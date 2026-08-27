@@ -10,21 +10,25 @@ import { logEvent } from '../log';
  *  Por qué NO alcanza con `revalidateTag(tag, 'max')` — medido, no deducido
  * ══════════════════════════════════════════════════════════════════════════════════════════════
  *
- * La vidriera cachea el **404** de un slug inexistente con `cacheLife('max')`, a propósito: un
- * escaneo de subdominios cuesta una query y no una por request. La contracara es que el alta del
- * tenant tiene que borrar ese 404, o el dueño carga 15 equipos, pega el link en un estado de
- * Instagram y el link no muestra nada. Sin error, sin log, sin alerta.
+ * La vidriera cachea la **respuesta negativa** de un slug que no es de nadie —bajo **ADR-011** una
+ * página legible con `noindex, nofollow` y status 200, no un 404 duro— con el perfil corto de
+ * ADR-012, a propósito: un escaneo de subdominios cuesta una query cada tanto y no una por
+ * request. La contracara es que el alta del tenant tiene que borrar esa entrada, o el dueño carga
+ * 15 equipos, pega el link en un estado de Instagram y el link no muestra nada. Sin error, sin
+ * log, sin alerta.
  *
  * `revalidateTag(tag, 'max')` **no borra nada**. El segundo argumento no es "el perfil con el que
  * se guardó la entrada": es *cuánto tiempo se puede seguir sirviendo el contenido viejo* mientras
  * se regenera en background. Con `'max'` esa ventana es de **un año**
  * (`node_modules/next/dist/docs/01-app/03-api-reference/04-functions/revalidateTag.md`:
  * *"A one year window, long enough that requests are always served stale content while the
- * revalidation runs"*). O sea: el 404 se sigue sirviendo.
+ * revalidation runs"*). O sea: la respuesta negativa se sigue sirviendo.
  *
  * Verificado en este repo contra `next build` + `next start` 16.3.3, con el e2e
- * `e2e/s1-alta-invalida-el-404-cacheado.spec.ts` y un 404 previamente cacheado (`x-nextjs-cache:
- * HIT`):
+ * `e2e/s1-alta-invalida-el-miss-cacheado.spec.ts` y una respuesta negativa previamente cacheada
+ * (`x-nextjs-cache: HIT`). La medición es **anterior a ADR-011**, cuando el miss todavía era un
+ * 404 duro: por eso la tabla dice `404`. Lo que se midió es el comportamiento de `revalidateTag`
+ * frente a `updateTag`, que no cambió — cambió cómo se llama la respuesta que quedaba pegada:
  *
  * | invalidación en el alta | secuencia de visitas después del alta |
  * |---|---|
@@ -68,9 +72,10 @@ import { logEvent } from '../log';
  *
  * El fallback existe porque acá la excepción llegaría **después** de que la escritura commiteó: el
  * negocio ya existe y hacer explotar la acción le mostraría un error a alguien cuyo alta salió
- * bien, dejando además el 404 cacheado. Degradar a la API equivalente y dejar rastro en el log es
- * estrictamente mejor. Si `revalidateTag` también falla, ahí sí propaga: eso ya no es "el contexto
- * equivocado", es el cache roto.
+ * bien, dejando además cacheada la página de miss (que bajo **ADR-011** ya no es un 404: es un 200
+ * con `noindex`, y por eso no se nota mirando status codes). Degradar a la API equivalente y dejar
+ * rastro en el log es estrictamente mejor. Si `revalidateTag` también falla, ahí sí propaga: eso ya
+ * no es "el contexto equivocado", es el cache roto.
  */
 export function invalidateStorefront(slug: string): void {
   for (const tag of [storefrontTag(slug), tenantConfigTag(slug)]) {

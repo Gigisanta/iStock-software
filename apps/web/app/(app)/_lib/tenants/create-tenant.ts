@@ -148,18 +148,23 @@ export async function createTenant(userId: string, input: CreateTenantInput): Pr
    * Regla 7 de `app-agent` y, acá, algo más grave que una regla de estilo.
    * `ARCHITECTURE.md` §"Resolución host → tenant" lo dice explícito:
    *
-   *   *"Slug inexistente → 404 real y cacheable. Corolario operativo: el alta de un tenant tiene
-   *   que invalidar el tag de su propio slug, o el 404 negativo queda cacheado y la vidriera
-   *   nace muerta."*
+   *   *"Slug inexistente → **página legible con `noindex, nofollow` y status 200**, cacheada con
+   *   perfil corto (**ADR-011**). […] Corolario operativo **intacto**: **el alta de un tenant
+   *   tiene que invalidar el tag de su propio slug**, o la respuesta negativa queda cacheada y la
+   *   vidriera nace muerta."*
    *
    * O sea: si alguien probó `minegocio.maat.work` antes de que el negocio existiera, el CDN tiene
-   * un 404 guardado con `cacheLife('max')`. Sin esta línea, el dueño carga 15 equipos, pega el
-   * link en un estado de Instagram y el link no anda. Es el peor bug posible del producto.
+   * guardada la página de miss. Bajo ADR-011 el corolario pesa **más**, no menos: el miss se
+   * cachea igual, y encima ya no se distingue por status code en los logs de acceso. Sin esta
+   * línea, el dueño carga 15 equipos, pega el link en un estado de Instagram y el link no muestra
+   * su vidriera. Es el peor bug posible del producto.
    *
    * Va **después** del insert y **antes** del `return`: invalidar antes de que la fila exista
-   * regenera la entrada con el mismo 404 y la deja cacheada de nuevo, que es el bug con un paso
+   * regenera la entrada con el mismo miss y la deja cacheada de nuevo, que es el bug con un paso
    * extra. Por qué `invalidateStorefront` y no `revalidateTag(tag, 'max')`: ver el módulo — con
-   * `'max'` el 404 se sigue sirviendo un año, medido `[404, 404, 404, 404, 404]`.
+   * `'max'` la respuesta negativa se sigue sirviendo un año, medido `[404, 404, 404, 404, 404]`
+   * cuando el miss todavía era un 404 duro (pre-ADR-011; lo que se midió es el mecanismo del
+   * cache, que no cambió).
    */
   invalidateStorefront(input.slug);
 
