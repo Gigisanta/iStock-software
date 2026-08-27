@@ -1,7 +1,9 @@
 # ARCHITECTURE
 
-_Owner: `architect`. **Se completa en FASE 1** con la síntesis de `docs/research/*.md`._
-_Estado: esqueleto + invariantes ya decididas. Las secciones marcadas `[FASE 1]` esperan research._
+_Owner: `architect` a partir de FASE 2. **FASE 1 la escribió el LEAD** (excepción declarada en
+`CLAUDE.md` §4), sintetizando `docs/research/*.md`. Fecha: 2026-08-27._
+_Estado: **FASE 1 cerrada.** Todo lo que quedó abierto está nombrado en `## Pendiente`, con el
+bloqueador y el experimento que lo cierra. Nada quedó sin decidir por olvido._
 
 ## Invariantes (ya decididas, no dependen del research)
 
@@ -107,10 +109,31 @@ Vercel). Hacerlo mal deja los objetos sin `Cache-Control` y con edge TTL default
 Costo: USD 0.00–0.09/mes a 100 tenants; USD 2.16/mes esperado a 1.000 (tope USD 14.76 con 0% de
 cache hit). Cloudflare Images se descartó: USD 165–465/mes a la misma escala.
 
-## Modelo de RLS
-Toda tabla de negocio: `tenant_id` + RLS forzada + policies de las 4 operaciones con `with check`.
-`[FASE 1]` Forma exacta del claim de tenant (JWT custom claim vs `memberships` + `auth.uid()`)
-→ ADR en `DECISIONS.md`, informada por R7.
+## Modelo de RLS  ·  **cerrado en FASE 1 (ADR-005, R7 PASS)**
+Toda tabla de negocio: `tenant_id` + RLS **forzada** + policies de las 4 operaciones con `with check`.
+
+`tenant_id` viaja en `auth.jwt() -> 'app_metadata'`, alimentado por el Custom Access Token Hook
+desde `memberships`, que es la fuente de verdad.
+
+Forma obligatoria de toda policy: `(select auth.jwt() ...)` **siempre en subquery** · `TO
+authenticated` **siempre** · índice en `tenant_id` **siempre** · `WITH CHECK` en INSERT/UPDATE
+**siempre**. Vistas con `security_invoker = on`. **Vistas materializadas y foreign tables no se
+exponen a la API** — RLS no aplica sobre ellas.
+
+**`tenant_id` jamás en `user_metadata`**: el usuario puede escribirlo, es escalación de tenant
+directa (lint `0015`, ERROR).
+
+**Deuda declarada: el claim queda stale hasta 3600 s.** Toda operación de membresía o billing
+**re-lee `memberships`** en vez de confiar en el claim; un usuario expulsado conserva acceso hasta
+que rote su token.
+
+**Gate de merge, sin excepción:** los seis lints de Supabase de severidad ERROR — `0002`, **`0007`**,
+`0010`, `0013`, `0015`, `0023`. `0007` (policies escritas + RLS apagado) es el que más se parece a
+"ya está hecho"; es el que hay que mirar primero.
+
+**Defensa en profundidad además de RLS:** DAL único en `server-only` · DTOs como `class`, para que
+bajar el objeto entero **rompa el build** · `experimental.taint: true` · filtro de tenant explícito
+en la query (`CLAUDE.md` §5).
 
 ## Jobs
 Vercel Cron (o Inngest free) para expirar reservas. **Sin worker 24/7.**
@@ -130,8 +153,31 @@ Idempotente: correr el cron dos veces no rompe nada.
 | imagen `card` | 200KB |
 | DB hits en caso cacheado | 0 |
 | JS de cliente | mínimo (RSC) |
-| LCP mobile 4G | `[FASE 1]` número concreto a fijar |
+| LCP mobile 4G | **≤ 2.5 s** (umbral "good" de Core Web Vitals) |
+| CPU del proxy por pageview | **< 2 ms**, 0 llamadas de red |
+| `set-cookie` en `(storefront)` | **cero** — uno solo apaga el CDN entero |
 
-## Pendiente de FASE 1
-`[R1]` wildcard + ISR · `[R2]` costo de imágenes · `[R3]` IDs y precios de LLM ·
-`[R4]` MP Subscriptions · `[R5]` ENACOM · `[R6]` catálogo AR · `[R7]` amenazas.
+## Seguridad de la vidriera y del chatbot (R7 PASS)
+- Anti-bot vive **en el edge de Vercel** (managed rulesets + WAF rate limit), **nunca en la app**:
+  filtrar dentro de la app fragmenta el cache ISR. Presupuesto: **2 reglas** (vidriera + chatbot).
+- **Cloudflare es sólo R2.** Nunca un proxy delante de Vercel: rompe Bot Protection.
+- **La vidriera es scrapeable por diseño.** Se defiende lo que cuesta plata (chatbot, queries a
+  Postgres), no el HTML público. **Prohibido servir contenido distinto a Googlebot** (cloaking).
+- Chatbot: **sin memoria persistente, sin tools de escritura, sin embeddings por tenant.** El
+  `tenant_id` **no es argumento de ninguna tool** — se inyecta server-side desde el host. La salida
+  se renderiza como **texto plano**: sin markdown, sin imágenes, sin links. Sanitizador de Unicode
+  invisible en el ingest de descripciones y en el render.
+- Los contadores del WAF son **por región** → el límite global efectivo es N×límite. El cap de costo
+  de LLM necesita **además** un contador de tokens por tenant en DB — en rutas autenticadas, nunca
+  en la vidriera.
+
+## Pendiente
+| qué | bloqueado por | cómo se cierra |
+|---|---|---|
+| Modelo de integración con MP | **B3** · ADR-008 | 4 experimentos de sandbox |
+| Región de funciones (`iad1` vs `gru1`) | ADR-010 | medir latencia real contra el Alto Valle |
+| ¿`revalidateTag` scopeado por dominio? | primer deploy con wildcard | test de 20 min, **antes de S3** |
+| Precio de Supabase Pro | **B2** | mirarlo al crear el proyecto |
+| Supuestos de tráfico de `COST.md` | primera vidriera real | medir, no estimar |
+
+Research cerrado: `[R1]` `[R2]` `[R3]` `[R5]` `[R6]` `[R7]` PASS · **`[R4]` PARCIAL** (regla 3).

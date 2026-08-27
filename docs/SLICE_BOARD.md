@@ -23,17 +23,28 @@ Estados: `todo` · `doing` · `blocked` · `done`
 
 | id | topic | estado | archivo |
 |---|---|---|---|
-| R1 | Wildcard subdominios + ISR en Next/Vercel (2026) | todo | `docs/research/wildcard-isr.md` |
-| R2 | R2 + transformaciones de imagen vs Cloudflare Images — pricing real | todo | `docs/research/r2-images.md` |
-| R3 | Gemini Flash-Lite y Groq free tier — IDs exactos y USD/1M | todo | `docs/research/llm-pricing.md` |
-| R4 | Mercado Pago Subscriptions API Argentina — estado vigente | todo | `docs/research/mp-subscriptions.md` |
-| R5 | ENACOM — URL y flujo de consulta de IMEI | todo | `docs/research/enacom-imei.md` |
-| R6 | Catálogo Apple que se vende hoy en AR — líneas y storages | todo | `docs/research/apple-catalog-ar.md` |
-| R7 | Amenazas: IDOR, scraping, prompt injection en SaaS multi-tenant | todo | `docs/research/threats.md` |
-| R-syn | Síntesis → `ARCHITECTURE.md` + `DECISIONS.md` + `COST.md` | todo | LEAD + `architect` |
+| R1 | Wildcard subdominios + ISR en Next/Vercel (2026) | **done** (PASS 1ª vuelta) | `docs/research/wildcard-isr.md` |
+| R2 | R2 + transformaciones de imagen vs Cloudflare Images — pricing real | **done** (PASS 2ª vuelta) | `docs/research/r2-images.md` |
+| R3 | Gemini Flash-Lite y Groq free tier — IDs exactos y USD/1M | **done** (PASS 2ª vuelta) | `docs/research/llm-pricing.md` |
+| R4 | Mercado Pago Subscriptions API Argentina — estado vigente | **PARCIAL — STOP regla 3, bloqueado en B3** | `docs/research/mp-subscriptions.md` |
+| R5 | ENACOM — URL y flujo de consulta de IMEI | **done** (PASS 2ª vuelta) | `docs/research/enacom-imei.md` |
+| R6 | Catálogo Apple que se vende hoy en AR — líneas y storages | **done** (PASS 2ª vuelta) | `docs/research/apple-catalog-ar.md` |
+| R7 | Amenazas: IDOR, scraping, prompt injection en SaaS multi-tenant | **done** (PASS 2ª vuelta) | `docs/research/threats.md` |
+| R-syn | Síntesis → `ARCHITECTURE.md` + `DECISIONS.md` + `COST.md` | **done** | LEAD |
 
 **Gate de FASE 1:** cada archivo con fuentes fechadas · sin cifra sin URL (o marcada `UNVERIFIED`) ·
-adversary vota cada research · **cero páginas de app escritas**.
+adversary vota cada research · **cero páginas de app escritas**. → **CUMPLIDO.**
+
+**Resultado de FASE 1.** Dos olas: 7 research + 7 adversary (1 PASS, 6 FAIL), después 6 fix + 6
+reverify (5 PASS, 1 FAIL). 26 agentes, ~1.9M tokens. **R4 falló dos veces → regla 3, STOP**: no hay
+tercera pasada. Causa raíz: sus preguntas abiertas **no son contestables leyendo** (páginas UA-gated
+y renderizadas por JS; la adhesión de un CBU sólo se establece intentándola). Se cambió research por
+**experimento**: ADR-008 abierta con 4 pruebas de sandbox. Ver el bloque `LEAD OVERRIDE` al tope de
+`docs/research/mp-subscriptions.md` con las 5 afirmaciones anuladas. **R4 no bloquea FASE 2/3/4.**
+
+ADRs cerradas: **005** (RLS por claim) · **006** (fotos, 2 buckets) · **007** (wildcard + cache) ·
+**009** (ENACOM). Abiertas: **008** (MP, B3) · **010** (región, falta medición).
+`docs/COST.md` pasó de todo-`[EST]` a cifras con fuente.
 
 ## FASE 2 — Domain + schema (SERIAL, nunca paralelo)
 

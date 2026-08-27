@@ -54,11 +54,11 @@ _Formato en `.claude/agents/architect.md`._
 ## ADRs pendientes de FASE 1
 | id | tema | depende de |
 |---|---|---|
-| ADR-005 | forma del claim de tenant para RLS (JWT custom vs `memberships`) | R7 |
-| ADR-006 | transformación de imágenes: sharp propio vs transform sobre R2 | R2 |
+| ~~ADR-005~~ | **cerrada abajo** (R7 PASS) | — |
+| ~~ADR-006~~ | **cerrada abajo** (R2 PASS) | — |
 | ~~ADR-007~~ | **cerrada abajo** (R1 PASS) | — |
 | ADR-008 | modelo de integración con MP Subscriptions | **R4 PARCIAL — bloqueado en B3, ver plan de sandbox abajo** |
-| ADR-009 | representación del resultado ENACOM (enum + link) | R5 |
+| ~~ADR-009~~ | **cerrada abajo** (R5 PASS) | — |
 | ADR-010 | región de las funciones de Vercel (`iad1` vs `gru1`) | R1 + medición de latencia |
 
 ---
@@ -174,3 +174,110 @@ Es el primer experimento a correr apenas exista deploy — antes de S3.
 - **El «piso de USD 1,03/mes por cliente pagador» no se usa como gate de `cost-auditor`** hasta el
   experimento 2. Está condicionado, no medido.
 - Sigue en pie: `preapproval`, la máquina de estados y la forma del webhook no están en disputa.
+
+---
+
+## ADR-005 — RLS por claim en JWT, con `memberships` como fuente de verdad
+- **Estado:** aceptada · **Fecha:** 2026-08-27 · **Autor:** LEAD (FASE 1) · **Insumo:** R7 (PASS)
+
+**Decisión.** `tenant_id` viaja en `auth.jwt() -> 'app_metadata'`, alimentado por el Custom Access
+Token Hook desde la tabla `memberships`, que es la fuente de verdad.
+
+**Forma obligatoria de toda policy** (es receta, no estilo — va al skill `drizzle-rls`):
+`(select auth.jwt() ...)` **siempre envuelto en subquery** · `TO authenticated` **siempre** ·
+índice en `tenant_id` **siempre** · `WITH CHECK` en INSERT/UPDATE **siempre**.
+Vistas: `with (security_invoker = on)` obligatorio. **Vistas materializadas y foreign tables no se
+exponen a la API**: RLS no aplica sobre ellas.
+
+**Prohibición dura.** `tenant_id` **jamás** en `user_metadata` — el usuario puede escribirlo, así
+que es escalación directa de tenant. Es el lint `0015`, severidad ERROR. Ya está en `CLAUDE.md` §2.
+
+**Deuda declarada, no escondida: el claim queda stale hasta 3600 s.** Consecuencia operativa: toda
+operación de **membresía o billing** re-lee `memberships`, no confía en el claim. Un usuario
+expulsado conserva acceso hasta que su token rote.
+
+**Gate de merge (bloqueante, sin excepción)** — los seis lints de Supabase de severidad ERROR:
+`0002`, **`0007`**, `0010`, `0013`, `0015`, `0023`.
+`0007` (*policies escritas y RLS apagado*) es el que **más se parece a "ya está hecho"** y es
+justamente el que faltaba. Sin los seis en verde no hay merge.
+
+**Defensa en profundidad, además de RLS:** DAL único en `server-only`; DTOs como `class` para que
+bajar el objeto entero **rompa el build**; `experimental.taint: true`.
+
+---
+
+## ADR-006 — Fotos: encode propio con sharp, dos buckets R2, key opaca content-addressed
+- **Estado:** aceptada · **Fecha:** 2026-08-27 · **Autor:** LEAD (FASE 1) · **Insumo:** R2 (PASS)
+
+**Decisión.** Resize propio con sharp en el upload (1600/800/200, WebP). **No** transformaciones de
+Cloudflare Images. Dos buckets: `istock-originals` **privado** (master, sin public access ni custom
+domain, sólo S3 API server-side) e `istock-media` **público** detrás de `img.maat.work`, que sirve
+**únicamente** thumb/card/detail.
+
+**Key pública opaca:** `v1/{ab}/{sha256_32}.webp`, con el hash del **byte output de esa variante** —
+sin sufijo de variante, sin `tenant_id`, sin `listing_id`. Así la vidriera no filtra identificadores
+internos en su HTML, y desde la URL de `card` **no se puede derivar** la del master. El mapeo
+`listing → keys` vive en Postgres con `tenant_id` + RLS.
+
+**Trampa que trae la key content-addressed:** dos tenants que suban la misma foto **comparten el
+objeto**. Por eso **borrar un listing nunca borra el objeto de R2**: se borra la fila del mapeo, y
+el byte se recolecta sólo cuando ningún tenant lo referencia. Borrar por key es borrado cruzado
+entre tenants. Ya es causal de rechazo en `CLAUDE.md` §2 y gate de review de S2.
+
+**Detalle de implementación que es un bug silencioso si se hace mal:** `Cache-Control` se setea con
+el parámetro **`CacheControl` de `@aws-sdk/client-s3`**, no con `httpMetadata.cacheControl` — eso
+último es el binding de Workers y **no existe** en el runtime Node de Vercel. Hacerlo mal deja los
+objetos sin `Cache-Control` y con edge TTL default de 120 min.
+
+**Números** (regla de redondeo de R2: la facturación redondea al alza a la siguiente unidad):
+100 tenants → **USD 0.00–0.09/mes** · 1.000 tenants → **USD 2.16/mes** esperado, **USD 14.76** peor
+caso con 0% de cache hit; a esa escala 960.000 PUT/mes = 96% del free tier de Class A.
+**Alternativas descartadas con su precio:** S3 equivalente ≈ USD 7.20–39.60/mes a 100 tenants y
+~USD 477/mes a 1.000, sólo en egress · Cloudflare Images **USD 165–465/mes** a 1.000 tenants.
+
+---
+
+## ADR-009 — IMEI/ENACOM: atestación manual racionada, cero integración
+- **Estado:** aceptada · **Fecha:** 2026-08-27 · **Autor:** LEAD (FASE 1) · **Insumo:** R5 (PASS)
+
+**El hecho que cambia el diseño: ENACOM corta a las 5 consultas por día por IP.** Ese cupo mata dos
+cosas de una: cualquier scraper nuestro muere en la sexta unidad, y el botón "consultar" por unidad
+en el alta es inejecutable — el dueño que carga 15 equipos en una tarde (que es literalmente el
+*done cobrable* de `CLAUDE.md` §1) ve `Intenta nuevamente mañana` en el equipo N° 6.
+
+**Decisión.**
+- **Cero integración.** Un `<a target="_blank" rel="noopener">` a `imei.enacom.gob.ar`. Sin cliente
+  HTTP, sin job, sin cache, sin retry, sin secreto. **COST_DELTA = 0.**
+- **El alta de unidad NO consulta ENACOM.** Guarda `not_checked` y no interrumpe la carga masiva.
+  **`not_checked` es un estado normal y mayoritario, no una deuda.**
+- El botón vive en **compra / canje / ingreso de mercadería** y en el detalle de la unidad — flujos
+  de pocas unidades por día, compatibles con el cupo.
+- Vista de panel **"unidades sin chequear"** ordenada por antigüedad, para que el dueño gaste sus 5
+  consultas diarias en las que importan (mayor valor, procedencia dudosa) y no en orden de carga.
+- Copy fijo: *"ENACOM permite 5 consultas por día por conexión. Si te dice que excediste el límite,
+  marcá 'No pude consultar' y reintentá mañana."* → eso es `inconclusive`.
+
+**Schema** (`db-agent`): `imei_check_status` enum `not_checked|valid|blocked|invalid|inconclusive` ·
+**`imei_check_status_raw text`** — el texto crudo que mostró ENACOM, sin normalizar · `imei_checked_at`
+· `imei_checked_by` · `imei_check_source` = `'enacom_web_manual'` · `imei_check_note` ·
+`tenant_id` + índice + RLS.
+La columna `_raw` **no es opcional**: es la única mitigación real de "ENACOM cambia los textos". Sin
+ella, el día que cambien el copy no hay forma de re-mapear el histórico.
+
+**Validación:** 15 dígitos numéricos en Zod, **bloqueante** (lo exige el propio form de ENACOM).
+**Luhn se calcula en `packages/domain` como warning NO bloqueante.** Prohibido un `.refine(luhn)`
+que impida el alta: existen equipos con IMEI mal grabado, y el dueño necesita poder cargarlos
+justamente para marcarlos `blocked`/`invalid` y no venderlos. **Un gate de alta que rechaza stock es
+peor que un warning que el dueño ignora.**
+
+**Privacidad:** el `publicListingDTO` stripea el IMEI **y todo el bloque `imei_check_*`** — aunque
+`valid` parezca inofensivo, publicarlo es afirmar un estado oficial que no controlamos y que cambia
+con el tiempo. Nada de eso entra al contexto del chatbot. Test explícito en `packages/domain`.
+
+**iStock no certifica nada.** Copy obligatorio: *"Resultado declarado por el dueño el {fecha}.
+iStock no es un registro oficial ni consulta a ENACOM."*
+**CABA 295/26 no genera trabajo de producto** y es argumento de venta, nunca promesa de
+cumplimiento. **Prohibido el copy "cumplís con el Decreto 295/26".**
+
+**Blocker que no es de ingeniería:** en los ToS, el reseller es responsable de la base de datos
+personales y MaatWork es encargado del tratamiento. Necesita redacción legal → marketing/legal.

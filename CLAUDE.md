@@ -94,6 +94,9 @@ IMEI + origen + resultado de consulta ENACOM (link + enum) **en el panel**.
 - `TODO: después el RLS` / `TODO: después R2` → rechazo.
 - Query sin filtro de tenant *además* de RLS → rechazo (defensa en profundidad).
 - Secret en el bundle del browser → rechazo.
+- `tenant_id` en `user_metadata` de Supabase → rechazo. Va en `app_metadata` (el usuario puede
+  escribir `user_metadata`; es escalación de tenant, lint `0015`, severidad ERROR).
+- Rate limiting con contador en Postgres sobre la **vidriera** → rechazo: rompe el 95% sin Postgres.
 - Imagen original (>500KB) servida a la vidriera → rechazo (`cost-auditor`).
 - URL pública de foto que contenga `tenant_id`/`listing_id`, o desde la que se pueda **derivar** la
   key del master → rechazo.
@@ -118,11 +121,25 @@ IMEI + origen + resultado de consulta ENACOM (link + enum) **en el panel**.
   Objetivo: **95% de los hits no tocan Postgres.**
 - **Realtime de Supabase:** sólo panel autenticado. **Nunca** para visitante anónimo.
 - **Jobs:** Vercel Cron o Inngest free tier (expirar reservas). **No** worker 24/7.
-- **LLM de vidriera:** Gemini 2.5 Flash-Lite (o el Lite vigente más barato) primario;
-  Groq `llama-3.1-8b-instant` / `gpt-oss-20b` fallback. **NUNCA Claude/GPT en el hot path.**
+- **LLM de vidriera:** Gemini 2.5 Flash-Lite primario; **Groq `openai/gpt-oss-20b` fallback**.
+  **NUNCA Claude/GPT en el hot path.**
+  > Corregido por el LEAD en FASE 1 (R3). `llama-3.1-8b-instant` **está retirado desde el
+  > 16/08/2026** para free y developer tier: la línea anterior apuntaba a un modelo muerto.
+  > Los IDs van por **env var** (`LLM_PRIMARY_MODEL` / `LLM_FALLBACK_MODEL`), no por constante:
+  > hubo dos deprecaciones en tres meses. El fallback está en el camino de ejecución y **testeado**,
+  > porque el primario tiene riesgo de apagado en octubre 2026.
+  > **Billing habilitado en Gemini desde el día 1** — no es optimización de costo, es privacidad:
+  > el free tier entrena con los prompts. **ZDR activado en Groq** antes de producción.
 - **Vercel AI SDK** + tools. Embeddings **sólo** en seed/update de `catalog_models`.
 - **Pagos SaaS:** Mercado Pago Subscriptions. Preferir débito/transferencia. **No Stripe.**
 - Sentry + PostHog (free). Playwright + Vitest. **pnpm**. Deploy Vercel + wildcard `*.maat.work`.
+- **Vercel Pro (USD 20/mes) es obligatorio, y no por features: por licencia.** Hobby prohíbe el uso
+  comercial, y "advertising the sale of a product or service" es exactamente lo que hace la
+  vidriera. Además Hobby no alcanza para las 2 reglas de rate limit que necesitamos.
+- **Piso de versiones: Next.js ≥ 16.2.11 y React ≥ 19.2.1.** CVE-2026-64648 (cache confusion) nos
+  aplica por ser App Router y **no tiene workaround, sólo upgrade**. Regla de código derivada:
+  **nunca reusar un `Request` con un `init` distinto** (`fetch(new Request(init), otroInit)` es el
+  disparador). `pnpm audit` bloqueante en CI.
 
 ### Rechazo automático
 Prisma · Mongo · Firebase · NestJS · schema-per-tenant · un proyecto Supabase por cliente ·
