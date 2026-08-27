@@ -1,0 +1,130 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Mismo shim que scripts/pg-local.sh levanta en la maquina del dev: roles anon/authenticated/
+  # service_role y un schema auth cuyo auth.jwt() tiene el MISMO cuerpo que el de Supabase.
+  # Los tests de RLS cruzado NO se saltean en CI: si se saltearan, "A no lee B" seria una promesa.
+  DATABASE_URL: postgresql://postgres:postgres@localhost:5432/istock_dev
+  ISTOCK_DB: istock_dev
+  PGHOST: localhost
+  PGUSER: postgres
+  PGPASSWORD: postgres
+
+jobs:
+  build:
+    name: typecheck · lint · test · rls
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with: { version: 10.34.5 }
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # Bloqueante por constitucion (CLAUDE.md §3): CVE-2026-64648 no tiene workaround, solo
+      # upgrade, asi que una vulnerabilidad high o critical no entra a main.
+      - name: audit
+        run: pnpm audit --audit-level=high
+
+      - name: typecheck
+        run: pnpm -r typecheck
+
+      - name: lint
+        run: pnpm -r lint
+
+      - name: base de datos
+        run: ./scripts/pg-local.sh
+
+      - name: migraciones
+        run: pnpm --filter @istock/db migrate
+
+      - name: seed
+        run: pnpm --filter @istock/db seed
+
+      - name: tests (incluye RLS cruzado contra Postgres real)
+        run: pnpm -r test
+
+      # El gate que la constitucion pide y que ningun linter da gratis: si esto encuentra algo,
+      # es una fuga a la vidriera, no un warning de estilo.
+      - name: gate de datos sensibles
+        run: ./scripts/guard-leaks.sh
+
+  e2e:
+    name: e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    needs: build
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 10.34.5 }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: ./scripts/pg-local.sh && pnpm --filter @istock/db migrate && pnpm --filter @istock/db seed
+
+      - name: playwright
+        run: pnpm --filter @istock/web exec playwright install --with-deps chromium
+
+      # Los e2e que necesitan un secret humano (R2 real, MP sandbox, LLM) se marcan skip CON MOTIVO
+      # en el propio test. Un e2e verde por no haber corrido es peor que un e2e rojo.
+      - name: e2e
+        run: pnpm --filter @istock/web e2e
+        env:
+          MEDIA_DRIVER: local
+          BILLING_DRIVER: mock
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: apps/web/playwright-report/
+          retention-days: 7
