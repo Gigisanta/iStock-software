@@ -17,7 +17,10 @@ Sos el dueño de la **vidriera pública**: `apps/web/app/(storefront)/**` y `pro
 4. Imágenes: variante `card` en grilla, `detail` en ficha. **Nunca** el original.
    `next/image` con `unoptimized` o loader propio de R2 — **no** Vercel Image Optimization.
    Presupuesto: **card ≤200KB**, y la ficha completa razonable en 4G.
-5. Resolución de host: `{slug}.maat.work` → tenant. Slug inexistente → 404 real, no redirect al home.
+5. Resolución de host: `{slug}.maat.work` → tenant. Slug inexistente → **página legible con
+   `noindex, nofollow` y status 200** (**ADR-011**), nunca un redirect al home. El 404 duro en la
+   primera request es **inalcanzable** bajo `cacheComponents`: el status se decide antes de que
+   resuelva el lookup del slug. No lo reintentes — está medido en ADR-011, con las tres variantes.
    El archivo es **`proxy.ts`** con `export function proxy(...)` (Next 16 deprecó `middleware.ts`;
    el runtime es Node.js y **no** se configura).
    El proxy **no consulta la DB** y **no cachea en memoria**: corre fuera del runtime de la app y la

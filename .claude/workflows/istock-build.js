@@ -627,9 +627,12 @@ TRES COSAS QUE SON LEY Y QUE EL LEAD VERIFICA UNA POR UNA:
 cacheLife de la vidriera: 'max' + invalidacion por evento. PROHIBIDO revalidate: 60 como default:
 son USD 2.59/tenant/mes contra USD 0.012, o sea 216x, y solo eso ya revienta el objetivo de 0.50.
 
-Slug inexistente -> 404 REAL y cacheable, no redirect al home. Y dejalo escrito en el codigo:
-ese 404 se cachea, asi que el alta de un tenant TIENE que invalidar el tag de su propio slug o la
-vidriera nace muerta.
+Slug inexistente -> pagina legible con noindex,nofollow y status 200 (ADR-011), nunca redirect al
+home. El 404 duro en la PRIMERA request es inalcanzable bajo cacheComponents: el status se decide
+antes de que resuelva el lookup del slug. Ya se midieron las tres variantes; no lo reintentes, leé
+ADR-011. El miss se cachea igual (perfil corto, ADR-012), asi que el corolario operativo queda
+intacto: el alta de un tenant TIENE que invalidar el tag de su propio slug o la vidriera nace
+muerta.
 
 Cero set-cookie en (storefront): uno solo apaga el cache del CDN entero.
 Mas una pagina placeholder de storefront que muestre el tenant resuelto. Nada de producto todavia.`,

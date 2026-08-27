@@ -68,8 +68,26 @@ function must(rule, desc, files, re) {
 console.log('web-lint · reglas de apps/web\n');
 
 // ── La vidriera es pública, cacheada y de costo acotado ───────────────────────────────────────
-must('W001', 'sin "use client" en (storefront): la vidriera no manda JS de datos', store,
+// Los error boundaries son la UNICA excepcion, y es del framework, no nuestra: Next exige que
+// `error.tsx` / `global-error.tsx` sean Client Components. Tal como estaba escrita, W001 hacia
+// literalmente imposible tener un error boundary en la vidriera — y sin boundary, un throw de
+// render bajo cacheComponents+PPR no es un 500: es un stream que nunca cierra con status 200.
+// Eso es el HIGH que encontro el adversary en S1.
+//
+// La excepcion va por NOMBRE DE ARCHIVO, no por un marcador que se pueda escribir en cualquier
+// lado. Y se paga con W001b: `storefront-agent` podia haber puesto el lint en verde escribiendo
+// `error.js` (web-lint solo camina .ts/.tsx) o re-exportando desde `lib/`, sin cambiar un byte de
+// lo que se sirve. No lo hizo y lo reporto, que es como se descubre que una regla estaba mal.
+const BOUNDARY = (f) => /(^|\/)(global-)?error\.tsx$/.test(f.rel);
+
+must('W001', 'sin "use client" en (storefront): la vidriera no manda JS de datos', store.filter((f) => !BOUNDARY(f)),
   /['"]use client['"]/);
+
+// Sin esto, la excepcion de W001 es una puerta: alcanza con llamar `error.tsx` a cualquier cosa
+// para meter JS de cliente en la vidriera. El boundary tiene que seguir siendo trivial.
+must('W001b', 'el error boundary de (storefront) no importa nada ni usa hooks: la excepcion de W001 no es una puerta',
+  store.filter(BOUNDARY),
+  /^\s*import\s|\brequire\s*\(|\buse(State|Effect|Reducer|Context|Ref|Memo|Callback|LayoutEffect|SyncExternalStore)\s*\(/);
 
 must('W002', 'sin headers()/cookies() en (storefront): vuelve la ruta dinámica y mata el ISR', store,
   /\b(headers|cookies|draftMode)\s*\(\s*\)/);

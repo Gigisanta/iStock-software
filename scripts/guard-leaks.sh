@@ -190,6 +190,59 @@ if [ "$N" -eq 1 ]; then ok "una sola forma: $SLUGS"
 elif [ "$N" -eq 0 ]; then bad "no se encontro ningun regex de slug — se renombro o se borro?"
 else bad "el regex de slug divergio en $N formas:"; echo "$SLUGS" | sed 's/^/        /'; fi
 
+
+say "15 . afirmaciones superadas por ADR-011  (el miss NO es un 404)"
+# Por que existe esta regla: ADR-011 cambio una respuesta observable, y la afirmacion vieja estaba
+# escrita en 7 archivos de 5 columnas distintas -- incluida la MIA (el brief del workflow, que la
+# re-inyectaba en cada corrida). Ningun owner podia verlo desde su columna. El comentario stale no
+# rompe CI: rompe al proximo que lo lee y reimplementa la variante A.
+#
+# Se permite nombrar la afirmacion vieja si el parrafo cita ADR-011 (o esta tachado / marcado como
+# superado): eso es historia, no una afirmacion vigente.
+#
+# POR QUE NO ES UN grep POR LINEA. La primera version lo era, y se le escaparon 4 afirmaciones que
+# estaban partidas por un salto de linea en medio de un docblock -- una de ellas decia que el miss
+# se cachea con cacheLife('max'), que es falso por partida doble. Un guard que se esquiva con
+# Enter no guarda. Esto agrupa las lineas de comentario contiguas en un parrafo y matchea contra
+# el parrafo, reportando la linea donde arranca.
+#
+# La lista de archivos sale de `git ls-files --cached --others --exclude-standard`: tracked mas
+# untracked-no-ignorados. Eso excluye solo node_modules, .next y e2e/test-results.
+STALE=$(git ls-files --cached --others --exclude-standard -- '*.ts' '*.tsx' '*.js' '*.md' '*.sh' '*.sql' 2>/dev/null \
+  | grep -v '^scripts/guard-leaks\.sh$' \
+  | python3 -c '
+import sys,re
+PAT = re.compile(r"(slug inexistente|slug que no existe)[^.]{0,120}?404|404 cacheado|404 REAL|404 real", re.I)
+EXE = re.compile(r"ADR-011|~~|supersed|superad", re.I)
+CMT = re.compile(r"^\s*(\*|/\*|//|#|--)")
+out = []
+for path in (l.strip() for l in sys.stdin if l.strip()):
+    try: lines = open(path, encoding="utf-8", errors="replace").read().split("\n")
+    except OSError: continue
+    md = path.endswith(".md")
+    i, n = 0, len(lines)
+    while i < n:
+        # un parrafo: en .md, lineas no vacias contiguas; en codigo, lineas de comentario contiguas
+        joinable = (lines[i].strip() != "") if md else bool(CMT.match(lines[i]))
+        j = i
+        if joinable:
+            while j + 1 < n and ((lines[j+1].strip() != "") if md else bool(CMT.match(lines[j+1]))):
+                j += 1
+        # sacar el lider del comentario ANTES de unir: si no, "404\n * cacheado" queda
+        # como "404 * cacheado" y no matchea. Lo encontro el test negativo de esta misma regla.
+        para = " ".join(re.sub(r"^\s*(\*/|/\*+|\*|//+|#|--)\s?", "", x) for x in lines[i:j+1])
+        if PAT.search(para) and not EXE.search(para):
+            # anclar en la linea que trae el 404, no en el "/**" que abre el docblock
+            k = next((x for x in range(i, j + 1) if "404" in lines[x]), i)
+            snippet = re.sub(r"\s+", " ", lines[k].strip())[:110]
+            out.append("%s:%d: %s" % (path, k + 1, snippet))
+        i = j + 1
+print("\n".join(out))
+' || true)
+STALE=$(echo "$STALE" | grep -v '^$' || true)
+if [ -z "$STALE" ]; then ok "nadie afirma que el slug inexistente da 404"
+else bad "afirmacion superada por ADR-011, sin citar ADR-011 en el parrafo:"; echo "$STALE" | sed 's/^/        /'; fi
+
 echo
 [ "$fail" -eq 0 ] && echo "GUARD-LEAKS: PASS" || echo "GUARD-LEAKS: FAIL"
 exit "$fail"
