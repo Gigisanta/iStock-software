@@ -12,6 +12,17 @@ const nextConfig: NextConfig = {
    * Verificado contra el upgrade guide de Next 16.
    */
   cacheComponents: true,
+  // La guia oficial de ISR with Cache Components pide los dos juntos: cacheComponents produce el
+  // App Shell y partialPrefetching lo asciende a ruta completa cuando se conocen los params.
+  //
+  // Con una advertencia que NO es cosmetica y que decide una regla de lint: la doc dice que un
+  // <Link prefetch={true}> sobre una ruta con partialPrefetching "costs a server invocation per
+  // prefetchable link". En la grilla de la vidriera, con ~20 fichas visibles, eso son ~20
+  // invocaciones por pageview en la unica pagina cuya economia depende de que el 95% de los hits
+  // no invoquen nada. Por eso `prefetch={true}` esta PROHIBIDO en (storefront) — regla W008 de
+  // scripts/web-lint.mjs. En el panel autenticado no aplica: ahi no hay grillas de 20 links y el
+  // trafico es del duenio, no del mundo.
+  partialPrefetching: true,
 
   /**
    * `taint` marca objetos que no pueden cruzar al cliente. Es la red de contención de

@@ -8,6 +8,7 @@
   },
   "scripts": {
     "typecheck": "pnpm -r --no-bail typecheck",
+    "build": "pnpm -r --no-bail build",
     "lint": "pnpm -r --no-bail lint",
     "test": "pnpm -r --no-bail test",
     "e2e": "pnpm --filter @istock/web e2e",

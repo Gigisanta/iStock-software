@@ -11,3 +11,6 @@ coverage/
 playwright-report/
 test-results/
 .vercel/
+
+# artefactos de build de TS
+*.tsbuildinfo
