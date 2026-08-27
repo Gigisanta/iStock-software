@@ -36,6 +36,20 @@ export function claimsFor(userId: string, tenantId: string): JwtClaims {
   return { sub: userId, role: 'authenticated', app_metadata: { tenant_id: tenantId } };
 }
 
+/**
+ * Claims de la **vidriera anónima**. No hay usuario y no hay `tenant_id`: lo único que el server
+ * conoce antes de consultar nada es el slug del host (`{slug}.maat.work`), y eso es lo que acota
+ * las filas (`drizzle/0002_storefront_anon_grants.sql`).
+ */
+export interface StorefrontClaims {
+  readonly role: 'anon';
+  readonly app_metadata?: { readonly storefront_slug: string };
+}
+
+export type SessionClaims = JwtClaims | StorefrontClaims;
+
+export type PgRole = 'authenticated' | 'anon';
+
 export interface Session {
   /** Corre SQL como `authenticated` con estos claims. Devuelve las filas. */
   query: <T = Record<string, unknown>>(text: string) => Promise<T[]>;
@@ -46,7 +60,7 @@ export interface Session {
   close: () => Promise<void>;
 }
 
-export function openSession(claims: JwtClaims, role: 'authenticated' | 'anon' = 'authenticated'): Session {
+export function openSession(claims: SessionClaims, role: PgRole = 'authenticated'): Session {
   const sql = postgres(databaseUrl(), { max: 1, prepare: false, onnotice: () => {} });
   const json = JSON.stringify(claims);
 
@@ -73,6 +87,16 @@ export function openSession(claims: JwtClaims, role: 'authenticated' | 'anon' = 
     },
     close: async () => { await sql.end({ timeout: 5 }); },
   };
+}
+
+/**
+ * Sesión de vidriera: rol `anon` **real** + el claim de slug. `slug === null` simula el caso en
+ * que alguien se olvida de setear el claim: tiene que devolver cero filas, no todo.
+ */
+export function openStorefrontSession(slug: string | null): Session {
+  const claims: StorefrontClaims =
+    slug === null ? { role: 'anon' } : { role: 'anon', app_metadata: { storefront_slug: slug } };
+  return openSession(claims, 'anon');
 }
 
 /** Cliente con privilegios de operador (superusuario / `service_role`): monta los fixtures. */

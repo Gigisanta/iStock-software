@@ -9,7 +9,7 @@ import { sql } from 'drizzle-orm';
 import { boolean, check, index, pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
 import { createdAt, pk, updatedAt } from './columns';
 import { planTierEnum, tenantStatusEnum } from './enums';
-import { selfTenantPolicies } from './rls';
+import { selfTenantPolicies, storefrontAnonSelectPolicy, storefrontSlugClaim } from './rls';
 
 export const tenants = pgTable(
   'tenants',
@@ -39,6 +39,10 @@ export const tenants = pgTable(
     check('tenants_slug_format', sql`slug ~ '^[a-z0-9](?:[a-z0-9-]{1,30}[a-z0-9])$'`),
     check('tenants_wa_phone_digits', sql`wa_phone ~ '^[0-9]{8,15}$'`),
     ...selfTenantPolicies('tenants'),
+    // Vidriera anónima: el tenant SE RESUELVE por el slug del host, y sólo si está `active`.
+    // Un tenant `suspended`/`cancelled` no tiene vidriera (misma regla que el DAL de storefront).
+    // Sin claim de slug → NULL → cero filas: `anon` no puede listar la cartera de clientes.
+    storefrontAnonSelectPolicy('tenants', sql`status = 'active' and slug = ${storefrontSlugClaim()}`),
   ],
 ).enableRLS();
 

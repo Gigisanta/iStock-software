@@ -20,7 +20,7 @@
 
 import { sql, type SQL } from 'drizzle-orm';
 import { pgPolicy } from 'drizzle-orm/pg-core';
-import { authenticatedRole } from 'drizzle-orm/supabase';
+import { anonRole, authenticatedRole } from 'drizzle-orm/supabase';
 
 /** `(select auth.jwt() -> 'app_metadata' ->> 'tenant_id')::uuid`. Fresco en cada uso. */
 export function tenantClaim(): SQL {
@@ -84,4 +84,80 @@ export function selfTenantPolicies(table: string) {
     }),
     pgPolicy(`${table}_tenant_delete`, { as: 'permissive', for: 'delete', to: authenticatedRole, using: sql`id = ${tenantClaim()}` }),
   ];
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+//  VIDRIERA ANÓNIMA — el rol `anon` SÍ es un cliente de Postgres, y por eso está acotado dos veces.
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+//
+// Corrección de la ronda S1-R2 (hallazgo HIGH-1). La versión anterior de este paquete apostaba a
+// que el visitante nunca tocaba Postgres: `REVOKE ALL ... FROM anon` y ninguna policy `TO anon`.
+// En dev eso "funcionaba" por la razón equivocada — la conexión local es SUPERUSER y un
+// superusuario se saltea FORCE RLS entero, así que el aislamiento lo estaba haciendo el `where`
+// de la query, no la base. Con un rol no-superusuario (producción) el mismo camino devuelve
+// `42501` y la vidriera lee CERO filas.
+//
+// La corrección tiene dos capas, y son dos capas distintas a propósito:
+//
+//   1. **GRANT a nivel de COLUMNA** (`0002_storefront_anon_grants.sql`). `anon` no recibe
+//      `GRANT SELECT ON listings`: recibe `GRANT SELECT (slug, title, price_usd, …)`. Un
+//      `select *`, un `select imei` o un `select cost_usd` no "filtran de más": **no compilan
+//      en Postgres**, dan `42501`. Es la única defensa que sigue en pie el día que
+//      `publicListingDTO` tenga un bug. `CLAUDE.md` §2 y §5.
+//   2. **Policies `TO anon`, sólo `SELECT`** (esto). Deciden QUÉ FILAS. Cero policies de
+//      insert/update/delete para `anon`: no existen, ni restringidas.
+//
+// ## El claim de la vidriera
+// `anon` no tiene `tenant_id` en el JWT (no hay usuario). Lo que sí conoce el server ANTES de
+// consultar nada es el **slug**, que viene del host (`{slug}.maat.work`) y lo reescribe `proxy.ts`.
+// Ese slug viaja como claim y **es el que acota las filas**:
+//
+//   begin;
+//     set local role anon;
+//     select set_config('request.jwt.claims', '{"role":"anon","app_metadata":{"storefront_slug":"acme"}}', true);
+//     <la query, con su where tenant_id = ... explícito ADEMÁS de RLS>
+//   commit;
+//
+// Sin el claim, `storefront_slug()` devuelve NULL y **todas** las policies de abajo dan falso:
+// cero filas. Falla cerrado y en silencio del lado seguro. Eso también cierra el agujero de
+// PostgREST: la `anon key` de Supabase está en el browser, pero un JWT firmado por Supabase para
+// `anon` **no puede traer `app_metadata.storefront_slug`**, así que `GET /rest/v1/listings` con la
+// clave pública sigue devolviendo `[]`.
+//
+// Las dos funciones (`storefront_slug()`, `storefront_tenant_id()`) las crea la migración 0002.
+// Son `stable` y `security invoker`: `storefront_tenant_id()` lee `tenants` **como `anon`**, o sea
+// que pasa por la policy de `tenants` de abajo. `security definer` sería un agujero silencioso —
+// con `FORCE ROW LEVEL SECURITY`, el dueño de la tabla tampoco se saltea las policies, y en
+// Supabase el dueño no es superusuario: la función devolvería NULL en producción y verde en local.
+
+/** El slug de vidriera que está sirviendo esta conexión, o NULL si no hay claim. */
+export function storefrontSlugClaim(): SQL {
+  // Siempre en subquery: InitPlan, una evaluación por query y no una por fila (ADR-005).
+  return sql`(select public.storefront_slug())`;
+}
+
+/** El tenant activo dueño de ese slug, o NULL. Es el `tenant_id` implícito de la vidriera. */
+export function storefrontTenantId(): SQL {
+  return sql`(select public.storefront_tenant_id())`;
+}
+
+/**
+ * Estados que un comprador anónimo puede ver. **Espejo exacto de `PUBLIC_STATUSES`**
+ * (`@istock/domain`), y `src/rls-anon-storefront.test.ts` verifica que no se desincronicen
+ * comparando el `qual` real de `pg_policies` contra el array de `domain`.
+ */
+export const PUBLIC_STATUS_SQL = sql`status in ('available', 'reserved', 'sold')`;
+
+/**
+ * Una policy de **sólo lectura** para el rol `anon`. No hay variante de escritura y no la va a
+ * haber: si algún día la vidriera necesita escribir (un lead, un click de WhatsApp), eso entra
+ * por una Server Function con el rol del server, no por el rol del visitante.
+ */
+export function storefrontAnonSelectPolicy(table: string, using: SQL) {
+  return pgPolicy(`${table}_storefront_anon_select`, {
+    as: 'permissive',
+    for: 'select',
+    to: anonRole,
+    using,
+  });
 }

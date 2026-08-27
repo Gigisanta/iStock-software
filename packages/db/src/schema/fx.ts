@@ -10,13 +10,14 @@
  * publica precios viejos.
  */
 
+import { sql } from 'drizzle-orm';
 import { index, pgTable, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
 import { authUsers } from 'drizzle-orm/supabase';
 import { moneyCents } from '../money';
 import { createdAt, pk, updatedAt } from './columns';
 import { tenantId } from './tenants';
 import { fxRoundingModeEnum } from './enums';
-import { tenantPolicies } from './rls';
+import { storefrontAnonSelectPolicy, storefrontTenantId, tenantPolicies } from './rls';
 
 export const fxSettings = pgTable(
   'fx_settings',
@@ -35,5 +36,8 @@ export const fxSettings = pgTable(
     index('fx_settings_tenant_idx').on(t.tenantId),
     uniqueIndex('fx_settings_tenant_key').on(t.tenantId),
     ...tenantPolicies('fx_settings'),
+    // El TC del tenant: sin esto la ficha no puede mostrar ARS, que es requisito de aceptación.
+    // `updated_by` (uuid de usuario) NO está en el GRANT de columnas.
+    storefrontAnonSelectPolicy('fx_settings', sql`tenant_id = ${storefrontTenantId()}`),
   ],
 ).enableRLS();

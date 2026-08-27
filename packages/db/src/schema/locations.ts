@@ -3,10 +3,11 @@
  * Es uno de los 15 campos obligatorios de la ficha pública (CLAUDE.md §1).
  */
 
+import { sql } from 'drizzle-orm';
 import { boolean, index, integer, pgTable, text } from 'drizzle-orm/pg-core';
 import { createdAt, pk, updatedAt } from './columns';
 import { tenantId } from './tenants';
-import { tenantPolicies } from './rls';
+import { storefrontAnonSelectPolicy, storefrontTenantId, tenantPolicies } from './rls';
 
 export const locations = pgTable(
   'locations',
@@ -27,5 +28,10 @@ export const locations = pgTable(
     index('locations_tenant_idx').on(t.tenantId),
     index('locations_tenant_active_idx').on(t.tenantId, t.isActive, t.sortOrder),
     ...tenantPolicies('locations'),
+    // Punto de retiro: es uno de los 15 campos obligatorios de la ficha. Sólo los activos.
+    storefrontAnonSelectPolicy(
+      'locations',
+      sql`tenant_id = ${storefrontTenantId()} and is_active`,
+    ),
   ],
 ).enableRLS();

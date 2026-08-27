@@ -79,11 +79,29 @@ describe('forma de las policies (ADR-005 · los seis lints ERROR de Supabase)', 
     expect(r.map((x) => x.p)).toEqual([]);
   });
 
-  it('toda policy es `TO authenticated` — nunca `TO public`, que incluye a anon', async () => {
+  it('toda policy nombra un rol explícito — nunca `TO public`, que incluye a anon sin decirlo', async () => {
+    // `TO public` es el default de Postgres y es el que se escribe solo cuando alguien se olvida
+    // del `TO`. Los dos roles legítimos son `authenticated` (panel) y `anon` (vidriera pública,
+    // sólo SELECT, ver `drizzle/0002_storefront_anon_grants.sql`).
     const r = await rows<{ p: string }>(`
       select tablename || '.' || policyname as p from pg_policies
-      where schemaname = 'public' and not ('authenticated' = any(roles))`);
+      where schemaname = 'public'
+        and not ('authenticated' = any(roles) or 'anon' = any(roles))`);
     expect(r.map((x) => x.p)).toEqual([]);
+
+    const aPublic = await rows<{ p: string }>(`
+      select tablename || '.' || policyname as p from pg_policies
+      where schemaname = 'public' and 'public' = any(roles)`);
+    expect(aPublic.map((x) => x.p)).toEqual([]);
+  });
+
+  it('las policies `TO anon` son de SELECT y de ninguna otra cosa', async () => {
+    // Un visitante no escribe. No hay policy de insert/update/delete para `anon`, ni restringida:
+    // el lead de canje y el click de WhatsApp entran por el server, con el rol del server.
+    const r = await rows<{ p: string; cmd: string }>(`
+      select tablename || '.' || policyname as p, cmd from pg_policies
+      where schemaname = 'public' and 'anon' = any(roles) and cmd <> 'SELECT'`);
+    expect(r.map((x) => `${x.p}:${x.cmd}`)).toEqual([]);
   });
 
   it('`auth.jwt()` siempre va envuelto en subquery (se evalúa 1 vez, no 1 vez por fila)', async () => {
@@ -241,11 +259,35 @@ describe('columnas SENSIBLES — marcadas en la base, no sólo en el TypeScript'
     expect(marks).toHaveLength(SENSITIVE.length);
   });
 
-  it('ninguna columna sensible tiene un GRANT de columna suelto hacia anon', async () => {
-    const r = await rows<{ n: string }>(`
-      select count(*)::text as n from information_schema.column_privileges
-      where table_schema = 'public' and grantee = 'anon'`);
-    expect(r[0]?.n).toBe('0');
+  it('ninguna columna SENSITIVE tiene GRANT hacia anon', async () => {
+    // La vidriera anónima SÍ tiene GRANTs desde 0002, pero **de columna** y sobre el read model
+    // público. Contar "cero privilegios de anon" dejó de ser el invariante correcto; el
+    // invariante es que ninguna de estas columnas esté entre los otorgados.
+    // El detalle que lo hace verificable: un GRANT de columna **no** otorga privilegio de tabla,
+    // así que `select *` sigue dando 42501. Ver `src/rls-anon-storefront.test.ts`.
+    const r = await rows<{ col: string }>(`
+      select table_name || '.' || column_name as col
+      from information_schema.column_privileges
+      where table_schema = 'public' and grantee = 'anon'
+        and (table_name, column_name) in (${SENSITIVE.map(([t, c]) => `('${t}', '${c}')`).join(', ')})
+      order by 1`);
+    expect(r.map((x) => x.col)).toEqual([]);
+  });
+
+  it('todo privilegio de anon es SELECT y es de columna, nunca de tabla', async () => {
+    const noSelect = await rows<{ p: string }>(`
+      select table_name || '.' || column_name || ':' || privilege_type as p
+      from information_schema.column_privileges
+      where table_schema = 'public' and grantee = 'anon' and privilege_type <> 'SELECT'`);
+    expect(noSelect.map((x) => x.p)).toEqual([]);
+
+    const deTabla = await rows<{ t: string }>(`
+      select c.relname as t from pg_class c
+      join pg_namespace n on n.oid = c.relnamespace
+      where n.nspname = 'public' and c.relkind = 'r'
+        and has_table_privilege('anon', c.oid, 'SELECT, INSERT, UPDATE, DELETE')
+      order by 1`);
+    expect(deTabla.map((x) => x.t)).toEqual([]);
   });
 });
 

@@ -28,6 +28,17 @@ lo contrario, y `scripts/rls-lint.mjs` lo reporta como `0012`.
 
 ## Comandos
 
+Antes que nada, la base local (una vez):
+
+```bash
+./scripts/pg-local.sh                      # desde la RAÍZ del repo. Crea istock_dev + auth.jwt()
+export DATABASE_URL="postgresql://localhost:5432/istock_dev"
+```
+
+Sin usuario en esa URL a propósito: libpq cae al usuario del SO. `pg-local.sh` **no crea un rol
+`postgres`**, y los roles que sí crea (`anon` / `authenticated` / `service_role`) son NOLOGIN.
+Es el mismo string que el default de `src/env.ts`, así que sin `DATABASE_URL` los tests igual corren.
+
 ```bash
 pnpm --filter @istock/db generate         # drizzle-kit generate → drizzle/*.sql (fuente de verdad)
 pnpm --filter @istock/db migrate          # aplica el journal
@@ -73,7 +84,9 @@ en la app, así no se puede desincronizar.
 ## Notas de operación
 
 - **Seed contra Supabase**: `FORCE ROW LEVEL SECURITY` aplica también al owner. El seed tiene que
-  correr con un rol `BYPASSRLS` (`postgres`/`service_role`), no con `authenticated`.
+  correr con un rol `BYPASSRLS`, no con `authenticated`: en Supabase, `postgres` o `service_role`;
+  en local, el usuario del SO que creó la base. **En la base local no existe un rol `postgres`** —
+  `scripts/pg-local.sh` sólo crea `anon` / `authenticated` / `service_role`, y los tres son NOLOGIN.
 - **`BYPASSRLS` no otorga privilegios.** Son dos capas y se evalúan las dos: el `GRANT` decide si
   el rol puede tocar la tabla, la policy decide qué filas ve, y `BYPASSRLS` sólo saltea lo segundo.
   Un `service_role` sin `GRANT` recibe `42501 permission denied` y no lee una fila: por eso 0001

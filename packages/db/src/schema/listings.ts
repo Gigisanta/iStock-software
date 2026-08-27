@@ -33,7 +33,7 @@ import { createdAt, pk, updatedAt } from './columns';
 import { tenantId } from './tenants';
 import { catalogModels } from './catalog';
 import { imeiCheckStatusEnum, listingConditionEnum, listingKindEnum, listingStatusEnum } from './enums';
-import { tenantPolicies } from './rls';
+import { PUBLIC_STATUS_SQL, storefrontAnonSelectPolicy, storefrontTenantId, tenantPolicies } from './rls';
 
 export const listings = pgTable(
   'listings',
@@ -124,5 +124,13 @@ export const listings = pgTable(
     // es peor que un warning que el dueño ignora.
     check('listings_imei_format', sql`imei is null or imei ~ '^[0-9]{15}$'`),
     ...tenantPolicies('listings'),
+    // Vidriera anónima: sólo el stock del tenant del host, sólo en estado público y sólo si
+    // está efectivamente publicado. `published_at` no es una condición de adorno: el trigger
+    // `listings_stamp_published_at` (migración 0002) la garantiza, así que no puede quedar en
+    // "publicado pero invisible" por un olvido del panel.
+    storefrontAnonSelectPolicy(
+      'listings',
+      sql`tenant_id = ${storefrontTenantId()} and ${PUBLIC_STATUS_SQL} and published_at is not null`,
+    ),
   ],
 ).enableRLS();

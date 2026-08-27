@@ -25,6 +25,24 @@ const fail = (rule, detail) => problems.push(`${rule}  ${detail}`);
 const GLOBAL_TABLES = new Set(['catalog_models', 'catalog_faqs']);
 /** Con RLS pero sin `tenant_id`: se aíslan por identidad, no por tenant. */
 const IDENTITY_TABLES = new Set(['tenants', 'users']);
+/**
+ * Las únicas tablas que la **vidriera anónima** puede leer, y sólo por GRANT de columna.
+ * Cualquier otra tabla con un GRANT a `anon` es un hallazgo (regla 0020).
+ */
+const STOREFRONT_TABLES = new Set([
+  'tenants', 'listings', 'listing_photos', 'locations', 'fx_settings', 'catalog_models',
+]);
+/**
+ * Columnas que no pueden aparecer en un GRANT a `anon` **jamás**, ni por descuido ni por
+ * "total, es sólo un dato más". Se chequea por nombre, no por tabla: si mañana aparece un
+ * `cost_usd` en otra tabla, sigue prohibido (regla 0020b).
+ */
+const NEVER_TO_ANON = new Set([
+  'imei', 'imei_check_status', 'imei_check_status_raw', 'imei_checked_at', 'imei_checked_by',
+  'imei_check_source', 'imei_check_note', 'cost_usd', 'margin_usd', 'margen', 'supplier',
+  'internal_notes', 'master_key', 'offer_usd', 'customer_name', 'customer_wa_phone',
+  'created_by', 'updated_by',
+]);
 const SENSITIVE_COLUMNS = [
   ['listings', 'imei'], ['listings', 'cost_usd'], ['listings', 'margin_usd'],
   ['listings', 'supplier'], ['listings', 'internal_notes'],
@@ -90,7 +108,28 @@ for (const [, name, table, body] of policies) {
   const id = `${table}.${name}`;
   if (/USING\s*\(\s*true\s*\)/i.test(body)) fail('0007', `${id} usa USING (true): RLS decorativa`);
   if (/WITH CHECK\s*\(\s*true\s*\)/i.test(body)) fail('0007', `${id} usa WITH CHECK (true)`);
-  if (!/\bTO\s+"?authenticated"?/i.test(body)) fail('0008', `${id} no es TO authenticated`);
+  const toAnon = /\bTO\s+"?anon"?/i.test(body);
+  const toAuthenticated = /\bTO\s+"?authenticated"?/i.test(body);
+  if (!toAuthenticated && !toAnon) {
+    fail('0008', `${id} no nombra un rol: TO authenticated (panel) o TO anon (vidriera)`);
+  }
+  if (toAnon) {
+    // La vidriera anónima LEE. No escribe, no escribió nunca y no va a escribir: un lead o un
+    // click de WhatsApp entran por una Server Function con el rol del server.
+    if (!/\bFOR\s+SELECT\b/i.test(body)) fail('0023', `${id} es TO anon y no es FOR SELECT`);
+    if (!STOREFRONT_TABLES.has(table)) {
+      fail('0023', `${id}: ${table} no es una tabla del read model público de la vidriera`);
+    }
+    // Sin claim de slug la policy tiene que dar falso. Una policy `TO anon` que no lo mira es
+    // una policy que publica el stock de todos los tenants a la vez.
+    if (!/storefront_(slug|tenant_id)\(\)/i.test(body)) {
+      fail('0024', `${id} es TO anon y no acota por el claim de la vidriera (storefront_slug/tenant_id)`);
+    }
+    if (/storefront_(slug|tenant_id)\(\)/i.test(body) && !/\(\s*select\s+public\.storefront_/i.test(body)) {
+      // Mismo motivo que 0009: sin subquery se evalúa una vez POR FILA.
+      fail('0009', `${id} llama a storefront_*() fuera de una subquery`);
+    }
+  }
   if (/auth\.jwt/i.test(body) && !/\(\s*select\s+auth\.jwt/i.test(body)) {
     // ADR-005: sin subquery, `auth.jwt()` se evalúa una vez POR FILA.
     fail('0009', `${id} llama auth.jwt() fuera de una subquery`);
@@ -146,17 +185,69 @@ for (const [table, column] of SENSITIVE_COLUMNS) {
   if (!re.test(sql)) fail('0019', `${table}.${column} sin COMMENT SENSITIVE consultable desde la base`);
 }
 
-// ── 7. anon no toca nada ─────────────────────────────────────────────────────────────────────
-// Sobre `sqlNoComments`, no sobre `sql`: la migración 0001 **explica en prosa** qué default
-// privileges trae Supabase (`... GRANT ALL ON TABLES TO anon ...`) y un lint que lee comentarios
-// como si fueran código convierte la documentación del bug en un falso positivo. Se lee el SQL
-// que Postgres va a ejecutar.
-// Se separa el GRANT de su lista de roles porque `TO authenticated, anon` es la forma real en que
-// esto se cuela: mirar sólo el token que sigue a `TO` deja pasar la segunda mitad de la lista.
+// ── 7. anon toca EXACTAMENTE el read model público, y por columna ────────────────────────────
+// Corregido en la ronda S1-R2 (hallazgo HIGH-1). La versión anterior de esta regla exigía CERO
+// GRANT a `anon` — y ese invariante era el bug: con un rol no-superusuario la vidriera recibía
+// `42501` y leía cero filas, mientras en dev "andaba" porque la conexión local es SUPERUSER y se
+// saltea RLS y GRANTs por igual. Lo que se exige ahora es la forma:
+//   · GRANT de **columna**, nunca de tabla (para que `select *` y `select imei` den 42501);
+//   · sólo SELECT;
+//   · sólo sobre las 6 tablas del read model público;
+//   · jamás una columna sensible.
+// Se lee `sqlNoComments`: la prosa de 0001/0002 explica GRANTs que no se ejecutan.
 for (const [, head, roles] of sqlNoComments.matchAll(/\bGRANT\b([^;]*?)\bTO\b([^;]*)/gi)) {
   if (!/\banon\b/i.test(roles)) continue;
-  const stmt = `GRANT${head}TO${roles}`.replace(/\s+/g, ' ').slice(0, 90);
-  fail('0020', `hay un GRANT a anon: la vidriera no lee Postgres directo → ${stmt}`);
+  const stmt = `GRANT${head}TO${roles}`.replace(/\s+/g, ' ').trim();
+  const short = stmt.slice(0, 110);
+
+  if (/^GRANT USAGE ON SCHEMA public$/i.test(`GRANT${head}`.replace(/\s+/g, ' ').trim())) continue;
+  if (/^GRANT EXECUTE ON FUNCTION public\.storefront_(slug|tenant_id)\(\)$/i.test(
+    `GRANT${head}`.replace(/\s+/g, ' ').trim(),
+  )) continue;
+
+  if (/\bON\s+ALL\s+/i.test(head)) {
+    fail('0020', `GRANT masivo a anon: el read model público se otorga tabla por tabla → ${short}`);
+    continue;
+  }
+
+  const columnGrant = /^GRANT\s+SELECT\s*\(([^)]*)\)\s*ON\s+TABLE\s+"?(\w+)"?$/i.exec(
+    `GRANT${head}`.replace(/\s+/g, ' ').trim(),
+  );
+  if (columnGrant === null) {
+    // Acá caen `GRANT SELECT ON TABLE listings TO anon` (privilegio de TABLA: haría andar el
+    // `select *`) y cualquier INSERT/UPDATE/DELETE.
+    fail('0020', `GRANT a anon que no es SELECT de COLUMNA sobre una tabla → ${short}`);
+    continue;
+  }
+  const [, columnList, table] = columnGrant;
+  if (!STOREFRONT_TABLES.has(table)) {
+    fail('0020', `anon no lee ${table}: no es parte del read model público de la vidriera`);
+  }
+  for (const raw of columnList.split(',')) {
+    const column = raw.trim().replace(/"/g, '');
+    if (column.length === 0) continue;
+    if (NEVER_TO_ANON.has(column)) {
+      fail('0020', `columna prohibida en un GRANT a anon: ${table}.${column}`);
+    }
+    if (SENSITIVE_COLUMNS.some(([t, c]) => t === table && c === column)) {
+      fail('0020', `columna SENSITIVE en un GRANT a anon: ${table}.${column}`);
+    }
+  }
+}
+
+// Toda tabla del read model público tiene que tener, además del GRANT, su policy `TO anon`:
+// un GRANT sin policy es una tabla que `anon` puede tocar y de la que no ve nada (o al revés,
+// el día que alguien apague RLS). Las dos capas van juntas o no van.
+for (const table of STOREFRONT_TABLES) {
+  const tieneGrant = new RegExp(`GRANT\\s+SELECT\\s*\\([^)]*\\)\\s*ON\\s+TABLE\\s+"?${table}"?\\s+TO\\s+anon`, 'i')
+    .test(sqlNoComments);
+  const tienePolicy = new RegExp(`CREATE POLICY[^;]*ON\\s+"?${table}"?[^;]*TO\\s+"?anon"?`, 'is')
+    .test(sqlNoComments);
+  if (!tieneGrant) fail('0025', `${table} está en el read model público y no tiene GRANT de columna a anon`);
+  // `catalog_models` es GLOBAL y no tiene RLS: se protege sólo con el GRANT (ver catalog.ts).
+  if (!tienePolicy && !GLOBAL_TABLES.has(table)) {
+    fail('0025', `${table} tiene GRANT a anon y ninguna policy TO anon: privilegio sin límite de filas`);
+  }
 }
 
 // El invariante de arriba sólo vale para las tablas que existen HOY. En un proyecto Supabase real

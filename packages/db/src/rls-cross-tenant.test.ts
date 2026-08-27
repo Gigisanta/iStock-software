@@ -1,6 +1,9 @@
 /**
  * ══════════════════════════════════════════════════════════════════════════════════════════════
- *  R1–R6 · RLS CRUZADO CONTRA POSTGRES REAL. Owner: `qa-agent`.
+ *  R0–R8 · RLS CRUZADO CONTRA POSTGRES REAL. Owner: `db-agent`.
+ *  (El encabezado decía `qa-agent`. `CLAUDE.md` §4, corregido en FASE 2: el test unitario de un
+ *   paquete es del owner del paquete — nace y muere con el código que prueba. `qa-agent` es dueño
+ *   de lo que CRUZA un límite: e2e e integración. Este archivo vive en `packages/db/src`.)
  * ══════════════════════════════════════════════════════════════════════════════════════════════
  *
  * Este archivo es el gate de `CLAUDE.md` §Reglas duras 7 (*"Multi-tenant: tenant_id + RLS en toda
@@ -31,11 +34,64 @@
  *
  * Falsificabilidad — la parte que a estos tests les suele faltar:
  *   R1–R4 tienen **control positivo** (R0): si el fixture no existiera, "B ve 0 filas" sería
- *   verde por vacío. R5/R6 tienen **control negativo**: el mismo SQL detector se corre contra un
- *   schema desechable (`qa_rls_control`) que contiene, a propósito, una tabla sin RLS y una policy
- *   `using (true)`. Si el detector no las encuentra, el detector está roto y el test lo dice.
+ *   verde por vacío. R5/R6/R7 tienen **control negativo**: el mismo SQL detector se corre contra un
+ *   schema desechable (`qa_rls_control`) donde están plantados, a propósito, los seis ataques que
+ *   este archivo dice cazar. Si el detector no encuentra su trampa, el detector está roto y el
+ *   test lo dice **antes** de afirmar nada sobre `public`.
  *
- * `qa-agent` no arregla el código bajo test. Si algo de acá se pone rojo, se reporta al LEAD.
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *  POR QUÉ CAMBIÓ EL INVARIANTE DE `anon` (S1 · si venís del git log leyendo "aflojaron un test
+ *  de RLS", esto es lo que buscabas)
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ * Hasta `drizzle/0001_rls_and_grants.sql` este archivo afirmaba dos cosas que hoy son falsas
+ * **por diseño**, no por descuido:
+ *
+ *   (viejo R1) "`select … from listings` como `anon` devuelve 42501" — o sea, `anon` no tiene
+ *              NINGÚN privilegio sobre `listings`.
+ *   (viejo R6) "ninguna policy de `public` está otorgada a `public`/`anon`".
+ *
+ * `drizzle/0002_storefront_anon_grants.sql` las contradice a propósito. El motivo está entero en
+ * el encabezado de esa migración y se resume así: la vidriera anónima **sí** es un cliente de
+ * Postgres. Mientras `anon` no tuvo ni un `GRANT`, el aislamiento entre tenants de la vidriera lo
+ * hacía el `where` de la query, no la base — y eso sólo "andaba" en local porque la conexión de
+ * desarrollo es superusuaria y un superusuario se saltea `FORCE ROW LEVEL SECURITY` entero. En
+ * producción ese mismo camino recibía `42501` y la vidriera mostraba cero equipos. Hallazgo HIGH-1
+ * de la ronda S1.
+ *
+ * Lo que hay que cuidar entonces NO es "cero privilegio para `anon`" —ese invariante describía un
+ * producto sin vidriera— sino el que es **estrictamente más difícil de cumplir**:
+ *
+ *   > `anon` toca EXACTAMENTE la allowlist de columnas públicas, **por columna y nunca por tabla**,
+ *   > sólo `SELECT`, y sólo las filas del slug que trae el claim.
+ *
+ * Que es más fuerte y no más débil se ve en los ataques que cada versión caza:
+ *
+ *   ataque                                                    viejo R1   R1/R7 de hoy
+ *   ────────────────────────────────────────────────────────  ────────   ────────────
+ *   GRANT SELECT ON TABLE listings TO anon                     ROJO       ROJO
+ *   GRANT SELECT (imei) ON listings TO anon                    **VERDE**  ROJO
+ *   GRANT INSERT (status) ON listings TO anon                  **VERDE**  ROJO
+ *   CREATE POLICY … TO anon USING (true)                       **VERDE**  ROJO
+ *   CREATE POLICY … TO public USING (…)                        **VERDE**  ROJO
+ *   `anon` cruza de vidriera A a vidriera B                    **VERDE**  ROJO
+ *
+ * Las tres celdas VERDE de la izquierda no son retórica: con un GRANT sólo sobre `imei`, el viejo
+ * `select id from listings` seguía devolviendo `42501` y el test quedaba en verde con el IMEI
+ * publicado. El invariante viejo medía la puerta equivocada.
+ *
+ * El de R6 es un caso más chico: `public` es el pseudo-rol atrapa-todo (lo tiene TODO el mundo,
+ * incluido `anon` sin decirlo) y `anon` es un rol nominado. El detector viejo los metía en el mismo
+ * `array['public','anon']` y barría a los dos. La intención —"nunca una policy al atrapa-todo"—
+ * sobrevive intacta; lo que se separó es el rol explícito, que ahora tiene su propio invariante
+ * *más* estricto que el general (sólo SELECT, sólo las 5 nominadas, todas acotadas por el claim).
+ *
+ * Nada de esto relaja el gate: `packages/db/scripts/rls-lint.mjs` (reglas 0020/0022/0023/0024/0025)
+ * lee las migraciones y `src/rls-anon-storefront.test.ts` §f lee el catálogo con la allowlist de
+ * columnas **por nombre**. La allowlist está escrita dos veces, en dos archivos, a propósito: si
+ * alguien la ensancha en uno para poner algo en verde, el otro sigue en rojo.
+ *
+ * `db-agent` no arregla el código bajo test para poner un test en verde (`CLAUDE.md` §4). Si algo
+ * de acá se pone rojo, se reporta al LEAD.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -64,6 +120,10 @@ const SALE_A = '00000000-0000-4000-9000-0000000000c4';
 const LEAD_A = '00000000-0000-4000-9000-0000000000c5';
 const INTRUDER_ROW = '00000000-0000-4000-9000-0000000000e9';
 
+/** Los slugs del host: `{slug}.maat.work`. Son el claim de la vidriera anónima (`0002`). */
+const SLUG_A = 'qa-rls-a';
+const SLUG_B = 'qa-rls-b';
+
 /** El costo y el IMEI de A. Si alguna de estas dos cadenas aparece en una sesión de B, es fuga. */
 const COST_A = '412.00';
 const IMEI_A = '353916104123456';
@@ -79,6 +139,15 @@ interface Claims {
   readonly app_metadata: { readonly tenant_id: string };
 }
 
+/** El claim de la vidriera (`drizzle/0002`): no hay usuario y no hay `tenant_id`. Lo único que el
+ *  server conoce antes de consultar nada es el **slug del host**, que reescribe `proxy.ts`. */
+interface StorefrontClaims {
+  readonly role: 'anon';
+  readonly app_metadata?: { readonly storefront_slug: string };
+}
+
+type AnyClaims = Claims | StorefrontClaims;
+
 type PgRole = 'authenticated' | 'anon' | 'service_role';
 
 interface Session {
@@ -88,7 +157,7 @@ interface Session {
   readonly close: () => Promise<void>;
 }
 
-function openSession(claims: Claims, role: PgRole = 'authenticated'): Session {
+function openSession(claims: AnyClaims, role: PgRole = 'authenticated'): Session {
   const sql = postgres(DATABASE_URL, { max: 1, prepare: false, onnotice: () => {} });
   const claimsJson = JSON.stringify(claims);
 
@@ -120,6 +189,14 @@ function openSession(claims: Claims, role: PgRole = 'authenticated'): Session {
 
 function claimsFor(userId: string, tenantId: string): Claims {
   return { sub: userId, role: 'authenticated', app_metadata: { tenant_id: tenantId } };
+}
+
+/** Vidriera pública: rol `anon` real + el claim del slug. `slug === null` = alguien se olvidó de
+ *  setearlo, y eso tiene que fallar **cerrado** (cero filas), no abierto. */
+function openStorefront(slug: string | null): Session {
+  const claims: StorefrontClaims =
+    slug === null ? { role: 'anon' } : { role: 'anon', app_metadata: { storefront_slug: slug } };
+  return openSession(claims, 'anon');
 }
 
 // ── Detectores de metadata, parametrizados por schema ───────────────────────────────────────
@@ -164,13 +241,102 @@ function policiesUsingTrue(schema: string): string {
     order by 1`;
 }
 
-/** R6b · policies otorgadas a `public` (que incluye a `anon`) en vez de a un rol explícito. */
-function policiesGrantedToPublic(schema: string): string {
+/**
+ * R6b · policies otorgadas al pseudo-rol `public` en vez de a un rol nominado.
+ *
+ * `public` NO es un rol: es el atrapa-todo que tiene absolutamente cualquiera que se conecte,
+ * `anon` incluido y sin decirlo. Una policy `TO public` es una policy cuyo alcance no está escrito
+ * en ningún lado. `anon` **sí** es un rol nominado y quedó fuera de este detector a partir de
+ * `drizzle/0002`: tiene su propio invariante, más estricto que éste, en R6c y R7 (ver el docblock).
+ */
+function policiesGrantedToPublicRole(schema: string): string {
   return `
     select tablename || '.' || policyname as t
     from pg_policies
-    where schemaname = '${schema}' and roles::text[] && array['public', 'anon']
+    where schemaname = '${schema}' and roles::text[] && array['public']
     order by 1`;
+}
+
+/** R6c · toda policy que nombre a `anon`, con su comando y su predicado, para auditarla entera. */
+function policiesForAnon(schema: string): string {
+  return `
+    select tablename || '.' || policyname as t,
+           cmd,
+           coalesce(qual, '') as qual,
+           coalesce(with_check, '') as with_check,
+           permissive
+    from pg_policies
+    where schemaname = '${schema}' and 'anon' = any(roles)
+    order by 1`;
+}
+
+// ── Detectores de PRIVILEGIO (GRANT), que es la otra capa ───────────────────────────────────
+// `GRANT` y RLS se evalúan las dos: el GRANT decide si podés tocar la tabla, la policy decide qué
+// filas ves (`CLAUDE.md` §2). Estos detectores preguntan por el privilegio **efectivo**
+// (`has_*_privilege`), no por el `acl` textual: así también cae un `GRANT … TO PUBLIC`, que le
+// llega a `anon` sin que su nombre aparezca en ningún lado.
+
+/** R7a · tablas donde `anon` tiene SELECT **de tabla**. Un GRANT de tabla hace andar `select *`
+ *  —y con él `imei` y `cost_usd`— sin tocar una sola línea de policy. */
+function anonTableLevelSelect(schema: string): string {
+  return `
+    select c.relname as t
+    from pg_class c
+    join pg_namespace n on n.oid = c.relnamespace
+    where n.nspname = '${schema}' and c.relkind = 'r'
+      and has_table_privilege('anon', c.oid, 'SELECT')
+    order by 1`;
+}
+
+/** R7b · cualquier privilegio de ESCRITURA de `anon`, de tabla o de columna. El visitante no
+ *  escribe: si mañana hay que registrar un lead, entra por una Server Function con el rol del
+ *  server. Las únicas privilegios que existen a nivel de columna son SELECT/INSERT/UPDATE/REFERENCES. */
+function anonWritePrivileges(schema: string): string {
+  return `
+    select c.relname || ':' || p as t
+    from pg_class c
+    join pg_namespace n on n.oid = c.relnamespace
+    cross join lateral (
+      select p from unnest(array['INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']) as p
+      where has_table_privilege('anon', c.oid, p)
+      union all
+      select 'column:' || p from unnest(array['INSERT','UPDATE','REFERENCES']) as p
+      where exists (
+        select 1 from pg_attribute a
+        where a.attrelid = c.oid and a.attnum > 0 and not a.attisdropped
+          and has_column_privilege('anon', c.oid, a.attnum, p)
+      )
+    ) w(p)
+    where n.nspname = '${schema}' and c.relkind = 'r'
+    order by 1`;
+}
+
+/** R7c · columnas marcadas `-- SENSITIVE: never in public DTO` que `anon` igual puede leer.
+ *  No se compara contra una lista escrita a mano: se le pregunta a Postgres cuáles columnas están
+ *  marcadas y se cruza con el privilegio efectivo. Una columna sensible nueva queda cubierta el día
+ *  que se marca, sin tocar este archivo. */
+function anonReadableSensitiveColumns(schema: string): string {
+  return `
+    select c.relname || '.' || a.attname as t
+    from pg_class c
+    join pg_namespace n on n.oid = c.relnamespace
+    join pg_attribute a on a.attrelid = c.oid and a.attnum > 0 and not a.attisdropped
+    where n.nspname = '${schema}' and c.relkind = 'r'
+      and col_description(c.oid, a.attnum) like 'SENSITIVE:%'
+      and has_column_privilege('anon', c.oid, a.attnum, 'SELECT')
+    order by 1`;
+}
+
+/** R7d · el read model público completo, columna por columna, leído del catálogo. */
+function anonReadableColumns(schema: string): string {
+  return `
+    select c.relname as tbl, a.attname as col
+    from pg_class c
+    join pg_namespace n on n.oid = c.relnamespace
+    join pg_attribute a on a.attrelid = c.oid and a.attnum > 0 and not a.attisdropped
+    where n.nspname = '${schema}' and c.relkind = 'r'
+      and has_column_privilege('anon', c.oid, a.attnum, 'SELECT')
+    order by 1, 2`;
 }
 
 // ── Estado del archivo ──────────────────────────────────────────────────────────────────────
@@ -209,8 +375,8 @@ beforeAll(async () => {
     on conflict (id) do nothing`);
   await admin.unsafe(`
     insert into tenants (id, slug, name, wa_phone) values
-      ('${TENANT_A}', 'qa-rls-a', 'Celus del Valle', '5492995550001'),
-      ('${TENANT_B}', 'qa-rls-b', 'Neuquen Mobile', '5492995550002')`);
+      ('${TENANT_A}', '${SLUG_A}', 'Celus del Valle', '5492995550001'),
+      ('${TENANT_B}', '${SLUG_B}', 'Neuquen Mobile', '5492995550002')`);
   await admin.unsafe(`
     insert into users (id, email) values
       ('${USER_A}', 'a@qa-rls.local'), ('${USER_B}', 'b@qa-rls.local')
@@ -236,13 +402,51 @@ beforeAll(async () => {
     insert into tradein_leads (id, tenant_id, customer_name, customer_wa_phone, model_text, offer_usd)
     values ('${LEAD_A}', '${TENANT_A}', 'Marcela Quiroga', '5492995559999', 'iPhone 11 64', 180.00)`);
 
-  // 3 · El schema de control negativo para R5/R6: acá SÍ hay RLS rota, a propósito.
+  // 3 · El schema de control negativo: acá SÍ están plantados los seis ataques que este archivo
+  //     dice cazar. Cada detector se corre PRIMERO contra este schema —donde tiene que encontrar
+  //     su trampa y NADA MÁS— y recién después contra `public`. Un detector que no encuentra su
+  //     trampa es un detector roto, y un test con un detector roto es verde inútil.
+  //
+  //     Regla al agregar una trampa: sólo lleva columna `tenant_id` la que tiene que caer en el
+  //     detector de R5 (`tablesWithoutRls` filtra por esa columna). Si no, se contaminan entre sí
+  //     y las aserciones de control dejan de ser exactas.
   await admin.unsafe(`drop schema if exists ${CONTROL_SCHEMA} cascade`);
   await admin.unsafe(`create schema ${CONTROL_SCHEMA}`);
+
+  // 3.a · R5 — tabla de negocio sin RLS.
   await admin.unsafe(`create table ${CONTROL_SCHEMA}.leaky_no_rls (id uuid primary key, tenant_id uuid not null)`);
+
+  // 3.b · R6a/R6b — policy `using (true)` Y otorgada al atrapa-todo `public`. Las dos cosas en la
+  //       misma trampa a propósito: cada detector tiene que encontrarla por SU motivo.
   await admin.unsafe(`create table ${CONTROL_SCHEMA}.leaky_policy (id uuid primary key, tenant_id uuid not null)`);
   await admin.unsafe(`alter table ${CONTROL_SCHEMA}.leaky_policy enable row level security`);
   await admin.unsafe(`create policy leaky_all on ${CONTROL_SCHEMA}.leaky_policy for select to public using (true)`);
+
+  // 3.c · R6c — policy de ESCRITURA otorgada a `anon`. El qual NO es `true`: si lo fuera, no se
+  //       podría distinguir "el detector de anon la encontró" de "la encontró el de using(true)".
+  await admin.unsafe(`create table ${CONTROL_SCHEMA}.leaky_anon_policy (id uuid primary key, tenant_id uuid not null)`);
+  await admin.unsafe(`alter table ${CONTROL_SCHEMA}.leaky_anon_policy enable row level security`);
+  await admin.unsafe(
+    `create policy leaky_anon_write on ${CONTROL_SCHEMA}.leaky_anon_policy for all to anon using (tenant_id is not null)`,
+  );
+
+  // 3.d · R7a — GRANT a nivel de TABLA (el ataque "se otorgó de tabla en vez de por columna").
+  await admin.unsafe(`create table ${CONTROL_SCHEMA}.leaky_grant_table (id uuid primary key, imei text)`);
+  await admin.unsafe(`grant select on table ${CONTROL_SCHEMA}.leaky_grant_table to anon`);
+
+  // 3.e · R7b — GRANT de escritura a `anon`, uno de tabla y uno de columna.
+  await admin.unsafe(`create table ${CONTROL_SCHEMA}.leaky_grant_write (id uuid primary key, status text)`);
+  await admin.unsafe(`grant delete on table ${CONTROL_SCHEMA}.leaky_grant_write to anon`);
+  await admin.unsafe(`grant insert (status) on table ${CONTROL_SCHEMA}.leaky_grant_write to anon`);
+
+  // 3.f · R7c — columna marcada SENSITIVE y otorgada igual a `anon`, por columna. Éste es el
+  //       ataque que el invariante VIEJO dejaba pasar en verde: `select id from leaky_grant_col`
+  //       sigue dando 42501 mientras el costo se publica.
+  await admin.unsafe(`create table ${CONTROL_SCHEMA}.leaky_grant_col (id uuid primary key, cost_usd numeric(12,2))`);
+  await admin.unsafe(
+    `comment on column ${CONTROL_SCHEMA}.leaky_grant_col.cost_usd is 'SENSITIVE: never in public DTO'`,
+  );
+  await admin.unsafe(`grant select (cost_usd) on table ${CONTROL_SCHEMA}.leaky_grant_col to anon`);
 
   a = openSession(claimsFor(USER_A, TENANT_A));
   b = openSession(claimsFor(USER_B, TENANT_B));
@@ -338,13 +542,124 @@ describe('R1 · un reseller no puede LEER el stock de otro reseller', () => {
     }
   });
 
-  it('el visitante anónimo de la vidriera no habla SQL: `anon` no tiene privilegio sobre listings', async () => {
-    const visitor = openSession(claimsFor(USER_B, TENANT_B), 'anon');
-    try {
-      expect(await visitor.errorCode(`select id from listings limit 1`)).toBe('42501');
-    } finally {
-      await visitor.close();
-    }
+  // ─────────────────────────────────────────────────────────────────────────────────────────
+  // El visitante anónimo. Hasta `0001` acá había UN test: "`anon` no tiene privilegio sobre
+  // listings → 42501". `0002` lo volvió falso a propósito (ver el docblock del archivo): la
+  // vidriera pública ES un cliente de Postgres. Lo que sigue es el invariante que lo reemplaza,
+  // y es más caro de cumplir: **la allowlist de columnas públicas, por columna, sólo SELECT, y
+  // sólo las filas del slug del claim.** Cada `it` de acá abajo se pone rojo ante un ataque que
+  // el test viejo dejaba pasar en verde.
+  describe('el visitante anónimo de la vidriera habla SQL, pero sólo el dialecto de la vidriera', () => {
+    it('CONTROL POSITIVO · con el slug de A, `anon` SÍ lee la unidad publicada de A', async () => {
+      // Sin esto, todo lo de abajo sería verde por vacío: "cero filas" también es lo que devuelve
+      // una policy que alguien borró, y una vidriera vacía es un incidente, no una defensa.
+      const visitor = openStorefront(SLUG_A);
+      try {
+        const rows = await visitor.rows<{ title: string }>(`select title from listings`);
+        expect(rows.map((r) => r.title)).toEqual(['iPhone 14 Pro 256 Grafito']);
+      } finally {
+        await visitor.close();
+      }
+    });
+
+    it('la vidriera de B no ve el stock de A: el aislamiento de R1 vale también para `anon`', async () => {
+      const visitor = openStorefront(SLUG_B);
+      try {
+        expect(await visitor.rows(`select id from listings where id = '${LISTING_A}'`)).toEqual([]);
+        // y sin `where`, que es como se filtra de verdad:
+        const todos = await visitor.rows<{ tenant_id: string }>(`select distinct tenant_id from listings`);
+        expect(todos.map((r) => r.tenant_id)).toEqual([TENANT_B]);
+      } finally {
+        await visitor.close();
+      }
+    });
+
+    it('un claim de `tenant_id` no le sirve a `anon`: la llave de la vidriera es el slug, y sólo el slug', async () => {
+      // Éste es el heredero directo del test viejo, con el MISMO claim forjado. Un visitante que
+      // se fabrica el JWT del panel (`app_metadata.tenant_id`) no abre nada: las policies `TO anon`
+      // sólo miran `storefront_slug`. Ojo con la forma del fallo: son CERO FILAS, no un error.
+      const visitor = openSession(claimsFor(USER_B, TENANT_B), 'anon');
+      try {
+        expect(await visitor.rows(`select id, slug, title from listings`)).toEqual([]);
+        expect(await visitor.rows(`select id, slug from tenants`)).toEqual([]);
+      } finally {
+        await visitor.close();
+      }
+    });
+
+    it('sin claim ninguno, `anon` lee cero filas: la vidriera falla CERRADA (el caso PostgREST)', async () => {
+      // La `anon key` de Supabase vive en el browser. Un JWT firmado para `anon` no puede traer
+      // `app_metadata.storefront_slug`, así que `GET /rest/v1/listings` con la clave pública
+      // devuelve `[]` y `GET /rest/v1/tenants` no lista la cartera de clientes.
+      const visitor = openStorefront(null);
+      try {
+        expect(await visitor.rows(`select id from listings`)).toEqual([]);
+        expect(await visitor.rows(`select slug from tenants`)).toEqual([]);
+      } finally {
+        await visitor.close();
+      }
+    });
+
+    it('`select *` como `anon` sigue siendo 42501: el GRANT es de COLUMNA y no de tabla', async () => {
+      // Lo que caza: `GRANT SELECT ON TABLE listings TO anon`. Es el único ataque que el
+      // invariante viejo también cazaba, y por eso se conserva textual.
+      const visitor = openStorefront(SLUG_A);
+      try {
+        expect(await visitor.errorCode(`select * from listings limit 1`)).toBe('42501');
+        expect(await visitor.errorCode(`select * from tenants limit 1`)).toBe('42501');
+      } finally {
+        await visitor.close();
+      }
+    });
+
+    // Lo que caza: `GRANT SELECT (imei) ON listings TO anon`. Con el invariante viejo, este
+    // ataque quedaba VERDE — `select id from listings` seguía dando 42501 con el IMEI publicado.
+    // `imei_check_status*` es el resultado de la consulta a ENACOM: va en el panel, nunca afuera.
+    const sensibles = [
+      'imei', 'imei_check_status', 'imei_check_status_raw', 'imei_check_note', 'imei_checked_by',
+      'cost_usd', 'margin_usd', 'supplier', 'internal_notes', 'created_by',
+    ];
+
+    it.each(sensibles)('`anon` pidiendo listings.%s recibe 42501, no una fila filtrada', async (col) => {
+      const visitor = openStorefront(SLUG_A);
+      try {
+        expect(await visitor.errorCode(`select ${col} from listings limit 1`)).toBe('42501');
+        // Tampoco de costado: un `order by` o un `sum()` leen la columna igual.
+        expect(await visitor.errorCode(`select id from listings order by ${col}`)).toBe('42501');
+      } finally {
+        await visitor.close();
+      }
+    });
+
+    it('`anon` no escribe: insert, update y delete son 42501 aun con el slug correcto', async () => {
+      // Lo que caza: `GRANT INSERT (status) ON listings TO anon` o una policy `TO anon FOR ALL`.
+      // Otro que el invariante viejo dejaba pasar: con un GRANT de escritura y sin GRANT de
+      // lectura, `select id from listings` seguía dando 42501 y el test quedaba verde.
+      const visitor = openStorefront(SLUG_A);
+      try {
+        expect(
+          await visitor.errorCode(
+            `insert into listings (tenant_id, slug, title, condition, price_usd)
+             values ('${TENANT_A}', 'plantado', 'Equipo plantado', 'sealed', 1.00)`,
+          ),
+        ).toBe('42501');
+        expect(await visitor.errorCode(`update listings set price_usd = 1.00`)).toBe('42501');
+        expect(await visitor.errorCode(`delete from listings`)).toBe('42501');
+      } finally {
+        await visitor.close();
+      }
+    });
+
+    it('las tablas que no son de la vidriera no existen para `anon`: ni una columna otorgada', async () => {
+      const visitor = openStorefront(SLUG_A);
+      try {
+        for (const tabla of ['sales', 'tradein_leads', 'memberships', 'users', 'reservations']) {
+          expect(await visitor.errorCode(`select 1 from ${tabla} limit 1`), tabla).toBe('42501');
+        }
+      } finally {
+        await visitor.close();
+      }
+    });
   });
 });
 
@@ -502,13 +817,21 @@ describe('R6 · ninguna policy es `using (true)`: RLS decorativa es peor que no 
     expect(rows.map((r) => r.t)).toEqual([]);
   });
 
-  it('el detector de policies otorgadas a `public`/`anon` encuentra la trampa plantada', async () => {
-    const rows = await adminRows<{ t: string }>(policiesGrantedToPublic(CONTROL_SCHEMA));
+  it('el detector de policies otorgadas al atrapa-todo `public` encuentra la trampa plantada', async () => {
+    const rows = await adminRows<{ t: string }>(policiesGrantedToPublicRole(CONTROL_SCHEMA));
     expect(rows.map((r) => r.t)).toEqual(['leaky_policy.leaky_all']);
   });
 
-  it('ninguna policy de public está otorgada a `public`/`anon`: siempre a un rol explícito', async () => {
-    const rows = await adminRows<{ t: string }>(policiesGrantedToPublic('public'));
+  it('y NO se lleva puesta la policy `TO anon`: `public` y `anon` no son lo mismo', async () => {
+    // El bug del detector viejo: `array['public','anon']` barría el rol nominado junto con el
+    // atrapa-todo. Si esta aserción se pone roja, alguien volvió a meterlos en la misma bolsa y
+    // R6c —que es el invariante estricto de `anon`— quedó tapado por el general.
+    const rows = await adminRows<{ t: string }>(policiesGrantedToPublicRole(CONTROL_SCHEMA));
+    expect(rows.map((r) => r.t)).not.toContain('leaky_anon_policy.leaky_anon_write');
+  });
+
+  it('ninguna policy de public está otorgada al pseudo-rol `public`: siempre a un rol nominado', async () => {
+    const rows = await adminRows<{ t: string }>(policiesGrantedToPublicRole('public'));
     expect(rows.map((r) => r.t)).toEqual([]);
   });
 
@@ -526,6 +849,50 @@ describe('R6 · ninguna policy es `using (true)`: RLS decorativa es peor que no 
     expect(incompletas.map((r) => `${r.t}: [${r.cmds}]`)).toEqual([]);
   });
 
+  // ─────────────────────────────────────────────────────────────────────────────────────────
+  // R6c · el invariante propio de `anon`, que es MÁS estricto que el general de R6b y no menos:
+  // las policies del rol nominado están enumeradas por nombre. Una policy `TO anon` nueva se pone
+  // roja hasta que alguien la agregue acá a mano, que es exactamente la fricción que se busca.
+  describe('R6c · las policies `TO anon` son las 5 de la vidriera, sólo SELECT y acotadas por el claim', () => {
+    /** Las de `drizzle/0002_storefront_anon_grants.sql` §5. Ni una más. */
+    const ESPERADAS = [
+      'fx_settings.fx_settings_storefront_anon_select',
+      'listing_photos.listing_photos_storefront_anon_select',
+      'listings.listings_storefront_anon_select',
+      'locations.locations_storefront_anon_select',
+      'tenants.tenants_storefront_anon_select',
+    ];
+
+    it('el detector de policies `TO anon` encuentra la trampa plantada, con su comando', async () => {
+      const rows = await adminRows<{ t: string; cmd: string }>(policiesForAnon(CONTROL_SCHEMA));
+      expect(rows.map((r) => `${r.t}:${r.cmd}`)).toEqual(['leaky_anon_policy.leaky_anon_write:ALL']);
+    });
+
+    it('en public son EXACTAMENTE las 5 de la vidriera', async () => {
+      const rows = await adminRows<{ t: string }>(policiesForAnon('public'));
+      expect(rows.map((r) => r.t)).toEqual(ESPERADAS);
+    });
+
+    it('ninguna es de escritura: `anon` no tiene INSERT/UPDATE/DELETE ni por policy', async () => {
+      const rows = await adminRows<{ t: string; cmd: string; with_check: string }>(policiesForAnon('public'));
+      for (const row of rows) {
+        expect(row.cmd, `${row.t} no es FOR SELECT`).toBe('SELECT');
+        expect(row.with_check, `${row.t} tiene WITH CHECK: eso es una policy de escritura`).toBe('');
+      }
+    });
+
+    it('ninguna es `using (true)` y todas acotan por el claim de la vidriera', async () => {
+      // Una policy `TO anon` que no mira `storefront_slug()`/`storefront_tenant_id()` es una
+      // policy que le muestra a cualquier visitante el stock de todos los tenants.
+      const rows = await adminRows<{ t: string; qual: string }>(policiesForAnon('public'));
+      expect(rows.length).toBe(ESPERADAS.length);
+      for (const row of rows) {
+        expect(row.qual.trim(), `${row.t} es RLS decorativa`).not.toBe('true');
+        expect(row.qual, `${row.t} no acota por el claim del host`).toMatch(/storefront_(slug|tenant_id)/);
+      }
+    });
+  });
+
   it('toda policy evalúa `auth.jwt()` dentro de un `(select …)`: si no, corre una vez POR FILA', async () => {
     // No es sólo performance: una policy que llama a `auth.jwt()` 10k veces por query es una
     // policy que alguien va a "optimizar" apagándola.
@@ -540,25 +907,85 @@ describe('R6 · ninguna policy es `using (true)`: RLS decorativa es peor que no 
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════════════════
-describe('R7 · `anon` no tiene privilegio sobre ninguna tabla de negocio', () => {
-  it('ninguna tabla de public le da SELECT a anon: el visitante nunca es un cliente de Postgres', async () => {
-    const rows = await adminRows<{ t: string }>(`
-      select c.relname as t from pg_class c
-      join pg_namespace n on n.oid = c.relnamespace
-      where n.nspname = 'public' and c.relkind = 'r'
-        and has_table_privilege('anon', c.oid, 'SELECT')
-      order by 1`);
+describe('R7 · el privilegio de `anon` es la allowlist de columnas públicas y nada más', () => {
+  // El invariante viejo era "`anon` no tiene privilegio sobre ninguna tabla de negocio", y lo
+  // cumplía sin esfuerzo: `0001` no le daba nada. Hoy `0002` le da algo, y por eso este describe
+  // dejó de ser una afirmación de vacío y pasó a ser una afirmación de FORMA — que es la que
+  // seguía en pie el día que la vidriera existió. Cada detector trae su control negativo.
+  //
+  // Nota de fidelidad (heredada): `scripts/pg-local.sh` no replica los `ALTER DEFAULT PRIVILEGES`
+  // que Supabase deja puestos en `public`. Acá `anon` no tiene privilegio de tabla porque nunca
+  // se lo dieron; en Supabase lo tiene que revocar `0001` (lint 0022 lo exige por texto). Hay que
+  // re-correr esto contra el proyecto real antes de creerle del todo.
+
+  /** El read model público de la vidriera, columna por columna: `drizzle/0002` §3.
+   *  Está escrito también en `rls-anon-storefront.test.ts` §f, en otro archivo y con otro fixture,
+   *  a propósito: si alguien ensancha uno para poner algo en verde, el otro queda rojo. */
+  const ALLOWLIST: Readonly<Record<string, readonly string[]>> = {
+    catalog_models: ['brand', 'display_name', 'family', 'id', 'release_year', 'slug'],
+    fx_settings: ['ars_per_usd', 'rounding', 'tenant_id'],
+    listing_photos: [
+      'alt', 'card_key', 'detail_key', 'height', 'id', 'listing_id', 'sort_order', 'tenant_id',
+      'thumb_key', 'width',
+    ],
+    listings: [
+      'battery_pct', 'catalog_model_id', 'color', 'condition', 'description', 'icloud_status_text',
+      'id', 'price_usd', 'provenance_text', 'published_at', 'screen_original', 'slug', 'status',
+      'storage_gb', 'tenant_id', 'title', 'warranty_text',
+    ],
+    locations: ['address', 'city', 'hours', 'id', 'is_active', 'name', 'sort_order', 'tenant_id'],
+    tenants: ['accepts_trade_in', 'id', 'name', 'payment_methods', 'slug', 'status', 'wa_phone'],
+  };
+
+  it('el detector de GRANT de TABLA encuentra la trampa plantada', async () => {
+    const rows = await adminRows<{ t: string }>(anonTableLevelSelect(CONTROL_SCHEMA));
+    expect(rows.map((r) => r.t)).toEqual(['leaky_grant_table']);
+  });
+
+  it('ninguna tabla de public le da SELECT de TABLA a `anon`: el GRANT es de columna', async () => {
+    // Un GRANT de tabla hace andar `select *` —y con él `imei` y `cost_usd`— sin tocar una policy.
+    const rows = await adminRows<{ t: string }>(anonTableLevelSelect('public'));
     expect(rows.map((r) => r.t)).toEqual([]);
   });
 
-  it('tampoco INSERT/UPDATE/DELETE', async () => {
-    const rows = await adminRows<{ t: string }>(`
-      select c.relname as t from pg_class c
-      join pg_namespace n on n.oid = c.relnamespace
-      where n.nspname = 'public' and c.relkind = 'r'
-        and has_table_privilege('anon', c.oid, 'INSERT, UPDATE, DELETE')
-      order by 1`);
+  it('el detector de escritura encuentra las dos trampas: la de tabla y la de columna', async () => {
+    const rows = await adminRows<{ t: string }>(anonWritePrivileges(CONTROL_SCHEMA));
+    expect(rows.map((r) => r.t)).toEqual([
+      'leaky_grant_write:DELETE',
+      'leaky_grant_write:column:INSERT',
+    ]);
+  });
+
+  it('`anon` no tiene ningún privilegio de escritura en public, ni de tabla ni de columna', async () => {
+    const rows = await adminRows<{ t: string }>(anonWritePrivileges('public'));
     expect(rows.map((r) => r.t)).toEqual([]);
+  });
+
+  it('el detector de columnas SENSITIVE encuentra la trampa plantada', async () => {
+    const rows = await adminRows<{ t: string }>(anonReadableSensitiveColumns(CONTROL_SCHEMA));
+    expect(rows.map((r) => r.t)).toEqual(['leaky_grant_col.cost_usd']);
+  });
+
+  it('ninguna columna marcada SENSITIVE es legible por `anon` (leído del COMMENT de la base)', async () => {
+    const rows = await adminRows<{ t: string }>(anonReadableSensitiveColumns('public'));
+    expect(rows.map((r) => r.t)).toEqual([]);
+  });
+
+  it('el read model de `anon` es EXACTAMENTE la allowlist: ni una columna de más', async () => {
+    // La aserción más ancha del archivo, y la que caza el ataque que ningún detector temático ve:
+    // otorgar una columna que no es sensible pero tampoco es pública (`qty`, `kind`, `sold_at`).
+    const rows = await adminRows<{ tbl: string; col: string }>(anonReadableColumns('public'));
+    const real: Record<string, string[]> = {};
+    for (const row of rows) (real[row.tbl] ??= []).push(row.col);
+    expect(real).toEqual(ALLOWLIST);
+  });
+
+  it('CONTROL POSITIVO · la allowlist no está vacía: si lo estuviera, R7 pasaría por vacío', async () => {
+    // El modo de falla clásico de este describe: la migración no aplicó, `anon` no tiene nada, y
+    // todas las aserciones de "cero privilegio" quedan verdes mientras la vidriera está caída.
+    const rows = await adminRows<{ tbl: string; col: string }>(anonReadableColumns('public'));
+    expect(rows.length).toBe(Object.values(ALLOWLIST).reduce((n, cols) => n + cols.length, 0));
+    expect(rows.length).toBeGreaterThan(40);
   });
 });
 

@@ -6,8 +6,9 @@
  *   Un seed con azar hace que el gate pase o falle según la corrida.
  * - **Idempotente**: borra el tenant demo y lo vuelve a crear. Correrlo dos veces deja la base
  *   exactamente igual, que es lo que uno espera de un seed y casi nunca se cumple.
- * - Corre con un rol que **bypassea RLS** (`postgres`/superusuario en local, `service_role` en
- *   Supabase). El seed no es un usuario: es el operador.
+ * - Corre con un rol que **bypassea RLS**: en local, el usuario del SO que creó la base (es
+ *   superusuario — la base local NO tiene un rol `postgres`, `scripts/pg-local.sh` no lo crea);
+ *   en Supabase, `service_role`. El seed no es un usuario: es el operador.
  *
  * `pnpm --filter @istock/db seed`
  */

@@ -197,11 +197,22 @@ describe('RLS cruzado — casos que no son "una fila más"', () => {
     }
   });
 
-  it('`anon` no tiene privilegios sobre ninguna tabla de negocio (la vidriera no habla SQL)', async () => {
+  it('un `anon` con claim de PANEL (tenant_id) no ve nada: la vidriera se acota por slug, no por tenant_id', async () => {
+    // Desde 0002 la vidriera anónima SÍ es un cliente de Postgres, pero su claim es
+    // `app_metadata.storefront_slug` y no `tenant_id`. Este caso es el de alguien que llega con
+    // el claim equivocado (o que lo forja): las policies `TO anon` no lo miran y devuelven cero.
+    // El aislamiento por slug está probado a fondo en `src/rls-anon-storefront.test.ts`.
     const visitor = openSession(claimsFor(USER_B, TENANT_B), 'anon');
     try {
-      const code = await visitor.expectError(`select id from listings limit 1`);
-      expect(code).toBe('42501');
+      expect(await visitor.query(`select id from listings limit 1`)).toEqual([]);
+      expect(await visitor.query(`select id from tenants limit 1`)).toEqual([]);
+      // Y las columnas sensibles no dependen de ninguna policy: no están en el GRANT.
+      expect(await visitor.expectError(`select imei from listings limit 1`)).toBe('42501');
+      expect(await visitor.expectError(`select cost_usd from listings limit 1`)).toBe('42501');
+      expect(await visitor.expectError(`select * from listings limit 1`)).toBe('42501');
+      // Las tablas que no son read model público siguen sin existir para `anon`.
+      expect(await visitor.expectError(`select 1 from sales limit 1`)).toBe('42501');
+      expect(await visitor.expectError(`select 1 from tradein_leads limit 1`)).toBe('42501');
     } finally {
       await visitor.close();
     }

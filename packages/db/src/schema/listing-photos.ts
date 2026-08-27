@@ -11,11 +11,12 @@
  *    es causal de rechazo (CLAUDE.md §2).
  */
 
+import { sql } from 'drizzle-orm';
 import { index, integer, pgTable, text, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
 import { createdAt, pk, updatedAt } from './columns';
 import { tenantId } from './tenants';
 import { listings } from './listings';
-import { tenantPolicies } from './rls';
+import { storefrontAnonSelectPolicy, storefrontTenantId, tenantPolicies } from './rls';
 
 export const listingPhotos = pgTable(
   'listing_photos',
@@ -51,5 +52,12 @@ export const listingPhotos = pgTable(
     index('listing_photos_tenant_listing_idx').on(t.tenantId, t.listingId, t.sortOrder),
     uniqueIndex('listing_photos_listing_sort_key').on(t.listingId, t.sortOrder),
     ...tenantPolicies('listing_photos'),
+    // La foto se ve si y sólo si SU listing se ve. El `exists` se evalúa con RLS puesta sobre
+    // `listings`, o sea que hereda la policy de arriba: una foto de un borrador no existe para
+    // `anon` aunque alguien adivine el id. `master_key` no está en el GRANT de columnas.
+    storefrontAnonSelectPolicy(
+      'listing_photos',
+      sql`tenant_id = ${storefrontTenantId()} and exists (select 1 from listings l where l.id = listing_photos.listing_id)`,
+    ),
   ],
 ).enableRLS();
