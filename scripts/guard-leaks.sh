@@ -121,6 +121,18 @@ hits "sin ARCA/AFIP, WhatsApp Business API, MercadoLibre ni carrito" \
      "\b(afip|arca|whatsapp[_-]?business[_-]?api|WABA|mercadolibre|mercado_libre|addToCart|checkout_?cart)\b" \
      $SRC_ALL --include='*.ts' --include='*.tsx'
 
+say "14 · el regex de slug es identico en los 4 owners"
+# Vive en packages/db (SQL, no puede importar TS), packages/domain, (app) y (storefront).
+# Ningun owner puede arreglar una divergencia solo, y divergir no rompe nada visible: el slug
+# entra a la DB y despues `storefrontTag()` tira en produccion al construir el tag. Falla tarde
+# y en el unico lugar donde no hay nadie mirando.
+SLUGS=$(grep -rhoE '\[a-z0-9\]\(\?:\[a-z0-9-\]\{[0-9]+,[0-9]+\}\[a-z0-9\]\)[$]' \
+        --include='*.ts' --include='*.sql' packages apps 2>/dev/null | sort -u || true)
+N=$(echo "$SLUGS" | grep -c . || true)
+if [ "$N" -eq 1 ]; then ok "una sola forma: $SLUGS"
+elif [ "$N" -eq 0 ]; then bad "no se encontro ningun regex de slug — se renombro o se borro?"
+else bad "el regex de slug divergio en $N formas:"; echo "$SLUGS" | sed 's/^/        /'; fi
+
 echo
 [ "$fail" -eq 0 ] && echo "GUARD-LEAKS: PASS" || echo "GUARD-LEAKS: FAIL"
 exit "$fail"
