@@ -1,3 +1,4 @@
+import type { ReactElement } from 'react';
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import { cacheLife, cacheTag } from 'next/cache';
@@ -71,11 +72,17 @@ export async function generateMetadata({ params }: StorefrontPageProps): Promise
 
   const tenant = await getStorefrontTenant(slug);
   if (tenant === null) {
-    return { title: 'Vidriera no encontrada', robots: { index: false, follow: false } };
+    // `title.absolute` y no `title`: el template del layout raíz es `'%s · iStock'`, e `iStock`
+    // es **nombre código interno** (CLAUDE.md, encabezado). La vidriera es la marca del reseller;
+    // ni el 404 ni la home pueden pegarle nuestro nombre en la pestaña del visitante.
+    return {
+      title: { absolute: 'No hay ninguna vidriera en esta dirección' },
+      robots: { index: false, follow: false },
+    };
   }
 
   return {
-    title: tenant.name,
+    title: { absolute: tenant.name },
     description: `Stock de celulares de ${tenant.name}. Precios en USD y ARS, retiro en el local y cierre por WhatsApp.`,
     alternates: { canonical: `https://${tenant.slug}.${STOREFRONT_DOMAIN}/` },
     openGraph: {
@@ -87,32 +94,37 @@ export async function generateMetadata({ params }: StorefrontPageProps): Promise
   };
 }
 
-export default async function StorefrontHomePage({ params }: StorefrontPageProps) {
+/**
+ * El cuerpo de la vidriera, **cacheado**, y el `notFound()` **afuera** de este scope.
+ *
+ * ## Por qué el `notFound()` no puede vivir acá adentro
+ * No es estilo: es el gate del LEAD *"visitar el slug, crear el negocio, volver a visitar y ver la
+ * vidriera"*. Medido en `next start` 16.3.3, con `updateTag()` en el alta y el mismo 404 cacheado:
+ *
+ * | `notFound()` | 1ª visita post-alta | `<h1>` | `<title>` |
+ * |---|---|---|---|
+ * | **dentro** del `'use cache'` (lanza) | 200 | nombre del negocio | quedó viejo |
+ * | **afuera** (esta función devuelve `null`) | 200 | nombre del negocio | nombre del negocio |
+ *
+ * Los `cacheTag` **sí** quedan en la entrada del ISR en los dos casos (verificado leyendo
+ * `x-next-cache-tags` en `.next/server/app/s/{slug}.meta`: `storefront:{slug}` y
+ * `tenant-config:{slug}` están presentes aunque el render haya lanzado). Lo que cambia es el
+ * `<title>`: con el `notFound()` adentro del scope cacheado, el cuerpo revive y el título se
+ * queda con el del 404. Una vidriera con el título viejo es una vidriera que Google no indexa
+ * con el nombre del negocio — y "pegá el link en un estado" es la mitad del producto.
+ *
+ * Devolver `null` en vez de lanzar hace que la función **termine bien**. El `notFound()` queda en
+ * el componente de página, fuera del cache, donde lanzar no cuesta nada.
+ */
+async function storefrontBody(slug: string): Promise<ReactElement | null> {
   'use cache';
   cacheLife('max');
-
-  const { slug } = await params;
   // El tag va SIEMPRE con el slug adentro: los cache tags de Vercel están scopeados a
   // proyecto + environment, **no a dominio**. Un tag genérico purga a todos los tenants juntos.
   cacheTag(storefrontTag(slug), tenantConfigTag(slug));
 
   const tenant = await getStorefrontTenant(slug);
-
-  // 404 REAL, no un redirect a la home de marketing. Medido: `HTTP/1.1 404`, `x-nextjs-cache: MISS`
-  // la primera vez y `HIT` después, `Cache-Control: s-maxage=2592000, swr=28944000`.
-  //
-  // Que el status sea 404 y no 200 depende de UNA cosa, y por eso está escrita acá: la doc de
-  // `not-found.js` dice que Next devuelve *"200 for streamed responses, and 404 for non-streamed
-  // responses"*. Sin `generateStaticParams` esta ruta se sirve en modo *postponed* (streamed) y el
-  // mismo código devuelve **200 con contenido de 404** — un soft 404, el peor resultado posible
-  // para SEO. Si alguien saca `generateStaticParams`, esto se rompe en silencio.
-  //
-  // ⚠️ CONTRAPARTIDA OPERATIVA, NO OPCIONAL: como este 404 queda cacheado hasta que expire
-  // `cacheLife('max')`, **el alta de un tenant TIENE que invalidar `storefront:{slug}` y
-  // `tenant-config:{slug}` de su propio slug**. Si no, alguien visita `acme.maat.work` un minuto
-  // antes de que exista el tenant y la vidriera de `acme` nace muerta. Es gate de S1 y está en la
-  // skill `isr-revalidate`.
-  if (tenant === null) notFound();
+  if (tenant === null) return null;
 
   const host = `${tenant.slug}.${STOREFRONT_DOMAIN}`;
 
@@ -159,4 +171,21 @@ export default async function StorefrontHomePage({ params }: StorefrontPageProps
       */}
     </main>
   );
+}
+
+export default async function StorefrontHomePage({ params }: StorefrontPageProps) {
+  const { slug } = await params;
+  const body = await storefrontBody(slug);
+
+  // 404 REAL, no un redirect a la home de marketing. Medido: `HTTP/1.1 404`, `x-nextjs-cache: MISS`
+  // la primera vez y `HIT` después, `Cache-Control: s-maxage=2592000, swr=28944000`.
+  //
+  // ⚠️ CONTRAPARTIDA OPERATIVA, NO OPCIONAL: como este 404 queda cacheado hasta que expire
+  // `cacheLife('max')`, **el alta de un tenant TIENE que invalidar `storefront:{slug}` y
+  // `tenant-config:{slug}` de su propio slug** (`create-tenant.ts` lo hace, con perfil `'max'`).
+  // Si no, alguien visita `acme.maat.work` un minuto antes de que exista el tenant y la vidriera
+  // de `acme` nace muerta. Es gate de S1 y está en la skill `isr-revalidate`.
+  if (body === null) notFound();
+
+  return body;
 }

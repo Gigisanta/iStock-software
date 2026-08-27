@@ -864,6 +864,103 @@ async function runSlice(sliceId, base) {
 // Varias slices en una sola invocacion, en el orden del board y SIEMPRE serial: dos slices en
 // paralelo que comparten owner violan "un writer por directorio a la vez". Se corta en el primer
 // ADVERSARY_FAIL en vez de seguir apilando trabajo sobre una base que ya sabemos rota.
+/**
+ * Ronda correctiva de una slice rechazada por el adversary.
+ *
+ * CLAUDE.md regla 3: dos fallos en la misma slice = STOP y re-plan. Esta funcion es el UNICO
+ * intento intermedio permitido, y existe para que ese intento sea disciplinado y no un reintento
+ * a ciegas: cada hallazgo va con nombre y apellido al owner del directorio, con la evidencia que
+ * lo prueba, y el gate adversarial se vuelve a correr entero.
+ *
+ * args.plan = [{ owner, brief }] en el ORDEN en que tienen que correr. Lo arma el LEAD: decidir
+ * que hallazgo es de quien es exactamente el trabajo que no se delega.
+ */
+async function runSliceFix(sliceId, base, plan) {
+  if (!sliceId) throw new Error('runSliceFix necesita args.slice')
+  if (!plan || !plan.length) throw new Error('runSliceFix necesita args.plan = [{owner, brief}]')
+  const baseRef = base || 'HEAD'
+  const diffCmd = 'git --no-pager diff ' + baseRef + ' && git --no-pager diff --stat ' + baseRef
+
+  log('FASE 4 - ' + sliceId + ' RONDA CORRECTIVA (fallo 1 de 1 permitido): ' + plan.map(function (x) { return x.owner }).join(' -> '))
+
+  phase('Fix')
+  const done = []
+  for (const step of plan) {
+    const r = await agent(
+      LAW + '\n\n' + role(step.owner) + '\n\n' +
+      'Sos "' + step.owner + '". La slice ' + sliceId + ' fue RECHAZADA por el adversary.\n' +
+      'Esto es la ronda correctiva: si vuelve a fallar, la slice se detiene y se re-planifica\n' +
+      'entera (CLAUDE.md regla 3). No hay tercer intento.\n\n' +
+      'Corre primero: cat .claude/agents/' + step.owner + '.md\n\n' +
+      'HALLAZGOS QUE TE TOCAN, con la evidencia con la que se encontraron:\n' + step.brief + '\n\n' +
+      'Reglas de esta ronda:\n' +
+      '- Arregla la CAUSA, no el sintoma. Si el test afirma algo que el producto no cumple, el\n' +
+      '  defecto es del producto: el test no se toca.\n' +
+      '- Escribi SOLO en tu directorio. Lo que cruce a otra columna lo reportas en notes.\n' +
+      '- Si un hallazgo te parece equivocado, decilo con la evidencia que lo desmiente y NO lo\n' +
+      '  arregles. Un hallazgo mal refutado cuesta la slice; uno bien refutado la salva.\n' +
+      (done.length ? '\nYa corrigieron antes que vos: ' + JSON.stringify(done) + '\n' : '') +
+      '\nAl terminar corre y reporta la salida REAL:\n' +
+      '  pnpm typecheck && pnpm lint && pnpm test && ./scripts/guard-leaks.sh',
+      { label: 'fix:' + sliceId + ':' + step.owner, phase: 'Fix', agentType: step.owner, schema: WORK_SCHEMA },
+    )
+    done.push({ owner: step.owner, files: (r && r.files) || [] })
+  }
+
+  phase('Gate')
+  const gate = await parallel([
+    function () {
+      return agent(
+        LAW + '\n\n' + role('adversary-reviewer') + '\n\n' +
+        'Sos "adversary-reviewer". Segunda pasada sobre la slice ' + sliceId + ', despues de la\n' +
+        'ronda correctiva. Audita el diff COMPLETO:\n  ' + diffCmd + '\n' +
+        'Si ese diff sale vacio, NO reportes PASS.\n\n' +
+        'Dos trabajos, y el segundo es el que importa:\n' +
+        '1. Verificar que cada hallazgo de la primera pasada este REALMENTE cerrado. Un hallazgo\n' +
+        '   "arreglado" con un comentario, un cast, o un test relajado sigue abierto.\n' +
+        '2. Buscar lo que la correccion ROMPIO. Un arreglo apurado bajo presion de "no hay tercer\n' +
+        '   intento" es el momento mas probable de todo el proyecto para que entre un bug nuevo.\n\n' +
+        'Trampas de este proyecto que ya mordieron una vez:\n' +
+        '- La vidriera anonima consultando Postgres con un rol que bypassea RLS. GRANT y RLS son\n' +
+        '  DOS capas: un rol sin GRANT recibe 42501 aunque tenga BYPASSRLS, y un superusuario se\n' +
+        '  saltea FORCE RLS entero. Verificalo contra el Postgres real, no leyendo el codigo.\n' +
+        '- El slug tiene que viajar como segmento de path. Nunca como header.\n' +
+        '- Todo cacheTag lleva el slug: los tags son por proyecto, no por dominio.\n' +
+        '- Borrar un objeto de R2 por key es borrado cruzado entre tenants.\n' +
+        '- Un assert sobre el HTML crudo es falso positivo: el payload de Flight arrastra la copy\n' +
+        '  del notFound() en TODA pagina del layout. Se afirma sobre el DOM renderizado.\n\n' +
+        'Devolve verdict PASS solo si lo defenderias con plata propia.',
+        { label: 'fix:' + sliceId + ':adversary', phase: 'Gate', agentType: 'adversary-reviewer', schema: VERDICT_SCHEMA },
+      )
+    },
+    function () {
+      return agent(
+        LAW + '\n\n' + role('cost-auditor') + '\n\n' +
+        'Sos "cost-auditor". La slice ' + sliceId + ' se corrigio. Re-audita el costo del diff:\n  ' + diffCmd + '\n\n' +
+        'El proxy se factura en el 100% de los pageviews, incluso en HIT.\n' +
+        'Medido y cerrado: cacheLife max + invalidacion por evento = USD 0.012/tenant/mes;\n' +
+        'revalidate 60 = USD 2.59/tenant/mes. 216x. El objetivo es < USD 0.50/tenant/mes.\n\n' +
+        'Foco de esta pasada, porque la correccion lo toca:\n' +
+        '- El cacheLife del NEGATIVO (slug inexistente) se acorto a proposito, para que un slug\n' +
+        '  elegido por un atacante no cree una entrada durable de 30 dias. Medi el intercambio\n' +
+        '  real: cuantas invocaciones de funcion mas cuesta, y si eso sigue entrando en el\n' +
+        '  presupuesto. Si no entra, decilo con el numero.\n' +
+        '- Si docs/COST.md documenta como aceptado un comportamiento que ahora es un defecto\n' +
+        '  corregido, corregilo: COST.md es tu columna y un doc que ratifica un bug es peor que\n' +
+        '  no tener doc.',
+        { label: 'fix:' + sliceId + ':cost', phase: 'Gate', agentType: 'cost-auditor', schema: WORK_SCHEMA },
+      )
+    },
+  ])
+
+  const adv = gate[0]
+  return {
+    phase: 'slice-fix', slice: sliceId, base: baseRef,
+    fixes: done, adversary: adv, cost: gate[1],
+    verdict: adv && adv.verdict === 'PASS' ? 'FIX_PASS' : 'FIX_FAIL_STOP_Y_REPLAN',
+  }
+}
+
 async function runSlices(ids, base) {
   const list = Array.isArray(ids) ? ids : String(ids || '').split(/[\s,]+/).filter(Boolean)
   if (!list.length) throw new Error('runSlices necesita args.slices, ej ["S1","S3"]')
@@ -1132,6 +1229,7 @@ else if (phase === 'domain') out = await runDomain()
 else if (phase === 'skeleton') out = await runSkeleton()
 else if (phase === 'slice') out = await runSlice(args && args.slice, args && args.base)
 else if (phase === 'slices') out = await runSlices(args && args.slices, args && args.base)
+else if (phase === 'slice-fix') out = await runSliceFix(args && args.slice, args && args.base, args && args.plan)
 else if (phase === 'chat') out = await runChat(args && args.base)
 else if (phase === 'billing') out = await runBilling(args && args.base)
 else if (phase === 'tests') out = await runTests()

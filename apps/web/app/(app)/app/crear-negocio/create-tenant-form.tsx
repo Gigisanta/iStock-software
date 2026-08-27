@@ -1,7 +1,7 @@
 'use client';
 
 import { useActionState, useEffect, useId, useState } from 'react';
-import { RESERVED_SLUGS, SLUG_PATTERN, normalizeSlug, suggestSlug } from '../../_lib/slug-format';
+import { isUsableSlug, normalizeSlug, suggestSlug } from '../../_lib/slug-format';
 import { createTenantAction } from './actions';
 import { initialCreateTenantState } from './form-state';
 
@@ -9,9 +9,10 @@ import { initialCreateTenantState } from './form-state';
  * Alta del negocio. `"use client"` justificado: hay tres interacciones reales (sugerir el link a
  * partir del nombre, chequear disponibilidad mientras se escribe, y el estado de envío).
  *
- * Importa de `slug-format` y **no** de `slug.ts`: el primero es puro y el segundo arrastra Zod al
- * bundle del navegador. La validación que decide es la del server; esta es sólo para no hacerle
- * perder un viaje a alguien parado en el mostrador.
+ * Importa de `slug-format` y **no** de `slug.ts`: el primero es puro (re-exporta `@istock/domain`)
+ * y el segundo arrastra Zod al bundle del navegador. La validación que decide es la del server;
+ * esta es sólo para no hacerle perder un viaje a alguien parado en el mostrador — y por eso usa
+ * `isUsableSlug()`, la misma función que el borde, y no una copia del criterio.
  *
  * El formulario anda sin JavaScript: `<form action={...}>` postea igual y la Server Action valida
  * todo de nuevo. Lo que se pierde sin JS son las ayudas, no la funcionalidad.
@@ -24,11 +25,6 @@ type Availability =
   | { readonly state: 'taken'; readonly reason: string };
 
 const DEBOUNCE_MS = 600;
-
-/** Mismo criterio que el server, sin Zod: no gastamos un request si el formato ya es inválido. */
-function looksValid(slug: string): boolean {
-  return SLUG_PATTERN.test(slug) && !RESERVED_SLUGS.has(slug);
-}
 
 export function CreateTenantForm({ rootDomain }: { rootDomain: string }) {
   const [state, formAction, isPending] = useActionState(createTenantAction, initialCreateTenantState);
@@ -45,7 +41,9 @@ export function CreateTenantForm({ rootDomain }: { rootDomain: string }) {
   const effectiveSlug = slugTouched ? normalizeSlug(slug) : suggestSlug(name);
 
   useEffect(() => {
-    if (!looksValid(effectiveSlug)) {
+    // Mismo criterio que el server, sin Zod: no gastamos un request si el slug ya es inválido
+    // o está reservado.
+    if (!isUsableSlug(effectiveSlug)) {
       setAvailability({ state: 'idle' });
       return;
     }

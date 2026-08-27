@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
 import { DomainError } from './errors';
+// `assertSlug` se mudó a `./slug` (fuente única del formato del slug); el test lo sigue
+// ejercitando desde acá porque el borde que rompe es `buildWaUrl`.
+import { assertSlug } from './slug';
 import {
   STOREFRONT_DOMAIN,
-  assertSlug,
   buildWaMessage,
   buildWaUrl,
   describeListing,

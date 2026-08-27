@@ -27,7 +27,59 @@
  *   dominio del tenant B: una fuga entre tenants, no una ineficiencia.
  */
 
-import { STOREFRONT_DOMAIN } from '@istock/domain';
+import {
+  PRERENDER_SEED_SLUG,
+  RESERVED_SUBDOMAINS,
+  STOREFRONT_DOMAIN,
+  isReservedSubdomain,
+} from '@istock/domain';
+
+/**
+ * Los tres se **re-exportan** en vez de re-declararse.
+ *
+ * `packages/domain` es el único paquete que los cuatro owners del slug pueden importar (TS puro,
+ * cero I/O), así que es el único lugar donde "una sola lista" es una propiedad del grafo de
+ * imports y no una promesa de code review. Mientras la lista estuvo escrita dos veces — acá y en
+ * `(app)/_lib/slug-format.ts` — **ya había divergido**: el proxy mandaba `not-a-tenant.maat.work`
+ * a marketing y el panel dejaba registrar ese mismo nombre. Quien lo registrara pagaba un plan y
+ * su vidriera no existía nunca. No rompe el build ni un test unitario: aparece con el cliente.
+ *
+ * El re-export existe porque el resto de `(storefront)` (y los tests de `qa-agent`) leen estos
+ * símbolos desde acá: el proxy y su cerebro son un solo módulo desde afuera.
+ *
+ * - {@link RESERVED_SUBDOMAINS} — subdominios que **nunca** son una vidriera. Ojo con `demo`: NO
+ *   está en este Set a propósito (`demo.maat.work` sirve el tenant demo, S13), pero **sí** está en
+ *   `RESERVED_SLUGS`, así que nadie lo puede registrar. Esa asimetría es la razón por la que en
+ *   `@istock/domain` hay dos Sets y no uno.
+ * - {@link PRERENDER_SEED_SLUG} — el artefacto del que depende que la vidriera sea cacheable.
+ *
+ * ## {@link PRERENDER_SEED_SLUG} — el `slug` que `/s/[slug]` prerenderiza en el build
+ *
+ * ### Por qué existe (esto NO es decorativo: es lo que hace cacheable la vidriera)
+ * Con `cacheComponents: true`, una ruta con segmento dinámico y **sin** `generateStaticParams` se
+ * sirve siempre en modo *postponed*: `Cache-Control: private, no-cache, no-store` y una invocación
+ * de función en el 100% de los pageviews. Medido en `next start` 16.3.3, con la página entera bajo
+ * `'use cache'`. Con `generateStaticParams` presente — **aunque devuelva un solo slug que no le
+ * importa a nadie** — la ruta pasa a ISR clásico: `s-maxage=2592000, stale-while-revalidate=28944000`,
+ * `MISS` la primera vez y `HIT` después, **también para slugs que no existían en el build**.
+ *
+ * O sea: el contenido de esta entrada es irrelevante; lo que importa es que la lista no esté vacía
+ * (Next exige ≥ 1 resultado con Cache Components).
+ *
+ * ### Por qué NO es la lista real de tenants
+ * Prerenderizar todos los tenants ataría el build a Postgres, haría una query por tenant en **cada
+ * deploy** y generaría un pico de ISR Writes proporcional a `tenants × páginas` — y los tenants
+ * dados de alta después del deploy quedarían igual en el camino on-demand. Con el slug semilla el
+ * build hace **cero** queries (verificado: `next build` sin `DATABASE_URL` compila) y cada vidriera
+ * se materializa sola en su primer visitante.
+ *
+ * ### Por qué este slug y no `demo`
+ * `/s/not-a-tenant` es **inalcanzable en producción**: el proxy manda `not-a-tenant.maat.work` a
+ * marketing (está reservado) y `/s/*` sobre el apex da 404. La entrada del build es un artefacto,
+ * no una página que alguien pueda ver. Con `demo` el build tendría que consultar la DB y, si el
+ * tenant demo faltara ese día, dejaría un 404 estático servido bajo el nombre del demo.
+ */
+export { PRERENDER_SEED_SLUG, RESERVED_SUBDOMAINS, isReservedSubdomain };
 
 /**
  * Mismo regex que el `CHECK tenants_slug_format` de `packages/db` y que `assertSlug()` de
@@ -44,90 +96,6 @@ export const SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{1,30}[a-z0-9])$/;
 
 /** El primer segmento de la vidriera. `acme.maat.work/x` → `/s/acme/x`. */
 export const STOREFRONT_PATH_PREFIX = '/s';
-
-/**
- * Subdominios que **nunca** son un tenant. La DB no los puede reservar sola: alguien podría
- * registrar el slug `www` y quedarse con la home de marketing.
- *
- * `demo` **no** está en la lista a propósito: `demo` es un tenant real (`tenants.is_demo`), y
- * `demo.maat.work` tiene que servir su vidriera. La ruta `/demo` de marketing (S13) es otra cosa
- * y vive en el apex.
- */
-export const RESERVED_SUBDOMAINS: ReadonlySet<string> = new Set([
-  'www',
-  'app',
-  'apps',
-  'api',
-  'admin',
-  'auth',
-  'account',
-  'billing',
-  'cdn',
-  'static',
-  'assets',
-  'img',
-  'images',
-  'media',
-  'files',
-  'mail',
-  'smtp',
-  'imap',
-  'ns1',
-  'ns2',
-  'dns',
-  'staging',
-  'preview',
-  'status',
-  'blog',
-  'docs',
-  'help',
-  'soporte',
-  // No es un subdominio de infraestructura: es el `slug` semilla del prerender de `/s/[slug]`
-  // (ver `PRERENDER_SEED_SLUG` abajo). Está reservado para que **nadie pueda registrarlo** y
-  // quedarse con la entrada estática del build.
-  'not-a-tenant',
-]);
-
-/**
- * ¿Este label está reservado y por lo tanto **no puede ser un tenant, jamás**?
- *
- * Lo usa `_lib/tenant.ts` para cortar antes de tocar Postgres. No es una optimización: es la misma
- * decisión que toma el proxy, escrita una sola vez. Que el proxy diga "`www` es marketing" y la DAL
- * igual salga a preguntarle a Postgres por el tenant `www` sería dejar la puerta abierta a que
- * alguien registre el slug `www` y aparezca por un camino que el proxy ya cerró.
- */
-export function isReservedSubdomain(label: string): boolean {
-  return RESERVED_SUBDOMAINS.has(label);
-}
-
-/**
- * El `slug` que `/s/[slug]` prerenderiza en el build.
- *
- * ## Por qué existe (esto NO es decorativo, es lo que hace cacheable la vidriera)
- * Con `cacheComponents: true`, una ruta con segmento dinámico y **sin** `generateStaticParams` se
- * sirve siempre en modo *postponed*: `Cache-Control: private, no-cache, no-store` y una invocación
- * de función en el 100% de los pageviews. Medido en `next start` 16.3.3, con la página entera bajo
- * `'use cache'`. Con `generateStaticParams` presente — **aunque devuelva un solo slug que no le
- * importa a nadie** — la ruta pasa a ISR clásico: `s-maxage=2592000, stale-while-revalidate=28944000`,
- * `MISS` la primera vez y `HIT` después, **también para slugs que no existían en el build**.
- *
- * O sea: el contenido de esta entrada es irrelevante; lo que importa es que la lista no esté vacía
- * (Next exige ≥ 1 resultado con Cache Components).
- *
- * ## Por qué NO es la lista real de tenants
- * Prerenderizar todos los tenants ataría el build a Postgres, haría una query por tenant en **cada
- * deploy** y generaría un pico de ISR Writes proporcional a `tenants × páginas` — y los tenants
- * dados de alta después del deploy quedarían igual en el camino on-demand. Con el slug semilla el
- * build hace **cero** queries (verificado: `next build` sin `DATABASE_URL` compila) y cada vidriera
- * se materializa sola en su primer visitante.
- *
- * ## Por qué este slug y no `demo`
- * `/s/not-a-tenant` es **inalcanzable en producción**: el proxy manda `not-a-tenant.maat.work` a
- * marketing (está reservado) y `/s/*` sobre el apex da 404. La entrada del build es un artefacto,
- * no una página que alguien pueda ver. Con `demo` el build tendría que consultar la DB y, si el
- * tenant demo faltara ese día, dejaría un 404 estático servido bajo el nombre del demo.
- */
-export const PRERENDER_SEED_SLUG = 'not-a-tenant';
 
 /** Sufijos que son infraestructura, no tenants: nunca se reescriben. */
 const PASSTHROUGH_SUFFIXES = ['.vercel.app', '.vercel.sh'] as const;

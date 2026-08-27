@@ -11,7 +11,7 @@
     "build": "pnpm -r --no-bail build",
     "lint": "pnpm -r --no-bail lint",
     "test": "pnpm -r --no-bail test",
-    "e2e": "pnpm --filter @istock/web e2e",
+    "e2e": "pnpm --filter @istock/e2e e2e",
     "db:generate": "pnpm --filter @istock/db generate",
     "db:migrate": "pnpm --filter @istock/db migrate",
     "db:seed": "pnpm --filter @istock/db seed",

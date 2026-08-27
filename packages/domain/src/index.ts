@@ -83,8 +83,27 @@ export {
 } from './reservation';
 
 export {
-  STOREFRONT_DOMAIN,
+  PRERENDER_SEED_SLUG,
+  RESERVED_SLUGS,
+  RESERVED_SUBDOMAINS,
+  TENANT_SERVED_RESERVED_SLUGS,
+  isReservedSlug,
+  isReservedSubdomain,
+} from './reserved-slugs';
+
+export {
+  SLUG_MAX_LENGTH,
+  SLUG_MIN_LENGTH,
+  SLUG_PATTERN,
   assertSlug,
+  isSlugShaped,
+  isUsableSlug,
+  normalizeSlug,
+  suggestSlug,
+} from './slug';
+
+export {
+  STOREFRONT_DOMAIN,
   buildWaMessage,
   buildWaUrl,
   describeListing,

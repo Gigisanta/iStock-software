@@ -22,6 +22,7 @@
 
 import { DomainError } from './errors';
 import { formatUsd } from './money';
+import { assertSlug } from './slug';
 import { waConditionLabel, type Condition, type PublicStatus } from './types';
 
 export const STOREFRONT_DOMAIN = 'maat.work';
@@ -37,17 +38,6 @@ export interface WaListing {
   readonly condition: Condition;
   readonly priceUsdCents: number;
   readonly status: PublicStatus;
-}
-
-const SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{1,30}[a-z0-9])$/u;
-
-export function assertSlug(slug: string): void {
-  if (!SLUG_RE.test(slug)) {
-    throw new DomainError(
-      'SLUG_INVALID',
-      `slug inválido: "${slug}" (minúsculas, números y guiones, 3–32 caracteres, sin guión al borde)`,
-    );
-  }
 }
 
 /** `nortecel` → `nortecel.maat.work`. */

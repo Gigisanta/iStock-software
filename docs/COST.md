@@ -69,6 +69,61 @@ presupuesto** — el precio de no fragmentar el cache filtrando en el edge en ve
 Edge Requests, que **no son gratis pasados ~80 tenants** porque el proxy corre en el 100% de los
 pageviews, HIT incluido.
 
+### 2.1 Medido en S1 — la vidriera dejó de ser un supuesto (2026-08-27)
+
+Primera vez que estas líneas se **miden** en vez de estimarse. Método: `next build` + `next start`
+(Next 16.3.3, `cacheComponents: true`) contra el Postgres 16 local, contando queries con
+`pg_stat_user_tables` sobre `tenants` y leyendo los headers crudos con `curl -D -`.
+Se midió **dos veces**: en `6a6513c` (base) y con S1 aplicado, para poder restar.
+
+⚠️ **Es `next start`, no Vercel.** Lo que se mide acá es el comportamiento del runtime de Next
+(cuántas queries, cuántos bytes, qué se cachea). Los **precios** siguen siendo los de R1 y el
+comportamiento del CDN de Vercel sigue `[UNVERIFIED]` hasta que haya un deploy real.
+
+| qué | cómo se midió | resultado |
+|---|---|---|
+| **hits de vidriera que tocan Postgres** | 50 GET a un slug tibio | **0 / 50** (base: 0 / 50 también) |
+| cache miss frío | 1 GET a un slug nuevo | **1 query**, y ninguna más |
+| 404 de slug inexistente | 10 GET seguidos | 1ª: `200` `no-store`; 2ª en adelante: **`404` con `x-nextjs-cache: HIT`**, `s-maxage=2592000, stale-while-revalidate=28944000`, `x-nextjs-stale-time: 300` |
+| **tamaño de la entrada de ISR** | `.next/server/app/s/{slug}.*` | html 14.326 B + `_full.segment.rsc` 9.322 B + `_tree` 505 B + meta 333 B ≈ **24,5 KB → ~6 write units de 8 KB** |
+| HTML por pageview | mismo tenant, base vs S1 | 14.386 → **14.326 B** (−60 B) |
+| **bundle del proxy** (corre en el 100% de los hits, antes del cache) | `.next/server/chunks/[root-of-the-server]__02a5epf._.js` | 214.960 → **216.038 B (+1.078 B)**. Fuentes propias: `proxy.ts`, `domain/wa.ts`, `domain/reserved-slugs.ts` — el barrel de `@istock/domain` **no** arrastró `money`/`reservation` |
+| `set-cookie` en `(storefront)` | headers del 200 y del 404 | **ninguna** (apagaría el CDN entero) |
+
+**Dos correcciones al modelo de §2:**
+1. Una regeneración cuesta **~6 write units, no 15**. El renglón de ISR Writes estaba sobrestimado
+   ~2,5×. No se baja el número de §2 todavía: 15 es el techo conservador y el tamaño de la entrada
+   va a crecer cuando la vidriera tenga fichas y fotos (S2). Se re-mide en S2.
+2. **La primera visita a un slug, después de cada deploy o de cada invalidación, NO es cacheable**:
+   sale en modo *postponed* (`Cache-Control: private, no-cache, no-store`) y es 1 invocación de
+   función + 1 query. Recién la segunda queda en ISR. Es el mecanismo exacto por el que se rompe
+   el 95%, y ahora está medido en vez de supuesto.
+
+**El % de hits que llega a Postgres, con la aritmética a la vista:**
+```
+queries/tenant/mes = renders fríos
+                   = deploys que reciben visita (30/mes [EST]) + sesiones de mutación visitadas (30/mes [EST])
+                   = 60
+60 / 3.000 pageviews = 2 %          (alarma: 5 %)
+```
+
+### Gate anticipado para S2 (stock): la invalidación tiene que coalescer
+
+S1 llama `invalidateStorefront()` **una vez en la vida del tenant** (el alta), así que su costo es
+ruido. S2 lo va a llamar en cada publicar/despublicar/reservar/vender. Con `updateTag` —que es
+*read-your-own-writes* y por diseño **no** sirve stale— cada llamada le cobra al próximo visitante
+un render bloqueante + 1 query:
+
+```
+200 mutaciones/mes/tenant sin agrupar → 200 renders fríos
+200 / 3.000 pageviews = 6,7 %  →  POR ENCIMA de la alarma de 5 %
+ISR writes: 200 × 6 units × USD 4.00/1M = USD 0.0048/tenant/mes  (la plata no es el problema)
+```
+El problema no es el gasto, son las **queries a Postgres**: el vector que el objetivo protege.
+Mitigación esperada en S2 (no en S1): las mutaciones de una misma sesión de carga colapsan en una
+sola invalidación, o se invalida al terminar la tanda. **Cargar 15 equipos tiene que costar 1
+regeneración, no 15.** Es gate de `cost-auditor` para S2.
+
 ### La decisión de una línea que rompe el objetivo entera
 | `cacheLife` | ISR Writes/tenant/mes | contra el objetivo |
 |---|---|---|
@@ -156,13 +211,18 @@ unitario del Base no está calculado en ningún artefacto — ver §7.)
   no está calculado. Toda comparación del tipo *"X es comparable al margen"* es inválida hasta que
   este documento lo publique.
 - **Supuestos de tráfico míos, no medidos:** 3.000 pageviews/mes/tenant, ~8 requests/pageview,
-  ~120 KB de HTML/RSC comprimido por pageview, 95% de cache hit ratio, tamaños de variante.
+  95% de cache hit ratio, tamaños de variante, frecuencia de deploy y de mutación.
   Se miden con la primera vidriera real, no antes. **Casi todas las cifras de §2 dependen de ellos.**
+  Bajaron de categoría dos, medidos en S1 (§2.1): el **peso de la página** (14,3 KB de HTML +
+  9,3 KB de RSC, sin fotos todavía) y el **hit ratio contra Postgres** (0 queries en 50 hits
+  tibios). Lo que sigue sin medirse es **cuántos** hits son tibios en producción.
 - **Región de funciones.** `iad1` es 1.6× más barato que `gru1` en ISR y ~7× en Fast Origin Transfer
   (USD 0.06 vs 0.41/GB), pero está más lejos si Supabase queda en `sa-east-1`. Falta la medición de
   latencia real contra el Alto Valle → **ADR-010 abierta**. Todos los números de §2 asumen `iad1`.
 
 ## 8. Estado
 **FASE 1 cerrada** para los vectores de infra (Vercel, R2, LLM, WAF).
+**S1 auditada (2026-08-27): PASS, delta USD 0.00/tenant/mes** — ver §2.1. Aporta las primeras
+mediciones reales de la vidriera y el gate anticipado de coalescing para S2.
 **Abierto:** precio de Supabase (B2) · comisión de MP (B3, ADR-008) · región (ADR-010) ·
 todos los supuestos de tráfico, hasta la primera vidriera real.

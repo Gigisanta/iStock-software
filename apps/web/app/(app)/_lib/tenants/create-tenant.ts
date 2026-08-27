@@ -1,6 +1,5 @@
 import 'server-only';
 import { eq, sql } from 'drizzle-orm';
-import { revalidateTag } from 'next/cache';
 import { z } from 'zod';
 import { memberships, tenants } from '@istock/db';
 import { authDriver } from '../auth/driver';
@@ -8,6 +7,7 @@ import { withServiceDb } from '../db/session';
 import { logEvent } from '../log';
 import { slugSchema } from '../slug';
 import { normalizeArWaPhone } from '../wa-phone';
+import { invalidateStorefront } from './storefront-cache';
 
 /** Trial de 14 días (`CLAUDE.md` §1 · `PRODUCT.md` §Planes). El trial no toca Mercado Pago. */
 export const TRIAL_DAYS = 14;
@@ -145,8 +145,8 @@ export async function createTenant(userId: string, input: CreateTenantInput): Pr
   await authDriver().syncTenantClaim(userId, tenantId);
 
   /**
-   * `revalidateTag('storefront:{slug}')` — regla 7 de `app-agent` y, acá, algo más grave que una
-   * regla de estilo. `ARCHITECTURE.md` §"Resolución host → tenant" lo dice explícito:
+   * Regla 7 de `app-agent` y, acá, algo más grave que una regla de estilo.
+   * `ARCHITECTURE.md` §"Resolución host → tenant" lo dice explícito:
    *
    *   *"Slug inexistente → 404 real y cacheable. Corolario operativo: el alta de un tenant tiene
    *   que invalidar el tag de su propio slug, o el 404 negativo queda cacheado y la vidriera
@@ -156,10 +156,12 @@ export async function createTenant(userId: string, input: CreateTenantInput): Pr
    * un 404 guardado con `cacheLife('max')`. Sin esta línea, el dueño carga 15 equipos, pega el
    * link en un estado de Instagram y el link no anda. Es el peor bug posible del producto.
    *
-   * Dos argumentos: la forma de uno solo está **deprecada en Next 16**.
+   * Va **después** del insert y **antes** del `return`: invalidar antes de que la fila exista
+   * regenera la entrada con el mismo 404 y la deja cacheada de nuevo, que es el bug con un paso
+   * extra. Por qué `invalidateStorefront` y no `revalidateTag(tag, 'max')`: ver el módulo — con
+   * `'max'` el 404 se sigue sirviendo un año, medido `[404, 404, 404, 404, 404]`.
    */
-  revalidateTag(`storefront:${input.slug}`, 'max');
-  revalidateTag(`tenant-config:${input.slug}`, 'max');
+  invalidateStorefront(input.slug);
 
   logEvent('tenant.created', { tenantId, userId, plan: 'trial' });
 
