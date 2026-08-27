@@ -46,9 +46,20 @@ chk "la vidriera usa 'use cache'" "grep -rq \"use cache\" 'apps/web/app/(storefr
 sec "K1 · marketing honesta (app-agent)"
 have "apps/web/app/(marketing)/page.tsx"
 have "apps/web/app/(marketing)/precios/page.tsx"
-none "no promete nada prohibido en Capa 1" \
-     "\b(ARCA|AFIP|factura electr|WhatsApp Business API|MercadoLibre|carrito|checkout)\b" \
-     "apps/web/app/(marketing)"
+# La pagina honesta TIENE que nombrar ARCA/WABA/ML/carrito — para decir que NO los hace.
+# Grepear la palabra sin mirar la polaridad marca justo la seccion que cumple la regla.
+# Lo prohibido es la PROMESA: el termino en una linea sin negacion.
+PROMESAS=$(grep -rnE '\b(ARCA|AFIP|factura electr|WhatsApp Business API|MercadoLibre|carrito|checkout)\b' \
+           "apps/web/app/(marketing)" 2>/dev/null \
+           | grep -vE ':[0-9]+:[[:space:]]*(//|\*|/\*)' \
+           | grep -viE '(\bno\b|\bsin\b|\bnunca\b|\btampoco\b|NOT_INCLUDED)' || true)
+if [ -z "$PROMESAS" ]; then
+  ok "no promete nada prohibido en Capa 1 (los menciona solo para negarlos)"
+else
+  no "promete algo prohibido en Capa 1"; echo "$PROMESAS" | sed 's/^/        /'
+fi
+chk "nombra explicitamente lo que NO hace (honestidad, no omision)" \
+    "grep -qE 'NOT_INCLUDED|no incluye|No incluye' 'apps/web/app/(marketing)/page.tsx'"
 chk "precios dice 14 dias de trial" "grep -qE '14' 'apps/web/app/(marketing)/precios/page.tsx'"
 
 sec "K2 · auth + crear tenant + slug (app-agent)"
@@ -60,8 +71,12 @@ chk "el tenant viaja en app_metadata" "grep -rqE 'app_metadata' 'apps/web/app/(a
 # ADR-007 ley 3: un matcher que excluye un path tambien saltea las Server Functions de ese path.
 chk "cada Server Action verifica sesion adentro, no delega en el proxy" \
     "grep -qE 'requireSession|requireUser|getSession|assertSession' 'apps/web/app/(app)/app/crear-negocio/actions.ts'"
-chk "Zod en el borde del form de alta" \
-    "grep -qE \"from 'zod'|from \\\"zod\\\"\" 'apps/web/app/(app)/app/crear-negocio/actions.ts'"
+# El schema puede vivir en su propio modulo (y debe: se comparte con el server).
+# Lo que importa es que el FormData pase por el en el borde, y que ese schema sea Zod.
+chk "el form de alta valida el FormData en el borde" \
+    "grep -qE '(safeParse|\\.parse)\\(' 'apps/web/app/(app)/app/crear-negocio/actions.ts'"
+chk "y ese schema es Zod" \
+    "grep -rqE \"from 'zod'\" 'apps/web/app/(app)/_lib/tenants/create-tenant.ts'"
 
 sec "K4 · panel mobile-first (app-agent)"
 have "apps/web/app/(app)/app/(panel)/layout.tsx"
@@ -86,8 +101,12 @@ chk "borrar un listing DESVINCULA, no borra el byte (key content-addressed)" \
     "ls packages/media/src/unlink.ts"
 none "sin DeleteObject por key de listing en el camino de unlink" \
      "DeleteObjectCommand" packages/media/src/unlink.ts
+# El comentario que documenta la trampa NO es la trampa. Se ignoran lineas de comentario:
+# marcarlas entrena al equipo a borrar el comentario que evita el bug.
 chk "Cache-Control por parametro del SDK, no httpMetadata (eso es Workers)" \
-    "! grep -q 'httpMetadata' packages/media/src/storage/r2.ts"
+    "! grep -nE 'httpMetadata' packages/media/src/storage/r2.ts | grep -qvE '^[0-9]+:[[:space:]]*(//|\\*|/\\*)'"
+chk "y lo manda de verdad (CacheControl del comando S3)" \
+    "grep -qE 'CacheControl:' packages/media/src/storage/r2.ts"
 chk "hay driver local para trabajar sin las credenciales B1" "ls packages/media/src/storage/local.ts"
 
 sec "Global · el arbol compila, pasa y no filtra"
