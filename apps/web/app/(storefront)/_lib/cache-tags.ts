@@ -16,12 +16,24 @@
  * - Los tags son **case-sensitive**: `Acme` ≠ `acme`.
  *
  * Nada de esto tira una excepción sola. Por eso las tira este módulo.
+ *
+ * ## Estas excepciones son la ÚLTIMA barrera, nunca la primera (hallazgo HIGH del adversary, S1)
+ * Durante S1 la validación del slug de la vidriera estaba *derivada* de este throw: nadie
+ * chequeaba la forma del slug antes de llamar `storefrontTag()`, así que un slug basura se
+ * convertía en una excepción **de render**. Bajo `cacheComponents` + PPR una excepción de render no
+ * es un 500: el shell ya salió con `200` y lo que queda es un stream que nunca cierra, con
+ * `no-store`, o sea CPU facturada que el CDN jamás absorbe. Una request bastaba.
+ *
+ * Regla que sale de ahí y que este módulo no puede hacer cumplir solo: **el que construye un tag ya
+ * tiene que saber que el slug es válido.** Para eso está `isSlugShaped()` de `@istock/domain`, que
+ * es una función pura que devuelve `false` en vez de tirar. Los throws de acá se quedan igual —
+ * fallar cerrado en el borde es correcto, y un tag mal formado que se descarta en silencio es peor
+ * que una excepción— pero llegar a ellos ya es un bug de quien llamó.
  */
 
-const MAX_TAG_BYTES = 256;
+import { isSlugShaped } from '@istock/domain';
 
-/** Slug de tenant: mismo contrato que `_lib/host.ts` y que el `CHECK` de `packages/db`. */
-const SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{1,30}[a-z0-9])$/;
+const MAX_TAG_BYTES = 256;
 
 function assertTag(tag: string): string {
   if (tag.includes(',')) {
@@ -34,8 +46,19 @@ function assertTag(tag: string): string {
   return tag;
 }
 
+/**
+ * La forma del slug se pregunta a `@istock/domain` y **no se re-declara acá**.
+ *
+ * Antes este archivo tenía su propia copia del regex, idéntica carácter por carácter a la de
+ * `_lib/host.ts`, y nada las ataba. Mientras coincidieran, un host bien formado nunca podía
+ * disparar este throw. El día que una de las dos se aflojara —por ejemplo a 63 caracteres, para
+ * alinearla con el límite de label DNS— el proxy iba a aceptar un host que este módulo rechaza, y
+ * el throw pasaba a ser alcanzable **desde una URL de vidriera normal, en el camino caliente**.
+ * Ese es el hallazgo LOW del adversary de S1, y es el mismo modo de falla que la lista de
+ * subdominios reservados duplicada: dos copias que no rompen nada hasta que divergen.
+ */
 function assertSlug(slug: string): string {
-  if (!SLUG_RE.test(slug)) {
+  if (!isSlugShaped(slug)) {
     throw new Error(`cache tag: slug inválido "${slug}" (minúsculas, dígitos y guiones, 3–32)`);
   }
   return slug;

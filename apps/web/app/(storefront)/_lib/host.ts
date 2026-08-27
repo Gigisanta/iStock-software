@@ -30,8 +30,10 @@
 import {
   PRERENDER_SEED_SLUG,
   RESERVED_SUBDOMAINS,
+  SLUG_PATTERN,
   STOREFRONT_DOMAIN,
   isReservedSubdomain,
+  isSlugShaped,
 } from '@istock/domain';
 
 /**
@@ -75,24 +77,34 @@ import {
  *
  * ### Por qué este slug y no `demo`
  * `/s/not-a-tenant` es **inalcanzable en producción**: el proxy manda `not-a-tenant.maat.work` a
- * marketing (está reservado) y `/s/*` sobre el apex da 404. La entrada del build es un artefacto,
+ * marketing (está reservado) y `/s/**` da 404 desde el proxy en **cualquier** host, con slug válido
+ * o no (ver {@link isStorefrontInternalPath}). La entrada del build es un artefacto,
  * no una página que alguien pueda ver. Con `demo` el build tendría que consultar la DB y, si el
- * tenant demo faltara ese día, dejaría un 404 estático servido bajo el nombre del demo.
+ * tenant demo faltara ese día, dejaría la página de miss prerenderizada bajo el nombre del demo.
  */
-export { PRERENDER_SEED_SLUG, RESERVED_SUBDOMAINS, isReservedSubdomain };
+export { PRERENDER_SEED_SLUG, RESERVED_SUBDOMAINS, isReservedSubdomain, isSlugShaped };
 
 /**
- * Mismo regex que el `CHECK tenants_slug_format` de `packages/db` y que `assertSlug()` de
- * `@istock/domain`: minúsculas, dígitos y guiones, 3–32 caracteres, sin guión en los bordes.
+ * **Alias de `SLUG_PATTERN` de `@istock/domain`. Ya no es una segunda declaración.**
  *
- * Que sea el mismo en los tres lados no es prolijidad: un slug que la DB acepta y el proxy rechaza
- * es un tenant que paga y no tiene vidriera. Un slug que el proxy acepta y la DB no, es un 404
- * cacheado para siempre.
+ * Hasta S1 este regex estaba escrito de nuevo acá **y** en `_lib/cache-tags.ts`, idéntico carácter
+ * por carácter, sin nada que atara las dos copias. El adversary lo reportó y tenía razón sobre por
+ * qué importa: mientras coincidieran, un host bien formado nunca podía disparar el throw de
+ * `cacheTag()`; el día que alguien aflojara **una sola** (por ejemplo a 63 caracteres, para
+ * alinearla con el límite de label DNS de RFC 1035) el proxy iba a aceptar un host que `cacheTag()`
+ * rechaza, y ese throw es un stream colgado en el camino caliente, no un 500.
  *
- * Además acota el largo **por debajo** del límite de label DNS (63 chars, RFC 1035) y muy por
- * debajo del límite de cache tag (256 bytes).
+ * Ahora hay una sola fuente en TypeScript: `packages/domain`, que es el único paquete que los
+ * cuatro owners del slug pueden importar. Quedan dos declaraciones en el repo, y la segunda es
+ * inevitable: el `CHECK tenants_slug_format` de `packages/db` es SQL y no puede importar TS. Esa
+ * equivalencia la sigue chequeando `host.test.ts` (TS contra el literal del `CHECK`) y
+ * `scripts/guard-leaks.sh` regla 14.
+ *
+ * Se mantiene el nombre `SLUG_RE` exportado porque el resto de `(storefront)` y los tests lo leen
+ * desde acá: el proxy y su cerebro son un solo módulo visto desde afuera. Para chequear la forma
+ * preferí `isSlugShaped()`, que es la misma pregunta sin exponer un objeto `RegExp` mutable.
  */
-export const SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{1,30}[a-z0-9])$/;
+export const SLUG_RE = SLUG_PATTERN;
 
 /** El primer segmento de la vidriera. `acme.maat.work/x` → `/s/acme/x`. */
 export const STOREFRONT_PATH_PREFIX = '/s';
@@ -144,7 +156,7 @@ const NUMERIC_LABEL_RE = /^\d+$/;
 
 function labelToResolution(label: string): HostResolution {
   if (RESERVED_SUBDOMAINS.has(label)) return { kind: 'marketing' };
-  if (!SLUG_RE.test(label)) {
+  if (!isSlugShaped(label)) {
     return { kind: 'not-found', reason: `subdominio "${label}" no tiene forma de slug de tenant` };
   }
   return { kind: 'storefront', slug: label };
@@ -239,7 +251,7 @@ export function resolveHost(rawHost: string | null | undefined, options: Resolve
  * y el día que alguien la llame desde otro lado, el path traversal entra por acá.
  */
 export function storefrontPathFor(slug: string, pathname: string): string {
-  if (!SLUG_RE.test(slug)) throw new Error(`storefrontPathFor: slug inválido "${slug}"`);
+  if (!isSlugShaped(slug)) throw new Error(`storefrontPathFor: slug inválido "${slug}"`);
   const rest = pathname === '/' ? '' : pathname;
   return `${STOREFRONT_PATH_PREFIX}/${slug}${rest}`;
 }
@@ -254,4 +266,58 @@ export function storefrontPathFor(slug: string, pathname: string): string {
  */
 export function isInfrastructurePath(pathname: string): boolean {
   return pathname === '/_next' || pathname.startsWith('/_next/') || pathname.startsWith('/__nextjs');
+}
+
+/**
+ * `/s` y `/s/**` — el **espacio de nombres interno** de la vidriera, el destino del rewrite.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════════════════════════
+ *  Qué devuelve `/s/algo.json`, y por qué. Hallazgo HIGH del adversary de S1.
+ * ═══════════════════════════════════════════════════════════════════════════════════════════════
+ * **Respuesta: 404 real, servido por el proxy, sin invocar la app. Para todos los hosts.**
+ *
+ * ── El síntoma ─────────────────────────────────────────────────────────────────────────────────
+ * `/s/algo.json` **sí** es match de la ruta `/s/[slug]` (con `slug = "algo.json"`), pero **no** era
+ * match del `matcher` del proxy, que excluye 14 extensiones estáticas. O sea: el proxy no corría, y
+ * la guarda que rechaza `/s/**` tampoco. El slug basura llegaba a `cacheTag()` y ahí explotaba.
+ * Medido contra `next start`: HTTP 200, 8661 bytes, **el stream no cierra nunca** (`curl` corta por
+ * timeout), `no-store` — así que el CDN jamás lo absorbe— y cardinalidad de paths infinita.
+ * Anónimo, sin auth, en el dominio de cada tenant. Una request : hasta 300 s de CPU facturada.
+ *
+ * ── Por qué 404 y no la página de miss, aunque el miss sea `200` ───────────────────────────────
+ * Tres argumentos independientes; el primero es el que decide.
+ *
+ * 1. **ADR-011 no gobierna este caso, y no por un tecnicismo.** ADR-011 eligió `200` + `noindex` +
+ *    DOM legible para el slug **bien formado que no existe**, y lo eligió porque la app *no puede*
+ *    saber si ese tenant existe sin ir a Postgres, y cuando lo sabe el shell de PPR ya salió con
+ *    `200`: es status XOR body, y se eligió el body. `algo.json` no plantea esa disyuntiva: que no
+ *    es un slug se decide con una función pura, **antes** de que empiece a streamear nada, en el
+ *    único lugar que la doc de Next señala para esto (`loading.md`: *"ensure the resource exists
+ *    before the response body is streamed. You can run this check in `proxy`"*). Donde hay certeza
+ *    sin I/O, el status se puede tener; y donde se puede tener, se tiene.
+ * 2. **Es el mismo género de input que el host `Foo_Bar.maat.work`, que ya da 404 desde el proxy.**
+ *    La única diferencia es la puerta por la que entra —path en vez de host—, y el `CHECK
+ *    tenants_slug_format` de `packages/db` dice que ninguno de los dos puede ser un tenant jamás.
+ *    Dos respuestas distintas para el mismo input, según por qué puerta entró, es arbitrario.
+ * 3. **El espacio de `/s/**` no es direccionable en producción, con ningún slug.** La URL canónica
+ *    de un tenant es `{slug}.maat.work/`; `/s/**` es el destino interno del rewrite y **los rewrites
+ *    del proxy no vuelven a entrar al proxy** (si entraran, `acme.maat.work/` haría bucle infinito
+ *    hoy mismo, y no lo hace). Nadie llega acá desde un link legítimo: ni una persona que se
+ *    equivocó de subdominio —esa se equivoca en el host, no en el path— ni un buscador. Así que
+ *    esta rama no le está negando la página legible de ADR-011 a nadie que la necesite.
+ *
+ * Contra-argumento que consideré y descarté: *"un 404 acá contradice el `200` del miss"*. No, son
+ * dos preguntas distintas. La de ADR-011 es "¿existe este tenant?" y se contesta con I/O, tarde. La
+ * de acá es "¿esto puede ser un slug?" y se contesta con un regex, temprano. Que las dos respuestas
+ * tengan status distinto es la consecuencia de que una se pueda decidir a tiempo y la otra no.
+ *
+ * ── Por qué es una función y por qué se chequea ANTES de resolver el host ──────────────────────
+ * Antes esta guarda vivía dentro de la rama `marketing` de `proxy.ts`, o sea que dependía de dos
+ * cosas para correr: que el matcher no salteara el path **y** que el host fuera el apex. Sobre un
+ * host de tenant, `/s/x` se reescribía a `/s/{slug}/s/x` y terminaba en el 404 default de Next —
+ * misma respuesta, pero pagando una invocación de función. Ahora es una sola decisión, arriba de
+ * todo, sin mirar el host: el prefijo `/s` es nuestro y no es de nadie más.
+ */
+export function isStorefrontInternalPath(pathname: string): boolean {
+  return pathname === STOREFRONT_PATH_PREFIX || pathname.startsWith(`${STOREFRONT_PATH_PREFIX}/`);
 }

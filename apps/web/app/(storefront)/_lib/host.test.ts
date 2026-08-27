@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest';
+import { SLUG_PATTERN } from '@istock/domain';
 import {
   PRERENDER_SEED_SLUG,
   RESERVED_SUBDOMAINS,
   SLUG_RE,
   isInfrastructurePath,
   isReservedSubdomain,
+  isSlugShaped,
+  isStorefrontInternalPath,
   normalizeHostname,
   resolveHost,
   storefrontPathFor,
@@ -65,7 +68,17 @@ describe('resolveHost · producción', () => {
   });
 
   it('un subdominio con forma inválida da 404, no marketing', () => {
-    // La regla: slug inexistente → 404 real, nunca redirect/passthrough al home.
+    // Ojo con el alcance: acá se prueba el host MALFORMADO (`Foo_Bar`, `-acme`, `ab`, 33 chars),
+    // no el slug bien formado que todavía no está dado de alta. Son dos casos distintos a
+    // propósito y ADR-011 sólo cambió el segundo:
+    //  · malformado (esto) — la DB tiene el mismo CHECK, así que no puede ser un tenant JAMÁS;
+    //    el proxy responde 404 real sin invocar la app (`malformedHost` en `apps/web/proxy.ts`).
+    //  · bien formado e inexistente — ADR-011: sigue al rewrite y la página cacheada devuelve
+    //    una página LEGIBLE con `noindex, nofollow` y status 200, no un 404, cacheada con el
+    //    perfil corto de ADR-012 (`_lib/cache-life.ts`).
+    // La mitad que NO cambió — y que es lo que este test protege — es la otra: en ninguno de los
+    // dos casos hay redirect ni passthrough al home. Caer en `marketing` le mostraría la landing
+    // de MaatWork a alguien que escribió mal un subdominio, y eso no se distingue de una vidriera.
     expect(resolveHost('Foo_Bar.maat.work').kind).toBe('not-found');
     expect(resolveHost('-acme.maat.work').kind).toBe('not-found');
     expect(resolveHost('acme-.maat.work').kind).toBe('not-found');
@@ -174,5 +187,72 @@ describe('PRERENDER_SEED_SLUG · el slug que hace cacheable a la vidriera', () =
     }
     expect(isReservedSubdomain('demo')).toBe(false);
     expect(isReservedSubdomain('nortecel')).toBe(false);
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════════════════════════
+ *  El HIGH del adversary de S1: `/s/**` es espacio interno y el proxy lo cierra con 404.
+ * ═══════════════════════════════════════════════════════════════════════════════════════════════
+ * El bug tenía dos mitades y las dos se testean acá:
+ * - la GUARDA no existía como función propia y vivía dentro de la rama `marketing` del proxy, así
+ *   que sobre un host de tenant no corría;
+ * - el MATCHER excluía 14 extensiones estáticas por sufijo, y `/s/algo.json` es sufijo `.json`
+ *   **y** ruta de la app a la vez (`/s/[slug]` matchea con `slug = "algo.json"`).
+ * Juntas dejaban un slug basura llegando a `cacheTag()`, que tira, y bajo cacheComponents + PPR un
+ * throw de render es un stream que no cierra con status 200.
+ */
+describe('isStorefrontInternalPath · `/s/**` no es una URL pública', () => {
+  it('cubre el prefijo entero, con slug válido o basura', () => {
+    expect(isStorefrontInternalPath('/s')).toBe(true);
+    expect(isStorefrontInternalPath('/s/nortecel')).toBe(true);
+    expect(isStorefrontInternalPath('/s/nortecel/p/iphone-14')).toBe(true);
+  });
+
+  it('cubre las 14 extensiones que el matcher excluía — el vector exacto del hallazgo', () => {
+    const exts = ['svg', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'ico', 'css', 'js', 'txt', 'xml', 'json', 'woff', 'woff2', 'ttf'];
+    for (const ext of exts) {
+      expect(isStorefrontInternalPath(`/s/noexiste-991.${ext}`), ext).toBe(true);
+    }
+  });
+
+  it('NO se come paths que apenas empiezan con "s": la exclusión es por segmento', () => {
+    // Si esto fuera un `startsWith('/s')` pelado, `/stock` y `/style.css` darían 404 en marketing.
+    expect(isStorefrontInternalPath('/stock')).toBe(false);
+    expect(isStorefrontInternalPath('/style.css')).toBe(false);
+    expect(isStorefrontInternalPath('/sitemap.xml')).toBe(false);
+    expect(isStorefrontInternalPath('/')).toBe(false);
+    expect(isStorefrontInternalPath('/p/iphone-14')).toBe(false);
+  });
+
+  it('lo que el proxy PRODUCE cae dentro de la guarda: por eso el rewrite no puede re-entrar', () => {
+    // No es una curiosidad: si los rewrites del proxy volvieran a pasar por el proxy, esta guarda
+    // convertiría toda la vidriera en 404. No lo hacen (si lo hicieran, `acme.maat.work/` haría
+    // bucle infinito hoy). El test deja escrito de qué depende.
+    expect(isStorefrontInternalPath(storefrontPathFor('nortecel', '/'))).toBe(true);
+    expect(isStorefrontInternalPath(storefrontPathFor('nortecel', '/p/iphone-14'))).toBe(true);
+  });
+});
+
+describe('SLUG_RE es UNA sola fuente de verdad, no una copia (hallazgo LOW)', () => {
+  it('es literalmente el `SLUG_PATTERN` de @istock/domain, no un regex equivalente', () => {
+    // El hallazgo no era "están distintos": era que NADA los ataba. Dos regex equivalentes hoy y
+    // divergentes mañana es cómo un host que el proxy acepta termina tirando en `cacheTag()`.
+    // `toBe` (identidad referencial) es el assert correcto: `toEqual` pasaría con dos copias.
+    expect(SLUG_RE).toBe(SLUG_PATTERN);
+  });
+
+  it('`isSlugShaped` responde lo mismo que el regex, sin tirar', () => {
+    // Es la diferencia entre contestar y lanzar: la guarda de `page.tsx` no puede tirar.
+    for (const s of ['nortecel', 'ab', 'A-B', 'algo.json', '', 'a'.repeat(33), '-ab', 'ab-']) {
+      expect(isSlugShaped(s), s).toBe(SLUG_RE.test(s));
+    }
+    expect(isSlugShaped('algo.json')).toBe(false);
+  });
+
+  it('sin flag `g`: un regex con estado daría false en llamadas alternas', () => {
+    expect(SLUG_RE.global).toBe(false);
+    expect(SLUG_RE.test('nortecel')).toBe(true);
+    expect(SLUG_RE.test('nortecel')).toBe(true);
   });
 });

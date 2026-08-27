@@ -1,38 +1,27 @@
-import { STOREFRONT_DOMAIN } from '@istock/domain';
+import { StorefrontMiss } from '../../_components/storefront-miss';
 
 /**
- * 404 de la vidriera. Se muestra cuando el subdominio **no corresponde a ningún tenant activo**.
+ * Boundary de `notFound()` del segmento `/s/[slug]/**`.
  *
- * Es un **404 real** (status 404), no un redirect al home de marketing: un redirect le dice a
- * Google que ese subdominio existe y le dice al visitante que se equivocó de producto, cuando lo
- * que pasó es que se equivocó de dirección.
+ * **Hoy no lo dispara nadie, y eso es correcto.** El slug inexistente ya no lanza `notFound()`:
+ * `page.tsx` renderiza `<StorefrontMiss />` como contenido normal (ADR-011, variante B — el porqué
+ * está medido en el docblock de `page.tsx`). Este archivo no es el camino del miss.
  *
- * Esta respuesta **se cachea**, verificado y no supuesto: con `generateStaticParams` presente en
- * `page.tsx`, un slug inexistente devuelve `404` con `x-nextjs-cache: MISS` la primera vez,
- * `x-nextjs-cache: HIT` desde la segunda, y `Cache-Control: s-maxage=2592000,
- * stale-while-revalidate=28944000` en las dos. Un escaneo de subdominios cuesta **una** query de
- * Postgres por slug, no una por request.
+ * Existe por dos motivos concretos, no "por las dudas":
  *
- * La contrapartida está escrita en `page.tsx` y es un requisito operativo, no un detalle: el alta
- * de un tenant tiene que invalidar `storefront:{slug}` y `tenant-config:{slug}` de su propio slug,
- * o este 404 queda cacheado hasta 30 días y la vidriera nace muerta.
+ * 1. **La red de contención tiene que estar en español y dentro del layout de la vidriera.** Sin
+ *    este archivo, cualquier `notFound()` que se lance en el segmento cae en el 404 default de
+ *    Next, que se renderiza **fuera** de `(storefront)/layout.tsx` y bajo el `title.template` del
+ *    layout raíz: `'… · iStock'`. `iStock` es nombre código interno (`CLAUDE.md`, encabezado) y no
+ *    puede aparecerle en la pestaña al cliente de un reseller.
+ * 2. **S3/S4 sí van a lanzarlo.** La ficha (`/s/[slug]/p/[id]`) hereda este boundary, y un id de
+ *    listing que no existe sí es un `notFound()` legítimo: ahí el shell del tenant ya resolvió, no
+ *    hay ambigüedad de host y el status importa menos que en la raíz.
  *
- * Cero `set-cookie`, cero JS de cliente, cero fetch. Es HTML estático.
+ * Cero texto propio: el párrafo vive una sola vez, en `_components/storefront-miss.tsx`. Si este
+ * archivo tuviera su propia copia, en tres meses diría otra cosa que la del camino del miss y nadie
+ * se enteraría hasta que un dueño lo viera.
  */
 export default function StorefrontNotFound() {
-  return (
-    <main className="flex min-h-[70dvh] flex-col justify-center">
-      <p className="text-xs font-medium uppercase tracking-wide text-neutral-500">Error 404</p>
-      <h1 className="mt-2 text-2xl font-semibold leading-tight sm:text-3xl">
-        No hay ninguna vidriera en esta dirección
-      </h1>
-      <p className="mt-3 text-sm leading-relaxed text-neutral-600 dark:text-neutral-400">
-        Revisá el link: cada negocio tiene su propia dirección con la forma{' '}
-        <span className="font-mono text-neutral-900 dark:text-neutral-100">
-          nombre.{STOREFRONT_DOMAIN}
-        </span>
-        . Si te lo pasó el vendedor por WhatsApp, pedile que te lo reenvíe completo.
-      </p>
-    </main>
-  );
+  return <StorefrontMiss />;
 }
