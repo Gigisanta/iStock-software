@@ -11,9 +11,11 @@
  * El mismo regex vive además en el `CHECK tenants_slug_format` de `packages/db` (SQL, no puede
  * importar TypeScript) y en los bordes de `apps/web`, que necesitan mensajes en castellano por
  * campo mientras el dominio tira `DomainError`. `scripts/guard-leaks.sh` regla 14 falla si esas
- * copias **divergen**, que es el único modo en que esta duplicación hace daño: un slug que la DB
- * acepta y el proxy rechaza es un tenant que paga y no tiene vidriera; al revés, es un 404
- * cacheado 30 días.
+ * copias **divergen**, que es el único modo en que esta duplicación hace daño — y hace daño en las
+ * dos direcciones, no en una:
+ *
+ * - La **DB acepta** y el **proxy rechaza** → un tenant que paga y no tiene vidriera.
+ * - Al revés (**el proxy acepta lo que la DB nunca va a guardar**), el visitante no recibe un 404 sino la página de miss: legible, con `noindex, nofollow` y status **200** (ADR-011), cacheada con el perfil corto del polo negativo (`stale 60 s / revalidate 300 s / expire 900 s`, ADR-012) — minutos, no 30 días.
  */
 
 import { DomainError } from './errors';
