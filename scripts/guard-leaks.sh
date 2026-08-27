@@ -59,10 +59,67 @@ if [ -f apps/web/proxy.ts ]; then
     && bad "proxy.ts configura runtime — en Next 16 tira error" || ok "proxy.ts no configura runtime"
 else ok "todavia no hay proxy.ts"; fi
 
-say "6 · cacheLife de la vidriera  (§goal: revalidate:60 = 216x el costo)"
+say "6 . cacheLife de la vidriera - POLARIDAD  (§goal: revalidate:60 = 216x el costo)"
+# Reescrito por el LEAD: la version anterior prohibia `revalidate: <numero corto>` en CUALQUIER
+# archivo de (storefront) y no distinguia el camino positivo del negativo. storefront-agent lo
+# reporto como conflicto entre dos reglas mias y tenia razon: la regla se satisfacia renombrando
+# el literal a una constante, y una regla que se pasa renombrando dejo de guardar.
+#
+# El invariante real tiene dos polos:
+#   POSITIVO (el tenant que existe)  -> 'max'. Un TTL por tiempo aca multiplica el costo por 216.
+#   NEGATIVO (el slug que no existe) -> corto. 'max' aca es envenenamiento durable de 30 dias.
 if [ -n "$SRC_STOREFRONT" ]; then
-  hits "sin revalidate numerico corto en (storefront)" \
-       "revalidate\s*[:=]\s*([0-9]|[1-9][0-9]|[1-9][0-9]{2})\b" $SRC_STOREFRONT
+  CL="apps/web/app/(storefront)/_lib/cache-life.ts"
+
+  # 6a - el polo positivo sigue en 'max'.
+  grep -rqE "cacheLife\('max'\)" $SRC_STOREFRONT \
+    && ok "el camino positivo usa cacheLife('max')" \
+    || bad "el camino positivo perdio cacheLife('max') - 216x el costo"
+
+  # 6b - el perfil corto se declara en UN solo archivo. Un cacheLife({...}) inline en cualquier
+  #      otro lado es un TTL por tiempo escondido en el camino positivo.
+  OTHER=$(grep -rlE "cacheLife\(\{" $SRC_STOREFRONT 2>/dev/null | grep -v 'cache-life\.ts' || true)
+  if [ -z "$OTHER" ]; then ok "ningun cacheLife({...}) inline fuera de _lib/cache-life.ts"
+  else bad "cacheLife({...}) inline fuera de _lib/cache-life.ts"; echo "$OTHER" | sed 's/^/        /'; fi
+
+  # 6c - y ese unico archivo es el del MISS y sus numeros siguen siendo CORTOS.
+  #      Se leen los enteros del archivo y se compara contra un techo DUPLICADO a proposito aca
+  #      (mismo criterio que el presupuesto de bytes de packages/media): si el techo se leyera de
+  #      la constante, subir la constante pondria el guard en verde y el guard dejaria de guardar.
+  if [ -f "$CL" ]; then
+    MAXN=$(grep -oE '=[[:space:]]*[0-9]+' "$CL" | grep -oE '[0-9]+' | sort -n | tail -1)
+    MINN=$(grep -oE '=[[:space:]]*[0-9]+' "$CL" | grep -oE '[0-9]+' | sort -n | head -1)
+    if [ -n "$MAXN" ] && [ "$MAXN" -le 900 ] && [ -n "$MINN" ] && [ "$MINN" -ge 30 ]; then
+      ok "perfil negativo corto: enteros en [$MINN, $MAXN] s, dentro de [30, 900]"
+    else
+      bad "perfil negativo fuera de banda (enteros en [${MINN:-?}, ${MAXN:-?}] s, se exige [30, 900])"
+    fi
+    grep -qiE 'MISS' "$CL" \
+      && ok "el perfil corto esta nombrado como MISS (es el polo negativo, no un TTL del positivo)" \
+      || bad "_lib/cache-life.ts declara un perfil corto que no dice ser el del miss"
+  else
+    ok "todavia no hay _lib/cache-life.ts"
+  fi
+
+  # 6d - fuera de ese archivo, ningun revalidate numerico corto (la regla original, ya con scope).
+  REST=$(grep -rnE "revalidate[[:space:]]*[:=][[:space:]]*([0-9]|[1-9][0-9]|[1-9][0-9]{2})\b" \
+         $SRC_STOREFRONT 2>/dev/null | grep -v 'cache-life\.ts' \
+         | grep -vE '^[^:]*:[0-9]+:[[:space:]]*(//|\*|/\*)' || true)
+  if [ -z "$REST" ]; then ok "sin revalidate numerico corto fuera de _lib/cache-life.ts"
+  else bad "revalidate numerico corto en el camino positivo"; echo "$REST" | sed 's/^/        /' | head -6; fi
+
+  # 6e - todo archivo con un scope 'use cache' elige perfil EXPLICITAMENTE. Borrar el cacheLife
+  #      no vuelve la ruta dinamica: la deja en el perfil default (~15 min de revalidate), que es
+  #      el mismo 216x por otra puerta. Es el agujero que T3 dejo ver: 6a pasaba porque OTRO
+  #      archivo tenia el 'max'.
+  MUTE=""
+  for f in $(grep -rlE "^\s*'use cache'" $SRC_STOREFRONT 2>/dev/null); do
+    case "$f" in *cache-life.ts) continue;; esac
+    grep -qE "cacheLife\(|cacheStorefrontMiss\(" "$f" || MUTE="$MUTE$f"$'\n'
+  done
+  if [ -z "$MUTE" ]; then ok "todo scope 'use cache' de la vidriera elige perfil explicito"
+  else bad "'use cache' sin cacheLife -> cae al perfil default (~15m = 216x)"; printf '%s' "$MUTE" | sed 's/^/        /'; fi
+
   hits "sin set-cookie en (storefront)  (uno solo apaga el CDN entero)" \
        "(set-?[Cc]ookie|cookies\(\)\.set)" $SRC_STOREFRONT
 fi
