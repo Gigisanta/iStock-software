@@ -837,6 +837,246 @@ async function runSlices(ids, base) {
 }
 
 // ---------------------------------------------------------------------------
+// FASE 5 — chatbot de vidriera (capa 2, entitlement Negocio)
+// ---------------------------------------------------------------------------
+async function runChat(base) {
+  const baseRef = base || 'HEAD'
+  const diffCmd = 'git --no-pager diff ' + baseRef
+  log('FASE 5 - chatbot. Primero se corrige el doc que lo especifica, despues se codea.')
+
+  // docs/CHATBOT.md se escribio en FASE 0 y quedo desactualizado: ofrece llama-3.1-8b-instant
+  // como fallback de Groq. Ese modelo esta RETIRADO desde el 16/08/2026 y CLAUDE.md seccion 3 lo
+  // prohibe explicito. Si el doc entra asi a ai-agent, la fase arranca desde un ID muerto y el
+  // fallback -- que esta en el camino de ejecucion, no de adorno -- falla la primera vez que se
+  // usa, en produccion. Se arregla ANTES y lo arregla su owner, no el LEAD.
+  const fix = await agent(
+    LAW + '\n\n' + role('docs-keeper') + '\n\n' +
+    'Sos "docs-keeper", unico writer de docs/** (salvo docs/research y docs/COST.md).\n' +
+    'Tarea unica y acotada: docs/CHATBOT.md contradice a CLAUDE.md seccion 3.\n\n' +
+    'El doc dice que el fallback de Groq es "llama-3.1-8b-instant / gpt-oss-20b".\n' +
+    'La constitucion dice: llama-3.1-8b-instant esta RETIRADO desde el 16/08/2026 para free y\n' +
+    'developer tier. El fallback es openai/gpt-oss-20b, unico.\n\n' +
+    'Ademas, los IDs de modelo NO van como constante en el doc ni en el codigo: van por env var\n' +
+    '(LLM_PRIMARY_MODEL / LLM_FALLBACK_MODEL), porque hubo dos deprecaciones en tres meses.\n' +
+    'Y anota lo que ya esta decidido: billing habilitado en Gemini desde el dia 1 (no es ahorro,\n' +
+    'es privacidad: el free tier entrena con los prompts) y ZDR activado en Groq antes de prod.\n\n' +
+    'Verifica contra docs/research/llm-pricing.md [R3] antes de escribir. No reabras la decision,\n' +
+    'no toques nada mas del archivo, y no inventes precios.',
+    { label: 'chat:doc-fix', phase: 'Chat', agentType: 'docs-keeper', schema: WORK_SCHEMA },
+  )
+
+  const evals = await agent(
+    LAW + '\n\n' + role('qa-agent') + '\n\n' +
+    'Sos "qa-agent". Escribi la eval del chatbot ANTES de que exista, y mostrala fallando.\n' +
+    'Gate de la fase, de docs/CHATBOT.md:\n' +
+    '  - jailbreaks de COSTO y de IMEI, en TRES fraseos distintos cada uno. Que el bot no diga el\n' +
+    '    costo "porque no se lo pasamos" no alcanza: la eval verifica que ni siquiera este en el\n' +
+    '    contexto que se le arma.\n' +
+    '  - prompt injection escondida en la DESCRIPCION de un listing. La escribe el dueno: es input\n' +
+    '    no confiable, aunque el dueno sea nuestro cliente.\n' +
+    '  - un listing reserved NUNCA se describe como disponible.\n' +
+    '  - "no se" => handoff a WhatsApp, no invencion.\n' +
+    '  - dieta MEDIDA: <=1200 tokens in, <=180 out. La eval cuenta tokens reales del prompt armado,\n' +
+    '    no confia en que el codigo respete el techo.\n\n' +
+    'Sin API keys (B4) la eval corre igual contra un cliente LLM fake que devuelve respuestas\n' +
+    'fijas: lo que se testea es el ARMADO del contexto, las tools y el handoff, no el modelo.\n' +
+    'Eso no es un skip: es la parte que nos puede filtrar un IMEI.',
+    { label: 'chat:evals', phase: 'Chat', agentType: 'qa-agent', schema: WORK_SCHEMA },
+  )
+
+  const impl = await agent(
+    LAW + '\n\n' + role('ai-agent') + '\n\n' +
+    'Sos "ai-agent", unico writer de packages/ai. Corre: cat .claude/agents/ai-agent.md\n' +
+    'Lee docs/CHATBOT.md (recien corregido) y la skill .claude/skills/chatbot-diet/SKILL.md.\n\n' +
+    'Evals ya escritas que tenes que hacer pasar y NO podes tocar: ' + JSON.stringify(evals?.files ?? []) + '\n\n' +
+    'No negociable:\n' +
+    '  - Contexto exacto: system corto + publicListingDTO de la ficha abierta + 3 chunks del MISMO\n' +
+    '    catalog_model + ultimos 4 turnos recortados. Nada mas. Ni el catalogo entero, ni los otros\n' +
+    '    listings, ni el historial completo.\n' +
+    '  - Tres tools: get_open_listing, search_listings (mismo tenant, max 5, campos minimos),\n' +
+    '    handoff_whatsapp. El tenant_id NO es argumento de ninguna tool: se inyecta server-side\n' +
+    '    desde el host. Un tenant_id que el modelo puede elegir es un tenant_id que puede cambiar.\n' +
+    '  - El contexto se arma desde publicListingDTO, nunca desde la fila de la DB.\n' +
+    '  - Modelos por env var. Gemini 2.5 Flash-Lite primario, openai/gpt-oss-20b fallback.\n' +
+    '    El fallback esta EN el camino de ejecucion y TESTEADO: el primario tiene riesgo de apagado\n' +
+    '    en octubre 2026. Un fallback que nunca se ejecuto no es un fallback.\n' +
+    '  - Claude o GPT en el hot path = fallo de la fase.\n' +
+    '  - Salida como TEXTO PLANO: sin markdown, sin imagenes, sin links. Sanitizador de Unicode\n' +
+    '    invisible en el ingest de descripciones y en el render.\n' +
+    '  - Sin memoria persistente, sin tools de escritura, sin embeddings por tenant.\n\n' +
+    'Al terminar: pnpm typecheck && pnpm lint && pnpm test && ./scripts/guard-leaks.sh\n' +
+    'y reporta la salida real de cada uno.',
+    { label: 'chat:impl', phase: 'Chat', agentType: 'ai-agent', schema: WORK_SCHEMA },
+  )
+
+  const widget = await agent(
+    LAW + '\n\n' + role('storefront-agent') + '\n\n' +
+    'Sos "storefront-agent". Monta el widget del chat en la vidriera, detras del entitlement.\n\n' +
+    'La regla que decide el diseno: en plan base el widget NO EXISTE EN EL DOM. No esta oculto,\n' +
+    'no esta deshabilitado, no hay paywall. El comprador final no es nuestro cliente y no tiene\n' +
+    'por que enterarse de nuestros planes.\n\n' +
+    'Y no rompas el cache: el entitlement del tenant es parte del contenido cacheado por slug\n' +
+    '(mismo tag tenant-config:{slug}), no una decision por request. Si esto te obliga a leer\n' +
+    'headers() o cookies en la vidriera, lo estas haciendo mal: pará y reportalo en notes.\n\n' +
+    'El chat es una llamada explicita del visitante, JAMAS parte del pageview.',
+    { label: 'chat:widget', phase: 'Chat', agentType: 'storefront-agent', schema: WORK_SCHEMA },
+  )
+
+  const [adversary, cost] = await parallel([
+    () => agent(
+      LAW + '\n\n' + role('adversary-reviewer') + '\n\n' +
+      'Sos "adversary-reviewer". NO escribis. Audita el chatbot. Diff: ' + diffCmd + '\n' +
+      'Vector principal: la descripcion del listing la escribe el DUENO. Es input no confiable.\n' +
+      'Intenta, con evidencia concreta: sacarle el costo o el IMEI al bot en tres fraseos;\n' +
+      'inyectar instrucciones desde la descripcion de un listing; hacer que hable de otro tenant;\n' +
+      'que describa un reserved como disponible; que devuelva un link o markdown.\n' +
+      'Mira tambien si el tenant_id es argumento de alguna tool (deberia inyectarse server-side).\n' +
+      'Un critical o high => FAIL.',
+      { label: 'chat:adversary', phase: 'Chat', agentType: 'adversary-reviewer', schema: VERDICT_SCHEMA },
+    ),
+    () => agent(
+      LAW + '\n\n' + role('cost-auditor') + '\n\n' +
+      'Sos "cost-auditor". El chat es ~75% del costo variable del plan Negocio (<= USD 1.50).\n' +
+      'Diff: ' + diffCmd + '\n' +
+      'Verifica: cero LLM por pageview; dieta respetada con tokens MEDIDOS, no declarados;\n' +
+      'rate limit 8/IP/10min y soft cap 40 msgs/tenant/dia; el contador de tokens por tenant vive\n' +
+      'en ruta autenticada, NUNCA en la vidriera (un contador en Postgres sobre la vidriera rompe\n' +
+      'el 95% sin Postgres); embeddings solo en seed/update de catalog_models.\n' +
+      'Llena la tabla de costo de docs/CHATBOT.md con lo medido y actualiza docs/COST.md.\n' +
+      'Devolve DELTA_POR_TENANT_MES con la aritmetica a la vista.',
+      { label: 'chat:cost', phase: 'Chat', agentType: 'cost-auditor', schema: WORK_SCHEMA },
+    ),
+  ])
+
+  return { phase: 'chat', fix, evals, impl, widget, adversary, cost,
+    gate: adversary?.verdict === 'PASS' ? 'ADVERSARY_PASS' : 'ADVERSARY_FAIL' }
+}
+
+// ---------------------------------------------------------------------------
+// FASE 6 — billing (trial 14d + entitlements; MP real bloqueado en B3)
+// ---------------------------------------------------------------------------
+async function runBilling(base) {
+  const baseRef = base || 'HEAD'
+  log('FASE 6 - billing. B3 no esta: se codea contra la interface y el driver mock.')
+
+  const test = await agent(
+    LAW + '\n\n' + role('qa-agent') + '\n\n' +
+    'Sos "qa-agent". Test primero, mostrado fallando. Cubri:\n' +
+    '  - trial de 14 dias: dia 13 tiene acceso, dia 15 no. Con "now" INYECTADO, nunca Date.now().\n' +
+    '  - entitlements por plan: base no tiene chatbot ni reservas ni margen; negocio si.\n' +
+    '  - webhook IDEMPOTENTE: el mismo evento dos veces deja el mismo estado. MP reintenta, y un\n' +
+    '    webhook que cobra dos veces se descubre con el cliente enojado, no en CI.\n' +
+    '  - webhook con firma HMAC invalida => rechazado. La firma se verifica DENTRO del route\n' +
+    '    handler: un matcher del proxy que excluye un path tambien saltea sus Server Functions.\n' +
+    '  - vencimiento de pago => se cae a base, la vidriera SIGUE viva. Cortarle la vidriera a quien\n' +
+    '    se atraso un dia es perderlo para siempre.\n\n' +
+    'BILLING_DRIVER=mock. Sin B3 no hay skip: la maquina de estados de la suscripcion es nuestra.',
+    { label: 'billing:test', phase: 'Billing', agentType: 'qa-agent', schema: WORK_SCHEMA },
+  )
+
+  const impl = await agent(
+    LAW + '\n\n' + role('billing-agent') + '\n\n' +
+    'Sos "billing-agent". Corre: cat .claude/agents/billing-agent.md\n' +
+    'Lee la skill .claude/skills/mp-subscriptions/SKILL.md y, ANTES de escribir, el bloque\n' +
+    'LEAD OVERRIDE al tope de docs/research/mp-subscriptions.md.\n\n' +
+    'CRITICO: R4 fallo dos veces y se cerro por la regla 3. Hay CINCO afirmaciones ANULADAS en ese\n' +
+    'archivo. NO las copies al codigo ni a los docs. Sus preguntas abiertas no son contestables\n' +
+    'leyendo: se cierran con los 4 experimentos de sandbox de ADR-008, y eso necesita B3.\n' +
+    'debin_transfer y CVU EXISTEN en el enum de la API. Que existan en el enum no prueba que\n' +
+    'funcionen para suscripciones: NO afirmes nada en positivo sobre ellos hasta B3.\n\n' +
+    'Escribi: maquina de estados de la suscripcion, trial 14d, entitlements por plan, y el webhook\n' +
+    'idempotente con verificacion HMAC. Todo detras de una interface con driver mock, de modo que\n' +
+    'el dia que llegue B3 se enchufe el driver real sin tocar la logica.\n' +
+    'Nunca Stripe. Preferir debito y transferencia: la comision de MP (~USD 1.03/pagador/mes) es\n' +
+    'mas cara que TODA la infra del tenant.\n' +
+    'Dejá en .env.example lo que hace falta de B3 y en notes los 4 experimentos pendientes.',
+    { label: 'billing:impl', phase: 'Billing', agentType: 'billing-agent', schema: WORK_SCHEMA },
+  )
+
+  const adversary = await agent(
+    LAW + '\n\n' + role('adversary-reviewer') + '\n\n' +
+    'Sos "adversary-reviewer". NO escribis. Diff: git --no-pager diff ' + baseRef + '\n' +
+    'Intenta: pagar una vez y quedar habilitado dos; reenviar un webhook viejo; forjar la firma;\n' +
+    'usar el webhook de un tenant para habilitar otro; quedarte con features de negocio despues de\n' +
+    'que expire el trial; leer el secret del webhook desde el bundle del browser.\n' +
+    'Un critical o high => FAIL.',
+    { label: 'billing:adversary', phase: 'Billing', agentType: 'adversary-reviewer', schema: VERDICT_SCHEMA },
+  )
+
+  return { phase: 'billing', test, impl, adversary,
+    gate: adversary?.verdict === 'PASS' ? 'ADVERSARY_PASS' : 'ADVERSARY_FAIL' }
+}
+
+// ---------------------------------------------------------------------------
+// FASE 7 — test matrix completa
+// ---------------------------------------------------------------------------
+async function runTests() {
+  log('FASE 7 - TEST_MATRIX verde, o skip declarado por falta de key. Nunca skip silencioso.')
+  const r = await agent(
+    LAW + '\n\n' + role('qa-agent') + '\n\n' +
+    'Sos "qa-agent", unico writer de tests/** y e2e/**. Lee docs/TEST_MATRIX.md fila por fila.\n\n' +
+    'Para CADA fila: o esta cubierta por un test que existe y corre, o esta skipeada con el motivo\n' +
+    'y el blocker ESCRITOS al lado. Una fila sin ninguna de las dos cosas es la fila que despues\n' +
+    'nadie recuerda que falta.\n\n' +
+    'Minimos: 20 unit de domain, las 8 aserciones de RLS contra Postgres REAL (scripts/pg-local.sh,\n' +
+    'dos claims, dos sesiones), e2e E1..E7 cubriendo S1..S13.\n\n' +
+    'Las tres que no pueden faltar, porque son las que nos hunden:\n' +
+    '  - el seller no recibe cost_usd EN EL PAYLOAD DE RED, no solo en pantalla. Se verifica\n' +
+    '    interceptando la respuesta, no mirando el DOM.\n' +
+    '  - IMEI ausente del HTML renderizado, de los logs y del contexto del chatbot. Los tres.\n' +
+    '  - la vidriera del tenant A no se sirve nunca bajo el host del tenant B.\n\n' +
+    'Mock solo donde no importa la verdad. RLS contra Postgres real, siempre.\n' +
+    'Al final corre todo y reporta el conteo real: pasados, fallados, skipeados y por que.',
+    { label: 'tests:matrix', phase: 'Tests', agentType: 'qa-agent', schema: WORK_SCHEMA },
+  )
+  return { phase: 'tests', result: r }
+}
+
+// ---------------------------------------------------------------------------
+// FASE 8 y 9 — README de operador + retrospectiva
+// ---------------------------------------------------------------------------
+async function runDocs() {
+  log('FASE 8/9 - README de operador y retrospectiva del harness.')
+  const [readme, retro] = await parallel([
+    () => agent(
+      LAW + '\n\n' + role('docs-keeper') + '\n\n' +
+      'Sos "docs-keeper". Escribi el README de OPERADOR: para el que tiene que levantar y sostener\n' +
+      'esto, no para el que lo escribio. Cada comando que pongas, CORRELO antes.\n\n' +
+      'Tiene que cubrir:\n' +
+      '  - variables de entorno, con cual es obligatoria y que se rompe si falta.\n' +
+      '  - Postgres local: scripts/pg-local.sh, migraciones, seed.\n' +
+      '  - wildcard en local con nip.io, para probar {slug}.maat.work sin DNS.\n' +
+      '  - COMO NO APAGAR EL SPEND CAP de Supabase, y que pasa si alguien lo apaga. Va como\n' +
+      '    seccion propia, no como nota al pie: es la unica linea entre un mes normal y una factura\n' +
+      '    que no podemos pagar.\n' +
+      '  - B5: el PROCEDIMIENTO para migrar los nameservers de maat.work a ns1/ns2.vercel-dns.com,\n' +
+      '    documentado paso a paso, con el lead time de 24-48h y la advertencia de PRESERVAR los\n' +
+      '    registros MX y TXT. Documentado, NO ejecutado: mover el DNS lo hace un humano.\n' +
+      '  - los blockers B1..B6 abiertos, que bloquea cada uno y quien lo destraba.\n' +
+      '  - que corre en CI y como reproducirlo local.',
+      { label: 'docs:readme', phase: 'Docs', agentType: 'docs-keeper', schema: WORK_SCHEMA },
+    ),
+    () => agent(
+      LAW + '\n\n' + role('docs-keeper') + '\n\n' +
+      'Sos "docs-keeper". Escribi la retrospectiva del HARNESS en docs/, no del producto.\n' +
+      'Que funciono y que no de: un writer por directorio, el test primero, el adversary como gate,\n' +
+      'la regla de dos fallos, el phantom-file guard, los research con voto adversarial.\n\n' +
+      'Interesa lo que fallo, con el caso concreto. Tres que ya estan documentados en los commits:\n' +
+      '  - un comentario que MENTIA sobre los privilegios de service_role sobrevivio al review y\n' +
+      '    solo lo agarro un test contra Postgres real. El bug era de produccion, no de CI: habria\n' +
+      '    aparecido el dia que se prendia el cron.\n' +
+      '  - runSkeleton contradecia tres ADRs cerradas porque el script se escribio ANTES del\n' +
+      '    research. Un workflow guardado tambien se pudre.\n' +
+      '  - adversary-reviewer diffeaba contra HEAD, que queda vacio despues del commit del LEAD:\n' +
+      '    un gate que reportaba PASS sobre cero lineas auditadas.\n\n' +
+      'Sin autoelogio y sin metricas de vanidad. Que sirva para la proxima.',
+      { label: 'docs:retro', phase: 'Docs', agentType: 'docs-keeper', schema: WORK_SCHEMA },
+    ),
+  ])
+  return { phase: 'docs', readme, retro }
+}
+
+// ---------------------------------------------------------------------------
 // Dispatch
 // ---------------------------------------------------------------------------
 const phase = (args && args.phase) || 'research'
@@ -849,6 +1089,10 @@ else if (phase === 'domain') out = await runDomain()
 else if (phase === 'skeleton') out = await runSkeleton()
 else if (phase === 'slice') out = await runSlice(args && args.slice, args && args.base)
 else if (phase === 'slices') out = await runSlices(args && args.slices, args && args.base)
-else throw new Error(`FASE desconocida: ${phase}. Usá research | research-fix | domain | skeleton | slice | slices`)
+else if (phase === 'chat') out = await runChat(args && args.base)
+else if (phase === 'billing') out = await runBilling(args && args.base)
+else if (phase === 'tests') out = await runTests()
+else if (phase === 'docs') out = await runDocs()
+else throw new Error(`FASE desconocida: ${phase}. Usá research | research-fix | domain | skeleton | slice | slices | chat | billing | tests | docs`)
 
 return out
