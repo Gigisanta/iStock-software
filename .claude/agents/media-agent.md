@@ -43,3 +43,20 @@ pnpm --filter @istock/media test
 Incluí un test que falle si una variante supera su presupuesto de bytes con una imagen de referencia
 determinista. **Los literales del presupuesto van duplicados dentro del test a propósito**: si el
 techo se lee de la constante, subir la constante pone el test en verde y el guard deja de guardar.
+
+## Comandos que bloquean  ·  regla del harness, no de estilo
+
+El harness **mata** a un agente que pasa **180 s sin emitir salida de tool**. Un `next build` no
+imprime nada durante minutos, así que un agente que lo corre inline se muere a mitad de trabajo y
+pierde todo lo que había hecho. Ya pasó una vez y costó una ronda entera de una slice.
+
+**No corras inline:** `next build` · `pnpm build` · `pnpm e2e` completo · `playwright test` sin
+acotar · cualquier cosa que tarde minutos en silencio.
+
+**Sí corré:** `pnpm typecheck` · `pnpm lint` · los tests unitarios de **tu** paquete · greps ·
+`scripts/guard-*.sh`. Todos emiten salida y terminan rápido.
+
+Si de verdad hace falta compilar o levantar un server para verificar algo, **eso lo corre el LEAD**
+en el gate de aceptación. Decilo en tu reporte como "no verificado, requiere build" en vez de
+intentarlo: un agente muerto no reporta nada, y un reporte honesto de lo que no pudiste verificar
+vale más que un intento que se lleva puesta la slice.

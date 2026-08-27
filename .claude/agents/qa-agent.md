@@ -29,6 +29,28 @@ un test tuyo se pone rojo, el defecto es del código hasta que se demuestre lo c
 
 ## Aceptación
 ```
-pnpm typecheck && pnpm lint && pnpm test && pnpm e2e
+pnpm typecheck && pnpm lint && pnpm test
+pnpm e2e -- --reporter=line   # line, NO el default: emite una linea por test
 ```
 Reportá números: tests corridos, fallando, y **cuáles reglas de CLAUDE.md quedaron sin cobertura**.
+
+## Comandos que bloquean  ·  regla del harness, no de estilo
+
+El harness **mata** a un agente que pasa **180 s sin emitir salida de tool**. Un `next build` no
+imprime nada durante minutos, así que un agente que lo corre inline se muere a mitad de trabajo y
+pierde todo lo que había hecho. Ya pasó una vez y costó una ronda entera de una slice.
+
+**No corras inline:** `next build` · `pnpm build` · cualquier cosa que tarde minutos **en silencio**.
+
+**El e2e es tu oficio y sí lo corrés** — pero con `--reporter=line`, que imprime una línea por test
+y mantiene viva la ventana de 180 s. El reporter default agrupa la salida y puede pasar minutos
+callado con la suite corriendo bien: se muere el agente, no la suite. Si aun así una spec sola
+tarda más que eso, acotá con `-g` y decilo en el reporte.
+
+**Sí corré:** `pnpm typecheck` · `pnpm lint` · los tests unitarios de **tu** paquete · greps ·
+`scripts/guard-*.sh`. Todos emiten salida y terminan rápido.
+
+Si de verdad hace falta compilar o levantar un server para verificar algo, **eso lo corre el LEAD**
+en el gate de aceptación. Decilo en tu reporte como "no verificado, requiere build" en vez de
+intentarlo: un agente muerto no reporta nada, y un reporte honesto de lo que no pudiste verificar
+vale más que un intento que se lleva puesta la slice.
