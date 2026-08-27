@@ -605,7 +605,7 @@ Lee ANTES de escribir una linea: docs/research/wildcard-isr.md, docs/ARCHITECTUR
 Eso ya esta CERRADO. No lo re-decidas.
 
 El archivo es apps/web/proxy.ts con  export function proxy(request: NextRequest).
-Next 16 deprecio middleware.ts. El runtime es Node.js y NO se configura: poner `runtime` tira error.
+Next 16 deprecio middleware.ts. El runtime es Node.js y NO se configura: poner runtime tira error.
 
   maat.work / www        -> passthrough (marketing)
   {slug}.maat.work       -> rewrite a /s/{slug}/...
@@ -666,7 +666,7 @@ EL ESQUEMA DE KEYS ES LEY Y ES CONTRAINTUITIVO. Leelo dos veces:
     objeto. Por lo tanto borrar un listing NUNCA borra el objeto de R2 por key: se borra la fila
     del mapeo. Borrar por key es un borrado cruzado entre tenants. Por eso la funcion se llama
     unlink y no delete.
-  - Cache-Control se setea con el parametro `CacheControl` de @aws-sdk/client-s3, NO con
+  - Cache-Control se setea con el parametro CacheControl de @aws-sdk/client-s3, NO con
     httpMetadata.cacheControl: eso es el binding de Workers y no existe en el runtime Node de
     Vercel. Hacerlo mal deja los objetos sin Cache-Control y con edge TTL default de 120 min.
 
@@ -686,86 +686,154 @@ los techos de bytes se testean SIN credenciales: hacelo, no lo dejes para despue
 // ---------------------------------------------------------------------------
 // FASE 4 - una slice: test -> impl -> adversary -> costo.
 // ---------------------------------------------------------------------------
-async function runSlice(sliceId) {
-  if (!sliceId) throw new Error('runSlice necesita args.slice, ej "S2"')
-  log(`FASE 4 - slice ${sliceId}: test primero, un writer, adversary y costo como gate.`)
+// Owner de cada slice, tomado de la tabla de FASE 4 de docs/SLICE_BOARD.md.
+// Existe para que el agente de implementacion arranque CON el system prompt de su oficio y con
+// sus tools recortadas, en vez de que un agente generico adivine quien es leyendo una tabla.
+// Adivinar el owner es adivinar el permiso de escritura: la regla 1 se queda sin enforcement.
+// Las slices con dos owners corren en ORDEN, nunca a la vez: la flecha del board es la secuencia.
+const SLICE_OWNERS = {
+  S1: ['storefront-agent'],
+  S2: ['media-agent', 'app-agent'],
+  S3: ['storefront-agent'],
+  S4: ['domain-agent', 'storefront-agent'],
+  S5: ['domain-agent', 'app-agent'],
+  S6: ['app-agent'],
+  S7: ['app-agent'],
+  S8: ['app-agent'],
+  S9: ['app-agent'],
+  S10: ['app-agent'],
+  S11: ['app-agent'],
+  S12: ['app-agent'],
+  S13: ['storefront-agent'],
+}
 
-  const spec = `Slice ${sliceId} de docs/SLICE_BOARD.md. Leé la fila de la slice y su gate de aceptación.`
+async function runSlice(sliceId, base) {
+  if (!sliceId) throw new Error('runSlice necesita args.slice, ej "S2"')
+  const owners = SLICE_OWNERS[sliceId]
+  if (!owners) throw new Error('Slice desconocida: ' + sliceId + '. Owners definidos: ' + Object.keys(SLICE_OWNERS).join(' '))
+
+  // El LEAD commitea entre slices. Si el adversary mira "git diff HEAD" despues de ese commit ve
+  // CERO lineas, no encuentra nada y reporta PASS: un gate que se apaga solo justo cuando el
+  // trabajo esta completo. Por eso el diff va contra el SHA anterior a la slice, que pasa el LEAD.
+  const baseRef = base || 'HEAD'
+  const diffCmd = 'git --no-pager diff ' + baseRef + ' && git --no-pager diff --stat ' + baseRef
+
+  log('FASE 4 - slice ' + sliceId + ': owners=' + owners.join(' -> ') + ', diff contra ' + baseRef)
+
+  const spec = 'Slice ' + sliceId + ' de docs/SLICE_BOARD.md (FASE 4). Lee la fila de la slice y su gate de aceptacion, que es literal: es el comando que el LEAD va a re-ejecutar.'
 
   const test = await agent(
-    `${LAW}
-
-${role('qa-agent')}
-
-Sos "qa-agent". ${spec}
-Escribi el test ANTES de la implementacion y CORRELO para mostrar que falla.
-Un test que nunca fallo no prueba nada. Reporta la salida real del test fallando.
-Prohibido expect(true).toBe(true) y tests que pasan con la implementacion vacia.`,
-    { label: `slice:${sliceId}:test`, phase: 'Slice', agentType: 'qa-agent', schema: WORK_SCHEMA },
+    LAW + '\n\n' + role('qa-agent') + '\n\n' +
+    'Sos "qa-agent". ' + spec + '\n' +
+    'Escribi el test ANTES de la implementacion y CORRELO para mostrar que falla.\n' +
+    'Un test que nunca fallo no prueba nada. Reporta la salida real del test fallando.\n' +
+    'Prohibido expect(true).toBe(true) y tests que pasan con la implementacion vacia.\n' +
+    'Prohibido skipear por falta de un secret: si falta, el driver mock o local ya existe\n' +
+    '(MEDIA_DRIVER=local, BILLING_DRIVER=mock, scripts/pg-local.sh). Usalo y testea de verdad.\n' +
+    'El gate del board manda: si dice "cero campos prohibidos en el HTML", el test lee el HTML\n' +
+    'renderizado y busca los campos, no confia en que el DTO este bien.',
+    { label: 'slice:' + sliceId + ':test', phase: 'Slice', agentType: 'qa-agent', schema: WORK_SCHEMA },
   )
 
-  const impl = await agent(
-    `${LAW}
-
-Tu oficio depende del directorio de la slice: mirá la tabla de ownership de CLAUDE.md seccion 4,
-identificá cual de los agentes de .claude/agents/ sos, y leé ese archivo con cat antes de escribir.
-
-${spec}
-Sos el agente owner del directorio de esta slice segun la tabla de ownership de CLAUDE.md seccion 4.
-Identificá cual sos leyendo el board y la tabla, y escribí SOLO en tu directorio.
-Si la slice cruza dos directorios, hacé la parte que te corresponde y reporta la otra como pendiente:
-NO escribas fuera de tu columna.
-
-Tests que tenes que hacer pasar (ya escritos, no los modifiques): ${JSON.stringify(test?.files ?? [])}
-
-Al terminar corré: pnpm typecheck && pnpm lint && pnpm test
-y reporta la salida real, no lo que esperabas que pasara.`,
-    { label: `slice:${sliceId}:impl`, phase: 'Slice', schema: WORK_SCHEMA },
-  )
+  const impls = []
+  for (const owner of owners) {
+    const previo = impls.length
+      ? '\nParte ya hecha por ' + owners[impls.length - 1] + ': ' + JSON.stringify(impls[impls.length - 1]?.files ?? []) + '\nConstrui sobre eso; NO lo reescribas.'
+      : ''
+    const r = await agent(
+      LAW + '\n\n' + role(owner) + '\n\n' +
+      'Sos "' + owner + '", el owner del directorio de esta slice segun CLAUDE.md seccion 4.\n' +
+      'Corre primero: cat .claude/agents/' + owner + '.md\n\n' + spec + previo + '\n\n' +
+      'Escribi SOLO en tu directorio. Si la slice cruza otro directorio, haces tu parte y reportas\n' +
+      'la otra como pendiente en notes. Escribir fuera de tu columna es fallo de slice, no iniciativa.\n\n' +
+      'Tests ya escritos por qa-agent, que tenes que hacer pasar y NO podes tocar: ' +
+      JSON.stringify(test?.files ?? []) + '\n' +
+      'Si un test te parece mal, decilo en notes y pará. Editarlo para que pase es el unico modo\n' +
+      'de romper esto sin que se note.\n\n' +
+      'Al terminar corre, en este orden, y reporta la salida REAL de cada uno:\n' +
+      '  pnpm typecheck && pnpm lint && pnpm test && ./scripts/guard-leaks.sh\n' +
+      'guard-leaks chequea las prohibiciones de CLAUDE.md seccion 2. Si tira LEAK, arreglalo:\n' +
+      'no es un falso positivo tuyo hasta que muestres por que.',
+      { label: 'slice:' + sliceId + ':impl:' + owner, phase: 'Slice', agentType: owner, schema: WORK_SCHEMA },
+    )
+    impls.push(r)
+  }
 
   const [adversary, cost] = await parallel([
     () =>
       agent(
-        `${LAW}
-
-${role('adversary-reviewer')}
-
-Sos "adversary-reviewer". NO escribis archivos. Auditá la slice ${sliceId}.
-Mirá el diff: git --no-pager diff HEAD
-Checklist completo de .claude/agents/adversary-reviewer.md: tenant leak, IDOR, PII en payload
-(imei/cost_usd/internal_notes en HTML, __NEXT_DATA__, props de RSC, respuestas de API),
-RLS ausente o permisiva, input sin Zod, secretos en el cliente, prompt injection, estado
-inconsistente, costo escondido, cache leak entre tenants.
-Un critical o high => FAIL. Sin evidencia concreta no hay finding.`,
-        { label: `slice:${sliceId}:adversary`, phase: 'Slice', agentType: 'adversary-reviewer', schema: VERDICT_SCHEMA },
+        LAW + '\n\n' + role('adversary-reviewer') + '\n\n' +
+        'Sos "adversary-reviewer". NO escribis archivos. Audita la slice ' + sliceId + '.\n' +
+        'Mira el diff con: ' + diffCmd + '\n' +
+        'Si ese diff sale vacio, NO reportes PASS: reporta que no hay diff que auditar y por que.\n\n' +
+        'Checklist completo de .claude/agents/adversary-reviewer.md: tenant leak, IDOR, PII en\n' +
+        'payload (imei/cost_usd/internal_notes en HTML, __NEXT_DATA__, props de RSC, respuestas de\n' +
+        'API), RLS ausente o permisiva, input sin Zod, secretos en el cliente, prompt injection,\n' +
+        'estado inconsistente, costo escondido, cache leak entre tenants.\n\n' +
+        'Cuatro cosas de este proyecto que un checklist generico no mira:\n' +
+        '  1. El slug viaja en el PATH, nunca en un header: el key de "use cache" no incluye el\n' +
+        '     host, asi que dos subdominios comparten entrada. Eso es fuga de tenant, no ineficiencia.\n' +
+        '  2. Todo cacheTag lleva el slug adentro: los tags son por proyecto+environment, no por\n' +
+        '     dominio, y un tag sin slug purga a todos los tenants.\n' +
+        '  3. proxy.ts no consulta nada ni cachea nada en memoria, y no configura runtime.\n' +
+        '  4. Borrar un listing NO borra el objeto de R2 por key: la key es content-addressed y dos\n' +
+        '     tenants pueden compartir el byte. Se desvincula el mapeo.\n\n' +
+        'Corre tambien ./scripts/guard-leaks.sh y reporta lo que diga.\n' +
+        'Un critical o high => FAIL. Sin evidencia concreta (archivo:linea, o comando y salida) no\n' +
+        'hay finding: un finding sin evidencia le hace perder mas tiempo al equipo que el bug.',
+        { label: 'slice:' + sliceId + ':adversary', phase: 'Slice', agentType: 'adversary-reviewer', schema: VERDICT_SCHEMA },
       ),
     () =>
       agent(
-        `${LAW}
-
-${role('cost-auditor')}
-
-Sos "cost-auditor". Auditá la slice ${sliceId} contra el objetivo de < USD 0.50/mes por tenant activo.
-Mirá el diff: git --no-pager diff HEAD
-Pregunta unica: esto agrega costo tonto?
-Fallos automaticos: fotos por Supabase Storage o Vercel Image Optimization, original >500KB al
-browser, LLM por pageview o modelo frontier, realtime anonimo, vidriera pegandole a Postgres en
-cada hit, worker 24/7 en vez de cron, spend cap apagado.
-Devolve DELTA_POR_TENANT_MES con la aritmetica a la vista y la metrica a vigilar.
-Actualizá docs/COST.md si el delta es distinto de cero. FAIL bloquea el merge.`,
-        { label: `slice:${sliceId}:cost`, phase: 'Slice', agentType: 'cost-auditor', schema: WORK_SCHEMA },
+        LAW + '\n\n' + role('cost-auditor') + '\n\n' +
+        'Sos "cost-auditor". Audita la slice ' + sliceId + ' contra < USD 0.50/mes por tenant activo\n' +
+        '(plan Base) y < USD 1.50 (Negocio), hasta 100 clientes.\n' +
+        'Mira el diff con: ' + diffCmd + '\n' +
+        'Pregunta unica: esto agrega costo tonto?\n\n' +
+        'Fallos automaticos: fotos por Supabase Storage o Vercel Image Optimization, original\n' +
+        '>500KB al browser, LLM por pageview o modelo frontier, realtime anonimo, vidriera\n' +
+        'pegandole a Postgres en cada hit, worker 24/7 en vez de cron, spend cap apagado.\n\n' +
+        'Dos numeros medidos que ya estan en docs/COST.md y son el patron de comparacion:\n' +
+        '  - cacheLife "max" + invalidacion por evento = USD 0.012/tenant/mes en ISR Writes.\n' +
+        '  - revalidate: 60 = USD 2.59/tenant/mes. 216 veces mas caro por un default.\n' +
+        '  - El proxy corre ANTES del cache: se factura en el 100% de los pageviews, tambien en HIT.\n' +
+        '    Ahi duelen las Edge Requests alrededor de los 80 tenants.\n\n' +
+        'Devolve DELTA_POR_TENANT_MES con la aritmetica a la vista y la metrica a vigilar.\n' +
+        'Actualiza docs/COST.md si el delta es distinto de cero. Marca [EST] lo que estimaste.\n' +
+        'FAIL bloquea el merge.',
+        { label: 'slice:' + sliceId + ':cost', phase: 'Slice', agentType: 'cost-auditor', schema: WORK_SCHEMA },
       ),
   ])
 
   return {
     phase: 'slice',
     slice: sliceId,
+    owners,
+    base: baseRef,
     test,
-    impl,
+    impls,
     adversary,
     cost,
     gate: adversary?.verdict === 'PASS' ? 'ADVERSARY_PASS' : 'ADVERSARY_FAIL',
   }
+}
+
+// Varias slices en una sola invocacion, en el orden del board y SIEMPRE serial: dos slices en
+// paralelo que comparten owner violan "un writer por directorio a la vez". Se corta en el primer
+// ADVERSARY_FAIL en vez de seguir apilando trabajo sobre una base que ya sabemos rota.
+async function runSlices(ids, base) {
+  const list = Array.isArray(ids) ? ids : String(ids || '').split(/[\s,]+/).filter(Boolean)
+  if (!list.length) throw new Error('runSlices necesita args.slices, ej ["S1","S3"]')
+  const done = []
+  for (const id of list) {
+    const r = await runSlice(id, base)
+    done.push(r)
+    if (r.gate !== 'ADVERSARY_PASS') {
+      log('STOP en ' + id + ': adversary FAIL. No sigo con ' + list.slice(list.indexOf(id) + 1).join(' '))
+      break
+    }
+  }
+  return { phase: 'slices', ran: done.map((d) => d.slice), results: done }
 }
 
 // ---------------------------------------------------------------------------
@@ -779,7 +847,8 @@ if (phase === 'research') out = await runResearch()
 else if (phase === 'research-fix') out = await runResearchFix(args && args.items)
 else if (phase === 'domain') out = await runDomain()
 else if (phase === 'skeleton') out = await runSkeleton()
-else if (phase === 'slice') out = await runSlice(args && args.slice)
-else throw new Error(`FASE desconocida: ${phase}. Usá research | research-fix | domain | skeleton | slice`)
+else if (phase === 'slice') out = await runSlice(args && args.slice, args && args.base)
+else if (phase === 'slices') out = await runSlices(args && args.slices, args && args.base)
+else throw new Error(`FASE desconocida: ${phase}. Usá research | research-fix | domain | skeleton | slice | slices`)
 
 return out
