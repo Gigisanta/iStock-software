@@ -1,0 +1,31 @@
+{
+  "name": "@istock/web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "next lint",
+    "test": "vitest run --passWithNoTests",
+    "e2e": "playwright test"
+  },
+  "dependencies": {
+    "@istock/db": "workspace:*",
+    "@istock/domain": "workspace:*",
+    "next": "16.3.3",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "zod": "^4.1.13"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.1.16",
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.4",
+    "tailwindcss": "^4.1.16",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  }
+}

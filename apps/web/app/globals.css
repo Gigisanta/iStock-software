@@ -1,0 +1,28 @@
+@import "tailwindcss";
+
+/*
+ * Mobile-first, sin excepcion (CLAUDE.md §0.11). El panel se usa parado en un local, con una
+ * mano y con el telefono. Cualquier breakpoint de escritorio es una mejora, no la base.
+ */
+@theme {
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+:root {
+  color-scheme: light dark;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  @apply bg-white text-neutral-900 antialiased dark:bg-neutral-950 dark:text-neutral-100;
+}
+
+/* Objetivo del touch target en el panel: el dedo de alguien que atiende y carga a la vez. */
+@media (pointer: coarse) {
+  button, a[role="button"], input, select {
+    min-height: 44px;
+  }
+}

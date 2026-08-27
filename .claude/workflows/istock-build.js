@@ -569,14 +569,25 @@ async function runSkeleton() {
 ${role('app-agent')}
 
 Sos "app-agent". Escribis SOLO en apps/web/app/(marketing), apps/web/app/(app) y apps/web/app/api.
-NO toques middleware.ts ni apps/web/app/(storefront): son de storefront-agent.
+NO toques proxy.ts ni apps/web/app/(storefront): son de storefront-agent.
+NO toques apps/web/package.json, next.config.ts, tsconfig.json, app/layout.tsx ni app/globals.css:
+los escribio el LEAD porque son compartidos por los tres owners. Si necesitas una dependencia
+nueva, la pedis en BLOCKERS; no edites ese package.json.
 
 Entrega:
   - marketing honesta en / : que hace iStock, para quien, precio. Cero promesa que el producto no cumple.
   - auth con Supabase + creacion de tenant con slug (validado con Zod: url-safe, unico, reservados bloqueados)
   - layout del panel /app mobile-first (se usa parado en un local, con una mano)
 RSC por default. Zod en todo borde. Copy en espanol rioplatense, codigo en ingles.
-Cero features de slices S1-S13 todavia: esto es esqueleto navegable, no producto.`,
+Cero features de slices S1-S13 todavia: esto es esqueleto navegable, no producto.
+
+Dos reglas que NO son negociables y que el LEAD verifica:
+  - La autorizacion se chequea DENTRO de cada Server Function / Route Handler. El proxy no es
+    control de acceso: un matcher que excluye un path tambien saltea las Server Functions de ese
+    path (ARCHITECTURE.md, cerrado en ADR-007).
+  - tenant_id va en app_metadata del JWT, NUNCA en user_metadata: el usuario puede escribir
+    user_metadata y eso es escalacion de tenant (lint 0015, severidad ERROR).
+Sin credenciales de Supabase (B2), cablea contra la interface y deja el flujo testeable; no pares.`,
         { label: 'skeleton:panel', phase: 'Skeleton', agentType: 'app-agent', schema: WORK_SCHEMA },
       ),
     () =>
@@ -585,17 +596,42 @@ Cero features de slices S1-S13 todavia: esto es esqueleto navegable, no producto
 
 ${role('storefront-agent')}
 
-Sos "storefront-agent". Escribis SOLO en apps/web/app/(storefront) y middleware.ts.
-NO toques el panel ni las API del panel.
+Sos "storefront-agent". Escribis SOLO en apps/web/app/(storefront) y apps/web/proxy.ts.
+NO toques el panel ni las API del panel. NO toques los archivos compartidos de apps/web
+(package.json, next.config.ts, tsconfig.json, app/layout.tsx, app/globals.css): son del LEAD.
 
-Lee docs/research/wildcard-isr.md antes de escribir una linea: define el mecanismo vigente.
+Lee ANTES de escribir una linea: docs/research/wildcard-isr.md, docs/ARCHITECTURE.md
+(secciones "Resolucion host -> tenant" y "Cache e invalidacion") y docs/DECISIONS.md ADR-007.
+Eso ya esta CERRADO. No lo re-decidas.
 
-Entrega el middleware de resolucion de host:
-  maat.work / www        -> marketing
-  {slug}.maat.work       -> storefront del tenant
-  localhost / nip.io     -> dev
-Sin consultar Postgres por request: cache de slug -> tenantId.
-Slug inexistente -> 404 real, no redirect al home.
+El archivo es apps/web/proxy.ts con  export function proxy(request: NextRequest).
+Next 16 deprecio middleware.ts. El runtime es Node.js y NO se configura: poner `runtime` tira error.
+
+  maat.work / www        -> passthrough (marketing)
+  {slug}.maat.work       -> rewrite a /s/{slug}/...
+  *.localhost / *.nip.io -> idem, para dev
+
+TRES COSAS QUE SON LEY Y QUE EL LEAD VERIFICA UNA POR UNA:
+  1. El proxy NO consulta Postgres y NO cachea en memoria. NO hay Map de slug -> tenantId.
+     Corre fuera del runtime de la app y la doc oficial dice explicito que no dependas de modulos
+     ni globals compartidos: un Map a nivel de modulo ahi NO es un cache. Parsea el host, valida
+     el slug con un regex, reescribe. Nada mas. Presupuesto: < 2 ms de CPU, 0 llamadas de red.
+     Se factura en el 100% de los pageviews, incluso en HIT de cache.
+  2. El slug viaja como SEGMENTO DE PATH, jamas como header. Dos motivos, los dos graves:
+     headers() dentro de 'use cache' vuelve la ruta dinamica y mata el ISR; y el cache key de
+     'use cache' NO incluye el host, asi que dos subdominios que rendericen el mismo path con
+     los mismos argumentos COMPARTEN ENTRADA. Eso es una fuga entre tenants, no una ineficiencia.
+  3. Todo cacheTag lleva el slug adentro (storefront:{slug}), porque los tags estan scopeados a
+     proyecto + environment, NO a dominio: un tag sin slug purga a todos los tenants a la vez.
+
+cacheLife de la vidriera: 'max' + invalidacion por evento. PROHIBIDO revalidate: 60 como default:
+son USD 2.59/tenant/mes contra USD 0.012, o sea 216x, y solo eso ya revienta el objetivo de 0.50.
+
+Slug inexistente -> 404 REAL y cacheable, no redirect al home. Y dejalo escrito en el codigo:
+ese 404 se cachea, asi que el alta de un tenant TIENE que invalidar el tag de su propio slug o la
+vidriera nace muerta.
+
+Cero set-cookie en (storefront): uno solo apaga el cache del CDN entero.
 Mas una pagina placeholder de storefront que muestre el tenant resuelto. Nada de producto todavia.`,
         { label: 'skeleton:storefront', phase: 'Skeleton', agentType: 'storefront-agent', schema: WORK_SCHEMA },
       ),
@@ -610,12 +646,36 @@ Sos "media-agent". Escribis SOLO en packages/media.
 Lee docs/research/r2-images.md antes de decidir el pipeline: define resize propio vs transform.
 Lee .claude/skills/r2-media/SKILL.md.
 
-Entrega el probe de R2: cliente, upload server-side, resize con sharp a thumb/card/detail,
-keys deterministas t/{tenantId}/l/{listingId}/{variant}/{hash}.webp, y la API publica
-uploadListingPhoto / variantUrl / deleteListingPhotos.
-Test con imagen de referencia que FALLA si una variante supera su techo de bytes.
-Si faltan credenciales de R2, dejalo funcionando contra un doble local del storage y reportalo
-en blockers. El pipeline de resize se puede testear sin credenciales: hacelo.`,
+Lee tambien docs/ARCHITECTURE.md seccion "Camino de una foto" y docs/DECISIONS.md ADR-006.
+Eso esta CERRADO: no re-decidas el esquema de keys ni la cantidad de buckets.
+
+Entrega el pipeline: cliente R2, upload server-side, resize propio con sharp a
+thumb 200 / card 800 / detail 1600 px en WebP, y la API publica
+uploadListingPhoto / variantUrl / unlinkListingPhotos.
+
+EL ESQUEMA DE KEYS ES LEY Y ES CONTRAINTUITIVO. Leelo dos veces:
+  - DOS buckets, no uno. istock-originals es PRIVADO (el master, alcanzable solo por S3 API
+    server-side, sin public access y sin custom domain). istock-media es publico y SOLO tiene
+    variantes.
+  - La key publica es OPACA:  v1/{ab}/{sha256_32}.webp  donde el hash es del byte output DE ESA
+    VARIANTE. Sin tenant_id, sin listing_id, sin sufijo de variante.
+    Una key que contenga tenant_id o listing_id, o desde la que se pueda DERIVAR la key del
+    master, es causa de rechazo automatico (CLAUDE.md §2). El mapeo listing -> keys vive en
+    Postgres con tenant_id + RLS, no en la URL.
+  - TRAMPA de la key content-addressed: dos tenants que suban la MISMA foto comparten el mismo
+    objeto. Por lo tanto borrar un listing NUNCA borra el objeto de R2 por key: se borra la fila
+    del mapeo. Borrar por key es un borrado cruzado entre tenants. Por eso la funcion se llama
+    unlink y no delete.
+  - Cache-Control se setea con el parametro `CacheControl` de @aws-sdk/client-s3, NO con
+    httpMetadata.cacheControl: eso es el binding de Workers y no existe en el runtime Node de
+    Vercel. Hacerlo mal deja los objetos sin Cache-Control y con edge TTL default de 120 min.
+
+Techos que el test tiene que hacer FALLAR si se superan, con una imagen de referencia real
+(generala vos con sharp, deterministica): card <= 150KB es requisito de aceptacion de S2.
+
+Sin credenciales de R2 (B1), implementa la interface StorageDriver con un driver local en disco
+y dejalo como default via MEDIA_DRIVER=local (ya esta en .env.example). El pipeline de resize y
+los techos de bytes se testean SIN credenciales: hacelo, no lo dejes para despues.`,
         { label: 'skeleton:media', phase: 'Skeleton', agentType: 'media-agent', schema: WORK_SCHEMA },
       ),
   ])
