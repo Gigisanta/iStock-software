@@ -47,8 +47,14 @@ Request Host                          proxy.ts (Node.js, O(1), 0 I/O)
   vuelve la ruta dinámica y mata el ISR; y el key de `'use cache'` **no incluye el host**, así que
   sin el slug en los argumentos dos tenants comparten entrada de cache. Ver ADR-007 §4.
 - El slug se resuelve a tenant **dentro de la página cacheada**: 1 query en el miss, 0 en el hit.
-- Slug inexistente → **404 real** y cacheable. Corolario operativo: **el alta de un tenant tiene
-  que invalidar el tag de su propio slug**, o el 404 negativo queda cacheado y la vidriera nace
+- Slug inexistente → **página legible con `noindex, nofollow` y status 200**, cacheada con perfil
+  corto (**ADR-011**). El 404 duro en la primera request es inalcanzable bajo `cacheComponents`:
+  el status se decide antes de que resuelva el lookup del slug, y la única salida que sugiere Next
+  —chequear en el proxy— cuesta una query a Postgres por pageview. **Deuda declarada de ADR-011:
+  el miss deja de ser distinguible por status code en los logs de acceso.** Lo que se chequea en su
+  lugar (`scripts/accept-s1.sh` A3/A4): `<h1` literal, `noindex`, título propio, cero markup de
+  vidriera, req2 en `HIT`. Corolario operativo **intacto**: **el alta de un tenant tiene que
+  invalidar el tag de su propio slug**, o la respuesta negativa queda cacheada y la vidriera nace
   muerta.
 - El proxy corre **antes** del cache → se factura en el 100% de los pageviews, incluso en HIT.
   Presupuesto: **< 2 ms de CPU, 0 red**. Es un assert de `cost-auditor`.

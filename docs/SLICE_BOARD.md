@@ -74,7 +74,7 @@ Entidades: `tenants` `users` `memberships(owner\|seller)` `locations` `catalog_m
 
 | id | slice | estado | owner | gate de aceptación |
 |---|---|---|---|---|
-| S1 | host → hello storefront | todo | `storefront-agent` | `{slug}.local` resuelve al tenant; slug inexistente → 404 real |
+| S1 | host → hello storefront | doing | `storefront-agent` | `{slug}.local` resuelve al tenant; slug inexistente → página legible con `noindex` (**ADR-011**, el gate viejo "404 real en la primera request" era inalcanzable); se verifica con `bash scripts/accept-s1.sh` |
 | S2 | listing unit + fotos R2 con variantes | todo | `media-agent` → `app-agent` | 3 variantes generadas; `card` ≤150KB medido |
 | S3 | grilla + ficha mínima | todo | `storefront-agent` | los 15 campos de la skill `storefront-ficha`; cero campos prohibidos en el HTML |
 | S4 | botón `wa.me` + tracking de eventos | todo | `domain-agent` → `storefront-agent` | texto exacto byte a byte; evento registrado sin PII |

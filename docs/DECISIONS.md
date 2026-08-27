@@ -137,8 +137,11 @@ Capa 1 (rate limit de 100 altas/hora/team y trabajo manual por cliente) · Globa
 1. `curl -I` sobre `a.maat.work` y `b.maat.work` → `x-vercel-cache: HIT` y **contenido distinto**.
 2. Mutar el tenant A desde `maat.work/app` → sólo cambia `a.maat.work`; `b.maat.work` sigue en HIT.
 3. Grep de `set-cookie` en toda respuesta de `(storefront)`: debe dar cero.
-4. Un slug inexistente da **404 real** y cacheable; darlo de alta después **invalida su propio tag**
-   (si no, el 404 negativo queda cacheado y la vidriera nace muerta).
+4. ~~Un slug inexistente da **404 real** y cacheable~~ → **superado por ADR-011**: el status 404 en
+   la primera request es inalcanzable bajo `cacheComponents` y el miss se sirve como página legible
+   con `noindex, nofollow`. La segunda mitad **sigue vigente**: la respuesta negativa se cachea, así
+   que dar de alta el slug después **invalida su propio tag** (si no, el negativo queda cacheado y
+   la vidriera nace muerta).
 
 ### Riesgo abierto que hereda esta ADR
 R1 marca **confianza media** en la granularidad de invalidación: dos docs oficiales de Vercel se
@@ -281,3 +284,157 @@ cumplimiento. **Prohibido el copy "cumplís con el Decreto 295/26".**
 
 **Blocker que no es de ingeniería:** en los ToS, el reseller es responsable de la base de datos
 personales y MaatWork es encargado del tratamiento. Necesita redacción legal → marketing/legal.
+
+---
+
+## ADR-011 — El slug inexistente se sirve como página legible con `noindex`, no como 404 duro
+- **Estado:** aceptada · **Fecha:** 2026-08-27 · **Autor:** LEAD (FASE 4, S1)
+- **Insumo:** medición directa del LEAD con `curl`, tres variantes sobre el **mismo build**
+  (`next@16.3.3`, `cacheComponents: true`), slug que no corresponde a ningún tenant.
+- **Supersede el corolario 4 de la verificación de ADR-007** (*"un slug inexistente da 404 real y
+  cacheable"*). **No supersede ADR-007**: las cinco piezas de esa ADR siguen vigentes.
+
+### Contexto — lo que se midió
+
+| variante | req1 status | req2+ status | body visible (HTML sin `<script>`) | `h1` | robots | `<title>` |
+|---|---|---|---|---|---|---|
+| **A** `notFound()` en `s/[slug]/page.tsx` | 200 | 404 | **0 bytes** | 0 | noindex | `iStock` (hereda del layout raíz) / en req2+ ninguno |
+| **C** `notFound()` con el boundary movido a `(storefront)/not-found.tsx` | 200 | 404 | **0 bytes** | 0 | noindex | igual que A |
+| **B** el contenido de not-found renderizado como página normal | 200 | 200 | **797 bytes** | 1 | **noindex, nofollow** | propio y correcto |
+
+Hechos, todos verificados y ninguno inferido:
+
+1. **Ninguna** de las tres variantes da 404 en la primera request.
+2. La causa no es del código de este repo: bajo PPR el status se decide **antes** de que resuelva el
+   lookup del slug. Lo dice la doc que Next envía en su propio paquete,
+   `node_modules/next/dist/docs/01-app/03-api-reference/03-file-conventions/loading.md:103-113`:
+   > *"When streaming, a `200` status code will be returned... the status code of the response
+   > cannot be updated... ensure the resource exists before the response body is streamed. You can
+   > run this check in `proxy`..."*
+3. La posición de `not-found.tsx` en el árbol **no cambia nada**: C es idéntica a A.
+4. `notFound()` bajo `cacheComponents` renderiza **cero DOM visible incluso en el caso
+   completamente prerenderizado** — el seed guarda `"status": 404` y su body menos `<script>` son
+   0 bytes. No es un artefacto de streaming.
+5. `16.3.3` es el último estable: no hay upgrade que disuelva esto.
+6. Es **status XOR body**: ninguna variante da las dos cosas.
+
+### Alternativa descartada: el chequeo en el proxy (la salida que sugiere Next)
+**Rechazada por costo, no por gusto.** El proxy corre **antes** del cache y se factura en el 100%
+de los pageviews, incluso en HIT: una query ahí es una query a Postgres **por pageview**.
+Contradice ADR-007 §3 y el objetivo de *"95% de los hits no tocan Postgres"* de `CLAUDE.md` §3.
+
+### Decisión
+**Se adopta la variante B.** El propósito del gate —que un slug muerto no se confunda con una
+vidriera y no se indexe— se cumple con `noindex, nofollow` + DOM legible. La variante A cumplía la
+**letra** (el status 404) mientras le mostraba una **página en blanco** al 100% de las personas, en
+la primera request y en la centésima.
+
+### Por qué el XOR es estructural y no se esquiva reordenando el código
+El mismo archivo, `loading.md:118`, explica **cuándo** empieza a streamearse el body y da la receta
+para conservar el status:
+
+> *"The response body starts streaming when a Suspense fallback renders (for example, a
+> `loading.tsx`) or when a Server Component suspends under a `Suspense` boundary. **Place
+> `notFound()` before those boundaries and before any `await` that may suspend.**"*
+
+La receta se cita entera aunque acá sea **inaplicable**, y por una razón concreta: en `/s/[slug]`
+**el `await` que suspende es exactamente el lookup del slug**. Es imposible saber si el slug existe
+*antes* de esperarlo. La única forma de cumplir la receta sería tener la lista completa de slugs en
+build time vía `generateStaticParams`, y eso es **incompatible con un SaaS self-serve** donde un
+tenant se da de alta en runtime.
+
+Dos consecuencias que cierran el tema:
+- Explica el resultado medido de la variante **C**: mover el boundary no cambia nada porque el
+  problema nunca fue dónde está el boundary, sino que el dato llega después del primer byte.
+- **La variante A no es una implementación mejorable: es el techo.** No hay orden de instrucciones,
+  ni posición de `not-found.tsx`, ni upgrade que dé **status y body** a la vez. Se eligió B porque
+  era la única opción que quedaba, no porque fuera la mejor de tres.
+
+### El riesgo de SEO no es nuestro problema, y lo dice el framework
+La preocupación obvia contra la variante B —*"un 200 sobre un recurso que no existe es un soft 404
+y Google lo indexa"*— está contestada en el mismo párrafo de
+`node_modules/next/dist/docs/01-app/03-api-reference/03-file-conventions/loading.md`:
+
+> *"Some crawlers may label these responses as 'soft 404s'. In the streaming case, this does not
+> lead to indexation because the page is explicitly marked `noindex` in the HTML."*
+
+No es una mitigación inventada acá ni una apuesta: es la guía del framework sobre su propio
+comportamiento. **El único costo real que deja la variante B es el de monitoreo**, abajo.
+
+### El precio, declarado y no escondido
+**El miss deja de ser distinguible por status code en los logs de acceso.** Es una pérdida real de
+señal de monitoreo, del mismo orden que la deuda del claim stale de 3600 s de ADR-005: no se
+mitiga, se acepta. Se paga a cambio de que la persona que se equivocó de subdominio lea algo.
+
+### Lo que reemplaza al status como invariante chequeable
+Ya implementado en `scripts/accept-s1.sh`, A3/A4. Sobre la **primera** request a un slug nuevo:
+- `<h1` **literal** en el body (DOM renderizado de verdad, no payload de Flight);
+- `robots` `noindex`;
+- `<title>` propio, distinto de `iStock`;
+- **cero markup de vidriera**: ni `wa.me` ni `data-listing`;
+- req2 con `x-nextjs-cache: HIT` (un escaneo de subdominios no puede ser una query por request);
+- control: el tenant `demo` sigue dando **200**.
+
+### Lo que sobrevive de ADR-007 sin cambios
+El cinturón: **el alta de un tenant tiene que invalidar el tag de su propio slug**
+(`storefront:{slug}` y `tenant-config:{slug}`), o la respuesta negativa queda cacheada y la vidriera
+nace muerta. Sigue siendo cierta palabra por palabra; sólo dejó de llamarse "404".
+También sigue en pie el `cacheLife` asimétrico: `'max'` para el positivo, perfil corto para el miss.
+
+---
+
+## ADR-012 — Los dos polos del cache de la vidriera son asimétricos a propósito
+- **Estado:** aceptada · **Fecha:** 2026-08-27 · **Autor:** LEAD (FASE 4, S1)
+- **Insumo:** hallazgo **MEDIUM-C** de la revisión de S1. Todo lo de acá es verificable en el árbol:
+  `apps/web/app/(storefront)/_lib/cache-life.ts` · `scripts/guard-leaks.sh` §6 (commit `96d0c67`) ·
+  `scripts/accept-s1.sh` A5.
+- **Por qué existe esta ADR:** la decisión vivía sólo en comentarios de dos scripts y en un
+  docblock. Un docblock que alguien limpia deja un número mágico sin razonamiento. Precisa ADR-007
+  (`cacheLife('max')`), no la contradice: agrega el **segundo** polo, que ADR-007 no distinguía.
+
+### Decisión — dos polos, dos perfiles, dos motivos distintos
+
+**Polo positivo (el tenant que existe): `cacheLife('max')`**, invalidado **por evento**
+(`updateTag` desde el panel), nunca por tiempo. Es lo que compra los ~**USD 0,012/tenant/mes** en
+ISR Writes. Un `revalidate: 60` por tiempo son ~**USD 2,59/tenant/mes**: **216×**, el **13% del plan
+Base de USD 19**. Sólo eso ya revienta el objetivo de < USD 0,50/tenant/mes.
+
+**Polo negativo (el slug que no existe): perfil corto** — `stale 60 s · revalidate 300 s ·
+expire 900 s`, declarado en `_lib/cache-life.ts` (`STOREFRONT_MISS_LIFE` / `cacheStorefrontMiss()`).
+Poner `'max'` también acá produce **dos problemas opuestos que salen de la misma causa**:
+
+1. **Envenenamiento durable.** Un bot que barre `aaa1.maat.work … zzz9.maat.work` crea una entrada
+   de ISR **de 30 días por cada slug inventado**, y **nadie las va a invalidar nunca**: no
+   corresponden a ningún tenant, así que no hay evento que las purgue.
+2. **El tenant que nace muerto.** Alguien prueba `nortecel.maat.work` el martes, el negocio se da de
+   alta el miércoles → la vidriera queda muerta hasta 30 días. El `updateTag(storefront:{slug})` del
+   alta es **el cinturón**; este perfil corto son **los tirantes**, para el caso en que el cinturón
+   no aplica: un slug que nadie creó nunca, un alta hecha por un job donde `updateTag` falla, un
+   deploy en el medio.
+
+### El costo de acortar el negativo, en la unidad correcta
+**Una** query a Postgres cada `revalidate` **por slug**, no una por request. Un escaneo de 10.000
+subdominios sostenido durante una hora son ~**12 queries por slug**, contra 10.000 sin cache. El
+`where slug = ...` pega sobre el **índice único de `tenants.slug`** y no devuelve filas.
+
+### Cómo se hace cumplir — `scripts/guard-leaks.sh` §6 (commit `96d0c67`)
+Esto es lo que evita que la ADR sea decorativa. Cinco reglas, cada una tapando un agujero medido:
+
+| # | qué chequea | por qué |
+|---|---|---|
+| **6a** | el polo positivo sigue en `cacheLife('max')` | un TTL por tiempo ahí es el 216× |
+| **6b** | **un solo** archivo declara el perfil corto (`_lib/cache-life.ts`); ningún `cacheLife({...})` inline en otro lado | un inline es un TTL por tiempo escondido en el camino positivo |
+| **6c** | los enteros de ese archivo siguen en **[30, 900] s**, contra un techo **duplicado dentro del guard a propósito**; y el perfil se llama `MISS` | mismo criterio que el presupuesto de bytes de `packages/media`: si el techo se leyera de la constante, **subir la constante pondría el guard en verde** |
+| **6d** | ningún `revalidate` numérico corto fuera de ese archivo | la regla original, ahora con scope |
+| **6e** | todo scope `'use cache'` elige perfil **explícito** | borrar el `cacheLife` **no** vuelve la ruta dinámica: la deja en el perfil **default (~15 min)**, que es el mismo 216× por otra puerta |
+
+`scripts/accept-s1.sh` A5 no duplica estos regex: **invoca** a `guard-leaks.sh` §6. Dos copias del
+mismo regex derivan, y la que deriva es siempre la que nadie mira.
+
+### Procedencia, escrita y no borrada
+La asimetría la decidió el **LEAD** a partir de MEDIUM-C. La regla 6 **fue reescrita** porque su
+versión anterior prohibía `revalidate: <número corto>` en **cualquier** archivo de `(storefront)` sin
+distinguir polo: el perfil corto del miss hacía fallar el mismo gate que lo exige, y la regla **se
+satisfacía renombrando el literal a una constante** — o sea que había dejado de guardar. El conflicto
+lo **reportó `storefront-agent` en vez de resolverlo a escondidas**, y tenía razón.
+Un ADR que borra de dónde vino una corrección se lee como si nunca hubiera habido un error.

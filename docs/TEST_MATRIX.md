@@ -49,7 +49,7 @@ _Owner: `qa-agent`. Una regla de `CLAUDE.md` sin test **no existe**._
 | E11 | LCP mobile de la ficha (4G simulado) | dentro del presupuesto de `ARCHITECTURE.md` |
 | E12 | mutar precio en el panel → recargar vidriera | precio nuevo **sin esperar TTL** |
 | E13 | host de tenant A **nunca** sirve contenido de B | cero cross-tenant en el cache |
-| E14 | slug inexistente | 404 real |
+| E14 | slug inexistente | página legible: `<h1` literal en el body, `robots noindex`, título propio ≠ `iStock`, cero markup de vidriera (`wa.me`/`data-listing`), req2 en `HIT`. **No 404** — ADR-011 |
 
 ## Seguridad — una por regla de `CLAUDE.md` §2
 | # | regla | cómo se prueba |

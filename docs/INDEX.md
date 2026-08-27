@@ -5,7 +5,7 @@
 | [PRODUCT.md](PRODUCT.md) | producto ejecutable: ICP, recorrido que factura, planes, fuera de alcance | `product-scribe` | cambio de producto (raro — no se reabre) |
 | [DOMAIN.md](DOMAIN.md) | glosario, entidades, máquina de estados, FX, visibilidad por rol, `publicListingDTO` | `product-scribe` + `domain-agent` | cada slice que toca reglas de negocio |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | monorepo, host→tenant, cache, camino de una foto, RLS, límites de confianza | LEAD en FASE 1, después `architect` | **FASE 1 cerrada** |
-| [DECISIONS.md](DECISIONS.md) | ADRs numeradas con alternativas descartadas y verificación | LEAD en FASE 1, después `architect` | **ADR-001..010; 008 y 010 abiertas** |
+| [DECISIONS.md](DECISIONS.md) | ADRs numeradas con alternativas descartadas y verificación | LEAD en FASE 1, después `architect` | **ADR-001..012; 008 y 010 abiertas.** ADR-011 supersede el corolario 4 de ADR-007; ADR-012 lo precisa con el polo negativo |
 | [SLICE_BOARD.md](SLICE_BOARD.md) | **estado de la verdad del avance** + blockers abiertos | `docs-keeper` | cada slice |
 | [TEST_MATRIX.md](TEST_MATRIX.md) | unit / RLS / e2e / seguridad + cobertura de reglas | `qa-agent` | cada test nuevo |
 | [COST.md](COST.md) | piso de plataforma, marginal por tenant, estrés, métrica a vigilar | LEAD en FASE 1, después `cost-auditor` | **con fuente desde FASE 1** |
