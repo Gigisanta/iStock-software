@@ -5,6 +5,8 @@ export const meta = {
   phases: [
     { title: 'Research', detail: '7 topics en paralelo, cada uno con fuentes de hoy' },
     { title: 'Verify', detail: 'adversario vota cada research: cifra sin fuente = FAIL' },
+    { title: 'Fix', detail: 'el researcher corrige solo los findings del adversario' },
+    { title: 'Reverify', detail: 'segunda vuelta: quedo algun critical/high abierto?' },
     { title: 'Domain', detail: 'packages/domain puro, luego schema + RLS, luego tests cruzados' },
     { title: 'Skeleton', detail: 'auth, tenant, middleware de host, layout de panel, probe R2' },
     { title: 'Slice', detail: 'test -> impl -> adversary -> costo, para una slice del board' },
@@ -334,6 +336,110 @@ No inventes findings: sin evidencia concreta (cita del archivo, URL, o aritmetic
 }
 
 // ---------------------------------------------------------------------------
+// FASE 1b - correccion quirurgica. El adversario voto FAIL sobre afirmaciones
+// puntuales, no sobre el research entero. Se corrigen ESAS lineas y se re-vota.
+// Re-investigar de cero tiraria a la basura material verificado.
+// ---------------------------------------------------------------------------
+async function runResearchFix(items) {
+  if (!items || !items.length) throw new Error('runResearchFix necesita args.items con los findings')
+  log(`FASE 1b - corrigiendo ${items.length} topics con findings del adversario.`)
+
+  const results = await pipeline(
+    items,
+
+    (it) =>
+      agent(
+        `${LAW}
+
+${role('researcher')}
+
+Escribiste docs/research/${it.slug}.md y el adversario lo voto FAIL.
+NO reescribas el documento de cero: la mayor parte esta bien y verificada.
+Corregí EXACTAMENTE los puntos de abajo y nada mas.
+
+EL REVIEW COMPLETO ESTA EN DISCO. Leelo AHORA, entero, antes de tocar nada:
+  cat ${it.reviewFile}
+Son ${it.nFindings} findings y ${it.nUnsourced} afirmaciones sin fuente. Trabajás sobre TODOS.
+
+PROTOCOLO DE CORRECCION, por cada punto, en este orden:
+  a) Cargá las tools: ToolSearch("select:WebSearch,WebFetch"). Hoy es 2026-08-27.
+  b) Intentá VERIFICAR la afirmacion contra fuente primaria. Si se verifica: dejala y agregá la URL.
+  c) Si la fuente dice algo DISTINTO: corregí el dato al valor real y citá la fuente.
+     Un dato corregido vale mas que un dato borrado.
+  d) Si no podes verificarla: NO la borres en silencio. Bajala a la seccion ## UNVERIFIED
+     con el texto exacto y el motivo, y sacá cualquier afirmacion del cuerpo que dependia de ella.
+  e) Si el adversario dice que INVENTASTE una cita textual o una URL: borrala y decilo en
+     ## UNVERIFIED. Una cita fabricada es el peor fallo posible de tu oficio.
+  f) Si el adversario encontro una CONTRADICCION INTERNA o un error aritmetico: rehacé la cuenta
+     y dejá un solo numero, coherente en todo el archivo.
+
+REGLAS:
+  - Un finding critical o high sin resolver = tu entrega vuelve a fallar.
+  - Si el adversario se equivoca, podes defender tu version, pero SOLO con URL que lo pruebe:
+    agregá una linea "## Refutaciones al review" con la evidencia. Sin URL no hay defensa.
+  - Escribis SOLO docs/research/${it.slug}.md.
+  - Al terminar: wc -c docs/research/${it.slug}.md y reporta el numero real.
+
+En shortAnswer devolvé un bullet por finding corregido, diciendo que cambio.`,
+        { label: `fix:${it.id}`, phase: 'Fix', agentType: 'researcher', schema: RESEARCH_SCHEMA },
+      ),
+
+    (res, it) => {
+      if (!res) return null
+      return agent(
+        `${LAW}
+
+${role('adversary-reviewer')}
+
+Segunda vuelta sobre docs/research/${it.slug}.md. Voz votaste FAIL antes; el researcher corrigio.
+Leelo: cat docs/research/${it.slug}.md
+
+Tus findings originales estan en disco. Leelos: cat ${it.reviewFile}
+
+Tu tarea, en este orden:
+  1. Por CADA finding tuyo: quedo resuelto? (corregido con fuente, o bajado a UNVERIFIED con motivo).
+     Un finding "resuelto" borrando la afirmacion pero dejando el cuerpo del doc apoyado en ella
+     NO esta resuelto.
+  2. Verificá que no se introdujeron afirmaciones NUEVAS sin fuente al corregir.
+  3. Si el researcher escribio "## Refutaciones al review", evaluá la evidencia con honestidad:
+     si la URL prueba que el researcher tenia razon, aceptalo y no lo cuentes como finding.
+  4. Chequeá coherencia aritmetica del archivo entero una vez mas.
+
+Podes usar ToolSearch("select:WebSearch,WebFetch") para verificar.
+
+verdict PASS solo si NINGUN critical/high queda abierto. Los low que quedaron documentados
+en UNVERIFIED no bloquean: el objetivo es que el LEAD no promueva a DECISIONS.md un dato falso,
+no que el research sea perfecto.`,
+        { label: `reverify:${it.id}`, phase: 'Reverify', agentType: 'adversary-reviewer', schema: VERDICT_SCHEMA },
+      ).then((v) => ({ id: it.id, slug: it.slug, research: res, verdict: v }))
+    },
+  )
+
+  const done = results.filter(Boolean)
+  const stillFailing = done.filter((r) => r.verdict?.verdict === 'FAIL')
+  log(`FASE 1b lista: ${done.length}/${items.length}. Siguen en FAIL: ${stillFailing.length}.`)
+
+  return {
+    phase: 'research-fix',
+    completed: done.length,
+    total: items.length,
+    stillFailing: stillFailing.map((r) => r.id),
+    reports: done.map((r) => ({
+      id: r.id,
+      slug: r.slug,
+      bytes: r.research.bytes,
+      confidence: r.research.confidence,
+      verdict: r.verdict?.verdict ?? 'NO_VERDICT',
+      corrections: r.research.shortAnswer,
+      keyNumbers: r.research.keyNumbers,
+      impact: r.research.impact,
+      unverified: r.research.unverified,
+      openFindings: (r.verdict?.findings ?? []).filter((f) => f.severity === 'critical' || f.severity === 'high'),
+    })),
+  }
+}
+
+// ---------------------------------------------------------------------------
 // FASE 2 - domain y schema. SERIAL por diseno: el schema depende del dominio,
 // y los tests de RLS dependen del schema. Paralelizar aca crea dos writers.
 // ---------------------------------------------------------------------------
@@ -582,9 +688,10 @@ log(`istock-build :: FASE solicitada = ${phase}`)
 
 let out
 if (phase === 'research') out = await runResearch()
+else if (phase === 'research-fix') out = await runResearchFix(args && args.items)
 else if (phase === 'domain') out = await runDomain()
 else if (phase === 'skeleton') out = await runSkeleton()
 else if (phase === 'slice') out = await runSlice(args && args.slice)
-else throw new Error(`FASE desconocida: ${phase}. Usá research | domain | skeleton | slice`)
+else throw new Error(`FASE desconocida: ${phase}. Usá research | research-fix | domain | skeleton | slice`)
 
 return out

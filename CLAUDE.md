@@ -95,6 +95,11 @@ IMEI + origen + resultado de consulta ENACOM (link + enum) **en el panel**.
 - Query sin filtro de tenant *además* de RLS → rechazo (defensa en profundidad).
 - Secret en el bundle del browser → rechazo.
 - Imagen original (>500KB) servida a la vidriera → rechazo (`cost-auditor`).
+- URL pública de foto que contenga `tenant_id`/`listing_id`, o desde la que se pueda **derivar** la
+  key del master → rechazo.
+- Master/original en un bucket R2 **público** → rechazo. El master va a `istock-originals`, privado.
+- Borrado de un objeto de R2 por key al borrar un listing → rechazo. La key es content-addressed:
+  dos tenants pueden compartir el objeto. Se borra el mapeo, no el byte.
 
 ---
 
@@ -131,7 +136,20 @@ packages/domain    TS puro, cero I/O: FX, máquina de estados, wa payload, publi
 packages/ai        chatbot: prompts, tools, dieta de contexto, evals
 packages/media     R2 client + pipeline de variantes
 ```
-Rutas: `/` marketing · `/demo` · `/onboarding` · `/app/*` panel · middleware de host → vidriera.
+Rutas: `/` marketing · `/demo` · `/onboarding` · `/app/*` panel · **`proxy.ts`** (host → vidriera).
+
+> **`middleware.ts` está deprecado desde Next 16.0.0**: el archivo se llama **`proxy.ts`** y exporta
+> `proxy`, con runtime Node.js no configurable (poner `runtime` tira error).
+> Verificado por el LEAD contra `nextjs.org/docs/app/api-reference/file-conventions/proxy` (v16.3.3,
+> 2026-08-25) y el upgrade guide. Codemod: `npx @next/codemod@latest middleware-to-proxy .`
+>
+> Dos consecuencias que **no** son cosméticas:
+> 1. El proxy corre fuera del runtime de la app: *"you should not attempt relying on shared modules
+>    or globals"*. Un `Map` a nivel de módulo **no es un cache** ahí. El proxy parsea el host y
+>    reescribe; no consulta nada.
+> 2. Las Server Functions **no** son rutas propias en la cadena de matchers: un `matcher` que
+>    excluye un path también saltea las Server Functions de ese path. Por eso la autorización se
+>    verifica **dentro** de cada Server Function y nunca se delega al proxy.
 
 ---
 
@@ -144,7 +162,7 @@ Rutas: `/` marketing · `/demo` · `/onboarding` · `/app/*` panel · middleware
 | `packages/media/**` | `media-agent` | ✅ |
 | `packages/ai/**` | `ai-agent` | ✅ |
 | `apps/web/app/(app)/**`, `apps/web/app/api/**` | `app-agent` | ✅ |
-| `apps/web/app/(storefront)/**`, `middleware.ts` | `storefront-agent` | ✅ |
+| `apps/web/app/(storefront)/**`, `proxy.ts` | `storefront-agent` | ✅ |
 | `apps/web/app/(billing)/**`, webhooks MP | `billing-agent` | ✅ |
 | `tests/**`, `e2e/**`, `**/*.test.ts` | `qa-agent` | ✅ |
 | `docs/**` (excepto `docs/research/**`) | `docs-keeper` | ✅ |
@@ -153,6 +171,11 @@ Rutas: `/` marketing · `/demo` · `/onboarding` · `/app/*` panel · middleware
 | `CLAUDE.md`, `AGENTS.md`, `.claude/**` | **LEAD** | ✅ |
 
 Conflicto de ownership = el LEAD reasigna. Un agente **nunca** edita fuera de su columna.
+
+**Excepción declarada, FASE 1:** la síntesis de `docs/ARCHITECTURE.md`, `docs/DECISIONS.md` y
+`docs/COST.md` a partir de `docs/research/**` la escribe el **LEAD**, una sola vez. Decidir el
+stack no es delegable. Cerrada la FASE 1, esos tres archivos vuelven a `docs-keeper` /
+`cost-auditor` y el LEAD sólo ratifica ADRs nuevos.
 
 ---
 

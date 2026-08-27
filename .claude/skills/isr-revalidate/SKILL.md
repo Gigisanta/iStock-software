@@ -35,9 +35,23 @@ posible: el visitante escribe por WhatsApp por un equipo que ya se vendió.
 - `revalidate` por tiempo es el **piso de seguridad** (ej. 300s), no el mecanismo principal.
   El mecanismo principal es la invalidación por tag.
 
-## Aislamiento entre tenants
-El slug es parte de la clave de cache. Un test debe probar que **el contenido de un tenant nunca
-se sirve bajo el host de otro** — un cache leak entre tenants es un incidente crítico.
+## Aislamiento entre tenants — la trampa que hay que conocer
+El cache key del CDN **sí** incluye el host. El key de `'use cache'` **no**: es Build ID +
+Function ID + argumentos. Dos subdominios que rendericen el mismo path con los mismos argumentos
+**comparten la entrada**.
+
+Por eso el slug **viaja en el path** (`/s/{slug}/...`, reescrito por `proxy.ts`) y **no** por header:
+además de que `headers()` dentro de `'use cache'` vuelve la ruta dinámica y mata el ISR, sin el
+slug en los argumentos el aislamiento entre tenants no existe.
+
+Los cache tags están scopeados a **proyecto + environment**, no a dominio → el tag **debe** llevar
+el slug. Un test debe probar que el contenido de un tenant nunca se sirve bajo el host de otro:
+un cache leak entre tenants es un incidente crítico, no una ineficiencia.
+
+## 404 negativo — el otro modo de romper la vidriera
+Un slug que todavía no existe se resuelve a 404 y **ese 404 se cachea**. Con un perfil de cache
+largo, dar de alta el tenant después deja su vidriera muerta hasta que expire.
+**El alta de tenant debe invalidar el tag de su propio slug.** Es parte del gate de S1.
 
 ## Verificación
 1. Cargar la ficha 10 veces → contar queries a Postgres → debe ser **0** después de la primera.

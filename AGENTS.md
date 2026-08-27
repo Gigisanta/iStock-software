@@ -38,7 +38,7 @@ BLOCKERS: <lista o "none">
 | `db-agent` | schema Drizzle, migraciones, **RLS**, seed | `packages/db/**` | tocar UI |
 | `domain-agent` | TS puro: FX, estados, wa payload, DTOs | `packages/domain/**` | I/O, fetch, DB |
 | `app-agent` | panel autenticado + API routes | `apps/web/app/(app)/**`, `app/api/**` | tocar vidriera |
-| `storefront-agent` | vidriera pública, ISR, middleware de host | `apps/web/app/(storefront)/**`, `middleware.ts` | tocar panel |
+| `storefront-agent` | vidriera pública, ISR, proxy de host | `apps/web/app/(storefront)/**`, `proxy.ts` | tocar panel |
 | `media-agent` | R2, resize, variantes, URLs | `packages/media/**` | subir originales |
 | `ai-agent` | chatbot: dieta de contexto, tools, evals | `packages/ai/**` | llamar modelos frontier |
 | `billing-agent` | Mercado Pago Subscriptions, entitlements | `apps/web/app/(billing)/**` | Stripe |

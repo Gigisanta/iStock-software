@@ -101,7 +101,15 @@ env · seed · wildcard local (nip.io) · **cómo NO apagar el spend cap**.
 |---|---|---|---|
 | B1 | credenciales de Cloudflare R2 (account id, bucket, access key) | K5, S2 | **humano** |
 | B2 | proyecto Supabase + service role key + **spend cap ON** | D2, D3 | **humano** |
-| B3 | credenciales de Mercado Pago (app + webhook secret) | FASE 6 | **humano** |
+| B3 | credenciales de Mercado Pago (**sandbox** + app + webhook secret) | FASE 6, **ADR-008** | **humano** |
 | B4 | API key de Gemini y/o Groq | FASE 5 | **humano** |
-| B5 | dominio `maat.work` con wildcard DNS apuntando a Vercel | K3, S1 (prod) | **humano** |
+| B5 | **migrar los nameservers de `maat.work` a `ns1/ns2.vercel-dns.com`** | K3, S1 (prod) | **humano — arrancar ya** |
 | B6 | número de WhatsApp del tenant demo | S4, S13 | **humano** |
+
+> **B5 creció en FASE 1 (R1).** El wildcard `*.maat.work` se certifica por DNS-01, y Vercel sólo lo
+> emite si el dominio usa **sus** nameservers. No alcanza con un CNAME: hay que mover el DNS
+> completo de `maat.work` a Vercel, con **24–48 h de propagación**. Es el blocker con más lead
+> time de los seis y no depende de nada nuestro → **conviene arrancarlo antes que B1–B4**, aunque
+> se use recién en K3.
+> Efecto colateral a mirar antes de apretar el botón: todo registro MX/TXT actual de `maat.work`
+> (mail, verificaciones) hay que recrearlo en Vercel o se cae.
