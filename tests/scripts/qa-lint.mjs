@@ -15,6 +15,11 @@
  *      espera por una condición.
  *   5. Nombres de test cortos: el nombre tiene que decir **la regla de negocio**, no el nombre de
  *      la función. Menos de 24 caracteres no alcanza para decir una regla.
+ *   6. (HIGH-3) Un spec que administra el pool de Postgres o que importa `test` de
+ *      `@playwright/test` en vez de `_lib/fixtures`. Las dos cosas son la misma: un recurso
+ *      compartido por toda la suite cuyo ciclo de vida quedó en manos de UN archivo. Cuando pasó,
+ *      el primer spec alfabético cerró el pool y los demás nunca corrieron — y la suite terminó
+ *      en verde. Esto no lo ve ESLint: los dos archivos compilan y "pasan".
  *
  * Uso: `node qa-lint.mjs <dir>`
  */
@@ -37,6 +42,12 @@ function walk(dir) {
   }
 }
 
+/**
+ * `appliesTo` acota una regla a ciertos archivos. Sin esto, la regla 6 rechazaría el propio
+ * `_lib/fixtures.ts`, que es justamente el único lugar donde esas dos cosas son correctas.
+ */
+const SPEC_ONLY = /\.spec\.ts$/u;
+
 const RULES = [
   {
     id: 'trivial-assertion',
@@ -55,6 +66,22 @@ const RULES = [
     re: /waitForTimeout\(|setTimeout\(\s*resolve/u,
     message: 'espera por reloj: se espera por una condición, no por milisegundos',
   },
+  {
+    id: 'pool-por-spec',
+    appliesTo: SPEC_ONLY,
+    re: /\bcloseDb\s*\(/u,
+    message:
+      'un spec cierra el pool de Postgres: es de la suite, no del archivo. Lo cierra el fixture ' +
+      'de worker de `e2e/_lib/fixtures.ts` (HIGH-3: el primer spec alfabético dejaba sin base al resto)',
+  },
+  {
+    id: 'test-sin-fixture',
+    appliesTo: SPEC_ONLY,
+    re: /import\s*\{[^}]*\btest\b[^}]*\}\s*from\s*['"]@playwright\/test['"]/u,
+    message:
+      'el `test` de un spec sale de `./_lib/fixtures`, no de `@playwright/test`: es lo que engancha ' +
+      'el fixture de worker que administra el pool para toda la suite',
+  },
 ];
 
 function check(file) {
@@ -62,6 +89,7 @@ function check(file) {
   lines.forEach((line, index) => {
     const code = line.replace(/^\s*(\/\/|\*|\/\*).*$/u, '');
     for (const rule of RULES) {
+      if (rule.appliesTo !== undefined && !rule.appliesTo.test(file)) continue;
       if (rule.re.test(code)) {
         problems.push({ file, line: index + 1, rule: rule.id, message: rule.message });
       }

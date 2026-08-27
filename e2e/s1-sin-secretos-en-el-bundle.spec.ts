@@ -19,7 +19,10 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, relative, resolve } from 'node:path';
-import { expect, test } from '@playwright/test';
+// `test` sale de `_lib/fixtures` y no de `@playwright/test` aunque este spec no toque Postgres:
+// que TODOS los specs usen el mismo `test` es lo que hace que el fixture de worker que administra
+// el pool sea una propiedad de la suite y no una convención que hay que acordarse de seguir.
+import { expect, test } from './_lib/fixtures';
 
 /** `.next/static` es lo único que el browser descarga. Lo demás nunca sale del server. */
 const HERE = dirname(fileURLToPath(import.meta.url));
