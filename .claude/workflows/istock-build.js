@@ -27,6 +27,13 @@ Reglas que te aplican siempre:
   - Terminas devolviendo el bloque FILES / ACCEPTANCE / COST_DELTA / UNVERIFIED / BLOCKERS.
 `.trim()
 
+// El registry de subagentes se congela al inicio de la sesion, asi que los oficios de
+// .claude/agents/*.md se cargan por instruccion. El contrato sigue siendo el mismo archivo.
+const role = (name) => `TU OFICIO: "${name}".
+Leé tu contrato completo AHORA: cat .claude/agents/${name}.md
+Actuás exactamente como ese agente: sus reglas, su limite de directorio y su formato de salida.
+No hagas nada que ese archivo no te habilite.`
+
 const RESEARCH_SCHEMA = {
   type: 'object',
   additionalProperties: false,
@@ -219,6 +226,8 @@ async function runResearch() {
       agent(
         `${LAW}
 
+${role('researcher')}
+
 Sos el agente "researcher" del topic ${t.id}.
 
 TOPIC: ${t.title}
@@ -259,6 +268,8 @@ El campo bytes de tu respuesta tiene que ser el resultado REAL de wc -c, no una 
       if (!res) return null
       return agent(
         `${LAW}
+
+${role('adversary-reviewer')}
 
 Sos el agente "adversary-reviewer". Auditá el research ${t.id} SIN escribir ningun archivo.
 
@@ -332,6 +343,8 @@ async function runDomain() {
   const domain = await agent(
     `${LAW}
 
+${role('domain-agent')}
+
 Sos "domain-agent". Unico writer de packages/domain. NO toques ningun otro directorio.
 
 Lee primero: docs/DOMAIN.md (maquina de estados, FX, publicListingDTO) y .claude/skills/wa-payload/SKILL.md
@@ -356,6 +369,8 @@ Acceptance que tenes que dejar funcionando: pnpm --filter @istock/domain typeche
 
   const db = await agent(
     `${LAW}
+
+${role('db-agent')}
 
 Sos "db-agent". Unico writer de packages/db. NO toques ningun otro directorio.
 
@@ -382,6 +397,8 @@ tu entrega es FAIL y lo decis vos mismo.`,
 
   const rlsTests = await agent(
     `${LAW}
+
+${role('qa-agent')}
 
 Sos "qa-agent". Unico writer de tests. NO arregles el codigo bajo test: si algo falla, lo reportas.
 
@@ -415,6 +432,8 @@ async function runSkeleton() {
       agent(
         `${LAW}
 
+${role('app-agent')}
+
 Sos "app-agent". Escribis SOLO en apps/web/app/(marketing), apps/web/app/(app) y apps/web/app/api.
 NO toques middleware.ts ni apps/web/app/(storefront): son de storefront-agent.
 
@@ -429,6 +448,8 @@ Cero features de slices S1-S13 todavia: esto es esqueleto navegable, no producto
     () =>
       agent(
         `${LAW}
+
+${role('storefront-agent')}
 
 Sos "storefront-agent". Escribis SOLO en apps/web/app/(storefront) y middleware.ts.
 NO toques el panel ni las API del panel.
@@ -447,6 +468,8 @@ Mas una pagina placeholder de storefront que muestre el tenant resuelto. Nada de
     () =>
       agent(
         `${LAW}
+
+${role('media-agent')}
 
 Sos "media-agent". Escribis SOLO en packages/media.
 
@@ -478,6 +501,8 @@ async function runSlice(sliceId) {
   const test = await agent(
     `${LAW}
 
+${role('qa-agent')}
+
 Sos "qa-agent". ${spec}
 Escribi el test ANTES de la implementacion y CORRELO para mostrar que falla.
 Un test que nunca fallo no prueba nada. Reporta la salida real del test fallando.
@@ -487,6 +512,9 @@ Prohibido expect(true).toBe(true) y tests que pasan con la implementacion vacia.
 
   const impl = await agent(
     `${LAW}
+
+Tu oficio depende del directorio de la slice: mirá la tabla de ownership de CLAUDE.md seccion 4,
+identificá cual de los agentes de .claude/agents/ sos, y leé ese archivo con cat antes de escribir.
 
 ${spec}
 Sos el agente owner del directorio de esta slice segun la tabla de ownership de CLAUDE.md seccion 4.
@@ -506,6 +534,8 @@ y reporta la salida real, no lo que esperabas que pasara.`,
       agent(
         `${LAW}
 
+${role('adversary-reviewer')}
+
 Sos "adversary-reviewer". NO escribis archivos. Auditá la slice ${sliceId}.
 Mirá el diff: git --no-pager diff HEAD
 Checklist completo de .claude/agents/adversary-reviewer.md: tenant leak, IDOR, PII en payload
@@ -518,6 +548,8 @@ Un critical o high => FAIL. Sin evidencia concreta no hay finding.`,
     () =>
       agent(
         `${LAW}
+
+${role('cost-auditor')}
 
 Sos "cost-auditor". Auditá la slice ${sliceId} contra el objetivo de < USD 0.50/mes por tenant activo.
 Mirá el diff: git --no-pager diff HEAD
