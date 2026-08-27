@@ -1219,21 +1219,21 @@ async function runDocs() {
 // ---------------------------------------------------------------------------
 // Dispatch
 // ---------------------------------------------------------------------------
-const phase = (args && args.phase) || 'research'
-log(`istock-build :: FASE solicitada = ${phase}`)
+const requested = (args && args.phase) || 'research'
+log(`istock-build :: FASE solicitada = ${requested}`)
 
 let out
-if (phase === 'research') out = await runResearch()
-else if (phase === 'research-fix') out = await runResearchFix(args && args.items)
-else if (phase === 'domain') out = await runDomain()
-else if (phase === 'skeleton') out = await runSkeleton()
-else if (phase === 'slice') out = await runSlice(args && args.slice, args && args.base)
-else if (phase === 'slices') out = await runSlices(args && args.slices, args && args.base)
-else if (phase === 'slice-fix') out = await runSliceFix(args && args.slice, args && args.base, args && args.plan)
-else if (phase === 'chat') out = await runChat(args && args.base)
-else if (phase === 'billing') out = await runBilling(args && args.base)
-else if (phase === 'tests') out = await runTests()
-else if (phase === 'docs') out = await runDocs()
-else throw new Error(`FASE desconocida: ${phase}. Usá research | research-fix | domain | skeleton | slice | slices | chat | billing | tests | docs`)
+if (requested === 'research') out = await runResearch()
+else if (requested === 'research-fix') out = await runResearchFix(args && args.items)
+else if (requested === 'domain') out = await runDomain()
+else if (requested === 'skeleton') out = await runSkeleton()
+else if (requested === 'slice') out = await runSlice(args && args.slice, args && args.base)
+else if (requested === 'slices') out = await runSlices(args && args.slices, args && args.base)
+else if (requested === 'slice-fix') out = await runSliceFix(args && args.slice, args && args.base, args && args.plan)
+else if (requested === 'chat') out = await runChat(args && args.base)
+else if (requested === 'billing') out = await runBilling(args && args.base)
+else if (requested === 'tests') out = await runTests()
+else if (requested === 'docs') out = await runDocs()
+else throw new Error(`FASE desconocida: ${requested}. Usá research | research-fix | domain | skeleton | slice | slices | slice-fix | chat | billing | tests | docs`)
 
 return out
