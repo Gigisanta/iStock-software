@@ -692,8 +692,8 @@ los techos de bytes se testean SIN credenciales: hacelo, no lo dejes para despue
 // Adivinar el owner es adivinar el permiso de escritura: la regla 1 se queda sin enforcement.
 // Las slices con dos owners corren en ORDEN, nunca a la vez: la flecha del board es la secuencia.
 const SLICE_OWNERS = {
-  S1: ['storefront-agent'],
-  S2: ['media-agent', 'app-agent'],
+  S1: ['domain-agent', 'storefront-agent', 'app-agent'],
+  S2: ['db-agent', 'media-agent', 'app-agent'],
   S3: ['storefront-agent'],
   S4: ['domain-agent', 'storefront-agent'],
   S5: ['domain-agent', 'app-agent'],
@@ -705,6 +705,46 @@ const SLICE_OWNERS = {
   S11: ['app-agent'],
   S12: ['app-agent'],
   S13: ['storefront-agent'],
+}
+
+// Requisitos que el LEAD detecto verificando FASE 3 y que NO estan en la fila del board.
+// El board tiene una linea por slice y lo escribe docs-keeper. Esto es columna del LEAD.
+// Cada uno esta enganchado a la slice donde su owner ya va a estar escribiendo.
+const SLICE_EXTRA = {
+  S1: [
+    'BUG VIVO, prioridad sobre el resto de la slice (app-agent): el 404 de un slug inexistente',
+    'se cachea 30 dias, y eso esta VERIFICADO (MISS->HIT). Consecuencia: si alguien visita',
+    'juanceluvermkt.maat.work un minuto antes de que exista el tenant, esa vidriera nace muerta',
+    'y sigue muerta un mes. Crear un tenant TIENE que invalidar los dos tags de su propio slug:',
+    'storefront:{slug} y tenant-config:{slug}, los dos con perfil max. Test obligatorio: visitar',
+    'el slug (cachea el 404), crear el tenant, volver a visitar, y ver la vidriera. Sin ese test',
+    'la slice no pasa: es exactamente el caso que un humano no descubre hasta el primer cliente.',
+    '',
+    'domain-agent: RESERVED_SLUGS tiene que tener UNA sola fuente en packages/domain. Hoy la',
+    'lista esta duplicada. guard-leaks regla 14 ya chequea que el REGEX de slug no diverja entre',
+    'owners, pero la lista de reservados no la chequea nadie, y dos listas que divergen dejan',
+    'entrar un slug que colisiona con una ruta del producto.',
+  ].join('\n'),
+  S2: [
+    'db-agent va PRIMERO y es lo que desbloquea al resto: hoy unlinkListingPhotos esta bien',
+    'escrito pero NO esta cableado a nada. Faltan el port ListingPhotoMappingStore',
+    '(listByListing / deleteByListing) y countReferencesAcrossAllTenants. Sin eso el borrado de',
+    'un listing no desvincula nada y collectOrphanObjects no recolecta un solo byte: se paga',
+    'storage para siempre.',
+    '',
+    'countReferencesAcrossAllTenants es la UNICA consulta del sistema que cruza tenants a',
+    'proposito, porque la key es content-addressed y dos tenants comparten el objeto. Por eso',
+    'mismo es la mas peligrosa del repo: tiene que devolver un CONTEO y nada mas. Si devuelve',
+    'filas, ids, o cualquier cosa de la que se derive que otro tenant tiene esa foto, es una fuga',
+    'cross-tenant. Documentala como excepcion explicita, no la dejes parecer una query normal.',
+  ].join('\n'),
+  S4: [
+    'domain-agent: normalizeArWaPhone va a packages/domain y es la unica copia. Hoy hay tres, y',
+    'ya divergieron: normalizeWaPhone acepta "2995551234" y produce un wa.me MUERTO — el link',
+    'abre WhatsApp y no encuentra a nadie. Es el boton del que depende el producto entero.',
+    'Testea numeros del Alto Valle: 299 (Neuquen) y 298 (Cipolletti), con y sin 0, con y sin 15,',
+    'con +54 y sin, con 9 y sin. El caso "0299 15 555-1234" es el que escribe un humano real.',
+  ].join('\n'),
 }
 
 async function runSlice(sliceId, base) {
@@ -720,7 +760,10 @@ async function runSlice(sliceId, base) {
 
   log('FASE 4 - slice ' + sliceId + ': owners=' + owners.join(' -> ') + ', diff contra ' + baseRef)
 
-  const spec = 'Slice ' + sliceId + ' de docs/SLICE_BOARD.md (FASE 4). Lee la fila de la slice y su gate de aceptacion, que es literal: es el comando que el LEAD va a re-ejecutar.'
+  const extra = SLICE_EXTRA[sliceId]
+    ? '\n\nREQUISITOS ADICIONALES DEL LEAD para esta slice (no estan en el board, valen igual):\n' + SLICE_EXTRA[sliceId]
+    : ''
+  const spec = 'Slice ' + sliceId + ' de docs/SLICE_BOARD.md (FASE 4). Lee la fila de la slice y su gate de aceptacion, que es literal: es el comando que el LEAD va a re-ejecutar.' + extra
 
   const test = await agent(
     LAW + '\n\n' + role('qa-agent') + '\n\n' +
