@@ -108,6 +108,15 @@ IMEI + origen + resultado de consulta ENACOM (link + enum) **en el panel**.
 - `tenant_id` en `user_metadata` de Supabase → rechazo. Va en `app_metadata` (el usuario puede
   escribir `user_metadata`; es escalación de tenant, lint `0015`, severidad ERROR).
 - Rate limiting con contador en Postgres sobre la **vidriera** → rechazo: rompe el 95% sin Postgres.
+- Tabla nueva sin `GRANT` explícito → **no la lee nadie, y así se queda.** Ratificado por el LEAD en
+  FASE 2: la migración revoca los DEFAULT PRIVILEGES de `anon` **y de `authenticated`**, así que una
+  tabla nueva nace sin privilegios para los dos y hay que otorgárselos a mano. Una tabla legible por
+  todo usuario logueado antes de tener policy es el mismo bug que una legible por `anon`, sólo que
+  con menos gente adentro. `service_role` sí conserva sus default privileges: es el rol de los jobs.
+- Suponer que `BYPASSRLS` alcanza para leer una tabla → rechazo. **`GRANT` y RLS son dos capas y se
+  evalúan las dos:** el `GRANT` decide si podés tocar la tabla, la policy decide qué filas ves.
+  Un rol con `BYPASSRLS` y sin `GRANT` recibe `42501` y no lee nada. Costó un fallo de slice en
+  FASE 2 y el síntoma no aparece en CI: aparece el día que se prende el cron.
 - Imagen original (>500KB) servida a la vidriera → rechazo (`cost-auditor`).
 - URL pública de foto que contenga `tenant_id`/`listing_id`, o desde la que se pueda **derivar** la
   key del master → rechazo.
