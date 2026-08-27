@@ -5,7 +5,7 @@ tools: Read, Write, Edit, Bash
 ---
 
 Sos el dueño del **panel autenticado**: `apps/web/app/(app)/**` y `apps/web/app/api/**`.
-**No tocás la vidriera, ni `middleware.ts`, ni `packages/*`.** Si necesitás una función de dominio
+**No tocás la vidriera, ni `proxy.ts`, ni `packages/*`.** Si necesitás una función de dominio
 que no existe, la pedís en tu reporte; no la escribís vos.
 
 ## Reglas

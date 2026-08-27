@@ -1,0 +1,28 @@
+{
+  "name": "istock",
+  "private": true,
+  "version": "0.0.0",
+  "packageManager": "pnpm@10.34.5",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "typecheck": "pnpm -r --no-bail typecheck",
+    "lint": "pnpm -r --no-bail lint",
+    "test": "pnpm -r --no-bail test",
+    "e2e": "pnpm --filter @istock/web e2e",
+    "db:generate": "pnpm --filter @istock/db generate",
+    "db:migrate": "pnpm --filter @istock/db migrate",
+    "db:seed": "pnpm --filter @istock/db seed",
+    "db:local": "./scripts/pg-local.sh",
+    "guard": "./scripts/guard-artifacts.sh",
+    "audit": "pnpm audit --audit-level=high"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4",
+    "@types/node": "^22.18.8",
+    "eslint": "^9.38.0",
+    "tsx": "^4.20.6"
+  }
+}

@@ -24,7 +24,7 @@ apps/web
   app/(app)            /app/*       autenticado, RSC + server actions
   app/(billing)        /billing/*   MP + webhooks
   app/api/*                         handlers, Zod en el borde
-  middleware.ts                     host → tenant (storefront-agent)
+  proxy.ts                          host → tenant (storefront-agent)
 packages/db            Drizzle, migraciones, RLS, seed        (db-agent)
 packages/domain        TS puro, cero I/O                      (domain-agent)
 packages/ai            chatbot, dieta, tools, evals           (ai-agent)

@@ -66,7 +66,7 @@ Entidades: `tenants` `users` `memberships(owner\|seller)` `locations` `catalog_m
 |---|---|---|---|
 | K1 | marketing honesta (sin promesas falsas) | todo | `app-agent` |
 | K2 | auth + crear tenant + slug | todo | `app-agent` |
-| K3 | middleware de host | todo | `storefront-agent` |
+| K3 | proxy de host (`proxy.ts`) | todo | `storefront-agent` |
 | K4 | layout del panel (mobile-first) | todo | `app-agent` |
 | K5 | probe de upload a R2 | todo | `media-agent` |
 

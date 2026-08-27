@@ -27,6 +27,20 @@ Reglas que te aplican siempre:
   - tenant_id + RLS en toda tabla de negocio. IMEI/costo nunca en vidriera, logs ni chatbot.
   - Nunca afirmes un dato que no verificaste: marcalo UNVERIFIED.
   - Terminas devolviendo el bloque FILES / ACCEPTANCE / COST_DELTA / UNVERIFIED / BLOCKERS.
+
+ENTORNO REAL DE ESTA MAQUINA (verificado por el LEAD, no lo re-investigues):
+  - pnpm 10.34.5, Node 22.23.2. El workspace ya existe: pnpm-workspace.yaml + package.json raiz
+    + tsconfig.base.json con strict, noUncheckedIndexedAccess y exactOptionalPropertyTypes.
+    Tu package extiende ../../tsconfig.base.json. No lo redefinas.
+  - NO hay Docker y NO hay Supabase CLI. NO los uses y NO los pidas.
+  - SI hay Postgres 16.14 local corriendo. ./scripts/pg-local.sh crea la base istock_dev con los
+    roles anon/authenticated/service_role y el schema auth con auth.jwt()/auth.uid()/auth.role()
+    con el MISMO cuerpo que Supabase (leen current_setting('request.jwt.claims')).
+    DATABASE_URL=postgresql://gigi@localhost:5432/istock_dev
+    Consecuencia: el test de RLS cruzado SI se puede correr de verdad. B2 no lo bloquea.
+  - pgvector NO esta disponible en este Postgres. Todo lo de embeddings va en una migracion
+    APARTE y opcional, para que las migraciones base corran limpias en local.
+  - Falta un secret (R2, MP, Gemini) => interface + driver mock/local + .env.example. NUNCA pares.
 `.trim()
 
 // El registry de subagentes se congela al inicio de la sesion, asi que los oficios de
@@ -494,7 +508,17 @@ catalog_models y catalog_faqs son GLOBALES (sin tenant_id): documentalo explicit
 y en tu reporte, porque son la unica excepcion permitida.
 Marca con comentario SQL "-- SENSITIVE: never in public DTO" las columnas imei, cost_usd,
 internal_notes, supplier, margin.
-Migraciones versionadas y commiteadas. Seed demo determinista: 8 iPhones + 2 accesorios + 1 reserved.
+Migraciones versionadas y commiteadas, en SQL plano aplicable con psql (drizzle-kit generate).
+El embedding de catalog_models va en una migracion APARTE (pgvector no existe en el Postgres local):
+las migraciones base tienen que aplicar limpias contra istock_dev.
+Seed demo determinista: 8 iPhones + 2 accesorios + 1 reserved. Sin Math.random ni Date.now en el seed.
+
+Acceptance que tenes que dejar corriendo y verificada por vos mismo:
+  ./scripts/pg-local.sh --drop && pnpm --filter @istock/db migrate
+  psql -d istock_dev -tAc "select count(*) from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relkind='r'"
+  psql -d istock_dev -tAc "select count(*) from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relkind='r' and c.relrowsecurity"
+Los dos conteos tienen que coincidir salvo por catalog_models/catalog_faqs, y esa diferencia la
+explicas numericamente en tu reporte.
 
 En tu reporte deci cuantas tablas creaste y cuantas tienen RLS. Si esos numeros no coinciden,
 tu entrega es FAIL y lo decis vos mismo.`,
@@ -519,8 +543,12 @@ claim de tenant. Aserciones minimas:
 
 Schema entregado por db-agent: ${JSON.stringify(db?.files ?? [])}
 
-Si no hay credenciales de Supabase/Postgres disponibles, NO simules el test: dejalo escrito,
-marcalo skip con motivo explicito, y reportalo en blockers. Un test verde falso es peor que ninguno.`,
+HAY Postgres real disponible: no hay skip que valga. El test corre contra istock_dev.
+Setup del test: aplicar las migraciones de packages/db, insertar dos tenants con service_role,
+y para cada asercion hacer  set local role authenticated  +
+set_config('request.jwt.claims', <json con app_metadata.tenant_id>, true)  dentro de una transaccion.
+Nada de mocks, nada de stubs de auth.jwt(): la funcion ya existe en la base.
+Si un assert falla, el test queda ROJO y lo reportas. NO toques packages/db para taparlo.`,
     { label: 'qa:rls', phase: 'Domain', agentType: 'qa-agent', schema: WORK_SCHEMA },
   )
 
