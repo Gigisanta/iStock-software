@@ -14,11 +14,15 @@ for f in packages/domain/package.json packages/domain/tsconfig.json; do
   [ -s "$f" ] && ok "$f" || bad "falta o vacio: $f"
 done
 # Un import de I/O en domain es fallo de arquitectura, no de estilo.
+# strip_comments: un match dentro de un comentario no es I/O. Se filtra por linea, no por archivo.
+strip_comments() { grep -vE "^\s*(//|\*|/\*)" || true; }
 DIRT=$(grep -rnE "from ['\"](next|drizzle-orm|@supabase|@istock/db|node:fs|node:crypto)|process\.env|\bfetch\(" \
-        packages/domain/src 2>/dev/null | grep -v '\.test\.' || true)
+        packages/domain/src 2>/dev/null | grep -v '\.test\.' | sed 's/^[^:]*:[0-9]*://' \
+        | strip_comments || true)
 [ -z "$DIRT" ] && ok "cero I/O en packages/domain/src" || { bad "packages/domain hace I/O:"; echo "$DIRT" | sed 's/^/        /'; }
 # now/rate inyectados: Date.now() adentro de una funcion pura la vuelve no-testeable
-IMPURE=$(grep -rnE "Date\.now\(\)|new Date\(\)" packages/domain/src 2>/dev/null | grep -v '\.test\.' || true)
+IMPURE=$(grep -rnE "Date\.now\(\)|new Date\(\)" packages/domain/src 2>/dev/null | grep -v '\.test\.' \
+        | sed 's/^[^:]*:[0-9]*://' | strip_comments || true)
 [ -z "$IMPURE" ] && ok "cero reloj propio (now se inyecta)" || { bad "reloj dentro de domain:"; echo "$IMPURE" | sed 's/^/        /'; }
 for fn in applyFx buildWaMessage canTransition expireReservation publicListingDTO sanitizeDescription; do
   grep -rqE "export (function|const) $fn" packages/domain/src 2>/dev/null \

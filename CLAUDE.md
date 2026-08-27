@@ -81,6 +81,17 @@ canje sí/no · badge stock/reserva · **UN** botón `wa.me` con:
 
 > `Hola, vi el iPhone 14 Pro 256 Grafito (usado A) a USD 620 en {slug}.maat.work y lo quiero.`
 
+**Ratificado por el LEAD en FASE 2 (cerrado, no reabrir):**
+
+1. **Dos registros de condición, a propósito.** La ficha dice `usado excelente` (PRODUCT.md); el
+   mensaje de WhatsApp dice `usado A` (el string de arriba). No es un bug de consistencia: la ficha
+   le habla a un comprador, el mensaje de WA le habla a un reseller y usa su jerga. Son dos mapas
+   distintos en `packages/domain` y así se quedan.
+2. **Redondeo de FX: techo al millar de ARS** (`ceil_1000`) como default del tenant. Es como se
+   publica en la práctica y nunca deja el precio publicado por debajo del USD × TC. Los otros modos
+   existen y están testeados; el default se cambia por tenant, no por deploy.
+3. **El ARS de la ficha es informativo y la ficha lo dice.** La operación se cierra por WhatsApp.
+
 ### Compliance
 IMEI + origen + resultado de consulta ENACOM (link + enum) **en el panel**.
 **No somos registro oficial.** CABA 295/26 es argumento de venta, no integración.
@@ -181,13 +192,23 @@ Rutas: `/` marketing · `/demo` · `/onboarding` · `/app/*` panel · **`proxy.t
 | `apps/web/app/(app)/**`, `apps/web/app/api/**` | `app-agent` | ✅ |
 | `apps/web/app/(storefront)/**`, `proxy.ts` | `storefront-agent` | ✅ |
 | `apps/web/app/(billing)/**`, webhooks MP | `billing-agent` | ✅ |
-| `tests/**`, `e2e/**`, `**/*.test.ts` | `qa-agent` | ✅ |
+| `tests/**`, `e2e/**` | `qa-agent` | ✅ |
+| `packages/*/src/**/*.test.ts` (unit del propio paquete) | el owner del paquete | ✅ |
 | `docs/**` (excepto `docs/research/**`) | `docs-keeper` | ✅ |
 | `docs/research/**` | `researcher` (uno por topic-file) | ✅ |
 | `docs/COST.md` | `cost-auditor` | ✅ |
 | `CLAUDE.md`, `AGENTS.md`, `.claude/**` | **LEAD** | ✅ |
 
 Conflicto de ownership = el LEAD reasigna. Un agente **nunca** edita fuera de su columna.
+
+**Corregido por el LEAD en FASE 2.** La fila anterior daba **todo** `**/*.test.ts` a `qa-agent`, y
+eso contradecía el contrato de cada agente de paquete, que exige un test por export público. Regla
+vigente: **el test unitario de un paquete es del owner del paquete** — nace y muere con el código
+que prueba. `qa-agent` es dueño de lo que **cruza** un límite: e2e, RLS contra Postgres real,
+tests de integración. Corolario que ya se está aplicando: **`qa-agent` nunca edita el código bajo
+test para poner un test en verde**, y el owner del paquete **nunca edita un test de `qa-agent`
+para tapar un fallo**. Si el test de `qa-agent` falla, el defecto es del código hasta que se
+demuestre lo contrario.
 
 **Excepción declarada, FASE 1:** la síntesis de `docs/ARCHITECTURE.md`, `docs/DECISIONS.md` y
 `docs/COST.md` a partir de `docs/research/**` la escribe el **LEAD**, una sola vez. Decidir el
