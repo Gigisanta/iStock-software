@@ -86,3 +86,52 @@ export function suggestSlug(businessName: string): string {
 
   return isUsableSlug(base) ? base : '';
 }
+
+/* ══════════════════════════════════════════════════════════════════════════════════════════════
+ *  Segunda familia: el slug de una FICHA (listing)
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * Son dos familias distintas con la misma pinta, y confundirlas hace **desaparecer equipos**.
+ *
+ * El slug de tenant (arriba) es un **label DNS**: vive en el host, `{slug}.maat.work`, y por eso
+ * tiene techo 32. El slug de un listing vive en el **path** (`/p/{listingSlug}`): no es un label
+ * DNS y no le aplica ese techo. Prueba concreta y viva: la **fila 207 del seed**
+ * (`packages/db/src/seed-data.ts`) tiene el slug `iphone-15-pro-max-256-titanio-natural`, de
+ * **37 caracteres**. Validar esa ficha con la regla del subdominio devuelve `404` sobre un equipo
+ * publicado, legible por `anon`, que el dueño ve en el panel y el comprador no encuentra nunca.
+ *
+ * ── Por qué 64 y no más (decidido por el LEAD, no se re-abre) ──────────────────────────────────
+ * El slug real más largo del seed son 37 caracteres. 64 deja aire para
+ * `iphone-15-pro-max-1tb-titanio-natural`-y-algo sin permitir que alguien elija un path de 8 KB,
+ * que bajo `'use cache'` es un **cache key de 8 KB por request elegido por quien pide la URL**.
+ * El techo no es cosmético: es el límite de lo que un desconocido puede hacer entrar al cache.
+ *
+ * ── El generador es más angosto que el lector, A PROPÓSITO ─────────────────────────────────────
+ * El panel **fabrica** slugs de hasta `SLUG_MAX_LENGTH` (32) y **eso se queda así**: un slug corto
+ * es mejor para pegar en un estado de Instagram. El lector de la vidriera **acepta** hasta 64 para
+ * tolerar filas sembradas, importadas o migradas. No es una inconsistencia que haya que limpiar:
+ * es la asimetría deliberada entre lo que producimos y lo que estamos dispuestos a leer. **Si
+ * alguien más adelante los "unifica" en 32, desaparecen equipos** — empezando por la fila 207.
+ * Al revés tampoco: subir el generador a 64 no rompe nada técnico, pero alarga el link que el
+ * dueño pega a mano.
+ */
+
+export const LISTING_SLUG_MIN_LENGTH = 3;
+export const LISTING_SLUG_MAX_LENGTH = 64;
+
+/** Mismo alfabeto que el slug de tenant; sólo cambia el largo. Sin guión en los bordes. */
+export const LISTING_SLUG_PATTERN = /^[a-z0-9](?:[a-z0-9-]{1,62}[a-z0-9])$/u;
+
+/**
+ * ¿Tiene **forma** de slug de ficha? **Pura y no tira.**
+ *
+ * No hay `assertListingSlug` y la ausencia es la decisión. `assertSlug` existe para el slug de
+ * tenant porque ése lo escribe el dueño en un formulario y el throw se convierte en un mensaje de
+ * campo. El slug de una ficha lo escribe **un desconocido en la barra de direcciones**: un input
+ * malo se **contesta**, no se lanza. Bajo `cacheComponents` + PPR un throw de render no es un 500
+ * — el shell ya salió con `200` y lo que queda es un stream que no cierra, o sea CPU facturada por
+ * input basura. Es el mismo HIGH que documenta `apps/web/app/(storefront)/_lib/cache-tags.ts`.
+ */
+export function isListingSlugShaped(value: string): boolean {
+  return LISTING_SLUG_PATTERN.test(value);
+}

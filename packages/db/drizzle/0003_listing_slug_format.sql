@@ -1,0 +1,46 @@
+-- ═══════════════════════════════════════════════════════════════════════════════════════════
+-- 0003 · `listings.slug` es un valor que ELIGE EL VISITANTE y que la base aceptaba sin mirar.
+--
+-- ── Por qué existe esta migración (hueco encontrado por el LEAD, 2026-08-28) ───────────────
+-- `listings.slug` era `text not null` y nada más. `tenants.slug` sí tenía `tenants_slug_format`
+-- desde 0000 (`drizzle/0000_sparkling_vector.sql`); el de listings no tenía equivalente en
+-- ninguna migración. O sea que la base aceptaba ahí un string vacío, uno de 8 KB, mayúsculas,
+-- `../`, un `%00`, lo que sea.
+--
+-- No es una validación de formulario que se nos escapó, y por eso va en el motor:
+--   1. El slug va a una **URL pública** de la vidriera: `/p/{slug}`.
+--   2. El slug entra como **argumento del cache key de `'use cache'`**. Un valor sin forma
+--      fija es una colisión de cache elegida por el visitante, no un dato feo.
+-- La única defensa hasta hoy era que el panel *casualmente* genera slugs sanos — o sea ninguna
+-- para cualquier fila que entre por seed, import o migración, que son exactamente los caminos
+-- que no pasan por el panel. Misma clase de defecto que una tabla sin `GRANT`: la app anda, los
+-- tests pasan, y el problema aparece con un dato que no vino por el camino feliz.
+--
+-- ── La forma ──────────────────────────────────────────────────────────────────────────────
+--     ^[a-z0-9](?:[a-z0-9-]{1,62}[a-z0-9])$
+-- Minúsculas, números y guiones; entre 3 y 64 caracteres; sin guión en los bordes.
+-- Es el mismo patrón que `packages/domain` declara como `LISTING_SLUG_PATTERN`. Está duplicado
+-- a propósito y no importado: `packages/db` no depende de `domain` en el SQL, y el SQL no puede
+-- importar nada. Si uno de los dos cambia, cambian los dos.
+--
+-- ── Por qué el techo es 64 y no 32 ────────────────────────────────────────────────────────
+-- El slug de un TENANT vive en el **host** (`{slug}.maat.work`): es un label DNS y por eso su
+-- CHECK corta en 32. El slug de un LISTING vive en el **path** (`/p/{slug}`): no es un label DNS
+-- y no le aplica ese límite. Concreto: la fila 207 de `SEED_LISTINGS`
+-- (`iphone-15-pro-max-256-titanio-natural`) tiene **37 caracteres** y es legítima. Con techo 32
+-- esta migración no correría contra el seed, y en producción haría desaparecer de la vidriera un
+-- equipo publicado por tener nombre largo. 64 es el techo, y es a propósito.
+--
+-- ── Verificado antes de escribir esto ─────────────────────────────────────────────────────
+-- Las 10 filas de `SEED_LISTINGS` (`src/seed-data.ts`) cumplen el patrón; la más larga es la 207
+-- con 37 caracteres, la más corta `iphone-12-64-azul` con 17. `ALTER TABLE ... ADD CONSTRAINT`
+-- valida las filas existentes: si alguna violara, esta migración fallaría al aplicarse en vez de
+-- pasar en silencio. Eso es lo que queremos.
+--
+-- Emitido por `drizzle-kit generate` desde `src/schema/listings.ts` (`listings_slug_format`).
+-- Sólo se le agregó este encabezado; el DDL de abajo no se tocó.
+-- ═══════════════════════════════════════════════════════════════════════════════════════════
+
+ALTER TABLE "listings" ADD CONSTRAINT "listings_slug_format" CHECK (slug ~ '^[a-z0-9](?:[a-z0-9-]{1,62}[a-z0-9])$');--> statement-breakpoint
+
+COMMENT ON COLUMN "listings"."slug" IS 'Slug publico de la ficha (/p/{slug}), unico por tenant. Formato garantizado por listings_slug_format: [a-z0-9-], 3 a 64, sin guion en los bordes. Va a una URL publica y a un cache key elegido por el visitante.';

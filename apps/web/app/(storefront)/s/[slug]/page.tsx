@@ -5,12 +5,21 @@ import { storefrontTag, tenantConfigTag } from '../../_lib/cache-tags';
 import { cacheStorefrontMiss } from '../../_lib/cache-life';
 import { PRERENDER_SEED_SLUG, isSlugShaped } from '../../_lib/host';
 import { getStorefrontTenant } from '../../_lib/tenant';
+import { getStorefrontCatalog } from '../../_lib/listings';
+import { ListingGrid } from '../../_components/listing-grid';
 import { STOREFRONT_MISS_METADATA, StorefrontMiss } from '../../_components/storefront-miss';
 
 /**
- * `/s/{slug}` — **home de la vidriera**. Hoy es un placeholder honesto: resuelve el tenant y lo
- * muestra. **Cero producto**: la grilla y la ficha son S3, y prometer un catálogo vacío que
- * "ya viene" es exactamente la clase de pantalla que hace que el dueño no vuelva.
+ * `/s/{slug}` — **home de la vidriera**: encabezado del tenant + la grilla de equipos publicados.
+ *
+ * La grilla no arma su propio `select`: llama a `getStorefrontCatalog()` (`_lib/listings.ts`), que
+ * devuelve `PublicListingDTO[]` y nada más. Ese es el **único** camino de datos hasta el JSX, así
+ * que la allowlist del DTO no se puede esquivar desde acá aunque alguien quiera — no hay una fila
+ * cruda a mano para filtrar "a ojo" en el markup.
+ *
+ * Las cards **no** llevan botón de WhatsApp: el único `wa.me` de la vidriera vive en la ficha
+ * (`CLAUDE.md` §1). Ver `_components/listing-grid.tsx` para por qué la grilla es de dos columnas
+ * en mobile y por qué no usa `next/link`: las dos cosas son presupuesto, no estética.
  *
  * ## Cómo llega el `slug`
  * Por el **path**, reescrito por `apps/web/proxy.ts` desde `{slug}.maat.work`. Nunca por header.
@@ -236,6 +245,7 @@ export default async function StorefrontHomePage({ params }: StorefrontPageProps
   cacheLife('max');
 
   const host = `${tenant.slug}.${STOREFRONT_DOMAIN}`;
+  const catalog = await getStorefrontCatalog(slug);
 
   return (
     <main>
@@ -244,40 +254,69 @@ export default async function StorefrontHomePage({ params }: StorefrontPageProps
         <h1 className="mt-1 text-2xl font-semibold leading-tight sm:text-3xl">{tenant.name}</h1>
       </header>
 
-      <section
-        aria-labelledby="estado-vidriera"
-        className="mt-6 rounded-xl border border-neutral-200 p-4 dark:border-neutral-800"
-      >
-        <h2 id="estado-vidriera" className="text-base font-semibold">
-          Vidriera en preparación
-        </h2>
-        <p className="mt-2 text-sm leading-relaxed text-neutral-600 dark:text-neutral-400">
-          Todavía no hay equipos publicados en esta dirección. Cuando {tenant.name} cargue el stock,
-          vas a ver acá cada equipo con fotos, condición, batería, garantía y el precio en dólares y
-          en pesos.
-        </p>
-      </section>
+      {catalog.listings.length > 0 ? (
+        <section aria-labelledby="stock" className="mt-6">
+          <h2 id="stock" className="sr-only">
+            Equipos publicados
+          </h2>
+          <ListingGrid listings={catalog.listings} />
+          <p className="mt-5 text-xs leading-relaxed text-neutral-500 dark:text-neutral-400">
+            Tocá un equipo para ver fotos, batería, garantía, punto de retiro y el precio en pesos.
+          </p>
+        </section>
+      ) : (
+        <EmptyStorefront tenantName={tenant.name} publishedCount={catalog.publishedCount} />
+      )}
+    </main>
+  );
+}
 
-      <dl className="mt-6 grid grid-cols-2 gap-3 text-sm">
-        <div className="rounded-xl border border-neutral-200 p-3 dark:border-neutral-800">
-          <dt className="text-neutral-500">Acepta canje</dt>
-          <dd className="mt-1 font-medium">{tenant.acceptsTradeIn ? 'Sí' : 'No'}</dd>
-        </div>
-        <div className="rounded-xl border border-neutral-200 p-3 dark:border-neutral-800">
-          <dt className="text-neutral-500">Medios de pago</dt>
-          <dd className="mt-1 font-medium">
-            {tenant.paymentMethods.length > 0 ? tenant.paymentMethods.join(' · ') : 'A confirmar'}
-          </dd>
-        </div>
-      </dl>
+/**
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *  La vidriera vacía tiene DOS causas y se dicen distinto
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * - `publishedCount === 0`: el dueño todavía no publicó nada. La vidriera está bien; falta stock.
+ * - `publishedCount > 0` con grilla vacía: hay equipos publicados y **falta el tipo de cambio**.
+ *   El TC lo carga el dueño a mano, por tenant (`CLAUDE.md` §1: no hay API de dólar en el hot
+ *   path), y sin él no hay ARS, que es uno de los 15 campos obligatorios de la ficha. Antes que
+ *   inventarle un dólar al dueño, la vidriera no publica y **lo dice**.
+ *
+ * Que sean dos textos y no uno no es cortesía: el segundo caso es el dueño que cargó 15 equipos
+ * una tarde y ve la misma pantalla que si no hubiera cargado ninguno. Es la tarde en la que decide
+ * si el producto sirve, y un mensaje ambiguo ahí se lee como "no funciona".
+ *
+ * El número exacto de equipos NO se muestra: al visitante anónimo no le sirve saber que hay 15
+ * equipos que no puede ver, y publicar el tamaño del stock de un negocio no es dato nuestro.
+ */
+function EmptyStorefront({
+  tenantName,
+  publishedCount,
+}: {
+  readonly tenantName: string;
+  readonly publishedCount: number;
+}) {
+  const pending = publishedCount > 0;
+
+  return (
+    <section
+      aria-labelledby="estado-vidriera"
+      className="mt-6 rounded-xl border border-neutral-200 p-4 dark:border-neutral-800"
+    >
+      <h2 id="estado-vidriera" className="text-base font-semibold">
+        {pending ? 'Vidriera casi lista' : 'Vidriera en preparación'}
+      </h2>
+      <p className="mt-2 text-sm leading-relaxed text-neutral-600 dark:text-neutral-400">
+        {pending
+          ? `${tenantName} ya cargó equipos, pero todavía falta el tipo de cambio del día para publicar los precios en pesos. Volvé en un rato.`
+          : `Todavía no hay equipos publicados en esta dirección. Cuando ${tenantName} cargue el stock, vas a ver acá cada equipo con fotos, condición, batería, garantía y el precio en dólares y en pesos.`}
+      </p>
 
       {/*
         Acá NO va un botón de WhatsApp. El texto canónico de `CLAUDE.md` §1 nombra un equipo y un
         precio concretos; sin ficha no hay equipo, y un `wa.me` genérico ("Hola, vi tu vidriera")
         es exactamente el mensaje sin contexto que el producto existe para eliminar.
-        El único `wa.me` de la vidriera se arma en `publicListingDTO` (`@istock/domain`) y sale en
-        la ficha, en S3/S4.
       */}
-    </main>
+    </section>
   );
 }

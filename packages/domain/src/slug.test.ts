@@ -2,10 +2,14 @@ import { describe, expect, it } from 'vitest';
 
 import { DomainError } from './errors';
 import {
+  LISTING_SLUG_MAX_LENGTH,
+  LISTING_SLUG_MIN_LENGTH,
+  LISTING_SLUG_PATTERN,
   SLUG_MAX_LENGTH,
   SLUG_MIN_LENGTH,
   SLUG_PATTERN,
   assertSlug,
+  isListingSlugShaped,
   isSlugShaped,
   isUsableSlug,
   normalizeSlug,
@@ -165,5 +169,109 @@ describe('la sugerencia de link nunca propone algo que el submit vaya a rechazar
       expect(sugerido.length, nombre).toBeGreaterThan(0);
       expect(isUsableSlug(sugerido), `${nombre} → ${sugerido}`).toBe(true);
     }
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════════════════════
+//  Segunda familia: el slug de una ficha
+// ══════════════════════════════════════════════════════════════════════════════════════════════
+
+/** La fila 207 de `packages/db/src/seed-data.ts`. 37 caracteres, publicada, legible por `anon`. */
+const SEED_207_SLUG = 'iphone-15-pro-max-256-titanio-natural';
+
+const LISTING_AT_MIN = 'a'.repeat(LISTING_SLUG_MIN_LENGTH);
+const LISTING_AT_MAX = 'a'.repeat(LISTING_SLUG_MAX_LENGTH);
+
+describe('el slug de una ficha vive en el path, no en el host', () => {
+  it('acepta el slug de 37 caracteres que ya está sembrado (fila 207)', () => {
+    // Si esto se pone en rojo, hay un equipo publicado que el comprador nunca encuentra.
+    expect(SEED_207_SLUG.length).toBe(37);
+    expect(isListingSlugShaped(SEED_207_SLUG)).toBe(true);
+  });
+
+  it('rechaza uno de 65: el techo existe para acotar el cache key que elige el visitante', () => {
+    expect(isListingSlugShaped('a'.repeat(LISTING_SLUG_MAX_LENGTH + 1))).toBe(false);
+    expect(isListingSlugShaped(LISTING_AT_MAX)).toBe(true);
+  });
+
+  it('rechaza uno de 2 y acepta el mínimo de 3', () => {
+    expect(isListingSlugShaped('a'.repeat(LISTING_SLUG_MIN_LENGTH - 1))).toBe(false);
+    expect(isListingSlugShaped(LISTING_AT_MIN)).toBe(true);
+  });
+
+  it('rechaza el guión al principio', () => {
+    expect(isListingSlugShaped('-arranca-con-guion')).toBe(false);
+  });
+
+  it('rechaza el guión al final', () => {
+    expect(isListingSlugShaped('termina-')).toBe(false);
+  });
+
+  it('rechaza mayúsculas', () => {
+    expect(isListingSlugShaped('MAYUSCULAS')).toBe(false);
+  });
+
+  it('rechaza el espacio, que rompería el segmento de path', () => {
+    expect(isListingSlugShaped('con espacio')).toBe(false);
+  });
+
+  it('rechaza el guión bajo: el alfabeto es el mismo que el del slug de tenant', () => {
+    expect(isListingSlugShaped('con_guion_bajo')).toBe(false);
+  });
+
+  it('rechaza el string vacío', () => {
+    expect(isListingSlugShaped('')).toBe(false);
+  });
+
+  it('rechaza punto, barra y porcentaje, que se comen el ruteo de `/p/{slug}`', () => {
+    for (const value of ['iphone.14', 'iphone/14', 'iphone%2014', '../secreto', 'ñandu-14']) {
+      expect(isListingSlugShaped(value), value).toBe(false);
+    }
+  });
+
+  it('es pura: nunca tira, ni con basura de la barra de direcciones', () => {
+    // El input lo escribe un desconocido. Bajo cacheComponents + PPR un throw de render sale como
+    // stream abierto con 200, no como 500: CPU facturada por input basura.
+    for (const value of ['', '-', '%%%', 'a'.repeat(5000), '\u0000', 'コンニチハ']) {
+      expect(() => isListingSlugShaped(value), value).not.toThrow();
+    }
+  });
+
+  it('el patrón no tiene la bandera global, que lo volvería stateful entre llamadas', () => {
+    expect(LISTING_SLUG_PATTERN.global).toBe(false);
+    expect(LISTING_SLUG_PATTERN.test(SEED_207_SLUG)).toBe(true);
+    expect(LISTING_SLUG_PATTERN.test(SEED_207_SLUG)).toBe(true);
+  });
+});
+
+describe('el generador es más angosto que el lector, a propósito', () => {
+  it('la familia de tenant sigue rechazando el slug de 37 de la fila 207', () => {
+    // Si esto se pone en verde, dejaron de ser dos familias y el techo de 32 se perdió: el slug
+    // de tenant es un label DNS y ese límite no se afloja para acomodar una ficha.
+    expect(isSlugShaped(SEED_207_SLUG)).toBe(false);
+    expect(SEED_207_SLUG.length).toBeGreaterThan(SLUG_MAX_LENGTH);
+  });
+
+  it('lo que fabrica el panel (≤32) siempre lo lee la vidriera (≤64)', () => {
+    // La asimetría sólo es sana en una dirección: generador ⊂ lector. Al revés desaparecen fichas.
+    expect(LISTING_SLUG_MAX_LENGTH).toBeGreaterThan(SLUG_MAX_LENGTH);
+    expect(LISTING_SLUG_MIN_LENGTH).toBe(SLUG_MIN_LENGTH);
+    for (const value of ['nortecel', 'iphone-14-pro-256-grafi-k7m2p', AT_MIN, AT_MAX]) {
+      expect(isSlugShaped(value), value).toBe(true);
+      expect(isListingSlugShaped(value), value).toBe(true);
+    }
+  });
+
+  it('64 no es un techo cualquiera: deja aire sobre el peor slug real y corta el path de 8 KB', () => {
+    expect(LISTING_SLUG_MAX_LENGTH).toBeGreaterThan(SEED_207_SLUG.length);
+    expect(LISTING_SLUG_MAX_LENGTH).toBeLessThan(256);
+    expect(isListingSlugShaped('a'.repeat(8192))).toBe(false);
+  });
+
+  it('las constantes de largo y el regex de la familia de listing dicen lo mismo', () => {
+    expect(isListingSlugShaped('a'.repeat(LISTING_SLUG_MIN_LENGTH - 1))).toBe(false);
+    expect(isListingSlugShaped('a'.repeat(LISTING_SLUG_MIN_LENGTH))).toBe(true);
+    expect(isListingSlugShaped('a'.repeat(LISTING_SLUG_MAX_LENGTH))).toBe(true);
+    expect(isListingSlugShaped('a'.repeat(LISTING_SLUG_MAX_LENGTH + 1))).toBe(false);
   });
 });

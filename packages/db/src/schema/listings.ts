@@ -40,7 +40,14 @@ export const listings = pgTable(
   {
     id: pk(),
     tenantId: tenantId(),
-    /** Slug de la ficha dentro de la vidriera: `/p/{slug}`. Único por tenant. */
+    /**
+     * Slug de la ficha dentro de la vidriera: `/p/{slug}`. Único por tenant.
+     *
+     * Formato garantizado por `listings_slug_format` (migración 0003), no por el panel: este
+     * valor va a una **URL pública** y entra como argumento del **cache key de `'use cache'`**,
+     * o sea que lo elige el visitante. Toda fila que entre por seed, import o migración se saltea
+     * al panel; el CHECK no.
+     */
     slug: text('slug').notNull(),
     kind: listingKindEnum('kind').notNull().default('unit'),
     /** Global, sin tenant. `null` en accesorios que no son un modelo de catálogo. */
@@ -111,6 +118,10 @@ export const listings = pgTable(
       .on(t.tenantId, t.imeiCheckStatus, t.createdAt)
       .where(sql`kind = 'unit'`),
 
+    // Misma clase de defensa que `tenants_slug_format`, y por el mismo motivo: el slug va a una
+    // URL y a un cache key. La diferencia es el techo — 64 acá, 30+2 allá — porque el slug de un
+    // listing vive en el **path** (`/p/{slug}`) y no es un label DNS. Ver migración 0003.
+    check('listings_slug_format', sql`slug ~ '^[a-z0-9](?:[a-z0-9-]{1,62}[a-z0-9])$'`),
     check('listings_price_positive', sql`price_usd > 0`),
     check('listings_cost_non_negative', sql`cost_usd is null or cost_usd >= 0`),
     check('listings_battery_range', sql`battery_pct is null or (battery_pct between 0 and 100)`),

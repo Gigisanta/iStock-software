@@ -178,17 +178,91 @@ hits "sin ARCA/AFIP, WhatsApp Business API, MercadoLibre ni carrito" \
      "\b(afip|arca|whatsapp[_-]?business[_-]?api|WABA|mercadolibre|mercado_libre|addToCart|checkout_?cart)\b" \
      $SRC_ALL --include='*.ts' --include='*.tsx'
 
-say "14 · el regex de slug es identico en los 4 owners"
+say "14 · todo regex de slug del repo es uno de los que define packages/domain"
 # Vive en packages/db (SQL, no puede importar TS), packages/domain, (app) y (storefront).
 # Ningun owner puede arreglar una divergencia solo, y divergir no rompe nada visible: el slug
 # entra a la DB y despues `storefrontTag()` tira en produccion al construir el tag. Falla tarde
 # y en el unico lugar donde no hay nadie mirando.
-SLUGS=$(grep -rhoE '\[a-z0-9\]\(\?:\[a-z0-9-\]\{[0-9]+,[0-9]+\}\[a-z0-9\]\)[$]' \
-        --include='*.ts' --include='*.sql' packages apps 2>/dev/null | sort -u || true)
-N=$(echo "$SLUGS" | grep -c . || true)
-if [ "$N" -eq 1 ]; then ok "una sola forma: $SLUGS"
-elif [ "$N" -eq 0 ]; then bad "no se encontro ningun regex de slug — se renombro o se borro?"
-else bad "el regex de slug divergio en $N formas:"; echo "$SLUGS" | sed 's/^/        /'; fi
+#
+# ── Reescrita por el LEAD el 2026-08-28, y el motivo importa mas que el codigo ────────────────
+# La version anterior exigia UNA sola forma en todo el repo. Nacio cuando el unico slug era el de
+# tenant, y S3 demostro que la premisa se vencio: el slug de una FICHA vive en el path, no en el
+# host, asi que no es un label DNS y no le aplica el techo de 32. El seed tiene una fila con un
+# slug de 37 caracteres (`iphone-15-pro-max-256-titanio-natural`); validarla con la regla del
+# subdominio devuelve 404 sobre un equipo publicado y legible por `anon`. O sea: la regla vieja
+# empujaba hacia un bug de producto.
+#
+# La correccion NO es aflojar la regla hasta que de verde -- eso es exactamente lo que esta regla
+# existe para impedir. Es cambiar el criterio por el PROPOSITO: no "una sola forma", sino **una
+# sola FUENTE**. `packages/domain` declara las formas legitimas (es TS puro, cero I/O, y lo pueden
+# importar los tres owners que quedan); cualquier otro archivo del repo tiene que repetir una de
+# ellas textualmente, nunca inventar una tercera. El SQL de `packages/db` no puede importar, por
+# eso se compara texto y no identidad de simbolo.
+#
+# Con esto la regla se vuelve mas fuerte, no mas debil: antes cubria un slug, ahora cubre todas
+# las familias que domain declare, y ademas exige que la definicion viva en domain.
+#
+# ── Endurecida por el LEAD el mismo dia, y el hallazgo vino del propio subagente ──────────────
+# `domain-agent` cerro la version de arriba en verde y despues aviso: la copia textual del regex
+# que vive en `apps/web/app/(storefront)/_lib/listing-slug.ts` **sigue ahi** y la regla no la ve,
+# porque repite una forma que domain declara y por lo tanto no es huerfana. Tenia razon: la regla
+# medía divergencia, y la divergencia no es la enfermedad — es el sintoma. La enfermedad es la
+# **segunda definicion**, que hoy coincide y manana la edita uno solo de los dos owners.
+#
+# Queda partida en dos, y las dos tienen que dar verde:
+#   14a  ningun `.ts` fuera de `packages/domain/src/slug*.ts` escribe un regex de slug. Puede
+#        importarlo: domain es TS puro, cero I/O, y lo importan los tres owners que quedan.
+#   14b  todo regex de slug en un `.sql` es uno de los que domain declara. El SQL no puede
+#        importar TS, asi que ahi la copia es legitima y lo unico exigible es que no invente.
+SLUGRE='\[a-z0-9\]\(\?:\[a-z0-9-\]\{[0-9]+,[0-9]+\}\[a-z0-9\]\)[$]'
+CANON=$(grep -ohE "$SLUGRE" packages/domain/src/slug.ts 2>/dev/null | sort -u || true)
+NC=$(echo "$CANON" | grep -c . || true)
+
+# Ausencia de medicion = FAIL, nunca PASS. Si domain no declara ninguna forma, la regla no midio.
+if [ "$NC" -eq 0 ]; then
+  bad "packages/domain/src/slug.ts no declara ningun regex de slug — se renombro o se borro?"
+else
+  # 14a · una sola definicion en TS. Dos exenciones, y las dos son por MOTIVO, no por conveniencia:
+  #   - dentro de un template `sql`...`` es texto SQL viviendo en un .ts. `packages/db` no importa
+  #     `packages/domain` a proposito, asi que ahi la copia es la unica opcion.
+  #   - un archivo que declara el marcador de abajo copia el regex A PROPOSITO. El caso real es un
+  #     test que verifica que el proxy acepte exactamente lo que acepta la DB: si importara el
+  #     simbolo seria tautologico y no probaria nada. Es el mismo principio que hace que un gate no
+  #     pueda ser del writer que audita. La exencion se declara EN EL ARCHIVO, no en este gate:
+  #     asi el motivo viaja al lado del codigo y no hay una allowlist secreta acá.
+  MARCA='guard-leaks:slug-copia-deliberada'
+  COPIAS=""
+  while IFS= read -r f; do
+    [ -z "$f" ] && continue
+    case "$f" in packages/domain/src/slug*) continue ;; esac
+    grep -qF "$MARCA" "$f" && continue
+    # se ignoran las lineas donde el regex viaja adentro de un template sql``
+    grep -nE "$SLUGRE" "$f" | grep -qvE 'sql\s*`' && COPIAS="${COPIAS}${f}"$'\n'
+  done < <(grep -rlE "$SLUGRE" --include='*.ts' packages apps 2>/dev/null | sort -u)
+  if [ -z "${COPIAS//[$'\n\t ']/}" ]; then
+    ok "14a · el regex de slug se escribe en UN solo .ts: packages/domain/src/slug.ts"
+  else
+    bad "14a · hay .ts que redefinen el regex de slug en vez de importarlo de @istock/domain:"
+    echo "$COPIAS" | sed '/^$/d;s/^/          /'
+    echo "          (copia deliberada? el archivo tiene que decir por que: // $MARCA — motivo)"
+  fi
+
+  # 14b · el SQL no puede importar, pero tampoco puede inventar.
+  SQLRE=$(grep -rhoE "$SLUGRE" --include='*.sql' packages apps 2>/dev/null | sort -u || true)
+  HUERF=$(comm -23 <(echo "$SQLRE") <(echo "$CANON") | grep -c . || true)
+  if [ "$HUERF" -eq 0 ]; then
+    ok "14b · $NC forma(s) en domain y ningun .sql inventa una propia"
+    echo "$CANON" | sed 's/^/        /'
+  else
+    bad "14b · hay $HUERF regex de slug en SQL que packages/domain no declara:"
+    comm -23 <(echo "$SQLRE") <(echo "$CANON") | while IFS= read -r r; do
+      [ -z "$r" ] && continue
+      echo "          $r"
+      grep -rlE "$(printf '%s' "$r" | sed 's/[][\.*^$(){}?+|/]/\\&/g')" \
+        --include='*.sql' packages apps 2>/dev/null | sed 's/^/            en /'
+    done
+  fi
+fi
 
 
 say "15 . afirmaciones de 404 sin ADR que las respalde  (ADR-011 vidriera / ADR-013-014 panel)"

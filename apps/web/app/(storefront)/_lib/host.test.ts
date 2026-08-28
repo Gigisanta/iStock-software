@@ -134,6 +134,13 @@ describe('resolveHost · desarrollo', () => {
 describe('resolveHost · el slug aceptado es EXACTAMENTE el que acepta la DB', () => {
   // `packages/db`: CHECK tenants_slug_format = '^[a-z0-9](?:[a-z0-9-]{1,30}[a-z0-9])$'
   // Un slug que la DB acepta y el proxy rechaza es un tenant que paga y no tiene vidriera.
+  //
+  // guard-leaks:slug-copia-deliberada — el test compara el proxy contra el CHECK de la DB, así que la forma
+  // se transcribe a mano: importar el símbolo dejaría al test comparándose consigo mismo y no probaría nada.
+  //
+  // Es el mismo principio por el que un gate no puede ser del writer que audita (`CLAUDE.md` §4).
+  // La única copia que este archivo transcribe es la del slug de **tenant**; la del slug de ficha
+  // NO se transcribe en ningún lado de `apps/web`: se importa de `@istock/domain`.
   const DB_CHECK = /^[a-z0-9](?:[a-z0-9-]{1,30}[a-z0-9])$/;
   const candidates = ['abc', 'a-c', 'nortecel', 'celu-cipo-2', '0mega', 'a'.repeat(32), 'a'.repeat(33), 'ab', 'A-B', 'a_b', '-ab', 'ab-'];
 

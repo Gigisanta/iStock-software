@@ -5,7 +5,7 @@
 | [PRODUCT.md](PRODUCT.md) | producto ejecutable: ICP, recorrido que factura, planes, fuera de alcance | `product-scribe` | cambio de producto (raro — no se reabre) |
 | [DOMAIN.md](DOMAIN.md) | glosario, entidades, máquina de estados, FX, visibilidad por rol, `publicListingDTO` | `product-scribe` + `domain-agent` | cada slice que toca reglas de negocio |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | monorepo, host→tenant, cache, camino de una foto, RLS, límites de confianza, **qué NO reescribe el proxy** | LEAD en FASE 1, después `docs-keeper` | FASE 1 + §"Qué NO se reescribe" agregada en **S2** |
-| [DECISIONS.md](DECISIONS.md) | ADRs numeradas con alternativas descartadas y verificación | LEAD en FASE 1, después `docs-keeper`; **el LEAD ratifica** cada ADR nueva | **ADR-001..015; 008 y 010 abiertas.** ADR-011 supersede el corolario 4 de ADR-007; ADR-012 lo precisa con el polo negativo; **013** (indistinguibilidad en el panel) y **014** (`instant = false`, **enmendada el 2026-08-28 con la medición del status**) salieron de S2; **015** (el matcher excluye por nombre, no por sufijo) cierra P1+P2 |
+| [DECISIONS.md](DECISIONS.md) | ADRs numeradas con alternativas descartadas y verificación + **§"Notas operativas"** (hallazgos verificados que no abren ADR) | LEAD en FASE 1, después `docs-keeper`; **el LEAD ratifica** cada ADR nueva | **ADR-001..015; 008 y 010 abiertas.** ADR-011 supersede el corolario 4 de ADR-007; ADR-012 lo precisa con el polo negativo; **013** (indistinguibilidad en el panel) y **014** (`instant = false`, **enmendada el 2026-08-28 con la medición del status**) salieron de S2; **015** (el matcher excluye por nombre, no por sufijo) cierra P1+P2. **Notas operativas abiertas el 2026-08-28** con los dos gates que daban verde por ausencia |
 | [SLICE_BOARD.md](SLICE_BOARD.md) | **estado de la verdad del avance** + blockers + **FASE 4 bis** (trabajo que salió de una slice) | `docs-keeper` | cada slice |
 | [TEST_MATRIX.md](TEST_MATRIX.md) | unit / RLS / e2e / seguridad + cobertura de reglas | `qa-agent` | cada test nuevo |
 | [COST.md](COST.md) | piso de plataforma, marginal por tenant, estrés, métrica a vigilar | LEAD en FASE 1, después `cost-auditor` | **con fuente desde FASE 1** |
@@ -52,6 +52,16 @@ Lo que hay que saber sin leer nada más:
 - **El techo de request body que manda es 4 MB** (Routing Middleware), no 4.5. Por eso entra **una
   foto por request**. La slice que lo levanta es **S2.1** y está `blocked` en B1 — y arrastra una
   pregunta abierta entre las reglas 1 y 4 de `media-agent` que hay que contestar antes de empezar.
+- **S3 está `blocked`, no `done`.** `storefront-agent` entregó grilla y ficha y dejó **cuatro
+  traspasos**: sembrar `fx_settings` + `locations` en el alta (**S3.1**, `app-agent`, **severidad
+  alta**: un tenant nuevo ve grilla vacía) y emitir `updateTag(listingTag(id))` (**S3.2**,
+  `app-agent`); las dos líneas `MEDIDO` que hoy no emite ningún spec (**T8**, `qa-agent`, es el
+  bloqueo) y **T3**. `scripts/accept-s3.sh` nace en rojo **por ausencia de medición**, que es su
+  diseño.
+- **La forma de `listings.slug` está cerrada en las dos capas** (**T9**): `LISTING_SLUG_PATTERN`
+  (3–64, sin guión en los bordes) en `packages/domain` con 15 tests, y `0003_listing_slug_format`
+  en `packages/db` con 21 casos contra Postgres real, de polaridad negativa. Queda en vuelo que
+  `storefront-agent` borre su copia e importe de `domain`.
 - **Las tres condiciones previas a S3 están cerradas.** `robots.txt`/`sitemap.xml` por tenant
   (**P1**) y los metadata file conventions (**P2**) eran el mismo bug y los cierra **ADR-015**: el
   matcher del proxy excluye **por nombre, no por sufijo** — `/icon.png` es ruta, `/logo.png` es
@@ -69,7 +79,11 @@ Lo que hay que saber sin leer nada más:
 - **Regla de método vigente: un gate que nunca se vio fallar no es un gate.** Dos gates estaban
   verdes por vacío desde S1 (la regla del `TODO` no podía disparar nunca) y una regla del
   `guard-leaks` exigía citar el ADR equivocado. Toda regla nueva se prueba en **las dos
-  polaridades**. Detalle en `SLICE_BOARD.md`.
+  polaridades**. Detalle en `SLICE_BOARD.md`. **Dos casos más el 2026-08-28**
+  (`DECISIONS.md` §"Notas operativas"): un gate se satisfacía con un `import` —hay que verificar
+  **la invocación, nunca la presencia del símbolo**— y `guard-artifacts.sh` sin argumentos daba
+  `PASS` con cero archivos chequeados. Las reglas de R2 de `CLAUDE.md` §2 ya tienen gate:
+  `scripts/guard-r2.sh` (**T11**). **T4** (`scripts/_lib.sh`) sigue abierto.
 - **Deuda de S1 sin slice:** no hay rate limiting (**T1**) ni guard de "query sin filtro de tenant"
   (**T2**). Las dos son del **LEAD**: `scripts/**` y `vercel.json` tienen dueño desde FASE 4.
 - **Deuda de los instrumentos, abierta en FASE 4:** el test de RLS cruzado vive en el directorio de
@@ -78,3 +92,6 @@ Lo que hay que saber sin leer nada más:
   `readMatchers()` trunca el matcher del proxy en el primer `]` (**T7**, no rompe nada hoy).
 - **El driver de R2 existe** (`packages/media/src/storage/r2.ts`, `MEDIA_DRIVER=r2`). Lo que falta
   para K5 es el bucket real: ningún byte viajó nunca a R2. Eso es **B1**.
+- **Un comando de aceptación del repo no resuelve** (**T10**, LEAD): `.claude/agents/storefront-agent.md:40`
+  manda `pnpm --filter web test -- storefront`; el paquete es `@istock/web` y ese filtro no existe.
+  Para S3 es `bash scripts/accept-s3.sh`.

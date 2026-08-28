@@ -1,0 +1,464 @@
+// `server-only` hace **fallar el build** si este módulo termina importado desde un Client
+// Component. Es lo que impide que el read model de la vidriera viaje al browser.
+import 'server-only';
+
+import { cacheLife, cacheTag } from 'next/cache';
+import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
+import { catalogModels, fxSettings, listingPhotos, listings, locations, tenants } from '@istock/db';
+import { variantUrl } from '@istock/media';
+import {
+  PUBLIC_STATUSES,
+  fxRateFromArsCents,
+  isListingSlugShaped,
+  isPubliclyVisible,
+  publicListingDTO,
+  type Condition,
+  type FxRoundingMode,
+  type ListingStatus,
+  type PublicListingDTO,
+  type PublicListingSource,
+} from '@istock/domain';
+import { withStorefrontDb, type StorefrontTx } from './storefront-db';
+import { isReservedSubdomain, isSlugShaped } from './host';
+import { listingTag, storefrontTag, tenantConfigTag } from './cache-tags';
+import { STOREFRONT_MISS_LIFE, cacheStorefrontMiss } from './cache-life';
+
+/**
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *  Read model de la vidriera. **`publicListingDTO` es el único camino de datos a la vista.**
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * Ninguna función de este archivo devuelve una fila de Postgres. Devuelven `PublicListingDTO`, o
+ * `null`. Eso no es prolijidad: es la diferencia entre un filtro y una allowlist.
+ *
+ * Un componente que recibe la fila y "no imprime el costo" está a un `JSON.stringify`, un
+ * `data-*`, un `console.log` o un `{...row}` de publicarlo — y bajo RSC el objeto puede terminar
+ * en el payload de Flight al final del `<body>` **sin aparecer en pantalla**, que es el modo de
+ * falla que ningún code review encuentra mirando el JSX. Por eso el borde está acá abajo y no en
+ * la vista: lo que sale de este módulo ya no tiene los campos prohibidos, así que no hay nada que
+ * recordar más arriba.
+ *
+ * La descripción del dueño es **input no confiable** y se sanitiza dentro de `publicListingDTO`
+ * (`sanitizeDescription` de `@istock/domain`). No se sanitiza acá otra vez: dos saneadores en dos
+ * capas es la receta para que uno de los dos se afloje "porque el otro ya lo hace".
+ *
+ * ── Tres capas de aislamiento, y las tres se evalúan ──────────────────────────────────────────
+ * 1. **GRANT de columna** (migración 0002): `anon` no tiene `SELECT` de tabla sobre `listings`,
+ *    tiene `SELECT (slug, title, price_usd, …)`. Un `select *` no filtra de más: **no corre**
+ *    (`42501`). Es la capa que sigue en pie el día que este archivo tenga un bug.
+ * 2. **RLS**: las policies `*_storefront_anon_select` acotan a `storefront_tenant_id()`, y la de
+ *    `listings` además exige `status in ('available','reserved','sold') and published_at is not
+ *    null`. Un borrador no existe para el visitante.
+ * 3. **`where` explícito** por `tenant_id` en cada query de acá, además de RLS (`CLAUDE.md` §5).
+ *    Si mañana alguien afloja una policy, la query sigue acotada; si alguien borra el `where`, la
+ *    policy sigue acotando.
+ *
+ * ── Presupuesto ───────────────────────────────────────────────────────────────────────────────
+ * **Una transacción por render cacheado**, no una por dato. La ficha lee tenant + TC + puntos de
+ * retiro + equipo + fotos + modelo dentro del mismo `withStorefrontDb`: son seis roundtrips contra
+ * uno en el 5% de requests que fallan el cache, y el otro 95% no ejecuta nada de este archivo.
+ * `cacheLife('max')` en el camino positivo; invalidación **por evento** desde el panel.
+ */
+
+/**
+ * Techo de fichas por página de grilla.
+ *
+ * No es paginación (todavía no hace falta: el ICP tiene 20–200 equipos y la grilla entra), es un
+ * **techo de tags**: la ficha registra `listing:{uuid}` y Vercel descarta en silencio los tags que
+ * pasan de **128 por respuesta** (`CACHE_TAG_LIMITS.maxTagsPerResponse`). Un tag descartado no
+ * invalida nada y no rompe nada — la peor falla posible. La grilla no registra tags por unidad
+ * justamente por eso, y este techo es la segunda razón por la que no puede empezar a hacerlo.
+ */
+export const STOREFRONT_PAGE_SIZE = 60;
+
+/**
+ * Lo que la grilla necesita saber, y una cosa más que parece de más y no lo es.
+ *
+ * `publishedCount` distingue **"este negocio todavía no publicó nada"** de **"publicó y le falta
+ * cargar el tipo de cambio"**. Sin ese número las dos se ven igual —grilla vacía— y el dueño que
+ * cargó 15 equipos una tarde ve exactamente la misma pantalla que el que no cargó ninguno. Es el
+ * peor momento posible para ser ambiguo: es la tarde en la que decide si el producto sirve.
+ */
+export interface StorefrontCatalog {
+  /** Fichas publicables, ya como DTO. */
+  readonly listings: readonly PublicListingDTO[];
+  /** Unidades públicas que existen en la base, tengan o no precio en pesos calculable. */
+  readonly publishedCount: number;
+}
+
+/** Contexto del tenant que comparten la grilla y la ficha. Nunca sale de este módulo. */
+interface TenantContext {
+  readonly id: string;
+  readonly slug: string;
+  readonly waPhone: string;
+  readonly paymentMethods: readonly string[];
+  readonly acceptsTradeIn: boolean;
+}
+
+/**
+ * El tenant activo del slug, **con el teléfono**. Es un `select` distinto del de
+ * `_lib/tenant.ts` a propósito: aquel alimenta el encabezado y no trae `wa_phone`; éste arma el
+ * `wa.me` y no se usa para pintar nada. Que el teléfono viaje sólo por el camino que lo necesita
+ * es lo que hace que "no publicamos el teléfono suelto" sea verdad por construcción.
+ */
+async function tenantContext(tx: StorefrontTx, slug: string): Promise<TenantContext | null> {
+  const rows = await tx
+    .select({
+      id: tenants.id,
+      slug: tenants.slug,
+      waPhone: tenants.waPhone,
+      paymentMethods: tenants.paymentMethods,
+      acceptsTradeIn: tenants.acceptsTradeIn,
+    })
+    .from(tenants)
+    .where(and(eq(tenants.slug, slug), eq(tenants.status, 'active')))
+    .limit(1);
+
+  const row = rows[0];
+  if (row === undefined) return null;
+  return {
+    id: row.id,
+    slug: row.slug,
+    waPhone: row.waPhone,
+    paymentMethods: row.paymentMethods,
+    acceptsTradeIn: row.acceptsTradeIn,
+  };
+}
+
+/**
+ * El TC que puso el dueño, a mano, para su tenant. **No hay API de dólar en el hot path.**
+ *
+ * Devuelve `null` si el tenant todavía no cargó ninguno, y ese `null` **no se rellena con un
+ * default**. Publicar un precio en pesos calculado con un TC inventado por nosotros es peor que no
+ * publicarlo: el ARS de la ficha lo dice el dueño, y si no lo dijo, no lo decimos por él.
+ */
+async function fxContext(tx: StorefrontTx, tenantId: string) {
+  const rows = await tx
+    .select({ arsPerUsd: fxSettings.arsPerUsd, rounding: fxSettings.rounding })
+    .from(fxSettings)
+    .where(eq(fxSettings.tenantId, tenantId))
+    .limit(1);
+  return rows[0] ?? null;
+}
+
+/** Puntos de retiro activos, en el orden que eligió el dueño. Uno de los 15 campos de la ficha. */
+async function pickupContext(tx: StorefrontTx, tenantId: string) {
+  return tx
+    .select({ name: locations.name, address: locations.address, hours: locations.hours })
+    .from(locations)
+    .where(and(eq(locations.tenantId, tenantId), eq(locations.isActive, true)))
+    .orderBy(asc(locations.sortOrder), asc(locations.name));
+}
+
+/**
+ * Columnas de `listings` que la vidriera lee. Es **exactamente** el `GRANT` de columna de `anon`
+ * menos las que el DTO no usa. Se escribe una sola vez y la comparten la grilla y la ficha: dos
+ * listas de columnas es cómo se cuela una columna sensible en el `select` que nadie mira.
+ */
+const LISTING_COLUMNS = {
+  id: listings.id,
+  slug: listings.slug,
+  title: listings.title,
+  storageGb: listings.storageGb,
+  color: listings.color,
+  condition: listings.condition,
+  batteryPct: listings.batteryPct,
+  screenOriginal: listings.screenOriginal,
+  icloudStatusText: listings.icloudStatusText,
+  warrantyText: listings.warrantyText,
+  provenanceText: listings.provenanceText,
+  description: listings.description,
+  priceUsdCents: listings.priceUsd,
+  status: listings.status,
+  modelDisplayName: catalogModels.displayName,
+} as const;
+
+/**
+ * La forma de una fila del `select` de arriba, escrita a mano y **no** derivada de las columnas de
+ * Drizzle. El `leftJoin` con `catalog_models` hace que `display_name` pueda venir `null` aunque la
+ * columna sea `not null` —los accesorios no tienen modelo de catálogo—, y un tipo derivado de la
+ * columna diría `string`. Ese es justo el `null` que hay que contemplar.
+ */
+interface ListingRow {
+  readonly id: string;
+  readonly slug: string;
+  readonly title: string;
+  readonly storageGb: number | null;
+  readonly color: string | null;
+  readonly condition: Condition;
+  readonly batteryPct: number | null;
+  readonly screenOriginal: boolean | null;
+  readonly icloudStatusText: string | null;
+  readonly warrantyText: string | null;
+  readonly provenanceText: string | null;
+  readonly description: string | null;
+  readonly priceUsdCents: number;
+  readonly status: ListingStatus;
+  readonly modelDisplayName: string | null;
+}
+
+/**
+ * Orden de la grilla: **primero lo que se puede comprar hoy.**
+ *
+ * `sold` se sigue publicando (está en `PUBLIC_STATUSES` y es prueba social: "este negocio vende"),
+ * pero abajo. Mostrar un vendido arriba de un disponible es gastar el scroll de alguien parado en
+ * la calle en un equipo que no puede comprar.
+ *
+ * Se ordena en SQL y no en TS porque el `limit` corta **después** del `order by`: con el orden en
+ * memoria, el equipo 61 disponible se perdería detrás de 60 vendidos.
+ */
+const STATUS_ORDER = sql`case ${listings.status} when 'available' then 0 when 'reserved' then 1 else 2 end`;
+
+/** Fotos de un conjunto de fichas, agrupadas por listing y en el orden que eligió el dueño. */
+async function photosByListing(
+  tx: StorefrontTx,
+  tenantId: string,
+  listingIds: readonly string[],
+): Promise<Map<string, Array<{ cardUrl: string; detailUrl: string; alt: string | null }>>> {
+  const grouped = new Map<string, Array<{ cardUrl: string; detailUrl: string; alt: string | null }>>();
+  if (listingIds.length === 0) return grouped;
+
+  const rows = await tx
+    .select({
+      listingId: listingPhotos.listingId,
+      alt: listingPhotos.alt,
+      thumbKey: listingPhotos.thumbKey,
+      cardKey: listingPhotos.cardKey,
+      detailKey: listingPhotos.detailKey,
+    })
+    .from(listingPhotos)
+    .where(
+      and(
+        eq(listingPhotos.tenantId, tenantId),
+        inArray(listingPhotos.listingId, [...listingIds]),
+      ),
+    )
+    .orderBy(asc(listingPhotos.listingId), asc(listingPhotos.sortOrder));
+
+  for (const row of rows) {
+    const list = grouped.get(row.listingId) ?? [];
+    // Las URLs las arma `@istock/media`, nunca este archivo: la key es content-addressed y el
+    // bucket, el CDN y el prefijo no son asunto de la vidriera (`CLAUDE.md` §2, ADR-006).
+    list.push({
+      cardUrl: variantUrl(row, 'card'),
+      detailUrl: variantUrl(row, 'detail'),
+      alt: row.alt,
+    });
+    grouped.set(row.listingId, list);
+  }
+  return grouped;
+}
+
+/**
+ * `publicListingDTO()` recibe `PublicListingSource & Record<string, unknown>` a propósito: la firma
+ * está escrita para que un caller pueda pasarle **la fila entera de la base** sin pelear con el
+ * compilador... y que el DTO igual no la deje pasar, porque la allowlist es de runtime. Una
+ * `interface` de TS no es asignable a `Record<string, unknown>` (no tiene index signature
+ * implícita), así que el tipo se declara acá, en el borde, y no se toca `@istock/domain`.
+ *
+ * Que esta vidriera pase un objeto **más chico** que la fila es defensa en profundidad, no
+ * redundancia: si mañana la allowlist del DTO tuviera un agujero, acá no hay un `imei` en scope
+ * para que se escape por él.
+ */
+type ListingSource = PublicListingSource & Record<string, unknown>;
+
+/** Fila + contexto → `PublicListingSource`. El único lugar donde se arma la entrada del DTO. */
+function toSource(
+  row: ListingRow,
+  tenant: TenantContext,
+  fx: { readonly arsPerUsd: number; readonly rounding: FxRoundingMode },
+  pickupPoints: readonly { readonly name: string; readonly address: string; readonly hours: string }[],
+  photos: readonly { readonly cardUrl: string; readonly detailUrl: string; readonly alt: string | null }[],
+): ListingSource {
+  return {
+    id: row.id,
+    slug: row.slug,
+    tenantSlug: tenant.slug,
+    tenantWaPhone: tenant.waPhone,
+    title: row.title,
+    // Los accesorios no tienen `catalog_model`. El título es su nombre de display y es lo que
+    // tiene que entrar al mensaje de WhatsApp: "vi el Cargador 20W USB-C" se entiende; "vi el
+    // null" no.
+    modelDisplayName: row.modelDisplayName ?? row.title,
+    storageGb: row.storageGb,
+    color: row.color,
+    condition: row.condition,
+    batteryPct: row.batteryPct,
+    screenOriginal: row.screenOriginal,
+    icloudStatusText: row.icloudStatusText,
+    warrantyText: row.warrantyText,
+    provenanceText: row.provenanceText,
+    description: row.description,
+    priceUsdCents: row.priceUsdCents,
+    fxRate: fxRateFromArsCents(fx.arsPerUsd),
+    fxRounding: fx.rounding,
+    status: row.status,
+    photos,
+    pickupPoints,
+    paymentMethods: tenant.paymentMethods,
+    acceptsTradeIn: tenant.acceptsTradeIn,
+  };
+}
+
+/**
+ * ── Grilla ────────────────────────────────────────────────────────────────────────────────────
+ *
+ * Cachea con `storefront:{slug}` + `tenant-config:{slug}`, los dos tags que el panel ya invalida
+ * (`(app)/_lib/tenants/storefront-cache.ts`). **No** registra un tag por unidad: 200 equipos serían
+ * 200 tags y el techo por respuesta es 128 — los de más se descartan **en silencio**.
+ *
+ * El slug se valida antes de tocar `cacheTag()`: `storefrontTag()` **tira** con un slug basura, y
+ * bajo `cacheComponents` + PPR un throw de render no es un 500 sino un stream que no cierra con el
+ * `200` ya emitido. Un input inválido se contesta, no se lanza.
+ */
+export async function getStorefrontCatalog(slug: string): Promise<StorefrontCatalog> {
+  'use cache';
+
+  const empty: StorefrontCatalog = { listings: [], publishedCount: 0 };
+
+  if (!isSlugShaped(slug)) {
+    cacheLife(STOREFRONT_MISS_LIFE);
+    return empty;
+  }
+
+  cacheTag(storefrontTag(slug), tenantConfigTag(slug));
+
+  // `www`, `app`, `api`, … no son tenants y no se preguntan. Es también lo que permite que
+  // `generateStaticParams` prerenderice el slug semilla **sin abrir una conexión a Postgres**.
+  if (isReservedSubdomain(slug)) {
+    cacheLife(STOREFRONT_MISS_LIFE);
+    return empty;
+  }
+
+  const catalog = await withStorefrontDb(slug, async (tx) => {
+    const tenant = await tenantContext(tx, slug);
+    if (tenant === null) return null;
+
+    const rows = await tx
+      .select(LISTING_COLUMNS)
+      .from(listings)
+      .leftJoin(catalogModels, eq(listings.catalogModelId, catalogModels.id))
+      .where(
+        and(
+          // Filtro de tenant EXPLÍCITO, además de RLS (CLAUDE.md §5).
+          eq(listings.tenantId, tenant.id),
+          // Y el filtro de estado explícito, además de la policy: `PUBLIC_STATUSES` es la misma
+          // constante que espeja el trigger `listings_stamp_published_at` de la migración 0002.
+          inArray(listings.status, [...PUBLIC_STATUSES]),
+        ),
+      )
+      .orderBy(STATUS_ORDER, desc(listings.publishedAt), asc(listings.slug))
+      .limit(STOREFRONT_PAGE_SIZE);
+
+    const publishedCount = rows.length;
+
+    const fx = await fxContext(tx, tenant.id);
+    if (fx === null) return { rows: [], publishedCount };
+
+    const pickupPoints = await pickupContext(tx, tenant.id);
+    const photos = await photosByListing(tx, tenant.id, rows.map((row) => row.id));
+
+    return {
+      rows: rows.map((row) => toSource(row, tenant, fx, pickupPoints, photos.get(row.id) ?? [])),
+      publishedCount,
+    };
+  });
+
+  if (catalog === null) {
+    cacheStorefrontMiss();
+    return empty;
+  }
+
+  cacheLife('max');
+
+  return {
+    // `isPubliclyVisible` es redundante con la policy y con el `inArray` de arriba, y se queda:
+    // `publicListingDTO` **tira** con un estado no público, y un throw acá sería un stream que no
+    // cierra por una fila mal grabada. La tercera capa es la que convierte ese throw en un equipo
+    // que no se muestra.
+    listings: catalog.rows.filter((row) => isPubliclyVisible(row.status)).map(publicListingDTO),
+    publishedCount: catalog.publishedCount,
+  };
+}
+
+/**
+ * ── Ficha ─────────────────────────────────────────────────────────────────────────────────────
+ *
+ * `null` = 404 de verdad (`notFound()` en la página). Un id de listing que no existe **sí** va por
+ * `notFound()`: acá el shell del tenant ya resolvió, no hay ambigüedad de host y el boundary en
+ * español ya existe (`s/[slug]/not-found.tsx`). Eso **no** contradice ADR-011, que gobierna otra
+ * pregunta —"¿existe este tenant?"— y otra capa.
+ *
+ * El `null` se cachea con el perfil corto: un bot que pruebe mil slugs de ficha inventados hace
+ * mil queries la primera vez y **cero** después, sin sembrar entradas de 30 días.
+ *
+ * Registra un tag propio, `listing:{uuid}`, **además** de los dos del tenant. Hoy el panel sólo
+ * emite los dos del tenant, así que este tag todavía no invalida solo; existe para que cuando el
+ * panel lo emita, publicar una unidad deje de purgar el catálogo entero de ese tenant. El tag se
+ * registra después del `await` porque el UUID recién se conoce ahí — `cacheTag()` es acumulativo
+ * dentro del scope, igual que `cacheLife()`.
+ */
+export async function getStorefrontListing(
+  slug: string,
+  listingSlug: string,
+): Promise<PublicListingDTO | null> {
+  'use cache';
+
+  // Dos familias distintas de slug, y por eso dos validadores: `isSlugShaped` es el del **tenant**
+  // (label DNS, techo 32) e `isListingSlugShaped` el de la **ficha** (segmento de path, techo 64).
+  // Los dos los declara `@istock/domain` (`slug.ts`), que es donde está escrito por qué la fila 207
+  // del seed se caería con el primero y por qué el segundo no tira. Acá sólo se consumen.
+  if (!isSlugShaped(slug) || !isListingSlugShaped(listingSlug)) {
+    cacheLife(STOREFRONT_MISS_LIFE);
+    return null;
+  }
+
+  cacheTag(storefrontTag(slug), tenantConfigTag(slug));
+
+  if (isReservedSubdomain(slug)) {
+    cacheLife(STOREFRONT_MISS_LIFE);
+    return null;
+  }
+
+  const source = await withStorefrontDb(slug, async (tx) => {
+    const tenant = await tenantContext(tx, slug);
+    if (tenant === null) return null;
+
+    const rows = await tx
+      .select(LISTING_COLUMNS)
+      .from(listings)
+      .leftJoin(catalogModels, eq(listings.catalogModelId, catalogModels.id))
+      .where(
+        and(
+          eq(listings.tenantId, tenant.id),
+          eq(listings.slug, listingSlug),
+          inArray(listings.status, [...PUBLIC_STATUSES]),
+        ),
+      )
+      .limit(1);
+
+    const row = rows[0];
+    if (row === undefined) return null;
+
+    const fx = await fxContext(tx, tenant.id);
+    // Sin TC no hay ARS, y el ARS es uno de los 15 campos obligatorios de la ficha. Antes que
+    // publicar una ficha incompleta —o peor, un precio en pesos inventado por nosotros— la ficha
+    // no existe todavía. La grilla tampoco la linkea: las dos leen el mismo `fx_settings`.
+    if (fx === null) return null;
+
+    const pickupPoints = await pickupContext(tx, tenant.id);
+    const photos = await photosByListing(tx, tenant.id, [row.id]);
+
+    return toSource(row, tenant, fx, pickupPoints, photos.get(row.id) ?? []);
+  });
+
+  if (source === null || !isPubliclyVisible(source.status)) {
+    cacheStorefrontMiss();
+    return null;
+  }
+
+  cacheTag(listingTag(source.id));
+  cacheLife('max');
+
+  return publicListingDTO(source);
+}

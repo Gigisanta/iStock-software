@@ -718,3 +718,43 @@ segundo devolviendo 200 con el archivo del apex).
 S3 implementa `/s/[slug]/robots.txt` y `/s/[slug]/sitemap.xml` **con su propio perfil de cache**: un
 sitemap que pegue a Postgres por hit de crawler rompe el 95% de `CLAUDE.md` §3. El enrutamiento ya
 está y no se toca.
+
+---
+
+## Notas operativas — hallazgos que no son ADR
+
+> **Qué es:** hechos verificados que cambian cómo se escribe o se lee algo del repo, pero que **no
+> abren ni modifican una decisión de arquitectura**. No llevan número de ADR a propósito: numerarlos
+> los volvería reabribles, y no hay nada que reabrir.
+> **Para quién:** el que va a escribir o auditar un gate.
+> **Cuándo se actualiza:** cuando aparece un hallazgo de esta clase. Lo escribe `docs-keeper`.
+
+### 2026-08-28 · Dos formas nuevas de que un gate esté verde sin haber mirado nada
+
+Los dos son casos de la regla que el repo ya tiene escrita —**"un gate que nunca se vio fallar no es
+un gate"**, `SLICE_BOARD.md` §"Regla de método de los gates"— y los dos ya están corregidos.
+
+**1. Un gate puede satisfacerse con un `import` y no correr nunca.**
+La regla **R5** de `scripts/guard-r2.sh` verificaba que `assertPublicVariantKey` **apareciera** en
+`upload.ts` y `url.ts`. La línea de `import` sola ya contiene el nombre: un gate **importado y jamás
+llamado** pasaba la regla. No se ve leyendo el código —el archivo se lee como si el chequeo
+estuviera— y no lo encontró una revisión: lo encontró **la prueba de polaridad**, borrando la llamada
+para confirmar que el guard se ponía rojo. No se puso.
+Corregido a buscar la **llamada** (`assertPublicVariantKey\(`, descartando las líneas de `import`).
+**Regla general derivada: un guard verifica la invocación, nunca la presencia del símbolo.** Aplica a
+todo `grep` de gate que hoy busque un identificador suelto.
+
+**2. `scripts/guard-artifacts.sh` invocado mal daba `PASS`.**
+Sin argumentos iteraba sobre una lista vacía y salía `GUARD: PASS` con exit 0 **habiendo chequeado
+cero archivos**. Y en `--harness` los conteos **se imprimían sin afirmar**: borrar dos agentes lo
+dejaba verde con `12 (esperado 14)` ahí arriba como texto decorativo, porque el bucle de `check` sólo
+ve los archivos que **todavía están**.
+O sea: el guard que existe para hacer cumplir *"archivo inexistente o vacío = la tarea no pasó"*
+(`CLAUDE.md` §Phantom-file guard) era el que violaba la regla, y le daba verde a cualquiera que lo
+invocara mal. **Lo encontró el LEAD invocándolo mal él mismo.** Las dos cosas fallan ahora: sin
+argumentos es `SIN-ARGS … Ausencia de medicion = FAIL, nunca PASS`, y cada conteo del harness aborta
+el guard si no da el número esperado.
+
+**Lo que comparten, y por eso están juntos:** los dos daban verde **por ausencia**, no por
+aprobación. Un gate que no distingue "lo chequeé y está bien" de "no chequeé nada" no es un gate, es
+un `echo`.

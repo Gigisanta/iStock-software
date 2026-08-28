@@ -101,8 +101,8 @@ describe('error.tsx · el backstop de la vidriera', () => {
     expect(
       imports,
       'el boundary empezó a importar. Cualquier import acá es JS que se le baja a un visitante ' +
-        'anónimo en 4G; un barrel de `@istock/domain` arrastra `fx`, `wa`, `imei` y `dto` al chunk ' +
-        'del cliente por una constante. Tree-shaking *debería* limpiarlo, y "debería" no es un ' +
+        'anónimo en 4G; un barrel de `@istock/domain` arrastra `fx`, `wa`, `dto` y los módulos de ' +
+        'identificadores de equipo al chunk del cliente por una constante. Tree-shaking *debería* limpiarlo, y "debería" no es un ' +
         'presupuesto. Si hace falta un dato, se pasa por props desde el server.',
     ).toEqual([]);
 

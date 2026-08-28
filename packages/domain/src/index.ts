@@ -92,10 +92,14 @@ export {
 } from './reserved-slugs';
 
 export {
+  LISTING_SLUG_MAX_LENGTH,
+  LISTING_SLUG_MIN_LENGTH,
+  LISTING_SLUG_PATTERN,
   SLUG_MAX_LENGTH,
   SLUG_MIN_LENGTH,
   SLUG_PATTERN,
   assertSlug,
+  isListingSlugShaped,
   isSlugShaped,
   isUsableSlug,
   normalizeSlug,
