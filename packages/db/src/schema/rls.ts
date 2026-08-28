@@ -33,10 +33,40 @@ export function belongsToTenant(): SQL {
 }
 
 /**
+ * Condición EXTRA sobre el `with check` del INSERT del panel, además del tenant.
+ *
+ * Existe por un motivo concreto y medido (S6, `drizzle/0006_reservations_sweep_attempts.sql`):
+ * hay columnas que el panel **no elige** —las escribe un job— y la primera reacción es sacarlas
+ * del privilegio de INSERT columna por columna. **Eso rompe al caller real.** Drizzle, en
+ * `insert().values()`, nombra TODAS las columnas de la tabla y pone `default` en las que no le
+ * pasaste; y Postgres exige el privilegio sobre cada columna NOMBRADA aunque el valor sea
+ * `DEFAULT`. O sea que el `GRANT` por columna no dice "no la elijas": dice "no insertes nada".
+ *
+ * El candado correcto es este: el `GRANT` de INSERT queda a nivel de TABLA (la capa 1 decide si
+ * podés tocar la tabla) y la policy exige el valor (la capa 2 decide qué filas escribís). Es la
+ * única de las dos capas que sabe decir "sí, pero en cero", que es justo lo que hace falta.
+ *
+ * No aplica a `UPDATE`: ahí el `.set()` de Drizzle nombra sólo lo que setea, así que el `GRANT`
+ * por columna sí expresa la intención y además defiende el caso caro —forjar el contador
+ * *después*, sobre una fila viva—. Los dos mecanismos conviven a propósito.
+ */
+export interface TenantPolicyOptions {
+  /** Predicado extra exigido al INSERTAR, en `and` con el tenant. Nunca lo reemplaza. */
+  readonly insertWithCheck?: SQL;
+}
+
+/**
  * Las 4 policies de una tabla de negocio con columna `tenant_id`.
  * Devuelve el array listo para spread en el "extra config" de `pgTable`.
  */
-export function tenantPolicies(table: string) {
+export function tenantPolicies(table: string, options: TenantPolicyOptions = {}) {
+  // El tenant NUNCA se reemplaza: lo extra va en `and`. Si una opción pudiera sustituir el
+  // predicado de tenant, esta función dejaría de ser la receta que hace imposible olvidarlo.
+  const insertCheck =
+    options.insertWithCheck === undefined
+      ? belongsToTenant()
+      : sql`${belongsToTenant()} and ${options.insertWithCheck}`;
+
   return [
     pgPolicy(`${table}_tenant_select`, {
       as: 'permissive',
@@ -48,7 +78,7 @@ export function tenantPolicies(table: string) {
       as: 'permissive',
       for: 'insert',
       to: authenticatedRole,
-      withCheck: belongsToTenant(),
+      withCheck: insertCheck,
     }),
     pgPolicy(`${table}_tenant_update`, {
       as: 'permissive',

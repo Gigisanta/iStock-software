@@ -173,6 +173,59 @@ for (const [, name, table, body] of policies) {
   }
 }
 
+// ── 3b · `ALTER POLICY`: el predicado que queda es el ÚLTIMO, no el primero ───────────────────
+//
+// Regla agregada en S6, y no por prolijidad: hasta ese día esta sección leía **sólo**
+// `CREATE POLICY`, así que un `ALTER POLICY … WITH CHECK (true)` en una migración pasaba en verde.
+// Se midió antes de escribir esto: con esa línea puesta a mano en 0006, el lint imprimía
+// `rls-lint OK · 74 policies` y salía 0. O sea que la regla 0007 —"`using (true)` está prohibido",
+// que es la que CLAUDE.md nombra como fallo— tenía una puerta al lado sin cerrar.
+//
+// La puerta se abrió el día que apareció el primer `ALTER POLICY` del repo (0006, el `with check`
+// que exige `sweep_attempts = 0` al crear una reserva). Antes no había ninguno y la omisión no
+// costaba nada; a partir de ahí, cada cambio de predicado del producto entra por acá.
+//
+// Qué se audita y qué NO, que la diferencia importa:
+//   · SÍ el predicado: `(true)`, `auth.jwt()` fuera de subquery, `user_metadata`, y —si la policy
+//     original era `TO anon`— que siga acotando por el claim del host.
+//   · NO la regla 0011 ("escribe sin WITH CHECK"). En Postgres, un `ALTER POLICY` que omite una
+//     cláusula **la deja como estaba**: exigir `WITH CHECK` en un ALTER que sólo toca el `USING`
+//     sería un falso positivo. El `WITH CHECK` de una policy de escritura lo sigue garantizando
+//     su `CREATE`, arriba.
+// El comando y el rol se resuelven contra el `CREATE POLICY` del mismo nombre, que es de dónde
+// los saca Postgres también.
+const alters = [...sqlNoComments.matchAll(/ALTER POLICY\s+"([^"]+)"\s+ON\s+"?(\w+)"?([^;]*);/gis)];
+for (const [, name, table, body] of alters) {
+  const id = `${table}.${name} (ALTER)`;
+  const creado = policies.find(([, n, t]) => n === name && t === table);
+  if (creado === undefined) {
+    // Un ALTER sobre una policy que ninguna migración crea: o el nombre está mal escrito y el
+    // ALTER va a explotar al aplicarse, o la policy la creó alguien a mano en la base.
+    fail('0027', `${id} altera una policy que ninguna migración crea`);
+    continue;
+  }
+  if (/USING\s*\(\s*true\s*\)/i.test(body)) fail('0007', `${id} deja USING (true): RLS decorativa`);
+  if (/WITH CHECK\s*\(\s*true\s*\)/i.test(body)) fail('0007', `${id} deja WITH CHECK (true)`);
+  if (/auth\.jwt/i.test(body) && !/\(\s*select\s+auth\.jwt/i.test(body)) {
+    fail('0009', `${id} llama auth.jwt() fuera de una subquery`);
+  }
+  if (/user_metadata/i.test(body)) {
+    fail('0010', `${id} lee tenant desde user_metadata (va en app_metadata)`);
+  }
+  // Si el ALTER trae predicado, tiene que traer TAMBIÉN el tenant: lo que se agrega va en `and`,
+  // nunca en lugar del tenant. Sin esto, un ALTER que "simplifica" el `with check` a una condición
+  // de columna publicaría la tabla entre tenants y el lint lo vería como un cambio cosmético.
+  const traePredicado = /USING\s*\(|WITH CHECK\s*\(/i.test(body);
+  const creadoBody = creado[3];
+  if (traePredicado && /tenant_id/i.test(creadoBody) && !/tenant_id/i.test(body)) {
+    fail('0027', `${id} reemplaza el predicado y no menciona tenant_id: lo extra va EN AND, no en lugar del tenant`);
+  }
+  if (/\bTO\s+"?anon"?/i.test(creadoBody) && traePredicado
+      && !/storefront_(slug|tenant_id)\(\)/i.test(body)) {
+    fail('0024', `${id} altera una policy TO anon y el predicado nuevo no acota por el claim de la vidriera`);
+  }
+}
+
 // ── 4. tenant_id: NOT NULL, FK, e indexado ───────────────────────────────────────────────────
 for (const table of tables) {
   const block = sqlNoComments.match(
@@ -353,4 +406,7 @@ if (problems.length > 0) {
   for (const p of problems) console.error(`  ${p}`);
   process.exit(1);
 }
-console.log(`rls-lint OK · ${tables.length} tablas · ${enabled.size} con RLS · ${policies.length} policies · ${marks} columnas SENSITIVE`);
+console.log(
+  `rls-lint OK · ${tables.length} tablas · ${enabled.size} con RLS · ${policies.length} policies` +
+    ` (+${alters.length} ALTER auditados) · ${marks} columnas SENSITIVE`,
+);

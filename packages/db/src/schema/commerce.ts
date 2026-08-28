@@ -32,6 +32,41 @@ export const reservations = pgTable(
     customerLabel: text('customer_label'),
     createdBy: uuid('created_by').references(() => authUsers.id, { onDelete: 'set null' }),
     closedAt: timestamp('closed_at', { withTimezone: true }),
+    /**
+     * Cuántas veces el barrido de expiración intentó cerrar ESTA reserva y falló.
+     *
+     * No es telemetría: es la memoria que le faltaba al cron. El barrido toma
+     * `status='active' and expires_at <= now() order by expires_at asc limit 200`, y una fila que
+     * hace rollback queda `active` con el **mismo `expires_at`** — o sea vuelve a ser la primera
+     * de la próxima corrida, para siempre, tapando a las que sí podían vencer. Sin una columna
+     * donde anotar el intento, el barrido no tiene forma de saber que ya la vio.
+     *
+     * El modo de falla real no son 200 filas rotas independientes: es una causa sistémica que las
+     * envenena a todas de una (un `GRANT` faltante → `42501`, un check nuevo en `listing_events`).
+     * Con dos filas debidas y las dos fallando ya no vence nada de nadie, y el endpoint sigue
+     * devolviendo `200 OK`. Este contador es lo que hace visible esa clase entera.
+     *
+     * **Quién la escribe: sólo el cron (`service_role`). Nadie más, y eso lo sostienen las dos
+     * capas de `drizzle/0006_reservations_sweep_attempts.sql`, cada una donde sirve:**
+     *
+     *   · **UPDATE → `GRANT` por columna.** `authenticated` tiene UPDATE de las otras 11 columnas
+     *     y no de ésta: un `update reservations set sweep_attempts = 999` desde el panel no
+     *     "filtra de más", da `42501`. Es la mitad cara —forjar el contador *después*, sobre una
+     *     reserva viva, para que el barrido la saltee para siempre—.
+     *   · **INSERT → `with check` de la policy.** El `GRANT` de INSERT queda a nivel de TABLA y la
+     *     policy exige `sweep_attempts = 0`. No es una preferencia de estilo: Drizzle, en
+     *     `insert().values()`, NOMBRA todas las columnas y pone `default` en las que no le pasaste,
+     *     y Postgres pide el privilegio sobre cada columna nombrada aunque el valor sea `DEFAULT`.
+     *     Sacar la columna del GRANT de INSERT no impide elegirla: impide crear reservas. Con la
+     *     policy, el seller que mande `sweep_attempts = 7` recibe `new row violates row-level
+     *     security policy` y el que no la mande entra con su `default 0`.
+     *
+     * `anon` no tiene ningún privilegio sobre `reservations`: la vidriera no la ve ni la escribe.
+     *
+     * El consumo (a quién saltea el barrido, con qué techo, y si eso se ordena o se filtra) es de
+     * `app-agent` y no está acá: esta columna es sólo el lugar donde anotar.
+     */
+    sweepAttempts: integer('sweep_attempts').notNull().default(0),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -45,7 +80,12 @@ export const reservations = pgTable(
       .on(t.listingId)
       .where(sql`status = 'active'`),
     check('reservations_minutes_range', sql`minutes between 30 and 120`),
-    ...tenantPolicies('reservations'),
+    // Un contador de intentos que puede ir a negativo no es un contador: es una forma de
+    // deshabilitar el guard escribiendo -1 y que nadie lo note.
+    check('reservations_sweep_attempts_non_negative', sql`sweep_attempts >= 0`),
+    // El panel crea reservas con el contador en cero, y eso lo exige la POLICY (capa 2), no el
+    // GRANT (capa 1): ver `sweepAttempts` arriba y `TenantPolicyOptions` en `./rls.ts`.
+    ...tenantPolicies('reservations', { insertWithCheck: sql`sweep_attempts = 0` }),
   ],
 ).enableRLS();
 
