@@ -1,7 +1,15 @@
 # SLICE_BOARD — estado de la verdad del avance
 
-> Lo mantiene `docs-keeper`. Una slice pasa a `done` **sólo** cuando el **LEAD re-ejecutó**
-> su comando de aceptación y el resultado fue verde. Que un agente diga "pasa" no alcanza.
+> **Qué es:** el estado de la verdad del avance — una fila por slice, con su gate, su dueño y su
+> artefacto — más los blockers y el trabajo que salió de hacer una slice.
+> **Para quién:** el LEAD antes de repartir trabajo, y cualquier agente antes de tocar una fila.
+> **Cuándo se actualiza:** con cada slice y con cada corrida de gate del LEAD. Lo mantiene
+> `docs-keeper`, que **verifica contra el código antes de escribir** y reporta la discrepancia en vez
+> de arreglar el código.
+>
+> Una slice pasa a `done` **sólo** cuando el **LEAD re-ejecutó** su comando de aceptación y el
+> resultado fue verde. Que un agente diga "pasa" no alcanza. Que el código esté en `main` tampoco:
+> ya tuvo a S1 en `doing` y a S3.1/S3.2 en `todo` un día entero con el código entregado.
 
 Estados: `todo` · `doing` · `blocked` · `done`
 **Regla:** máximo **una** slice en `doing` por directorio owner.
@@ -136,8 +144,8 @@ cuyo gate no pudo correr: las cinco quedan `todo` hasta que el gate corra **ente
 | S2 | listing unit + fotos R2 con variantes | **done** | `media-agent` → `app-agent` | 3 variantes generadas; `card` ≤150KB **medido sobre bytes** (`card=50692B`, techo `153600B`). **Re-ejecutado por el LEAD el 2026-08-28: EXIT=0 · 21 PASS · 0 FAIL · `S2: ACEPTADA`** |
 | S3 | grilla + ficha mínima | **done** | `storefront-agent` | `bash scripts/accept-s3.sh`: los **15 campos** de `CLAUDE.md` §1 —los 15 de verdad recién desde **M3b** (`0edb661`), que agregó el botón `wa.me`—; cero campos prohibidos en el HTML; el byte medido es el que **pide el browser** (P3). **Re-ejecutado entero por el LEAD el 2026-08-28: 58 PASS · 0 FAIL · `S3: ACEPTADA`** (la corrida que la aceptó dio 50; M3b sumó 8 aserciones) |
 | S4 | botón `wa.me` + tracking de eventos | **done** | `domain-agent` → `storefront-agent` | texto exacto byte a byte; evento registrado sin PII. **Re-ejecutado entero por el LEAD el 2026-08-28, sin fixture: `./scripts/accept-s4.sh` → 37 PASS · 0 FAIL**, con la suite e2e ejecutada de verdad (73 passed) y `pnpm typecheck && pnpm lint && pnpm test` en 1004 passed / 0 failed. Las dos mitades del *byte a byte* siguen afirmadas por separado y hacen falta las dos: `packages/domain/src/wa.test.ts` U14 fija el string (`toBe(CANONICAL_TEXT)`) y M3b de `accept-s3.sh` prueba que la página servida lo lleva — **W1 de `accept-s4.sh` nombra las dos aserciones, no los archivos**, así que borrar M3b pone roja también a S4. Lo nuevo es el evento: W2/W3 (no hay dónde poner PII; `anon` gana exactamente un privilegio de columna y ni uno más), W5 (con JS apagado el botón sigue abriendo WhatsApp), W6/W6b (medición viva, y el cruce de tenant escribe **cero** filas), W7 (el endpoint nace con techo declarado en `config/firewall-rules.json`). **Deja abierta S4.1**, defecto del texto en el camino real |
-| S5 | FX → precio en ARS | todo | `domain-agent` → `app-agent` | TC del dueño; redondeo testeado; ARS visible en ficha |
-| S6 | reserva + cron de expiración | todo | `app-agent` | reserva 30–120min; cron libera; vidriera revalida |
+| S5 | FX → precio en ARS | **done** | `domain-agent` → `app-agent` | TC del dueño; redondeo testeado; ARS visible en ficha. **Los tres tercios están afirmados y por comandos que el LEAD ya re-ejecutó**, aunque S5 nunca tuvo un `accept-s5.sh` propio: (1) el TC lo carga el dueño en el alta — campo `fxRate` en `create-tenant-form.tsx:192` → `fx_settings` por tenant (`create-tenant.ts:320` en `main`, sembrado por **S3.1**); (2) `applyFx` (`packages/domain/src/fx.ts:117`) con `DEFAULT_FX_ROUNDING = 'ceil_1000'` (`:35`) y los 4 modos testeados en `fx.test.ts` — `pnpm --filter @istock/domain test` → **187 passed / 12 archivos**; (3) el ARS sale en la ficha y lo exige **M3 de `accept-s3.sh`** con la forma de `formatArs`, en la corrida de **58 PASS · 0 FAIL** del LEAD. **El hueco que queda no es de S5: es T12** — el dueño no puede *editar* el TC después del alta. Ver §S5 abajo |
+| S6 | reserva + cron de expiración | **doing** | `app-agent` | reserva 30–120min; cron libera; vidriera revalida. **DB y dominio listos; falta panel + ruta de cron + `revalidateTag`, y el `vercel.json` con el schedule (lo escribe el LEAD, hoy no existe).** Ver §S6 abajo |
 | S7 | venta manual | todo | `app-agent` | `→ sold`; sale de la grilla; URL directa no rompe |
 | S8 | canje: form + inbox + accept-to-stock | todo | `app-agent` | crea unidad en `draft` con costo; seller no ve el costo |
 | S9 | copy list para estados de IG/WA | todo | `app-agent` | export con precios y links; cero IMEI |
@@ -306,20 +314,24 @@ cuyo gate no pudo correr: las cinco quedan `todo` hasta que el gate corra **ente
 > **S3.3**; **T3** (el test de RLS cruzado ya vive en `tests/`, 69 casos verdes desde la ubicación
 > nueva); y **T1 en su nivel 1** —las reglas del WAF existen, están versionadas y tienen censo de
 > rutas, pero **no están aplicadas**: leer la fila entera, no el `done`.
-> **Sigue abierta T15**, que salió de medir el mensaje de WhatsApp. **T2**, **S2.1**, **S2.2**,
-> **S2.3** y **S2.4** siguen abiertas después de aceptar S1, S2 y S3: **aceptar la slice no cierra
-> sus deudas.**
+> **Sigue abierta T15**, que salió de medir el mensaje de WhatsApp. **S2.1**, **S2.2**, **S2.3** y
+> **S2.4** siguen abiertas después de aceptar S1, S2 y S3: **aceptar la slice no cierra sus deudas.**
+> **T2 cerró el 2026-08-28** (`9b3d7d2`, `W015` en `main`) **y al cerrarse abrió T16**: su alcance
+> medido es `apps/web` y `packages/**` sigue sin gate. Cerrar una fila sin nombrar lo que su alcance
+> deja afuera es cómo un gate angosto se lee después como cobertura completa.
 > **S4.1 es la entrada nueva del 2026-08-28**, y sale de la misma clase de corrida: apareció porque
 > `accept-s4.sh` **imprime el `href` entero** en vez de aseverar sobre él. El defecto es
-> preexistente de S3; lo que cambió es que ahora se ve.
+> preexistente de S3; lo que cambió es que ahora se ve. Su código y su gate ya están en `main`
+> (`7e40856` + `07c42ff`); lo que falta es **la corrida del LEAD**, que es lo único que mueve un
+> estado en este board.
 
 | id | título | estado | owner | bloqueo | gate de aceptación | artefacto |
 |---|---|---|---|---|---|---|
 | S2.1 | upload directo a R2 por URL prefirmada | blocked | `media-agent` → `app-agent` | **B1** + pregunta abierta de abajo | 8 fotos sin round-trip por foto; el original **nunca** es alcanzable; `card` sigue ≤150KB | `packages/media/src/*`, `apps/web/app/api/**` |
 | P1 | `robots.txt` / `sitemap.xml` por tenant — **decisión de diseño** | **done** | `storefront-agent` + `qa-agent` | — | decisión escrita **antes** de arrancar S3 → **ADR-015**, verificada por el LEAD (30 URLs contra el `path-to-regexp` compilado) | `docs/DECISIONS.md` ADR-015 · `apps/web/proxy.ts` (`117c4f0`) |
 | P2 | metadata file conventions bajo host de tenant — **decisión de diseño** | **done** | `storefront-agent` + `qa-agent` | — | ídem P1: misma causa raíz, misma ADR, mismo commit | ADR-015 · `apps/web/proxy.ts` · `tests/proxy-matcher-no-deja-la-vidriera-sin-vigilar.test.ts` |
-| T1 | rate limiting en el edge: las 2 reglas de Vercel Firewall | **done** — nivel 1 | **LEAD** (`config/**` + `scripts/**`, §4) | — | **el gate original decía "2 reglas activas + prueba de que disparan" y eso NO se cumple entero**: las reglas están declaradas y validadas, y **no están aplicadas** (no hay proyecto Vercel — **B2**/**B5** —, y aplicar es un paso operativo aparte que `vercel deploy` **no** hace). Cerrado el **nivel 1**: el archivo existe, pasa las restricciones reales de Pro, **el censo de route handlers no deja entrar una ruta sin decidir**, y desde `3199a78` **el gate y su polaridad corren en CI** (`ci.yml:118` y `:126`). `bash scripts/guard-firewall.sh` → `GUARD-FIREWALL: PASS`. **Cero** contador en Postgres sobre la vidriera. Con S4 (`c9611b1`) `storefront-track-rl` pasó de `planned` a **`active`**: el endpoint no nace sin techo. Ver §T1 abajo | `config/firewall-rules.json` + `scripts/guard-firewall.sh` + `scripts/guard-firewall.test.sh` (`4fce968`, `3199a78`) · **ADR-016** |
-| T2 | guard estático de "query sin filtro de tenant" | doing — **implementación en vuelo, sin commitear** | **LEAD** (`apps/web/scripts/*-lint.mjs` + `scripts/**`, §4) | — | el guard falla sobre una query sin `tenant_id` **y** pasa con la excepción declarada. **Al 2026-08-28 existe `W015` en `apps/web/scripts/web-lint.mjs`, corre y da verde** (`WEB-LINT: PASS (15 reglas)`, 15 tablas de negocio derivadas del schema) — pero el archivo está **modificado y sin commitear**: `git log -S W015` sobre él devuelve **cero commits**, así que en `main` la regla no existe y no corrió en ningún push. **La fila la cierra el LEAD**, no este board | `apps/web/scripts/web-lint.mjs` (W015, sin commitear) |
+| T1 | rate limiting en el edge: las 2 reglas de Vercel Firewall | **done** — nivel 1 | **LEAD** (`config/**` + `scripts/**`, §4) | — | **el gate original decía "2 reglas activas + prueba de que disparan" y eso NO se cumple entero**: las reglas están declaradas y validadas, y **no están aplicadas** (no hay proyecto Vercel — **B2**/**B5** —, y aplicar es un paso operativo aparte que `vercel deploy` **no** hace). Cerrado el **nivel 1**: el archivo existe, pasa las restricciones reales de Pro, **el censo de route handlers no deja entrar una ruta sin decidir**, y desde `3199a78` **el gate y su polaridad tienen step en CI** (`ci.yml:118` y `:126`) — *step declarado*, no ejecutado: `ci.yml` nunca corrió, ver §"Seis gates rojos o dormidos". `bash scripts/guard-firewall.sh` → `GUARD-FIREWALL: PASS` (re-corrido el 2026-08-28). **Cero** contador en Postgres sobre la vidriera. Con S4 (`c9611b1`) `storefront-track-rl` pasó de `planned` a **`active`**: el endpoint no nace sin techo. Ver §T1 abajo | `config/firewall-rules.json` + `scripts/guard-firewall.sh` + `scripts/guard-firewall.test.sh` (`4fce968`, `3199a78`) · **ADR-016** |
+| T2 | guard estático de "query sin filtro de tenant" | **done** — alcance `apps/web` | **LEAD** (`apps/web/scripts/*-lint.mjs` + `scripts/**`, §4) | — | el guard falla sobre una query sin `tenant_id` **y** pasa con la excepción declarada. **Está en `main` desde `9b3d7d2`**, junto con el párrafo de `CLAUDE.md` §2 que fija el contrato del marcador `web-lint:sin-tenant`; `git log --oneline -S W015 -- apps/web/scripts/web-lint.mjs` devuelve **un** commit, no cero. Verificado el 2026-08-28 por `docs-keeper`: `cd apps/web && node ./scripts/web-lint.mjs` → `ok W015 toda query sobre las 15 tablas de negocio filtra por tenant ademas de RLS (builder y sql crudo)` · `WEB-LINT: PASS (15 reglas)`, con las **2** excepciones declaradas del repo pasando. **El alcance es `apps/web` y nada más**: `packages/**` sigue sin gate → **T16**, abierta. **Residuo declarado:** la polaridad se ejerció **fuera del repo** y no es un comando — ver §T2 | `apps/web/scripts/web-lint.mjs` (W015, `9b3d7d2`) |
 | T3 | mudar el test de RLS cruzado a `tests/` | **done** | `qa-agent` | — | los casos corren desde `tests/` contra Postgres real, verdes, sin perder ninguno; `packages/db/src/rls-cross-tenant.test.ts` deja de existir; **y en la misma mudanza se borra el encabezado que se declara `db-agent`**, derogado por la regla de desempate de `CLAUDE.md` §4. **Re-ejecutado por el LEAD desde la ubicación nueva: `rls-cross-tenant.test.ts (69 tests)` verdes** — no 59: ese número contaba `it()` literales y se comía el `it.each` sobre 10 columnas sensibles (`:625-630`). Total del repo: **919** | `tests/rls-cross-tenant.test.ts` + `tests/vitest.config.ts` (`d686923`) |
 | T4 | extraer los helpers de los gates a `scripts/_lib.sh` | **done** | **LEAD** | — | un solo juego de helpers en el repo; los gates que lo importan re-corridos con el mismo veredicto **y** el helper probado en las dos polaridades, en CI | `scripts/_lib.sh` + `scripts/_lib.test.sh` (`dc1d854`) |
 | S2.2 | `collectOrphanObjects` existe y no lo llama nadie | todo | `media-agent` (función) + `app-agent` (comentarios) | — | se elige **(a)** o **(b)** por escrito: si (a), el job corre y borra un huérfano sembrado; si (b), **ningún** comentario del repo la nombra en presente | `packages/media/src/unlink.ts`, `apps/web/app/(app)/_lib/listings/*.ts` |
@@ -330,7 +342,7 @@ cuyo gate no pudo correr: las cinco quedan `todo` hasta que el gate corra **ente
 | S3.1 | un tenant real nace sin `fx_settings` y sin `locations` | **done** | `app-agent` | — | **severidad alta** — alta o onboarding siembran un `fx_settings` y ≥ 1 punto de retiro; un tenant nuevo que carga 3 equipos ve grilla con precio y retiro, no vacía. **Cerrada por la corrida de `accept-s3.sh` del LEAD (2026-08-28, 50 PASS/0 FAIL):** M3 exige el punto de retiro, el horario y el ARS con la forma de `formatArs`, y los tres salen de las filas sembradas | `apps/web/app/(app)/_lib/tenants/create-tenant.ts` (`eaccfee`) |
 | S3.2 | publicar un equipo purga el catálogo entero del tenant | **done** | `app-agent` | — | al mutar una unidad se emite además `updateTag(listingTag(id))`; los dos tags de tenant dejan de ser la única invalidación. **Cerrada por la misma corrida:** `MEDIDO s3 db-hits · primera=9 · cacheada=0` | `apps/web/app/(app)/_lib/tenants/storefront-cache.ts` (`eaccfee`) |
 | S3.3 | bajo un **tenant** inexistente la ficha dice que el equipo se vendió | **done** | `storefront-agent` | — | una ficha bajo un slug de tenant que no existe contesta el *tenant-miss* (`STOREFRONT_MISS_TITLE`, "No hay ninguna vidriera en esta dirección"), no el *listing-miss* ("Este equipo ya no está publicado"); el `null` del tenant se sigue cacheando con `STOREFRONT_MISS_LIFE`. **Verificado por el LEAD contra server real** (`next build` + `next start`, leyendo el HTML servido y no el fuente) y `accept-s3.sh` re-ejecutado: **58 PASS · 0 FAIL · S3 ACEPTADA**, con `MEDIDO s3 db-hits · primera=9 · cacheada=0` — el mismo número de antes del fix, o sea que **el camino feliz no se encareció**. Tabla de los 4 casos en §S3.3 abajo | `apps/web/app/(storefront)/s/[slug]/p/[listing]/page.tsx` + `apps/web/app/(storefront)/ficha.test.ts` (15 → 24 tests) (`042e24e`) |
-| S4.1 | el mensaje de WhatsApp repite storage y color cuando el listing no tiene `catalog_model` | doing | `domain-agent` + `storefront-agent` | — | el `href` medido sobre la **ficha servida** de un listing **sin `catalog_model`** dice el string canónico de `CLAUDE.md` §1 **byte a byte** —no por substrings—, y el fix decide **qué significa `modelDisplayName` cuando no hay catálogo** en vez de parchear el `??`. Ver §S4.1 abajo | `packages/domain/src/wa.ts:53` + `apps/web/app/(storefront)/_lib/listings.ts:282` |
+| S4.1 | el mensaje de WhatsApp repite storage y color cuando el listing no tiene `catalog_model` | doing — **código y gate en `main`; falta la corrida del LEAD** | `domain-agent` + `storefront-agent` | — | el `href` medido sobre la **ficha servida** de un listing **sin `catalog_model`** dice el string canónico de `CLAUDE.md` §1 **byte a byte** —no por substrings—, y el fix decide **qué significa `modelDisplayName` cuando no hay catálogo** en vez de parchear el `??`. **Gate primero, en rojo, `7e40856`** (M3b de `accept-s3.sh` + W5 de `accept-s4.sh`: *ningún token repetido en el equipo nombrado*); **fix en `07c42ff`**: `nameSource` es requerido en `WaListing` y `PublicListingSource`, `resolveModelName` es el único constructor, `isBlank` trata `''` como ausente. **Lo único que falta es la re-ejecución** — ver §S4.1 abajo | `apps/web/app/(storefront)/_lib/model-name.ts:54` (`resolveModelName`) · `packages/domain/src/wa.ts:51` (`nameSource`) · `packages/domain/src/text.ts:22` (`isBlank`) (`07c42ff`) |
 | T8 | los dos specs que miden S3 no emiten ninguna medición | **done** | `qa-agent` | — | las dos líneas `MEDIDO` exactas (ver abajo); **la de imagen se mide sobre la grilla**, no sobre la ficha. **Emitidas y verificadas por el LEAD el 2026-08-28** (`transferSize=51016B` / `primera=9 · cacheada=0`) | `e2e/s3-la-grilla-en-un-telefono-no-baja-la-foto-grande.spec.ts`, `e2e/s3-la-ficha-cacheada-no-le-pega-a-postgres.spec.ts` (`09c9bc3`) |
 | T9 | forma de `listings.slug` en `domain` + en el motor | **done** | `domain-agent` + `db-agent` | resto en vuelo con `storefront-agent` | ver abajo | `packages/domain/src/slug.ts`, `packages/db/drizzle/0003_listing_slug_format.sql` |
 | T10 | ocho comandos de aceptación corrían la suite entera creyendo filtrar | **done** | **LEAD** (`.claude/**`, §4) | — | el comando de cada contrato **filtra de verdad**, verificado en las dos polaridades (filtra, y falla con exit 1 ante un patrón que no matchea) | 4 `.claude/agents/*.md` + 4 `.claude/skills/*/SKILL.md` + `scripts/accept-fase3.sh` (`0d647c6`) |
@@ -341,6 +353,7 @@ cuyo gate no pudo correr: las cinco quedan `todo` hasta que el gate corra **ente
 | T13 | `/_media` no manda `Timing-Allow-Origin` | todo | `app-agent` | — | la Performance API reporta el byte real del recurso cross-origin; el spec de S3 compara sus **dos** cuentas en vez de descartar una | `apps/web/app/(app)/%5Fmedia/[...key]/route.ts` |
 | T14 | dos prohibiciones de `CLAUDE.md` §2 que ningún gate afirma | todo | `qa-agent` (ver desempate abajo) | — | cada una tiene un chequeo **que se vio fallar** sobre una violación sembrada, y corre **en cada push**, no dentro de un `accept-*` | `tests/` (o `scripts/**`, y entonces es del **LEAD**) |
 | T15 | el seed del demo dice un color en la URL y otro en la página | todo · **prioridad baja** | `db-agent` | — | **pregunta abierta, no diagnóstico** (ver abajo). Cerrada cuando el slug del listing y el color que muestra la ficha nombren lo mismo, y `bash scripts/accept-s3.sh` siga en verde | `packages/db/src/seed-data.ts:114-116` |
+| T16 | `packages/**` no tiene gate de "query sin filtro de tenant" | todo | **LEAD** (todo gate es del LEAD, §4) | — | una query sembrada sin `tenant_id` dentro de `packages/**` pone **rojo** un comando del repo, y la exención se declara con motivo escrito igual que en W015. **Nace de cerrar T2**, cuyo alcance medido es `apps/web/app` + `apps/web/lib` + `proxy.ts` (`web-lint.mjs:41`) y nada más | sin definir — `apps/web/scripts/web-lint.mjs` no puede ser (mira `apps/web`); candidato natural: un gate propio en `scripts/**` |
 
 > **Anti-drift, 2026-08-28 — el caso completo, de punta a punta, porque es el que enseña la regla.**
 > Durante un día **S3.1 y S3.2 estuvieron `todo` con el código ya en `main`** (`eaccfee`). Las filas
@@ -350,8 +363,8 @@ cuyo gate no pudo correr: las cinco quedan `todo` hasta que el gate corra **ente
 > `09c9bc3`) que la entrega del código no había mostrado. Eso es lo que compra la regla.
 > Lo que sí se corrigió el día que las filas seguían `todo` fue la **descripción**, porque decía algo
 > que el código ya no hacía:
-> - **S3.1** — `create-tenant.ts` ya siembra `fx_settings` (`:218`) y una fila de `locations`
->   (`:226`) en la **misma** transacción que `tenants` + `memberships` (`eaccfee`).
+> - **S3.1** — `create-tenant.ts` ya siembra `fx_settings` (`:320`) y una fila de `locations`
+>   (`:328`) en la **misma** transacción que `tenants` + `memberships` (`eaccfee`).
 > - **S3.2** — `storefront-cache.ts` ya tiene tres puntos de entrada según el alcance real de la
 >   mutación (`invalidateStorefront` 2 tags · `invalidateStorefrontUnit` 3 · `invalidateListing` 1),
 >   y los tags se **importan** de `(storefront)/_lib/cache-tags` en vez de redefinirse.
@@ -496,7 +509,9 @@ declara una regla por `host` sin acotar path, o un catch-all.
 > decisión, la alternativa descartada (`host suf .maat.work`, con su número de costo) y la
 > verificación con fuente viven ahí; esta sección queda como el estado de la fila.
 
-**El nivel 1 dejó de depender de disciplina: `guard-firewall.sh` corre en cada push.** Verificado
+**El nivel 1 dejó de depender de disciplina: `guard-firewall.sh` tiene step en CI.** ⚠️ *Step
+declarado, no ejecutado* — `ci.yml` no corrió nunca (§"Seis gates rojos o dormidos"), así que lo que
+dejó de depender de disciplina es **acordarse**, no **la corrida**. Verificado
 contra `.github/workflows/ci.yml` el 2026-08-28 — está en el job principal en `:118`, y su polaridad
 (`guard-firewall.test.sh`, "cada regla se tiene que ver romper") en `:126`, las dos desde `3199a78`.
 **Este board decía lo contrario y estaba desactualizado**; se corrige acá y en `TEST_MATRIX.md`, que
@@ -519,21 +534,57 @@ Postgres sobre la vidriera es rechazo automático*. Que exista el WAF **no** pon
 prohibición —son dos cosas distintas: una configura un techo en el edge, la otra prohíbe una
 implementación en el código— y eso es **T14.1**, que sigue en 🔴.
 
-### T2 · el guard de "query sin filtro de tenant" existe y **no está commiteado**  ·  LEAD
+### T2 · el guard de "query sin filtro de tenant"  ·  **CERRADA el 2026-08-28** (`9b3d7d2`) · LEAD
 
 `CLAUDE.md` §2 rechaza toda query sin filtro de tenant *además* de RLS. `scripts/guard-leaks.sh`
-tiene 15 secciones y **ninguna es ésta** — eso sigue siendo cierto y por eso la fila nació. Lo que
-cambió el 2026-08-28: la regla **se escribió en otro lado**, como `W015` de
-`apps/web/scripts/web-lint.mjs`, que es del LEAD por la misma tabla de §4.
+tiene 15 secciones y **ninguna es ésta** — sigue siendo cierto, y por eso la fila nació. La regla
+**se escribió en otro lado**, como `W015` de `apps/web/scripts/web-lint.mjs`, que es del LEAD por la
+misma tabla de §4.
 
-**Estado verificado, no reportado.** `node ./scripts/web-lint.mjs` desde `apps/web` imprime
-`ok W015 toda query sobre las 15 tablas de negocio filtra por tenant ademas de RLS` y cierra en
-`WEB-LINT: PASS (15 reglas)`. **Y `git log -S "W015" -- apps/web/scripts/web-lint.mjs` devuelve cero
-commits:** el archivo figura como `M` en `git status`. O sea que la regla **no está en `main`** y no
-se ejecutó en ningún push. Es la tercera pregunta que este repo tuvo que aprender a hacerse, después
-de *¿hay chequeo?* y *¿lo corre alguien?*: **¿está en `main`?**
+**Lo que este board decía y era falso al 2026-08-28.** Decía *"implementación en vuelo, sin
+commitear"* y citaba `git log -S W015` devolviendo **cero commits**. Re-medido:
 
-**Por qué la implementación es de las buenas, cuando aterrice.** Deriva la lista de tablas del
+```
+$ git log --oneline -S W015 -- apps/web/scripts/web-lint.mjs
+9b3d7d2 [fix] W015: read raw SQL, measure filtering instead of presence, fail closed
+```
+
+El mismo commit trae el párrafo de `CLAUDE.md` §2 que fija el contrato del marcador
+`web-lint:sin-tenant` (motivo de 30+ caracteres, una línea, dentro de la declaración de nivel de
+módulo o su docblock pegado; sin ancla no hay exención). O sea que la pregunta que la fila enseñó a
+hacerse —después de *¿hay chequeo?* y *¿lo corre alguien?*, la tercera es **¿está en `main`?**— ya
+tiene respuesta afirmativa, y el diagnóstico de arriba describe un estado que duró horas.
+
+**Estado verificado por `docs-keeper` el 2026-08-28, no reportado.** `node ./scripts/web-lint.mjs`
+desde `apps/web` imprime
+`ok W015 toda query sobre las 15 tablas de negocio filtra por tenant ademas de RLS (builder y sql crudo)`
+y cierra en `WEB-LINT: PASS (15 reglas)`. Corre en CI por `pnpm -r lint` (`ci.yml:64`, vía el script
+`lint` de `apps/web/package.json`) — con la salvedad de la sección *"«en CI» era una afirmación
+sobre intención"* de más abajo, que aplica a **todos** los gates de este repo.
+
+**Las dos excepciones declaradas del repo, y son exactamente dos:**
+
+| archivo | motivo escrito |
+|---|---|
+| `apps/web/app/(app)/_lib/session.ts:94` | *resolver a qué tenant pertenece una sesión es anterior a que exista el tenant* |
+| `apps/web/app/(app)/_lib/tenants/create-tenant.ts:202` | *pregunta existencial sobre todos los tenants, hecha antes de que exista el primero* |
+
+**Residuo declarado, y es el motivo por el que este `done` se lee entero: la polaridad de W015 no es
+un comando.** El commit dice *"twelve constructed cases, each seen to break in its own direction,
+**run in a sandbox outside the repo**"*. Es literalmente la situación anterior de `guard-firewall`,
+donde *"14 fixtures, 14 rompen"* también se había ejercido a mano y fuera del repo — y el día que se
+volvió un comando (`scripts/guard-firewall.test.sh`, `3199a78`) encontró que **seis reglas no
+fallaban nunca** (`DECISIONS.md` ADR-016 §Verificación). No hay hoy nada que diga que eso no le pasó
+a W015: ejercer la polaridad afuera prueba lo que hacía el archivo esa tarde, no lo que hace el de
+`main`. **`apps/web/scripts/` es del LEAD**, así que la fila queda anotada acá y no se abre sola.
+
+> **Pregunta abierta para el LEAD (no la contesta este board).** ¿W015 lleva arnés de polaridad
+> versionado, como `guard-firewall.test.sh` y `scripts/_lib.test.sh`? Hoy `ls apps/web/scripts/`
+> devuelve **un solo archivo**, `web-lint.mjs`. Comando que la contestaría en la dirección útil:
+> sembrar una query sin `tenant_id` en `apps/web/app/(app)/_lib/` y correr
+> `cd apps/web && node ./scripts/web-lint.mjs; echo "exit=$?"` esperando `exit=1`.
+
+**Por qué la implementación es de las buenas.** Deriva la lista de tablas del
 **schema real** (las que tienen `tenantId`), así que una tabla de negocio nueva queda cubierta el día
 que nace y no el día que alguien se acuerda de una lista; **falla si no puede leer el schema**
 —ausencia de medición es FAIL, y una lista vacía haría pasar todas las queries diciendo PASS—; usa
@@ -542,20 +593,29 @@ una ventana de sentencia **angosta a propósito**, porque una ancha produce fals
 `web-lint:sin-tenant` con **30+ caracteres de motivo escrito**, el mismo mecanismo que el censo de
 rutas de `guard-firewall.sh`.
 
-**Dos cosas que la fila no puede dar por cerradas:**
+**Lo que este `done` NO cierra, y por qué la fila del alcance se separó:**
 1. **El alcance no es el de la regla de `CLAUDE.md`.** `web-lint.mjs` recorre `apps/web/app`,
-   `apps/web/lib` y `proxy.ts`. Una query sin filtro en `packages/**` sigue sin gate.
+   `apps/web/lib` y `proxy.ts` (`web-lint.mjs:41`). Una query sin filtro en `packages/**` sigue sin
+   gate. Eso **no** es un residuo de T2: es trabajo con su propio dueño y su propio comando, así que
+   es **T16** y queda abierta. Cerrar T2 sin abrir T16 sería exactamente la forma en que un alcance
+   angosto se lee después como cobertura completa.
 2. **La razón por la que la regla importa teniendo RLS está en el propio comentario y conviene
    repetirla acá:** la RLS depende del claim de la sesión, así que **una query con `service_role`
    —los jobs, el signup, cualquier `withServiceDb`— no tiene RLS encima**. Ahí el filtro explícito es
    la única defensa que queda, y es justo donde menos se escribe *"total, hay RLS"*. Las dos capas se
    caen en momentos distintos: por eso van las dos.
 
-Nota relacionada, de `app-agent`: `apps/web/app/(app)/_lib/catalog/queries.ts` es **la única query
-del panel sin `where tenant_id`**, y está justificada por escrito en el propio archivo (tabla global
-declarada en `packages/db/src/schema/catalog.ts`, sin columna `tenant_id`, `GRANT SELECT` a
-`authenticated`, sembrada por `service_role`). **Esa excepción tiene que quedar declarada con la
-marca, no descubierta.**
+**Corrección medida sobre una nota vieja de este board.** Decía, de `app-agent`, que
+`apps/web/app/(app)/_lib/catalog/queries.ts` es la única query del panel sin `where tenant_id` y que
+*"esa excepción tiene que quedar declarada con la marca, no descubierta"*. La primera mitad sigue
+siendo cierta; **la segunda ya no aplica y pedirla sería pedir ruido**: W015 deriva las tablas de
+negocio del schema —las que tienen `tenantId`—, y `packages/db/src/schema/catalog.ts` define
+`catalog_models` y `catalog_faqs` **sin esa columna** (`grep -n tenantId` sobre el archivo no
+devuelve nada). O sea que `queries.ts` no está exento: **nunca entra a la regla**. Verificado:
+`grep -rn 'web-lint:sin-tenant' apps/web/app` devuelve **sólo** las dos marcas de la tabla de arriba,
+y el lint pasa igual. Una marca ahí diría *"acá hay una excepción"* sobre una query que no la
+necesita, y las excepciones que no significan nada son las que enseñan a no leerlas. La
+justificación por escrito que ya vive en el propio archivo es lo correcto y alcanza.
 
 ### T3 · el test de RLS cruzado estaba en la columna equivocada  ·  **CERRADA el 2026-08-28** (`d686923`)
 
@@ -673,9 +733,11 @@ que importa de otro gate se rompe de a dos*, y si `none()` se rompe **todos** lo
 vacuamente verdes a la vez. La contrapartida es `scripts/_lib.test.sh`: **10 aserciones**, cada
 helper **en las dos polaridades** (`none` limpio → PASS / con aguja → FAIL / con la aguja adentro de
 un comentario → PASS; `noneraw` al revés), más el `git check-ignore` (artefacto de build salteado,
-código sin commitear auditado igual) y el contador `fail`. Corre **en CI**, en su propio step
-(`.github/workflows/ci.yml`, *"polaridad de los helpers de los gates"*), antes que los guards que
-dependen de él.
+código sin commitear auditado igual) y el contador `fail`. Tiene step propio en CI
+(`.github/workflows/ci.yml:88`, *"polaridad de los helpers de los gates"*), antes que los guards que
+dependen de él. **Y estuvo rojo ahí adentro todo ese tiempo**: `.gitignore` ocultaba su directorio
+de fixtures a los helpers que las buscan, así que 3 de sus 13 casos no podían pasar nunca. Lo
+arregló `c854b99`; el caso entero está en §"Seis gates rojos o dormidos".
 
 ### Regla de método de los gates — **un gate que nunca se vio fallar no es un gate**
 
@@ -724,6 +786,74 @@ nivel más afuera: no era un gate que no podía fallar, era **el job que corre l
 El patrón de los tres es el mismo y conviene decirlo una vez: **un comando que resuelve no es un
 comando que hace lo que dice.** Es literalmente el defecto de **T10**, en otro archivo y el mismo
 día.
+
+### Seis gates rojos o dormidos, un solo día, una sola familia  ·  2026-08-28
+
+> **Qué es:** el registro de lo que pasó el 2026-08-28 con los gates, escrito una vez y junto.
+> **Para quién:** el que va a escribir, mover o creer un gate.
+> **Cuándo se actualiza:** cuando aparece otro caso de la familia. Lo escribe `docs-keeper`; los
+> arreglos son del LEAD, que es dueño de `scripts/**` y de `.github/**` por `CLAUDE.md` §4.
+
+No son seis accidentes: son seis instancias de **una** pregunta que el repo no se estaba haciendo.
+
+| # | gate | qué le pasaba | desde | arreglado en |
+|---|---|---|---|---|
+| 1 | `scripts/guard-routes.sh` | **rojo**: la ruta del beacon de S4 nunca entró al censo | `c9611b1` (S4) | `b1a8732` |
+| 2 | `scripts/accept-fase2.sh` | **rojo**: su regla decía *"toda policy de `anon` es SELECT"* y S4 le dio a `anon` la única escritura sin autenticar del producto | `c9611b1`, **el mismo commit** | `bd7b4e4` |
+| 3 | `scripts/accept-fase3.sh` | **no estaba en CI** y no lo corría nadie (pasa) | siempre | `c854b99` |
+| 4 | `scripts/accept-s1..s4.sh` | **no estaban en CI** | siempre | `c854b99` |
+| 5 | `scripts/_lib.test.sh` | **rojo y en CI**: `.gitignore` ignoraba su directorio de fixtures y los helpers que prueba saltean a propósito lo que git ignora → 3 de 13 casos no podían pasar nunca, y un cuarto pasaba por el motivo equivocado | `98594bf` — **no *"desde siempre"***, como dice el mensaje de `c854b99`: nació en `dc1d854` y `98594bf` le agregó el `scripts/.libtest-tmp/` al `.gitignore` **22 commits después** (`git rev-list --count dc1d854..98594bf`), del otro lado del repo | `c854b99` |
+| 6 | `scripts/accept-s1.sh` | `stat -f %m` y `date -j` son **BSD**. En `ubuntu-latest` habría salido **verde midiendo basura** | siempre | `c854b99` |
+
+**Los dos primeros comparten commit de origen y eso es lo que hay que leer.** `c9611b1` cerró S4 con
+`accept-s4.sh` en **37 PASS · 0 FAIL** mientras dejaba rojos a otros dos gates. No es contradicción:
+**una aceptación por slice corre sus propias aserciones y no puede ver el invariante que la slice
+derogó.** Lo único que cruza slices es CI, y por eso entraron ahí las cinco aceptaciones (#3 y #4).
+
+**#2 se arregló endureciendo, no aflojando, y el detalle importa.** La regla podría haberse relajado
+a *"`anon` puede escribir si la policy lo permite"*, que es lo que pide el camino de menor
+resistencia. En vez de eso, la lista de escrituras de `anon` **se compara por igualdad**: una
+escritura nueva rompe el gate, y **borrar el beacon también**. Un gate que sólo se puede violar hacia
+arriba deja de medir el día que alguien borra lo que medía.
+
+#### El hecho que enmarca los seis: **"está en CI" era una afirmación sobre intención**
+
+```
+$ git ls-remote --heads origin
+$ git rev-list --count HEAD
+89
+$ git branch -avv
+* main c854b99 [origin/main: gone] …
+```
+
+**`origin` está configurado y no tiene una sola rama.** 89 commits locales, `origin/main` marcado
+`gone`. `.github/workflows/ci.yml` **nunca se ejecutó**, ni una vez, en ninguno de los 89.
+
+Entonces cada *"corre en CI"* de este board y de `DECISIONS.md` significa, con precisión: **el repo
+declara que el step existe en `ci.yml`**. No significa que haya corrido. Es exactamente la misma
+distinción que ADR-016 ya dejó escrita para otra cosa: `"status": "active"` en
+`config/firewall-rules.json` significa *"el archivo declara que la regla debe estar publicada"*, no
+que lo esté — y por eso T1 está cerrada **en nivel 1** y el `done` hay que leerlo entero. Los gates
+tienen el mismo nivel 1 y el mismo nivel 2, y hasta hoy nadie los había separado:
+
+| nivel | qué afirma | cómo se verifica |
+|---|---|---|
+| **1 · declarado** | el gate existe, pasa a mano, y `ci.yml` tiene su step | `bash scripts/<gate>.sh` + `grep` en `ci.yml` |
+| **2 · ejecutado** | corrió sobre este commit, en Linux, sin la máquina del que lo escribió | una corrida de GitHub Actions — **hoy: cero** |
+
+#6 es el precio de confundirlos: `accept-s1.sh` habría salido **verde** en `ubuntu-latest` midiendo
+basura, porque `stat -f` no falla en GNU, significa `--file-system`. Un gate en nivel 1 que nunca
+llegó al 2 no está probado en la plataforma donde va a correr, y el modo de falla no es rojo: es
+verde.
+
+**La lección, en una línea:** *"¿hay chequeo?"* → *"¿lo corre alguien?"* → *"¿está en `main`?"*
+(la pregunta que abrió **T2**) → y ahora **"¿el CI que lo corre corrió alguna vez?"**.
+
+> **Lo que destraba el nivel 2 es un `git push`, y no es una fila de este board:** no hay slice que
+> lo cubra y no hay blocker que lo nombre. Se anota acá para que la próxima lectura de un *"corre en
+> CI"* sepa qué está leyendo. **Comando que lo contesta en cualquier momento:**
+> `git ls-remote --heads origin` — vacío significa nivel 1 para todos los gates del repo, sin
+> excepción.
 
 ### S2.4 · el docblock de `page.tsx` afirma un 404 que la medición desmiente  ·  deuda de S2
 
@@ -915,8 +1045,8 @@ Owner: **`app-agent`**.
 > `locations` están sembrados.
 >
 > **Lo que el código ya hacía desde `eaccfee` (`docs-keeper`, verificado contra el repo).**
-> `create-tenant.ts` inserta hoy `tenants` + `memberships` + `fx_settings` (`:218`) + un punto de
-> retiro (`:226`) en una sola transacción, el alta pide el TC en ARS/USD, y `parse-fx.ts` delega en
+> `create-tenant.ts` inserta hoy `tenants` + `memberships` + `fx_settings` (`:320`) + un punto de
+> retiro (`:328`) en una sola transacción, el alta pide el TC en ARS/USD, y `parse-fx.ts` delega en
 > `fxRateFromDecimal` de `@istock/domain` en vez de re-implementar la aritmética de plata. El punto
 > de retiro sembrado es un placeholder honesto (*"A coordinar por WhatsApp"*, `city` en `null` a
 > propósito: no se le inventa una dirección al dueño), y **por eso existe T12** — sin pantalla de
@@ -1119,7 +1249,7 @@ antes de opinar sobre skips, y si el log no trae resumen la regla **no midió y 
 una Server Action en el directorio (cero `'use server'`), y la propia pantalla lo admite con un
 `NotReadyYet` que dice *"Editar estos datos, el tipo de cambio y los puntos de retiro llega en la
 próxima entrega"*. La única mutación de `fx_settings` y de `locations` en todo el repo es el
-`insert` del alta (`create-tenant.ts:218` y `:226`, sembrados por **S3.1**).
+`insert` del alta (`create-tenant.ts:320` y `:328` en `main`, sembrados por **S3.1**).
 
 **Por qué esto es producto.** El TC lo setea el **dueño**, a mano, por tenant, y **no hay API de
 dólar en el hot path** (`CLAUDE.md` §1): es la decisión de diseño, no una carencia. Pero de ahí se
@@ -1197,11 +1327,15 @@ esquivar sin querer.
 
 **Lo que sí tiene gate y este board no vuelve a pedir** (verificado, para que nadie lo reabra):
 
-| prohibición de §2 | quién la afirma hoy | ¿en CI? |
+| prohibición de §2 | quién la afirma hoy | ¿tiene step en CI? |
 |---|---|---|
-| `tenant_id` fuera de `app_metadata` | `guard-leaks.sh:127` (§7) · `apps/web/scripts/web-lint.mjs:123` (W008) · `accept-fase3.sh:61` | sí (las dos primeras) |
-| tabla nueva sin `GRANT` | `scripts/guard-grants.sh` | sí, desde `985c369` — antes **sólo** corría dentro de `accept-s1.sh`, que no está en CI |
+| `tenant_id` fuera de `app_metadata` | `guard-leaks.sh:127` (§7) · `apps/web/scripts/web-lint.mjs:123` (W008) · `accept-fase3.sh:61` | sí, **los tres** desde `c854b99` — `accept-fase3.sh` entró ese día (`ci.yml:137`) |
+| tabla nueva sin `GRANT` | `scripts/guard-grants.sh` | sí, desde `985c369` — antes **sólo** corría dentro de `accept-s1.sh`, que **tampoco** estaba en CI hasta `c854b99` (`ci.yml:205`) |
 | borrado de un objeto de R2 por key | `scripts/guard-r2.sh` R1 + R2 (**T11**, `done`) | sí |
+| **query sin filtro de tenant** | `W015` de `apps/web/scripts/web-lint.mjs` (**T2**, `done`) | sí, vía `pnpm -r lint` (`ci.yml:64`). **Alcance `apps/web` → `packages/**` sigue descubierto: T16** |
+
+**Los "sí" de esta columna son de nivel 1.** `ci.yml` nunca corrió (§"Seis gates rojos o dormidos"):
+significan *"el repo declara el step"*, no *"se ejecutó"*.
 
 ### T15 · el seed del demo dice un color en la URL y otro en la página  ·  `db-agent`
 
@@ -1242,11 +1376,13 @@ href=https://wa.me/54…?text=Hola%2C%20vi%20el%20iPhone%2014%20Pro%20256%20Graf
 Decodificado: `Hola, vi el iPhone 14 Pro 256 Grafito 256 Grafito (usado A) a USD 620 en … y lo quiero.`
 Canónico según `CLAUDE.md` §1: `… el iPhone 14 Pro 256 Grafito (usado A) …`
 
-**La causa, en dos archivos de dos columnas distintas:**
+**La causa, en dos archivos de dos columnas distintas.** ⚠️ **Las dos líneas de abajo describen el
+código ANTERIOR a `07c42ff` y ya no están ahí** — se dejan porque son el diagnóstico, no el estado;
+lo que hay hoy en esos archivos está en el bloque *"Lo que aterrizó"* al final de esta sección.
 
-- `packages/domain/src/wa.ts:53` — `describeListing` arma `[modelDisplayName, storageGb, color]`, y
-  el contrato del campo dice textual *"nombre de display del `catalog_model`"*.
-- `apps/web/app/(storefront)/_lib/listings.ts:282` — `modelDisplayName: row.modelDisplayName ?? row.title`.
+- `packages/domain/src/wa.ts:53` (pre-`07c42ff`) — `describeListing` armaba `[modelDisplayName,
+  storageGb, color]`, y el contrato del campo decía textual *"nombre de display del `catalog_model`"*.
+- `apps/web/app/(storefront)/_lib/listings.ts:282` (pre-`07c42ff`) — `modelDisplayName: row.modelDisplayName ?? row.title`.
   Sin `catalog_model` cae al `title`, que es **texto libre del dueño** y en la práctica ya trae
   storage y color adentro (*"iPhone 14 Pro 256 Grafito"* es exactamente como lo escribe un reseller).
   Entonces se appendean por segunda vez.
@@ -1277,6 +1413,120 @@ Es la segunda vez que este repo paga la misma lección —la primera fue el bot�
 pruebas alrededor y ninguna encima, cerrada con M3b— y la forma es idéntica: **cada prueba era
 correcta y el invariante seguía descubierto.** El gate que cierra S4.1 tiene que comparar el string
 **completo**, sobre la **ficha servida**, con un listing **sin `catalog_model`**.
+
+#### Lo que aterrizó (verificado contra `main` el 2026-08-28) — y lo que falta, que es una sola cosa
+
+**Primero el gate, en rojo: `7e40856`.** Toca `scripts/accept-s3.sh` (M3b) y `scripts/accept-s4.sh`
+(W5) y agrega la misma aserción a los dos. No compara contra un string literal —el modelo, el
+storage y el color salen del seed, y hardcodearlos haría mentir al gate el día que cambien— sino
+contra la **propiedad que el defecto viola**: el equipo nombrado entre `vi el ` y ` (` **no repite
+ningún token**. `iPhone 14 Pro 256 Grafito` tiene cinco y ninguno se repite.
+
+**Después el fix: `07c42ff`.** Decide qué significa `modelDisplayName` sin catálogo, que es lo que
+la fila pedía, en vez de parchear el `??`:
+
+| pieza | dónde | qué hace |
+|---|---|---|
+| `nameSource` | `packages/domain/src/wa.ts:51` · `dto.ts:62` | **requerido, sin default.** El nombre y su procedencia son una decisión en un objeto: elegir el nombre y olvidarse de dónde vino es la forma exacta que tenía el bug |
+| `resolveModelName` | `apps/web/app/(storefront)/_lib/model-name.ts:54` | **único constructor**; trata el blanco como ausente, porque `display_name` es `text NOT NULL` sin `CHECK` y `''` es representable — con `??` se colaba como nombre de catálogo |
+| `isBlank` | `packages/domain/src/text.ts:22` | un solo predicado de "vacío" para toda la cadena; `publicListingDTO` y `describeListing` rechazan `title`/`modelDisplayName` en blanco en vez de emitir `Hola, vi el  (usado A)` |
+
+Con `nameSource: 'free_text'` los atributos se appendean **sólo si no están ya en el nombre**
+(`wa.ts:168`, `:199`); con `'catalog'` se appendean siempre, que es el comportamiento que la ficha
+tenía antes y que era correcto **cuando el nombre venía del catálogo**. `nameSource` **no** viaja al
+DTO público (`dto.ts:213`): es procedencia interna del dato.
+
+**Falta la corrida, y sólo eso.** Regla 5 de este board: el estado lo fija la re-ejecución del LEAD,
+no la entrega del código — la misma regla que tuvo a S1 en `doing` y a S3.1/S3.2 en `todo` un día
+entero con el código en `main`. Los dos comandos que cierran la fila:
+
+```
+bash scripts/accept-s3.sh     # M3b: el equipo se nombra una sola vez, sobre la ficha SERVIDA
+bash scripts/accept-s4.sh     # W5:  mismo invariante sobre el unico href medido de un browser real
+```
+
+**La evidencia que este board cita hoy para S4 es anterior al fix, y conviene saberlo al leerla.**
+Los `37 PASS · 0 FAIL` de la fila S4 son de la corrida que **imprimió** el defecto en W5 y lo dejó
+pasar (`7e40856`: *"un gate que imprime la evidencia del defecto y lo deja pasar es peor que uno que
+no la mira: deja el registro de que se vio"*). S4 está `done` y el LEAD la ratificó; lo que no se
+puede hacer es reusar ese número como prueba de S4.1, porque es del gate **sin** la aserción que
+S4.1 necesita.
+
+### S5 · FX → precio en ARS  ·  **CERRADA el 2026-08-28**  ·  el hueco que queda es T12, no S5
+
+Esta fila figuró `todo` con las tres partes de su gate ya en `main`. Es el mismo drift que tuvo a
+S1 en `doing` y a S3.1/S3.2 en `todo` un día entero, y se corrige igual: verificando contra el
+código, no contra la memoria.
+
+| tercio del gate | dónde está | quién lo afirma |
+|---|---|---|
+| **TC del dueño** | campo `fxRate` en `crear-negocio/create-tenant-form.tsx:192`, validado y con error propio (`:200`, `:207`); se escribe en `fx_settings` **por tenant** en la misma transacción del alta (`create-tenant.ts:320`) | **S3.1**, cerrada por la corrida de `accept-s3.sh` del LEAD |
+| **redondeo testeado** | `applyFx` (`packages/domain/src/fx.ts:117`), `FxRoundingMode = 'exact' \| 'ceil_100' \| 'nearest_1000' \| 'ceil_1000'` (`:33`), `DEFAULT_FX_ROUNDING = 'ceil_1000'` (`:35`) — el default ratificado por el LEAD en FASE 2, punto 2 | `packages/domain/src/fx.test.ts`; `pnpm --filter @istock/domain test` → **187 passed / 12 archivos** (2026-08-28) |
+| **ARS visible en ficha** | `s/[slug]/p/[listing]/page.tsx`, con el cartel de que el peso es **informativo** (FASE 2, punto 3) | **M3 de `scripts/accept-s3.sh`**, que exige el ARS con la forma de `formatArs`; corrida del LEAD **58 PASS · 0 FAIL** |
+
+**S5 no tiene `accept-s5.sh` y no lo va a tener.** Su gate está repartido entre `accept-s3.sh` (la
+mitad que se ve) y la suite de `@istock/domain` (la mitad que calcula), y las dos las re-ejecutó el
+LEAD. Se anota explícito porque *"no encontré el comando"* no puede volver a leerse como *"no está
+verificado"*.
+
+**El hueco real, y por qué es T12 y no S5.** El dueño **no puede editar el TC después del alta**:
+`app/(panel)/ajustes/page.tsx` es sólo lectura, cero `'use server'` en el directorio, y la única
+mutación de `fx_settings` en todo el repo es el `insert` del alta. Eso es exactamente lo que dice
+**T12**, que ya está en este board con su dueño (`app-agent`), su gate y su artefacto. Dejar a S5 en
+`todo` por ese motivo sería **contar la misma deuda dos veces** y, peor, esconderla: leyendo el board
+parecería que falta el FX entero cuando lo que falta es una pantalla de edición. La fila que hay que
+mirar para el TC es T12.
+
+### S6 · reserva + cron de expiración  ·  `doing` · `app-agent`
+
+**Lo que ya está, y no hay que volver a escribirlo:**
+
+- **La invariante en el motor, no en el código.** `packages/db/src/schema/commerce.ts`: tabla
+  `reservations` con `uniqueIndex('reservations_one_active_per_listing')` **parcial**
+  (`where status = 'active'`) — dos reservas simultáneas de la misma unidad las rechaza Postgres, no
+  un `if`. Más `check('reservations_minutes_range', minutes between 30 and 120)`, el índice parcial
+  `reservations_active_expiry_idx` por el que barre el cron, y `tenantPolicies` + `enableRLS()`.
+- **La regla pura.** `packages/domain/src/reservation.ts`: `RESERVATION_MIN_MINUTES = 30` /
+  `MAX = 120` / `DEFAULT = 60` (`:13-15`), `createReservation` (`:45`), `isReservationExpired`
+  (`:72`), `reservationMsRemaining` (`:78`) y **`expireReservation` (`:95`), puro e idempotente, con
+  `now` inyectado** — *"el cron lo llama, no al revés"* (`:7`).
+- **La invalidación ya tiene su función.** `invalidateStorefrontUnit(slug, listingId)`
+  (`_lib/tenants/storefront-cache.ts:127`) es la que corresponde: expirar una reserva cambia **una**
+  unidad, no el catálogo entero. `invalidateStorefront` (2 tags) es para lo que afecta a todas las
+  fichas —el TC, por ejemplo—; usarla acá purgaría de más y es el defecto que S3.2 cerró.
+
+**Lo que falta, y de dónde sale el `doing`:** el panel (reservar / cancelar desde `stock/`), la
+**ruta de cron** y el `revalidateTag` colgado de la expiración. **En `main` (`c854b99`) no hay nada
+de eso:** `apps/web/app/api/` tiene exactamente dos handlers, `health` y `tenants/slug-check`, más
+`s/[slug]/api/track` del lado de la vidriera. Ninguno es de cron.
+
+**Trabajo en vuelo, sin commitear — y se movió dos veces mientras se escribía esta sección.** Las
+dos lecturas de `git status` del 2026-08-28, en el orden en que se tomaron:
+
+| momento | `_lib/reservations/` | `_lib/entitlements` | `app/api/cron/` |
+|---|---|---|---|
+| primera lectura | 3 archivos, **los tres `.test.ts`**; importaban `./schema`, ausente | sólo `entitlements.test.ts`, con `await import('./entitlements')` contra un archivo ausente | no existía |
+| segunda lectura | 7 archivos: los 3 tests **más** `schema.ts`, `reserve-unit.ts`, `expire-reservations.ts`, `queries.ts` | `entitlements.ts` ya existe | `expire-reservations/route.test.ts`, **sin `route.ts`** |
+
+Es test-primero, y está bien —es la misma disciplina de `7e40856`, gate en rojo antes que el código—
+pero **nada de esto es artefacto todavía**: `CLAUDE.md` §Phantom-file guard dice que archivo
+inexistente = la tarea no pasó, y en cada lectura hubo un test cuyo sujeto todavía no existía. **Los
+números de línea que cita esta sección son de `main`, no del árbol de trabajo**, justamente porque el
+árbol se mueve entre dos lecturas y un board que cita un archivo sucio miente al día siguiente.
+
+**Dos cosas que S6 tiene que decidir por escrito antes de dar por cerrado el cron**, porque no están
+resueltas en el repo y no las inventa este board:
+
+1. **El `vercel.json` con el `schedule` lo escribe el LEAD** (`vercel.json` es suyo por §4) y **hoy
+   no existe** — `ls vercel.json` → *No such file or directory*. `ARCHITECTURE.md` §Jobs dice Vercel
+   Cron o Inngest free tier, no worker 24/7; cuál de los dos es una decisión que va a `DECISIONS.md`
+   y la ratifica el LEAD.
+2. **La ruta de cron es un route handler nuevo, así que rompe `guard-firewall.sh` el día que nace**
+   —F3 camina **`apps/web/app` entero**, no sólo `app/api` (`guard-firewall.sh:156-159`: la primera
+   versión censaba sólo `app/api` y por eso no veía `/_media/[...key]`, el endpoint de mayor egress
+   del producto), y exige que cada handler esté cubierto por una regla o justificado en la
+   allowlist—, y `config/firewall-rules.json` también es del LEAD. Es un pedido, no una edición.
+   Es la misma secuencia que dejó a `guard-routes` rojo tres commits en S4.
 
 ## FASE 5 — Chatbot (post S4/S8)
 Capa 2. Se **diseña** en FASE 1, se **codea** después de S4/S8. Ver `docs/CHATBOT.md`.

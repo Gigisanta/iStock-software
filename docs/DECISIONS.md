@@ -793,7 +793,10 @@ volvió un comando encontró que **seis reglas no fallaban nunca** —las fixtur
 `keys`, `window` y `action` en la **raíz** de la regla, y los límites de Pro se validan bajo
 `rateLimit`—. Hoy son **25 casos, cada uno en su polaridad**, y las fixtures se **derivan del archivo
 real en memoria**: una fixture literal se congela el día que se escribe y después falla por el motivo
-equivocado. Las dos corren en CI (`.github/workflows/ci.yml:118` y `:126`) desde `3199a78`.
+equivocado. Las dos **están declaradas** en CI (`.github/workflows/ci.yml:118` y `:126`) desde
+`3199a78` — declaradas, no ejecutadas: `git ls-remote --heads origin` está vacío y `ci.yml` no
+corrió nunca. Ver `SLICE_BOARD.md` §"Seis gates rojos o dormidos". La verificación que sí se hizo
+es a mano, en macOS, por el LEAD.
 
 ---
 
@@ -804,6 +807,44 @@ equivocado. Las dos corren en CI (`.github/workflows/ci.yml:118` y `:126`) desde
 > los volvería reabribles, y no hay nada que reabrir.
 > **Para quién:** el que va a escribir o auditar un gate.
 > **Cuándo se actualiza:** cuando aparece un hallazgo de esta clase. Lo escribe `docs-keeper`.
+
+### 2026-08-28 · Un gate tiene dos niveles, igual que una regla del WAF — y hasta hoy nadie los separaba
+
+**No es un ADR y no abre ninguna decisión: es un hecho medido que cambia cómo se lee una frase.**
+El detalle completo, con los seis casos del día, está en `SLICE_BOARD.md` §"Seis gates rojos o
+dormidos, un solo día, una sola familia". Acá va lo que hay que saber para escribir o leer un doc.
+
+```
+$ git ls-remote --heads origin      # (sin salida)
+$ git rev-list --count HEAD
+89
+```
+
+`origin` está configurado (`github.com/Gigisanta/iStock-software.git`), `origin/main` figura `gone`,
+y **`.github/workflows/ci.yml` no se ejecutó ni una vez en 89 commits.** Por lo tanto toda frase de
+la forma *"corre en CI"* / *"corre en cada push"* en este repo significa, literalmente, **"`ci.yml`
+declara el step"**.
+
+**Es la misma distinción que ADR-016 ya fijó para el WAF**, y por eso va acá y no en una ADR nueva:
+no hay nada que decidir, hay una palabra que estaba haciendo dos trabajos. En
+`config/firewall-rules.json`, `"status": "active"` significa *"el repo declara que la regla debe
+estar publicada"*, no que lo esté — y por eso T1 cerró en **nivel 1**. Los gates tienen los mismos
+dos niveles:
+
+| nivel | qué afirma | evidencia |
+|---|---|---|
+| **1 · declarado** | el gate existe, pasa a mano, y tiene step en `ci.yml` | `bash scripts/<gate>.sh` + `grep` en `ci.yml` |
+| **2 · ejecutado** | corrió sobre este commit, en Linux, sin la máquina del autor | una corrida de Actions — **hoy: cero** |
+
+**Qué compra el nivel 2, con un caso medido.** `accept-s1.sh` usaba `stat -f %m` y `date -j`, que son
+BSD. En `ubuntu-latest` `date -j` falla, pero **`stat -f` no**: en GNU es `--file-system`. El guard
+de frescura del build habría comparado basura y salido **verde** (`c854b99`). El modo de falla del
+nivel 1 sin nivel 2 no es rojo: es verde.
+
+**Consecuencia editorial, y aplica a todo `docs/**`:** un doc no escribe *"corre en cada push"*
+mientras `git ls-remote --heads origin` esté vacío. Escribe *"tiene step en `ci.yml:NN`"*, que es
+verificable, o *"declarado en CI, sin ejecutar"*. Las dos frases que decían lo otro
+—§Verificación de ADR-016 y la nota del `head()`— quedaron corregidas el 2026-08-28.
 
 ### 2026-08-28 · Dos formas nuevas de que un gate esté verde sin haber mirado nada
 
@@ -840,7 +881,7 @@ un `echo`.
 Decisión del LEAD, verificada contra `0bcb281`. `scripts/accept-fase2.sh` era el último gate fuera de
 `scripts/_lib.sh` y se migró; con eso son **seis** los gates que comparten los helpers
 (`accept-s1`, `accept-s2`, `accept-s3`, `accept-fase2`, `accept-fase3`, `guard-grants`), más
-`_lib.test.sh` que los prueba en las dos polaridades en CI.
+`_lib.test.sh` que los prueba en las dos polaridades y tiene step propio en CI (`ci.yml:88`).
 
 **El motivo anotado en el board no era el motivo real, y la diferencia importa.** La excepción decía
 que `bad()` y `strip_comments()` no tenían equivalente en `_lib.sh`. La primera mitad no era un

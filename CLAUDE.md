@@ -251,8 +251,13 @@ y `rate_limit` aparece **cero veces** (verificado contra `openapi.vercel.sh/verc
 y se aplican por CLI (`vercel firewall rules add` + `publish`), que **no es parte del build**: un
 `vercel deploy` **no** sincroniza el WAF. `scripts/guard-firewall.sh` valida el archivo contra los
 límites reales de Pro (`keys ⊆ {ip, ja4}` — `header:` es Enterprise —, `algo = fixed_window`,
-ventana 10–600 s) y, sobre todo, **censa `apps/web/app/api/**`**: toda ruta HTTP está cubierta por una
-regla o exceptuada con motivo escrito. Una ruta nueva sin decidir rompe el gate el día que se crea.
+ventana 10–600 s) y, sobre todo, **censa `apps/web/app` ENTERO** — no `apps/web/app/api`: todo
+`route.ts` está cubierto por una regla o exceptuado con motivo escrito. Una ruta nueva sin decidir
+rompe el gate el día que se crea. **El alcance ancho es a propósito y esta línea decía lo contrario
+hasta el 2026-08-28** (lo marcó `docs-keeper`, lo verifiqué en `guard-firewall.sh:154-168`): la
+primera versión del gate censaba sólo `app/api` y por eso **no veía `/_media/[...key]`**, que vive en
+el route group `(app)` y es el que sirve los BYTES de las fotos — o sea el de mayor egress del
+producto. Un censo que no ve el endpoint más caro es peor que no tener censo: da tranquilidad.
 Y una regla que condicione sólo por `host` está **prohibida**: se facturan los *allowed requests*, así
 que le cobraría peaje a cada pageview de vidriera — que es exactamente lo que `ARCHITECTURE.md` dice
 que no defendemos. Para abuso masivo del HTML la palanca es Attack Challenge Mode, que es gratis. Por eso `scripts/probes/s2-media-measure.test.ts` vive afuera de `packages/media` aunque

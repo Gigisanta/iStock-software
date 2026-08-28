@@ -100,7 +100,7 @@ aceptación de **S4**. La suite corre **73 tests** (eran 70; el spec de S4 sumó
 | # | escenario | aserción central | estado |
 |---|---|---|---|
 | E1 | signup → crear tenant → cargar 2 unidades | ambas publicadas y visibles | 🟡 **parcial** — el alta del negocio (`_lib/panel.ts:114`, `/app/crear-negocio`) y la carga de **una** unidad con sus 3 fotos hasta publicar están cubiertas (`s2-cargar-un-equipo-…`). No hay signup real: el auth de e2e es `AUTH_DRIVER=local` |
-| E2 | **otro browser** (sin sesión) abre `{slug}` y entra a una ficha | los 15 campos presentes | 🟡 **no por browser** — los campos los mide **`curl`** en M3/M3b/M4 de `accept-s3.sh`, sobre los bytes servidos bajo el host del tenant. Es una cobertura fuerte (lee el payload de RSC, donde un objeto crudo se escapa sin verse) pero **no prueba lo que un browser hace con ellos**: ni JS, ni layout, ni el click. Y `accept-s3.sh` **no corre en CI** |
+| E2 | **otro browser** (sin sesión) abre `{slug}` y entra a una ficha | los 15 campos presentes | 🟡 **no por browser** — los campos los mide **`curl`** en M3/M3b/M4 de `accept-s3.sh`, sobre los bytes servidos bajo el host del tenant. Es una cobertura fuerte (lee el payload de RSC, donde un objeto crudo se escapa sin verse) pero **no prueba lo que un browser hace con ellos**: ni JS, ni layout, ni el click. **La segunda mitad de esta celda quedó vieja el 2026-08-28**: decía que `accept-s3.sh` no corre en CI y desde `c854b99` tiene step propio (`ci.yml:213`). Lo que sigue siendo cierto es lo primero — el gate es `curl`, no browser |
 | E3 | click en WhatsApp | URL con el **texto exacto** del producto y el precio | 🟡 **ahora sí hay un browser, y el texto sigue sin estar afirmado entero sobre el camino real** — cambió con S4 (`c9611b1`): `e2e/s4-…-sin-pii.spec.ts:239` lee la ficha con `javaScriptEnabled: false` y mide `anchors=1 · abre_whatsapp=si`, y `:322` **hace el click**. Lo que ninguna de las dos hace es **comparar el `href` completo**: W5 lo **imprime**. Sumado a M3b de `accept-s3.sh` (substrings sobre el HTML servido: un solo anchor en la ficha, cero en la grilla, teléfono contra `SEED_DEMO_WA_PHONE`, `USD 620` + `demo.maat.work` + `y lo quiero.`, `usado A` sí / `usado excelente` no) y a U14 en unit (`toBe`, pero con el `modelDisplayName` ya limpio), quedan **tres pruebas alrededor del string y ninguna encima** — que es exactamente cómo pasó **S4.1**. `accept-s3.sh` sigue sin ser job de CI |
 | E4 | unidad `reserved` | badge visible; **no** dice "disponible"; copy alternativo | 🔴 **sin cubrir** — re-verificado después de S4: `grep -rn reserved e2e/` devuelve **cero líneas**, con la suite ya en 73 tests. Cubierto sólo en unit (`_lib/status.test.ts`, `wa.test.ts` U16), o sea que el estado que cambia el copy de la ficha **y** el del mensaje de WhatsApp nunca se vio en una página servida. Aterriza con **S6** |
 | E5 | canje: form público → inbox → checklist → aceptar | unidad creada en `draft` con costo | 🔴 sin cubrir — la slice (S8) no arrancó |
@@ -171,12 +171,41 @@ pnpm typecheck && pnpm lint && pnpm test && pnpm e2e
 ```
 Verde o no se mergea. Sin excepciones "porque es un fix chico".
 
-`.github/workflows/ci.yml` corre además, y son bloqueantes: `pnpm audit --audit-level=high`
+`.github/workflows/ci.yml` declara además, y son bloqueantes: `pnpm audit --audit-level=high`
 (`CLAUDE.md` §3, CVE-2026-64648 no tiene workaround), `scripts/_lib.test.sh` (polaridad de los
-helpers compartidos de los gates), `guard-leaks.sh`, `guard-grants.sh`, `guard-r2.sh`,
-`accept-fase2.sh`, **`guard-firewall.sh`**, **`guard-firewall.test.sh`**,
-`guard-artifacts.sh --harness` y —dentro del job `e2e`, el único que tiene un `.next`—
-`guard-routes.sh`.
+helpers compartidos de los gates, `:88`), `guard-leaks.sh`, `guard-grants.sh`, `guard-r2.sh`,
+`accept-fase2.sh`, **`guard-firewall.sh`** (`:118`), **`guard-firewall.test.sh`** (`:126`),
+`guard-artifacts.sh --harness`, **`accept-fase3.sh`** (`:137`, hace su propio `next build`) y
+—dentro del job `e2e`, el único que ya tiene un `.next`, el del `webServer` de Playwright—
+`guard-routes.sh` (`:189`) más **las cuatro aceptaciones por slice**: `accept-s1.sh` (`:205`),
+`accept-s2.sh` (`:209`), `accept-s3.sh` (`:213`) y `accept-s4.sh` (`:217`).
+
+**Las seis últimas entraron a CI el 2026-08-28 (`c854b99`), y el motivo no es cobertura: es que una
+aceptación por slice no puede ver el invariante que la slice derogó.** `accept-s4.sh` dio
+`37 PASS · 0 FAIL` mientras **el mismo commit** (`c9611b1`) dejaba rojos a `guard-routes` y a
+`accept-fase2`. Lo único que cruza slices es CI.
+
+> ### 🔴 `ci.yml` NUNCA CORRIÓ. Leer esto antes de creerle a cualquier ✅ de este doc.
+>
+> ```
+> $ git ls-remote --heads origin      # (sin salida)
+> $ git rev-list --count HEAD
+> 89
+> ```
+>
+> `origin` está configurado y **no tiene una sola rama**; `origin/main` figura `gone`. En 89 commits
+> locales **no hubo una corrida de GitHub Actions**. Por lo tanto, en este doc y en todo `docs/**`:
+>
+> | se lee | significa |
+> |---|---|
+> | ✅ / *"en cada push"* | **nivel 1**: el gate pasa a mano y `ci.yml` declara su step |
+> | — | **nivel 2**: corrió en `ubuntu-latest` sobre este commit → **hoy no aplica a ningún gate** |
+>
+> Es la misma distinción que ADR-016 fijó para `"status": "active"` del WAF: el archivo declara,
+> no ejecuta. Y no es teórica — `accept-s1.sh` usaba `stat -f %m`, que en GNU es `--file-system`:
+> habría salido **verde midiendo basura** en Linux (`c854b99`). El nivel 1 sin nivel 2 falla en
+> verde. Detalle completo en `SLICE_BOARD.md` §"Seis gates rojos o dormidos, un solo día, una sola
+> familia" y en `DECISIONS.md` §Notas operativas. **Lo destraba un `git push`.**
 
 > **CORRECCIÓN, 2026-08-28. Este doc decía que `scripts/guard-firewall.sh` (T1) NO estaba en CI, y
 > es falso: está.** `.github/workflows/ci.yml:118`, y su polaridad `guard-firewall.test.sh` en
@@ -203,15 +232,15 @@ helpers compartidos de los gates), `guard-leaks.sh`, `guard-grants.sh`, `guard-r
 Verificado regla por regla contra el repo el **2026-08-28**. La tabla completa se cierra en FASE 7;
 lo que hay acá es lo que ya está confirmado, incluidos los huecos.
 
-| prohibición de §2 | quién la afirma hoy | ¿en cada push? |
+| prohibición de §2 | quién la afirma hoy | ¿tiene step en CI? (**nivel 1** — ver recuadro rojo arriba) |
 |---|---|---|
 | `tenant_id` en `user_metadata` | **estático:** `guard-leaks.sh:127` · `web-lint.mjs:123` (W008) · `accept-fase3.sh:61` — **y en runtime:** `tests/rls-cross-tenant.test.ts:535`, que **forja un claim** con el tenant en `user_metadata` contra Postgres real y verifica que **no abre nada** | ✅ (los dos primeros + el test) |
 | tabla nueva sin `GRANT` | `guard-grants.sh` (parsea por **sentencia**, no por línea: 5 de los 6 `GRANT` son multilínea) — **y en runtime:** R7a/R7b/R7c preguntan por el privilegio **efectivo** (`has_table_privilege`), así que también cae un `GRANT … TO PUBLIC` | ✅ desde `985c369` |
 | borrado de un objeto de R2 por key | `guard-r2.sh` R1 + R2 (**T11**) | ✅ |
-| IMEI / costo / margen / notas en la vidriera | M4 de `accept-s3.sh` sobre los **bytes** de ficha **y** grilla, con los IMEI leídos del seed · `web-lint.mjs` W009 · `guard-leaks.sh` | 🟡 el lint sí; M4 no (`accept-s3.sh` no es job de CI) |
-| **query sin filtro de tenant *además* de RLS** | **`W015` de `apps/web/scripts/web-lint.mjs` — pero todavía NO está commiteada.** Verificado el 2026-08-28 contra el árbol de trabajo: la regla existe, corre y pasa (`WEB-LINT: PASS (15 reglas)` · *"toda query sobre las **15 tablas de negocio** filtra por tenant ademas de RLS"*), y `git log -S W015` sobre ese archivo devuelve **cero commits**: vive en `apps/web/scripts/web-lint.mjs` **modificado y sin commitear**, así que **en `main` no existe y no corrió en ningún push**. Lo que la hace fuerte cuando aterrice: **deriva la lista de tablas del schema real** (las que tienen `tenantId`), no de una lista escrita a mano, así que una tabla de negocio nueva queda cubierta el día que nace; **falla si no puede leer el schema** (ausencia de medición es FAIL, y una lista vacía dejaría pasar todas las queries diciendo PASS); usa una ventana de sentencia **angosta a propósito** para no producir falsos negativos; y el escape es una marca `web-lint:sin-tenant` con **30+ caracteres de motivo escrito**, igual que el censo de rutas de `guard-firewall`. **Ojo con el alcance, que no es el de la regla de `CLAUDE.md`:** mira `apps/web/app`, `apps/web/lib` y `proxy.ts`. Una query sin filtro en `packages/**` sigue sin gate | 🟡 **T2**, en vuelo |
+| IMEI / costo / margen / notas en la vidriera | M4 de `accept-s3.sh` sobre los **bytes** de ficha **y** grilla, con los IMEI leídos del seed · `web-lint.mjs` W009 · `guard-leaks.sh` | ✅ nivel 1 desde `c854b99`: `accept-s3.sh` pasó a ser step de CI (`ci.yml:213`), así que M4 dejó de depender de que alguien lo corra a mano |
+| **query sin filtro de tenant *además* de RLS** | **`W015` de `apps/web/scripts/web-lint.mjs`, en `main` desde `9b3d7d2`.** Corregido el 2026-08-28: este doc decía *"todavía NO está commiteada"* citando `git log -S W015` en cero, y ya no es cierto — `git log --oneline -S W015 -- apps/web/scripts/web-lint.mjs` devuelve **un** commit, que trae además el párrafo de `CLAUDE.md` §2 con el contrato del marcador. Re-corrida: `cd apps/web && node ./scripts/web-lint.mjs` → `WEB-LINT: PASS (15 reglas)` · *"toda query sobre las **15 tablas de negocio** filtra por tenant ademas de RLS (builder y sql crudo)"*. Lo que la hace fuerte: **deriva la lista de tablas del schema real** (las que tienen `tenantId`), así que una tabla de negocio nueva queda cubierta el día que nace; **falla si no puede leer el schema** (ausencia de medición es FAIL, y una lista vacía dejaría pasar todas las queries diciendo PASS); ventana de sentencia **angosta a propósito**; mide **filtrado, no presencia** (proyectar `m.tenant_id` o nombrarlo en un `join … on` no filtra); y el escape es `web-lint:sin-tenant` con **30+ caracteres de motivo** — hoy **dos** marcas en todo el repo, `_lib/session.ts:94` y `_lib/tenants/create-tenant.ts:202`. **Dos huecos que no se redondean:** (a) el alcance es `apps/web/app` + `apps/web/lib` + `proxy.ts` (`web-lint.mjs:41`), así que **`packages/**` sigue sin gate** → **T16**; (b) **su polaridad no es un comando**: los 12 casos se ejercieron *"in a sandbox outside the repo"* (`9b3d7d2`), que es la misma situación en la que `guard-firewall` tenía **seis reglas que no fallaban nunca** hasta que la polaridad se volvió un archivo | ✅ nivel 1 (`pnpm -r lint`, `ci.yml:64`) · **T2 cerrada**, **T16 abierta** |
 | **rate limiting con contador en Postgres sobre la vidriera** | **nadie**. **T1 no la cubre**: `guard-firewall.sh` audita el techo del WAF (config + censo de rutas), que es otra cosa que prohibir un contador en Postgres — y que el gate del WAF **sí** corra en CI (`ci.yml:118`) no cambia esto, porque valida un JSON de configuración y no mira una sola query | 🔴 **T14.1** |
-| **imagen original (>500 KB) servida a la vidriera** | `scripts/probes/s2-media-measure.test.ts` (sólo dentro de `accept-s2.sh`) · M2 de `accept-s3.sh` (ya midió: 51016 B) | 🔴 **T14.2** — existe en dos lados y **no corre en ninguno** en cada push |
+| **imagen original (>500 KB) servida a la vidriera** | `scripts/probes/s2-media-measure.test.ts` (dentro de `accept-s2.sh`) · M2 de `accept-s3.sh` (ya midió: 51016 B) | 🟡 **T14.2 cambió de color el 2026-08-28**: los dos `accept-*` que la afirman entraron a CI en `c854b99` (`ci.yml:209` y `:213`), así que dejó de ser *"existe en dos lados y no corre en ninguno"*. Sigue **amarilla y no verde** por dos motivos distintos: nadie la afirma fuera de un `accept-*` (que es lo que T14 pedía), y ningún gate del repo llegó al **nivel 2** |
 
 > **Dos de estas se dieron por descubiertas y estaban cubiertas.** Un reporte del 2026-08-28 listaba
 > `user_metadata` como *"cubierta sólo estáticamente por el lint 0015"* y la de `GRANT` como *"R5/R6
@@ -226,6 +255,14 @@ lo que hay acá es lo que ya está confirmado, incluidos los huecos.
 > operativa, que se suma a las dos preguntas de este doc: *¿hay chequeo?*, *¿lo corre alguien?* y
 > ahora **¿está en `main`?** Un gate en el árbol de trabajo de una sola máquina no protege a nadie
 > más que a quien lo tiene abierto.
+>
+> **Y el cuarto, 2026-08-28 a la tarde: la misma celda envejeció otra vez, en la otra dirección.**
+> El texto *"sin commitear · cero commits"* quedó **falso** con `9b3d7d2`, y este doc lo siguió
+> afirmando. Cambia una vez más la lista de preguntas, y ésta es la que ninguna de las anteriores
+> hacía: **¿el CI que lo corre corrió alguna vez?** Hoy la respuesta es **no** —
+> `git ls-remote --heads origin` vacío contra 89 commits — y por eso todo ✅ de arriba es nivel 1.
+> Las cuatro preguntas, en orden: *¿hay chequeo?* · *¿lo corre alguien?* · *¿está en `main`?* ·
+> *¿corrió el CI?*
 
 ## Cómo se verifica esta tabla
 **Un "sin cubrir" se escribe acá sólo después de buscarlo en el repo**, no cuando un agente lo
