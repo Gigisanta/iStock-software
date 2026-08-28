@@ -1,7 +1,7 @@
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defineConfig, devices } from '@playwright/test';
-import { APEX_URL, E2E_PORT } from './_lib/env';
+import { APEX_URL, E2E_CRON_SECRET, E2E_PORT } from './_lib/env';
 import { startPgSpy } from './_lib/pg-spy';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -166,6 +166,9 @@ export default defineConfig({
       MEDIA_LOCAL_ROOT,
       NEXT_PUBLIC_MEDIA_BASE_URL: `${APEX_URL}/_media`,
       BILLING_DRIVER: 'mock',
+      // Sin esto, `cronSecret()` devuelve `null` y la puerta del barrido responde 401 a
+      // todo el mundo: el spec de S6 mediría el fail-closed en vez del ciclo de la reserva.
+      CRON_SECRET: E2E_CRON_SECRET,
       NEXT_PUBLIC_ROOT_DOMAIN: APEX_URL.replace('http://', ''),
       NEXT_PUBLIC_APP_URL: APEX_URL,
     },

@@ -12,6 +12,7 @@ import {
 } from '../../../../../_lib/listings/schema';
 import { loadUnitWithPhotos } from '../../../../../_lib/listings/queries';
 import {
+  DRAFT_PUBLISH_EXTRAS,
   denyReasonText,
   transitionContextFor,
 } from '../../../../../_lib/listings/publish-listing';
@@ -125,7 +126,11 @@ export default async function FotosPage({ params }: { params: Promise<{ id: stri
    * `now` se calcula una sola vez: `@istock/domain` no llama `Date.now()`, el tiempo entra por
    * parámetro, y dos relojes distintos en un mismo render hacen el resultado no determinista.
    */
-  const draftCheck = checkTransition('draft', 'available', transitionContextFor(ctx, unit, now));
+  const draftCheck = checkTransition(
+    'draft',
+    'available',
+    transitionContextFor(ctx, unit, now, DRAFT_PUBLISH_EXTRAS),
+  );
   const isDraft = unit.status === 'draft';
   const canPublish = isDraft && draftCheck.ok;
   const blockedText = isDraft && !draftCheck.ok ? denyReasonText(draftCheck.reason) : null;

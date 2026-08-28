@@ -7,8 +7,22 @@ import {
 } from '@istock/domain';
 import { variantUrl } from '@istock/media';
 import type { TenantContext } from '../../../../_lib/db/session';
-import { denyReasonText, transitionContextFor } from '../../../../_lib/listings/publish-listing';
+import {
+  DRAFT_PUBLISH_EXTRAS,
+  denyReasonText,
+  transitionContextFor,
+} from '../../../../_lib/listings/publish-listing';
 import type { UnitRow } from '../../../../_lib/listings/queries';
+import type { ActiveReservationRow } from '../../../../_lib/reservations/queries';
+import {
+  RESERVATION_DEFAULT_OPTION,
+  RESERVATION_MINUTE_OPTIONS,
+  RESERVATION_RANGE_LABEL,
+  durationLabel,
+  reservationCountdown,
+} from '../../../../_lib/reservations/presentation';
+import { CancelReservationButton } from './cancel-reservation-button';
+import { ReserveForm, type ReserveFormOption } from './reserve-form';
 import { StatusButton } from './status-button';
 
 /**
@@ -71,6 +85,18 @@ const STATUS_CLASS: Readonly<Record<ListingStatus, string>> = {
 
 const THUMB_PX = 88;
 
+/**
+ * Los `<option>` del formulario de reserva, armados **una vez** en el server.
+ *
+ * Se calculan acá y viajan como props para que `@istock/domain` no entre al bundle del browser:
+ * `ReserveForm` es `"use client"` y lo único que necesita son cuatro pares número/texto. Es módulo
+ * y no cuerpo de función porque no dependen de la fila: son los mismos para las cien.
+ */
+const RESERVE_OPTIONS: readonly ReserveFormOption[] = RESERVATION_MINUTE_OPTIONS.map((minutes) => ({
+  value: minutes,
+  label: durationLabel(minutes),
+}));
+
 function detailLine(unit: UnitRow): string {
   const parts = [conditionLabel(unit.condition)];
   if (unit.storageGb !== null) parts.push(`${String(unit.storageGb)} GB`);
@@ -79,9 +105,37 @@ function detailLine(unit: UnitRow): string {
   return parts.join(' · ');
 }
 
-export function UnitRowCard({ unit, ctx, now }: { unit: UnitRow; ctx: TenantContext; now: Date }) {
+export interface UnitRowCardProps {
+  readonly unit: UnitRow;
+  readonly ctx: TenantContext;
+  readonly now: Date;
+  /**
+   * Si el tenant tiene reservas **hoy** (el plan las incluye y, si es trial, sigue vivo). Lo
+   * resuelve la página con `isFeatureEnabled()`, una vez para toda la lista.
+   *
+   * **No es la autorización**: `reserveUnit()` vuelve a preguntar del lado del server con
+   * `featureAccess()`, y `checkTransition()` deniega `entitlement_required` aunque el `POST` venga
+   * armado a mano o desde una tab abierta antes de que se venciera el trial. Acá sólo decide si el
+   * formulario se dibuja.
+   */
+  readonly reservationsEnabled: boolean;
+  /** La reserva viva de esta unidad, si la hay. Sale del `Map` de `loadActiveReservations()`. */
+  readonly reservation: ActiveReservationRow | null;
+}
+
+export function UnitRowCard({
+  unit,
+  ctx,
+  now,
+  reservationsEnabled,
+  reservation,
+}: UnitRowCardProps) {
   const photo = unit.photos[0];
-  const publishCheck = checkTransition('draft', 'available', transitionContextFor(ctx, unit, now));
+  const publishCheck = checkTransition(
+    'draft',
+    'available',
+    transitionContextFor(ctx, unit, now, DRAFT_PUBLISH_EXTRAS),
+  );
   const canPublish = unit.status === 'draft' && publishCheck.ok;
   const publishBlockedText =
     unit.status === 'draft' && !publishCheck.ok ? denyReasonText(publishCheck.reason) : null;
@@ -139,6 +193,20 @@ export function UnitRowCard({ unit, ctx, now }: { unit: UnitRow; ctx: TenantCont
           <p className="mt-0.5 text-xs text-neutral-500 dark:text-neutral-400">
             {unit.photoCount === 1 ? '1 foto' : `${String(unit.photoCount)} fotos`}
           </p>
+
+          {/*
+            Cuenta regresiva, no hora de vencimiento: el server corre en UTC y "hasta las 15:30"
+            saldría tres horas corrido. El detalle está en `_lib/reservations/presentation.ts`.
+            La etiqueta del cliente NO se muestra ni se consulta: `queries.ts` no la selecciona.
+          */}
+          {unit.status === 'reserved' && reservation !== null ? (
+            <p
+              data-testid="reserva-restante"
+              className="mt-0.5 text-xs font-medium text-amber-700 dark:text-amber-400"
+            >
+              Reservado: {reservationCountdown(reservation.expiresAt, now)}
+            </p>
+          ) : null}
         </div>
       </div>
 
@@ -162,6 +230,27 @@ export function UnitRowCard({ unit, ctx, now }: { unit: UnitRow; ctx: TenantCont
             tone="quiet"
           />
         ) : null}
+
+        {/*
+          Reservar sólo tiene sentido sobre algo que está en la vidriera, y sólo si el tenant
+          tiene la función. Cuando no la tiene no se dibuja nada: cien filas con un cartel de
+          "pasate al plan Negocio" no es un upsell, es ruido en la pantalla de trabajo. Ese
+          mensaje es de la pantalla de plan, no de acá.
+        */}
+        {unit.status === 'available' && reservationsEnabled ? (
+          <ReserveForm
+            listingId={unit.id}
+            options={RESERVE_OPTIONS}
+            defaultMinutes={RESERVATION_DEFAULT_OPTION}
+            rangeHint={`Entre ${RESERVATION_RANGE_LABEL}.`}
+          />
+        ) : null}
+
+        {/*
+          Liberar no pide entitlement: un negocio que bajó de plan tiene que poder destrabar su
+          propio stock. `cancelReservation()` lo dice con todas las letras.
+        */}
+        {unit.status === 'reserved' ? <CancelReservationButton listingId={unit.id} /> : null}
 
         {/*
           El camino a completar las fotos tiene que estar en la fila, no sólo después del alta: un

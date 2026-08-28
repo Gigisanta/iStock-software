@@ -10,8 +10,9 @@ import { db, type Tx } from './connection';
  * ─────────────────────────────────────────────────────────────────────────────────────────────
  *  `withTenantDb(ctx, fn)`  → TODA query de negocio. Corre como `authenticated` con los claims
  *                             del usuario, o sea **con RLS activa**.
- *  `withServiceDb(fn)`      → SÓLO el bootstrap: resolver la membresía de alguien que todavía no
- *                             tiene claim, y crear el primer tenant. Sin RLS. Tres llamadores.
+ *  `withServiceDb(fn)`      → el bootstrap de la sesión (resolver la membresía de alguien que
+ *                             todavía no tiene claim, crear el primer tenant) **y los jobs**, que
+ *                             corren sin persona. Sin RLS. Cuatro usos, declarados abajo.
  * ─────────────────────────────────────────────────────────────────────────────────────────────
  *
  * Lo que hace `withTenantDb` es literalmente lo que hace PostgREST en producción, y lo mismo que
@@ -51,7 +52,7 @@ export async function withTenantDb<T>(ctx: TenantContext, fn: (tx: Tx) => Promis
 /**
  * Conexión con privilegios de operador. **Bypassea RLS.**
  *
- * Tiene exactamente tres usos legítimos, y ninguno recibe datos del request sin validar antes:
+ * Tiene exactamente cuatro usos legítimos, y ninguno recibe datos del request sin validar antes:
  *
  * 1. `resolveMembership()` — leer a qué tenant pertenece un usuario. Es el problema del huevo y
  *    la gallina: para leer `memberships` bajo RLS hace falta el claim de tenant, y el claim de
@@ -60,9 +61,18 @@ export async function withTenantDb<T>(ctx: TenantContext, fn: (tx: Tx) => Promis
  * 2. `createTenant()` — el usuario todavía no tiene claim, así que la policy
  *    `tenants_tenant_insert` (`with check id = <claim>`) lo rechazaría con el claim en `null`.
  * 3. El driver local de auth, que emula el alta de `auth.users` que en producción hace GoTrue.
+ * 4. `expireDueReservations()` (S6) — el cron de expiración. Es el primero que **no** es bootstrap
+ *    de sesión, así que va con su motivo entero: lo dispara Vercel Cron, no una persona; no hay
+ *    sesión, no hay claim y por lo tanto no hay tenant. Bajo `withTenantDb` las policies se
+ *    evaluarían contra un claim inexistente y devolverían 0 filas **sin fallar**: el cron no
+ *    rompería, simplemente no vencería ninguna reserva nunca. Menos permiso acá no da menos datos,
+ *    da la respuesta equivocada — que es el mismo argumento del uso 1. Está acotado por lo que
+ *    escribe: los tres `update`/`insert` llevan `tenant_id` del tenant de **su** fila, y lo único
+ *    que sale de la función son cinco números. Su justificación completa, incluida la excepción
+ *    `web-lint:sin-tenant` del `select`, vive en `_lib/reservations/expire-reservations.ts`.
  *
- * Cualquier cuarto uso es un bug de seguridad, no una optimización. Si necesitás leer listings,
- * fotos, ventas o canjes: `withTenantDb`.
+ * Cualquier quinto uso es un bug de seguridad, no una optimización. Si necesitás leer listings,
+ * fotos, ventas o canjes desde una pantalla: `withTenantDb`.
  */
 export async function withServiceDb<T>(fn: (tx: Tx) => Promise<T>): Promise<T> {
   return db().transaction(async (tx) => fn(tx));

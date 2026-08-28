@@ -2,7 +2,9 @@ import { Suspense } from 'react';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { requireTenant } from '../../../_lib/session';
+import { FEATURE_RESERVATIONS, isFeatureEnabled } from '../../../_lib/entitlements';
 import { listUnits } from '../../../_lib/listings/queries';
+import { loadActiveReservations } from '../../../_lib/reservations/queries';
 import { PageTitle } from '../_ui/section';
 import { UnitRowCard } from './_ui/unit-row';
 
@@ -38,9 +40,30 @@ export default function StockPage() {
 }
 
 async function StockContent() {
-  const { ctx } = await requireTenant();
+  const { ctx, tenant } = await requireTenant();
   const units = await listUnits(ctx);
   const now = new Date();
+
+  /**
+   * Las reservas de toda la lista en **una** query, no una por fila: `loadActiveReservations()`
+   * devuelve un `Map` indexado por `listing_id`. Cien equipos en pantalla son dos queries en
+   * total, no ciento uno. El entitlement se pregunta una sola vez por el mismo motivo.
+   *
+   * Se piden juntas porque no dependen entre sí; con `max: 1` (`_lib/db/connection.ts`) el pool
+   * las **encola**, así que el `Promise.all` no las hace concurrentes — decía que sí y era falso.
+   *
+   * `reservationsEnabled` es sólo para decidir qué se dibuja: la autorización de verdad la vuelve
+   * a hacer `reserveUnit()`. Se le pasa `tenant` entero y el mismo `now` del render porque la
+   * vigencia del trial es parte de la respuesta (`_lib/entitlements.ts`): un trial vencido no
+   * dibuja el formulario **y** rebota en la acción.
+   */
+  const [reservationsEnabled, reservations] = await Promise.all([
+    isFeatureEnabled(ctx, tenant, FEATURE_RESERVATIONS, now),
+    loadActiveReservations(
+      ctx,
+      units.map((unit) => unit.id),
+    ),
+  ]);
 
   return (
     <>
@@ -69,7 +92,14 @@ async function StockContent() {
           </p>
           <ul className="mt-2 space-y-3">
             {units.map((unit) => (
-              <UnitRowCard key={unit.id} unit={unit} ctx={ctx} now={now} />
+              <UnitRowCard
+                key={unit.id}
+                unit={unit}
+                ctx={ctx}
+                now={now}
+                reservationsEnabled={reservationsEnabled}
+                reservation={reservations.get(unit.id) ?? null}
+              />
             ))}
           </ul>
         </>

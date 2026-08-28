@@ -1,0 +1,180 @@
+import 'server-only';
+import { and, eq } from 'drizzle-orm';
+import { entitlements } from '@istock/db';
+import { withTenantDb, type TenantContext } from './db/session';
+
+/**
+ * ¿Qué puede hacer este negocio **hoy**?
+ *
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *  Se lee en el server. Nunca viaja al cliente como flag.
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * `commerce`/`billing` lo dicen en el schema: *"Plan `base`: el widget del chatbot **no existe en
+ * el DOM** (cero paywall mostrado al comprador final)"*. La misma idea vale para el panel: cuando
+ * una feature está apagada, el botón no se dibuja **y** la acción la rechaza. Lo primero es
+ * cortesía; lo segundo es la puerta.
+ *
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *  Dos fuentes y un orden: la FILA manda, el PLAN es el default
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * | hay fila en `entitlements` | resultado |
+ * |---|---|
+ * | sí | `enabled` de la fila, sea cual sea el plan |
+ * | no | lo que trae el plan |
+ *
+ * Al revés —el plan primero— una feature apagada a mano por billing seguiría prendida para todo
+ * tenant del plan que la incluye, y el único modo de apagarla sería bajarle el plan. La fila es
+ * la palanca fina; el plan es lo que se vende.
+ *
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *  Por qué el fallback por plan EXISTE (y no es "por las dudas")
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * `tenants/create-tenant.ts` siembra cuatro filas en el alta —`tenants`, `memberships`,
+ * `fx_settings`, `locations`— y **ninguna es de `entitlements`**. O sea: hoy, todo tenant real
+ * nace sin una sola fila en esa tabla. Sin el fallback, las reservas serían código muerto para
+ * todos menos para el tenant del seed, y el bug se vería como "el botón de reservar no aparece",
+ * sin error y sin log.
+ *
+ * Podría arreglarse sembrando filas en el alta. No se hace, por dos motivos: sembrar una fila por
+ * feature convierte cada feature nueva en una migración de datos sobre los tenants existentes, y
+ * deja la respuesta a "¿qué incluye el plan Negocio?" repartida entre el código y N filas viejas.
+ * Acá el plan se define en un lugar y las filas quedan para las excepciones, que es lo que la
+ * columna `enabled` significa.
+ *
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *  El trial da features MIENTRAS ESTÁ VIVO. Vencido, no da ninguna.
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * Ratificado por el LEAD (S6). Es un trial **del plan Negocio** —`packages/db/src/seed.ts` crea la
+ * suscripción como `plan: 'negocio', status: 'trialing'` y `PRODUCT.md` vende los 14 días como la
+ * prueba del producto completo—, así que mientras corre incluye reservas: un trial que no deja
+ * probar lo que se paga no vende nada.
+ *
+ * Lo que **no** puede pasar es que las conserve después. La versión anterior de este módulo daba
+ * `trial: [FEATURE_RESERVATIONS]` sin mirar `trial_ends_at`, y confiaba en que "cuando el trial
+ * vence, `billing-agent` baja el plan". `billing-agent` es FASE 6 y todavía no existe: nada baja
+ * ese plan, así que un tenant con el trial vencido hace seis meses seguía reservando gratis, para
+ * siempre. Dejarlo para cuando exista `billing-agent` hubiera sido deuda diferida con otro
+ * nombre, y §2 de `CLAUDE.md` rechaza esa clase de herencia se la escriba como se la escriba.
+ *
+ * **La vigencia se resuelve acá, no en el call site.** `featureAccess()` es el único lugar donde se
+ * mira `trial_ends_at` para decidir una feature: un chequeo que cada pantalla tiene que acordarse
+ * de hacer no es un chequeo, es una lista de lugares donde todavía no falló.
+ *
+ * ── Un trial sin fecha de fin está vencido ───────────────────────────────────────────────────
+ * `tenants.trial_ends_at` es nullable en el schema. `createTenant()` siempre la escribe y el seed
+ * también, así que `null` con `plan = 'trial'` es una fila que nadie sabe explicar. Un trial sin
+ * fecha de vencimiento es exactamente el trial infinito que esta decisión vino a matar: se falla
+ * cerrado. `base` y `negocio` ni la miran — no tienen vigencia que chequear.
+ *
+ * ── Y la fila de `entitlements` sigue mandando, también acá ──────────────────────────────────
+ * La vigencia apaga lo que da el **plan**, que es el default. Una fila explícita en `entitlements`
+ * es una palanca que alguien movió a mano (hoy nada del panel escribe esa tabla: sólo el seed), y
+ * si le sacáramos precedencia no habría forma de darle una cortesía a un negocio sin inventar un
+ * cambio de plan — que es justo lo que `billing-agent` todavía no puede hacer. La fila no es el
+ * trial; el trial es el plan.
+ */
+
+/** El nombre de la feature es el valor de `entitlements.feature`, no un enum de TypeScript. */
+export const FEATURE_RESERVATIONS = 'reservations';
+
+export type PlanTier = 'trial' | 'base' | 'negocio';
+
+/**
+ * Lo que hace falta saber del plan de un tenant para resolver una feature. Sale entero de la
+ * sesión (`requireTenant()` → `tenant`, releído en cada request, ADR-005): `TenantSummary` lo
+ * satisface tal cual, así que ninguna pantalla arma este objeto a mano ni puede olvidarse la fecha.
+ */
+export interface PlanSnapshot {
+  readonly plan: PlanTier;
+  readonly trialEndsAt: Date | null;
+}
+
+/**
+ * Por qué una feature está apagada. El motivo importa porque el mensaje al dueño cambia: "eso
+ * viene con el plan Negocio" es lo correcto para el plan Base y es **mentira** para un trial que se
+ * venció ayer, donde lo que pasó es que se terminó la prueba.
+ */
+export type FeatureAccess =
+  | { readonly ok: true }
+  | { readonly ok: false; readonly reason: 'plan' | 'trial_expired' };
+
+const ACCESS_OK: FeatureAccess = { ok: true };
+
+/**
+ * ¿El trial sigue corriendo? El borde es cerrado del lado del vencimiento (`now >= trialEndsAt`
+ * ya no es trial), igual que `expireReservation()` del dominio. Sin fecha, no corre: ver arriba.
+ */
+export function trialIsAlive(snapshot: PlanSnapshot, now: Date): boolean {
+  if (snapshot.plan !== 'trial') return true;
+  if (snapshot.trialEndsAt === null) return false;
+  return now.getTime() < snapshot.trialEndsAt.getTime();
+}
+
+/**
+ * Qué incluye cada plan **sin** fila explícita.
+ *
+ * Sólo figura lo que alguien consume hoy. Declarar `chatbot`, `margin` o `pickup_points` acá
+ * antes de que exista su slice sería escribir el precio de algo que todavía no se puede prender:
+ * cada slice agrega su feature cuando la implementa, y hasta entonces una feature que nadie
+ * declaró está apagada para los tres planes. `PRODUCT.md` §Planes es la fuente; esto es su
+ * traducción ejecutable, no una segunda fuente.
+ */
+const PLAN_FEATURES: Readonly<Record<PlanTier, readonly string[]>> = {
+  trial: [FEATURE_RESERVATIONS],
+  base: [],
+  negocio: [FEATURE_RESERVATIONS],
+};
+
+/**
+ * ¿Puede este tenant usar `feature` **hoy**, y si no, por qué?
+ *
+ * `snapshot` se pasa por parámetro en vez de releerse acá: ya viene en la sesión
+ * (`requireTenant()` → `tenant`, releído de `memberships`/`tenants` en cada request, ADR-005), y
+ * volver a consultarlo sería una query por cada chequeo de feature en el mismo render. `now`
+ * también entra por parámetro: la vigencia del trial se testea a los dos lados del vencimiento y
+ * eso no se puede hacer con `Date.now()` adentro.
+ *
+ * Las dos capas de tenant, como siempre: `withTenantDb` prende RLS **y** el `where` lleva su
+ * `eq(entitlements.tenantId, ctx.tenantId)` explícito (`CLAUDE.md` §2).
+ */
+export async function featureAccess(
+  ctx: TenantContext,
+  snapshot: PlanSnapshot,
+  feature: string,
+  now: Date = new Date(),
+): Promise<FeatureAccess> {
+  const rows = await withTenantDb(ctx, async (tx) =>
+    tx
+      .select({ enabled: entitlements.enabled })
+      .from(entitlements)
+      .where(and(eq(entitlements.tenantId, ctx.tenantId), eq(entitlements.feature, feature)))
+      .limit(1),
+  );
+
+  const row = rows[0];
+  if (row !== undefined) return row.enabled ? ACCESS_OK : { ok: false, reason: 'plan' };
+
+  // El plan no la incluye: el motivo es el plan, aunque el trial además esté vencido. Decirle
+  // "se te terminó la prueba" a alguien que nunca tuvo esa feature sería explicar mal.
+  if (!PLAN_FEATURES[snapshot.plan].includes(feature)) return { ok: false, reason: 'plan' };
+
+  return trialIsAlive(snapshot, now) ? ACCESS_OK : { ok: false, reason: 'trial_expired' };
+}
+
+/**
+ * La misma pregunta en booleano, para las pantallas: dibujar o no dibujar un formulario no
+ * necesita el motivo. **No es la autorización**: la Server Action vuelve a preguntar con
+ * `featureAccess()` y ahí el motivo sí se usa para explicar qué pasó.
+ */
+export async function isFeatureEnabled(
+  ctx: TenantContext,
+  snapshot: PlanSnapshot,
+  feature: string,
+  now: Date = new Date(),
+): Promise<boolean> {
+  return (await featureAccess(ctx, snapshot, feature, now)).ok;
+}

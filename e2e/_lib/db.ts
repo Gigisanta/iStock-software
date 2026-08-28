@@ -473,6 +473,72 @@ export async function deleteWaClickEvents(tenantId: string): Promise<void> {
   await q`delete from public.wa_click_events where tenant_id = ${tenantId}::uuid`;
 }
 
+/**
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *  Reservas · lo que la medición de S6 necesita leer y adelantar
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ * La reserva **se crea desde el panel**, como la crea el dueño; acá sólo se *lee* (para afirmar
+ * sobre el estado real, no sobre lo que la pantalla dice) y se *adelanta el vencimiento* (para no
+ * tener que esperar 30 minutos de reloj).
+ *
+ * Adelantar `expires_at` es tocar el **fixture**, no la implementación: el barrido sigue
+ * decidiendo solo, con su propio `now`, contra una fila que ya venció de verdad. La alternativa
+ * —inyectarle un `now` falso al cron— probaría el barrido contra un reloj que en producción no
+ * existe.
+ */
+export interface ReservationRow {
+  readonly id: string;
+  readonly tenantId: string;
+  readonly listingId: string;
+  readonly status: string;
+  readonly minutes: number;
+  readonly expiresAt: Date;
+  readonly closedAt: Date | null;
+}
+
+const RESERVATION_COLUMNS = `
+  id, tenant_id as "tenantId", listing_id as "listingId", status::text as status,
+  minutes, expires_at as "expiresAt", closed_at as "closedAt"
+`;
+
+/** Todas las reservas de un equipo, en orden de creación. Incluye las cerradas: el test de S6
+ *  afirma que la que venció quedó `expired` y no que desapareció. */
+export async function reservationsByListing(listingId: string): Promise<readonly ReservationRow[]> {
+  const q = sql();
+  return q<ReservationRow[]>`
+    select ${q.unsafe(RESERVATION_COLUMNS)}
+      from public.reservations
+     where listing_id = ${listingId}::uuid
+     order by created_at
+  `;
+}
+
+/** La reserva viva del equipo. `null` si no hay ninguna: es lo que el índice parcial garantiza. */
+export async function activeReservation(listingId: string): Promise<ReservationRow | null> {
+  const rows = await reservationsByListing(listingId);
+  return rows.find((row) => row.status === 'active') ?? null;
+}
+
+/**
+ * Manda el vencimiento de una reserva al pasado. Devuelve el `expires_at` que quedó escrito, para
+ * que el spec afirme sobre lo que la base tiene y no sobre lo que pidió.
+ *
+ * No toca `status`: dejar la fila `active` y **vencida** es exactamente el estado que el barrido
+ * tiene que encontrar. Ponerla en `expired` a mano sería escribirle el resultado al test.
+ */
+export async function backdateReservation(reservationId: string, secondsAgo = 60): Promise<Date> {
+  const q = sql();
+  const rows = await q<{ expiresAt: Date }[]>`
+    update public.reservations
+       set expires_at = now() - make_interval(secs => ${secondsAgo})
+     where id = ${reservationId}::uuid
+    returning expires_at as "expiresAt"
+  `;
+  const row = rows[0];
+  if (row === undefined) throw new Error(`no existe la reserva ${reservationId}`);
+  return row.expiresAt;
+}
+
 /** `public.users` cuelga de `auth.users` con `on delete cascade`: se borra la raíz. */
 export async function deleteUserByEmail(email: string): Promise<void> {
   if (KEEP_FIXTURES) return;

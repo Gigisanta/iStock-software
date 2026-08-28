@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { DEFAULT_FX_ROUNDING } from '@istock/domain';
 import { fxSettings, locations, memberships, tenants } from '@istock/db';
 import { authDriver } from '../auth/driver';
+import { uniqueViolationConstraint } from '../db/pg-error';
 import { withServiceDb } from '../db/session';
 import { logError, logEvent } from '../log';
 import { slugSchema } from '../slug';
@@ -228,30 +229,15 @@ async function hasMembership(userId: string): Promise<boolean> {
  *
  * `memberships_single_owner_per_user_key` devuelve el **mismo objeto** que el chequeo previo, que
  * es lo único que hace que ganar o perder la carrera se vea igual desde afuera.
+ *
+ * Preguntar *qué* constraint murió es `uniqueViolationConstraint()` (`_lib/db/pg-error.ts`), que
+ * vive aparte desde S6: `reservations/reserve-unit.ts` hace lo mismo con el índice único parcial
+ * de las reservas, y dos copias de un discriminador de errores es una que se queda vieja.
  */
 const FAILURE_BY_CONSTRAINT: Readonly<Record<string, CreateTenantFailure>> = {
   tenants_slug_key: SLUG_TAKEN,
   memberships_single_owner_per_user_key: ALREADY_HAS_TENANT,
 };
-
-/**
- * Nombre de la constraint de un `23505`, o `null` si el error es otra cosa.
- *
- * `postgres-js` expone el campo `n` del `ErrorResponse` como `constraint_name`; `node-postgres` lo
- * llama `constraint`. Se leen los dos por el mismo motivo que en `listings/create-listing.ts`: el
- * driver es un detalle de infraestructura y esta decisión no puede depender de cuál está montado.
- *
- * Un `23505` **sin** nombre de constraint devuelve `'unnamed'`, no `null`: sigue siendo una
- * violación de unicidad, sólo que anónima, y una anónima no puede heredar el mensaje de ninguna de
- * las dos que conocemos. Postgres manda ese campo desde 9.3 para toda violación de integridad, así
- * que llegar ahí ya es raro — razón de más para no adivinar.
- */
-function uniqueViolationConstraint(error: unknown): string | null {
-  if (typeof error !== 'object' || error === null) return null;
-  const pg = error as { code?: string; constraint_name?: string; constraint?: string };
-  if (pg.code !== '23505') return null;
-  return pg.constraint_name ?? pg.constraint ?? 'unnamed';
-}
 
 /**
  * Crea tenant + membresía `owner` + `fx_settings` + punto de retiro en **una** transacción.

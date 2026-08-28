@@ -4,13 +4,25 @@ import {
   MIN_PHOTOS_TO_PUBLISH,
   checkTransition,
   transitionEffects,
+  type ActiveReservation,
   type ListingStatus,
+  type ReservationStatus,
   type TransitionContext,
   type TransitionDenyReason,
+  type TransitionIntent,
 } from '@istock/domain';
-import { listingEvents, listings } from '@istock/db';
+import { listingEvents, listings, reservations } from '@istock/db';
+import { DEADLOCK, isDeadlock } from '../db/pg-error';
 import { withTenantDb, type TenantContext } from '../db/session';
-import { logEvent } from '../log';
+import {
+  FEATURE_RESERVATIONS,
+  featureAccess,
+  type FeatureAccess,
+  type PlanSnapshot,
+} from '../entitlements';
+import { logError, logEvent } from '../log';
+import { loadActiveReservation } from '../reservations/queries';
+import type { ActiveSession } from '../session';
 import { invalidateStorefrontUnit } from '../tenants/storefront-cache';
 import { loadUnitForTransition, type UnitForTransition } from './queries';
 
@@ -47,8 +59,62 @@ export type PublishOutcome =
   | { readonly ok: true; readonly status: ListingStatus }
   | { readonly ok: false; readonly message: string };
 
-/** Motivo del dominio → castellano rioplatense. Le habla a alguien parado en el mostrador. */
-export function denyReasonText(reason: TransitionDenyReason): string {
+/**
+ * Quién hace la transición. `slug`, `plan` y `trialEndsAt` salen de la **sesión**, nunca del
+ * request: un `POST` con el slug de otro negocio purgaría la vidriera ajena, y uno con
+ * `plan: 'negocio'` compraría el entitlement gratis.
+ *
+ * Va acá y no en `reservations/reserve-unit.ts` porque los dos módulos lo necesitan igual y
+ * `reserve-unit` ya importa de este archivo: al revés habría un ciclo.
+ */
+export interface PanelActor {
+  readonly ctx: TenantContext;
+  readonly tenant: { readonly slug: string } & PlanSnapshot;
+}
+
+/**
+ * El actor a partir de la sesión. Existe para que ninguna Server Action arme el objeto a mano: el
+ * día que la resolución de entitlements necesite otro campo del tenant, se agrega en un solo lugar
+ * en vez de descubrirse por una pantalla que quedó vieja. **Este olvido ya pasó**: S6 le agregó
+ * `extras` a `transitionContextFor()` y dejó a `transitionUnit()` llamándolo sin ellos.
+ */
+export function panelActor(session: ActiveSession): PanelActor {
+  return {
+    ctx: session.ctx,
+    tenant: {
+      slug: session.tenant.slug,
+      plan: session.tenant.plan,
+      trialEndsAt: session.tenant.trialEndsAt,
+    },
+  };
+}
+
+export const NOT_FOUND = 'No encontramos ese equipo.';
+export const LOST_RACE = 'Alguien cambió este equipo mientras lo mirabas. Recargá la pantalla.';
+
+/**
+ * El trial se venció (D2 del LEAD). Dice **qué pasó**, no "no autorizado": el dueño no hizo nada
+ * mal, se le terminó la prueba, y "Eso viene con el plan Negocio" sería mentirle — el plan que
+ * tiene es justamente el que incluía la función.
+ */
+const TRIAL_OVER =
+  'Se te terminó la prueba, así que las reservas quedaron apagadas. Escribinos y lo vemos.';
+
+/**
+ * Motivo del dominio → castellano rioplatense. Le habla a alguien parado en el mostrador.
+ *
+ * `access` es opcional porque casi ningún motivo depende de él: sólo `entitlement_required`
+ * cambia de texto según **por qué** la feature está apagada. Sin el dato, el mensaje es el del
+ * plan, que es el caso mayoritario y el que no inventa una explicación que no se verificó.
+ */
+export function denyReasonText(
+  reason: TransitionDenyReason,
+  access: FeatureAccess = { ok: true },
+): string {
+  if (reason === 'entitlement_required' && !access.ok && access.reason === 'trial_expired') {
+    return TRIAL_OVER;
+  }
+
   switch (reason) {
     case 'missing_photos':
       return `Faltan fotos: para publicarlo necesitás ${String(MIN_PHOTOS_TO_PUBLISH)}.`;
@@ -80,14 +146,59 @@ export function denyReasonText(reason: TransitionDenyReason): string {
 }
 
 /**
+ * Lo que este módulo **no** puede saber solo: si el tenant tiene reservas y si la unidad ya tiene
+ * una viva. Las dos son queries (`_lib/entitlements.ts`, `_lib/reservations/queries.ts`) y esta
+ * función no las hace: se las pasa quien ya las hizo.
+ *
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *  El parámetro NO tiene default, y eso es la corrección de un bug de S6
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * Lo tenía (`extras: TransitionExtras = {}`), con el argumento de que los defaults eran los del
+ * caso "publicar / despublicar". El problema es que **el caso lo decide `from`, y `from` se relee
+ * de Postgres**: `transitionUnit()` quedó llamando sin extras y evaluando toda transición con
+ * `activeReservation: null` y `reservations: false`. Sobre una unidad `reserved`, `checkRelease()`
+ * ve `reservation === null` y aprueba —"volver a `available` es reparar un estado inconsistente"—,
+ * o sea que el dominio aprobaba porque le mentían. La unidad volvía a la vidriera como
+ * "Disponible" con la seña puesta, y quedaba irreservable hasta que el cron venciera la reserva.
+ *
+ * Sin default, un call site nuevo tiene que decir qué sabe. El que sólo dibuja un botón de
+ * `draft → available` usa `DRAFT_PUBLISH_EXTRAS`, que es la misma mentira pero **firmada**: se
+ * llama como la única arista para la que es verdad.
+ */
+export interface TransitionExtras {
+  /** `entitlements.reservations` ya resuelto. */
+  readonly reservationsEnabled: boolean;
+  readonly activeReservation: ActiveReservation | null;
+  /** `'cancel'` = alguien apretó el botón; `'expire'` = venció sola. Cambia lo que permite el dominio. */
+  readonly intent?: TransitionIntent;
+}
+
+/**
+ * Para chequear `draft → available` **en un render**, que es la única arista donde las reservas no
+ * juegan: un borrador no puede tener una, y publicar no pide entitlement. No sirve para decidir
+ * una mutación — ahí los datos se leen de la base.
+ */
+export const DRAFT_PUBLISH_EXTRAS: TransitionExtras = {
+  reservationsEnabled: false,
+  activeReservation: null,
+};
+
+/**
  * El contexto que pide `@istock/domain` para decidir. Se arma en un solo lugar para que la
  * pantalla y la Server Action evalúen **exactamente** lo mismo: si el botón se dibuja con un
  * criterio y la acción valida con otro, el dueño ve un botón que siempre falla.
+ *
+ * ── Por qué `intent` se agrega condicionalmente ─────────────────────────────────────────────
+ * `exactOptionalPropertyTypes` está prendido en `tsconfig.base.json`: `intent: undefined` **no** es
+ * lo mismo que no tener `intent`, y el tipo del dominio declara `intent?: TransitionIntent`. El
+ * spread condicional es la forma de decir "no hay intención declarada" sin mentirle al tipo.
  */
 export function transitionContextFor(
   ctx: TenantContext,
   unit: UnitForTransition,
   now: Date,
+  extras: TransitionExtras,
 ): TransitionContext {
   return {
     now,
@@ -98,66 +209,155 @@ export function transitionContextFor(
     condition: unit.condition,
     catalogModelId: unit.catalogModelId,
     qty: unit.qty,
-    /**
-     * Las reservas son S6 y del plan Negocio. `checkPublishable` no las mira; la arista
-     * `available → reserved` sí, y cuando exista va a leer el plan del tenant. Poner `false` acá
-     * es correcto **hoy** para las aristas que este módulo ejecuta (publicar / despublicar) y no
-     * es una deuda escondida: la arista que lo usaría todavía no está implementada.
-     */
-    entitlements: { reservations: false },
-    activeReservation: null,
+    entitlements: { reservations: extras.reservationsEnabled },
+    activeReservation: extras.activeReservation,
+    ...(extras.intent === undefined ? {} : { intent: extras.intent }),
   };
 }
 
 /**
- * Cambia el estado de una unidad. `tenantSlug` viene de la sesión, no del request: es lo que se
- * usa para invalidar el cache y un slug de otro tenant purgaría la vidriera ajena.
+ * En qué queda la reserva que esta transición cierra.
+ *
+ * El dominio declara **que** hay que cerrarla (`transitionEffects().closesReservation`) y no en qué
+ * estado: `reservation_status` es un enum de `packages/db`, no un concepto de la máquina de
+ * estados del listing. Dos casos y nada más:
+ *
+ * - `reserved → sold`: la reserva se **convirtió** en venta. `confirmed`.
+ * - `reserved → cualquier otra cosa` (available, service, canje): la soltó una persona desde el
+ *   panel. `cancelled`, igual que `cancelReservation()`, incluso si ya estaba vencida — el que
+ *   escribe `expired` es el cron, que es quien tiene la definición de "venció" (`expireReservation()`
+ *   del dominio). Dos definiciones de vencida es cómo se pierde el borde cerrado.
+ */
+function closingStatusFor(to: ListingStatus): ReservationStatus {
+  return to === 'sold' ? 'confirmed' : 'cancelled';
+}
+
+/**
+ * Cambia el estado de una unidad. El actor sale de la sesión, no del request: su `slug` es el que
+ * se usa para invalidar el cache y uno de otro tenant purgaría la vidriera ajena.
+ *
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *  El contexto se lee de la base, ENTERO. Nada se asume por la arista que se pidió.
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * `from` sale de Postgres, así que esta función **no sabe** de antemano si está publicando un
+ * borrador o soltando una unidad reservada: una tab vieja de `/app/stock` manda `to='available'`
+ * sobre algo que mientras tanto pasó a `reserved` desde otro dispositivo. Por eso la reserva viva y
+ * el entitlement se consultan siempre, y no sólo cuando "parece" que hacen falta. Ver el bloque de
+ * `TransitionExtras`.
+ *
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *  El efecto declarado se EJECUTA, en la misma transacción
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * `transitionEffects(from, to).closesReservation` es `from === 'reserved'`, y el dominio lo comenta
+ * como *"Efecto obligatorio"*. Salir de `reserved` dejando la reserva `active` es el mismo bug con
+ * otro disfraz: el índice único `reservations_one_active_per_listing` la sigue contando, así que la
+ * unidad queda irreservable —"Ya tiene una reserva activa" sobre una fila cuyo badge dice "En
+ * vidriera"— hasta que el cron la venza. Va adentro de la transacción que mueve el listing: si el
+ * `update` de la reserva falla, la unidad no se movió.
+ *
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *  Orden de locks: `listings` → `reservations` (D1 del LEAD)
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * El mismo orden que `cancelReservation()` y —desde esta slice— que el cron. Dos órdenes distintos
+ * sobre el mismo par de tablas es un deadlock ABBA, y con esta función tocando las dos hay **tres**
+ * participantes. Un `40P01` que llega igual es una carrera perdida, no un 500: se mapea a
+ * `LOST_RACE`, que es lo mismo que ve alguien a quien le ganaron de mano por un milisegundo.
  */
 export async function transitionUnit(
-  ctx: TenantContext,
-  tenantSlug: string,
+  actor: PanelActor,
   listingId: string,
   to: ListingStatus,
   now: Date = new Date(),
 ): Promise<PublishOutcome> {
+  const { ctx, tenant } = actor;
+
   const unit = await loadUnitForTransition(ctx, listingId);
-  if (unit === null) return { ok: false, message: 'No encontramos ese equipo.' };
+  if (unit === null) return { ok: false, message: NOT_FOUND };
+
+  /**
+   * Las dos lecturas que el dominio necesita para no decidir a ciegas. Se piden juntas porque no
+   * dependen entre sí; con `max: 1` (ver `_lib/db/connection.ts`) el pool las **encola**, así que
+   * el `Promise.all` ahorra la ida y vuelta de código, no una conexión.
+   */
+  const [access, activeReservation] = await Promise.all([
+    featureAccess(ctx, tenant, FEATURE_RESERVATIONS, now),
+    loadActiveReservation(ctx, listingId),
+  ]);
 
   const from = unit.status;
-  const check = checkTransition(from, to, transitionContextFor(ctx, unit, now));
-  if (!check.ok) return { ok: false, message: denyReasonText(check.reason) };
+  const check = checkTransition(
+    from,
+    to,
+    transitionContextFor(ctx, unit, now, { reservationsEnabled: access.ok, activeReservation }),
+  );
+  if (!check.ok) return { ok: false, message: denyReasonText(check.reason, access) };
 
-  const updated = await withTenantDb(ctx, async (tx) => {
-    // `eq(status, from)` es el guard de concurrencia: si otro dispositivo ya lo movió, esta
-    // actualización afecta 0 filas en vez de pisar una transición que ya ocurrió.
-    const rows = await tx
-      .update(listings)
-      .set({ status: to, updatedAt: sql`now()` })
-      .where(
-        and(
-          eq(listings.tenantId, ctx.tenantId),
-          eq(listings.id, listingId),
-          eq(listings.status, from),
-        ),
-      )
-      .returning({ id: listings.id });
+  const effects = transitionEffects(from, to);
 
-    if (rows.length === 0) return false;
+  let updated: boolean;
+  try {
+    updated = await withTenantDb(ctx, async (tx) => {
+      // `eq(status, from)` es el guard de concurrencia: si otro dispositivo ya lo movió, esta
+      // actualización afecta 0 filas en vez de pisar una transición que ya ocurrió.
+      const rows = await tx
+        .update(listings)
+        .set({ status: to, updatedAt: sql`now()` })
+        .where(
+          and(
+            eq(listings.tenantId, ctx.tenantId),
+            eq(listings.id, listingId),
+            eq(listings.status, from),
+          ),
+        )
+        .returning({ id: listings.id });
 
-    await tx.insert(listingEvents).values({
-      tenantId: ctx.tenantId,
-      listingId,
-      kind: 'status_change',
-      fromStatus: from,
-      toStatus: to,
-      actorUserId: ctx.userId,
+      if (rows.length === 0) return false;
+
+      /**
+       * Se cierra **la** reserva activa de esta unidad, sin nombrarla por id: el índice único
+       * parcial garantiza que hay a lo sumo una, y el id que teníamos es de antes de la
+       * transacción. El guard `status = 'active'` la hace idempotente contra el cron corriendo al
+       * mismo tiempo.
+       */
+      if (effects.closesReservation) {
+        await tx
+          .update(reservations)
+          .set({ status: closingStatusFor(to), closedAt: sql`now()`, updatedAt: sql`now()` })
+          .where(
+            and(
+              eq(reservations.tenantId, ctx.tenantId),
+              eq(reservations.listingId, listingId),
+              eq(reservations.status, 'active'),
+            ),
+          );
+      }
+
+      await tx.insert(listingEvents).values({
+        tenantId: ctx.tenantId,
+        listingId,
+        kind: 'status_change',
+        fromStatus: from,
+        toStatus: to,
+        actorUserId: ctx.userId,
+      });
+
+      return true;
     });
-
-    return true;
-  });
+  } catch (error) {
+    if (isDeadlock(error)) {
+      // Ids y el SQLSTATE. Nunca el `Error`: su `DETAIL` cita la fila, y la fila de una reserva
+      // lleva la etiqueta del cliente.
+      logError('listing.transition.deadlock', DEADLOCK, { tenantId: ctx.tenantId, listingId });
+      return { ok: false, message: LOST_RACE };
+    }
+    throw error;
+  }
 
   if (!updated) {
-    return { ok: false, message: 'Alguien cambió este equipo mientras lo mirabas. Recargá la pantalla.' };
+    return { ok: false, message: LOST_RACE };
   }
 
   /**
@@ -167,8 +367,8 @@ export async function transitionUnit(
    * la invalidación de los tres tags: los dos del tenant más `listing:{uuid}`. El de la unidad no
    * se saltea aunque hoy sea redundante — ver el bloque "el TERCER tag" en `storefront-cache.ts`.
    */
-  if (transitionEffects(from, to).revalidateStorefront) {
-    invalidateStorefrontUnit(tenantSlug, listingId);
+  if (effects.revalidateStorefront) {
+    invalidateStorefrontUnit(tenant.slug, listingId);
   }
 
   logEvent('listing.status_changed', {

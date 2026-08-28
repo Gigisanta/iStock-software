@@ -42,3 +42,19 @@ export function uniqueSlug(tag = 'x'): string {
 export function uniqueEmail(tag = 'x'): string {
   return `${uniqueSlug(tag)}@qa.local`;
 }
+
+/**
+ * El secreto con el que el arnés se hace pasar por Vercel Cron. Lo inyecta
+ * `playwright.config.ts` en `webServer.env` y lo lee el spec de S6: **la misma constante en las
+ * dos puntas**, porque un test que llama a la puerta del cron con un secreto que el server no
+ * tiene mide un 401 y no mide el barrido.
+ *
+ * No es un secreto de producción y no tiene que serlo: es un fixture. Sí tiene que cumplir el
+ * schema de `apps/web/app/(app)/_lib/env.ts` (mínimo 24 caracteres) o el server arranca sin
+ * secreto y la puerta queda cerrada para todos — que es el comportamiento correcto del producto y
+ * el equivocado para el arnés.
+ */
+export const E2E_CRON_SECRET = process.env['CRON_SECRET'] ?? 'qa-e2e-cron-secret-32-chars-minimum';
+
+/** La URL que Vercel Cron golpea cada 5 minutos, tal como la declara `vercel.json`. */
+export const CRON_EXPIRE_URL = `${APEX_URL}/api/cron/expire-reservations`;

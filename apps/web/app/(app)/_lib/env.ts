@@ -37,6 +37,19 @@ const serverEnvSchema = z.object({
   NEXT_PUBLIC_SUPABASE_URL: z.string().optional(),
   NEXT_PUBLIC_SUPABASE_ANON_KEY: z.string().optional(),
   SUPABASE_SERVICE_ROLE_KEY: z.string().optional(),
+
+  /**
+   * Credencial del cron de Vercel: llega como `Authorization: Bearer <CRON_SECRET>`.
+   *
+   * La cadena vacía se acepta **a propósito** y significa "no configurado": es lo que trae
+   * `.env.example`, y es lo que hay en desarrollo, donde el cron no corre. Si en vez de eso el
+   * schema exigiera un mínimo siempre, un panel de desarrollo no arrancaría por una variable que
+   * sólo usa una ruta. Cuando tiene valor, en cambio, se le exige largo: un secreto corto es un
+   * secreto adivinable, y esta es la única puerta HTTP sin sesión que escribe en la base.
+   */
+  CRON_SECRET: z
+    .union([z.literal(''), z.string().min(24, 'CRON_SECRET necesita al menos 24 caracteres')])
+    .optional(),
 });
 
 export type ServerEnv = z.infer<typeof serverEnvSchema>;
@@ -70,6 +83,37 @@ export function assertLocalDriverAllowed(env: ServerEnv): void {
         'poné AUTH_DRIVER="supabase".',
     );
   }
+}
+
+/**
+ * El secreto del cron, o `null` si no hay ninguno configurado.
+ *
+ * **`null` para ausente y para vacío.** Un `CRON_SECRET=""` heredado de `.env.example` en un
+ * preview deploy es exactamente el caso en el que una comparación descuidada deja pasar a
+ * cualquiera: acá no existe ese camino, porque no hay valor con el cual comparar y quien lo
+ * consume (`app/api/cron/expire-reservations/route.ts`) responde **401**. En esos dos casos esta
+ * función **no tira**, y eso es deliberado: si tirara, "no está configurado" saldría con un status
+ * distinto que "credencial equivocada", y esa diferencia es un oráculo gratis para quien esté
+ * probando la puerta.
+ *
+ * **Pero `null` no es el único desenlace posible, y decir que esta función "no tira" era falso.**
+ * Lo primero que hace es `serverEnv()`, que valida `process.env` entero con Zod y **lanza** cuando
+ * algo no pasa. Dos consecuencias reales, las dos con 500:
+ *
+ * 1. `CRON_SECRET` **seteado pero inválido** (cualquier valor no vacío de menos de 24 caracteres)
+ *    no llega nunca a este `return`: revienta en el `safeParse`. O sea que "seteado a `xyz`" y
+ *    "sin setear" **no** dan la misma respuesta HTTP: el primero es 500, el segundo 401.
+ * 2. Cualquier **otra** variable inválida del schema tira igual, aunque no tenga nada que ver con
+ *    el cron: la validación es del entorno completo, no de una clave.
+ *
+ * El llamado de la ruta está **fuera** de su `try`, así que esa excepción sube y Next responde 500.
+ * Se deja así a propósito: un secreto corto es un error de despliegue nuestro, no un intento de
+ * nadie, y tiene que ser ruidoso. Lo que hay que tener presente es que **la única falla que degrada
+ * a 401 silencioso es la ausencia**; el resto rompe fuerte, y está bien que rompa.
+ */
+export function cronSecret(): string | null {
+  const value = serverEnv().CRON_SECRET;
+  return value === undefined || value.length === 0 ? null : value;
 }
 
 /** Host raíz sin protocolo: `maat.work` en prod, `localhost:3000` en dev. */

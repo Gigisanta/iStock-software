@@ -3,7 +3,7 @@
 import { refresh } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { z } from 'zod';
-import { transitionUnit } from '../../../_lib/listings/publish-listing';
+import { panelActor, transitionUnit } from '../../../_lib/listings/publish-listing';
 import { requireTenant } from '../../../_lib/session';
 import type { StatusActionState } from './status-action-state';
 
@@ -82,9 +82,13 @@ export async function setListingStatusAction(
     return { error: 'No pudimos identificar el equipo. Recargá la pantalla.' };
   }
 
+  /**
+   * El actor sale entero de la sesión (`panelActor()`). Del form llega **sólo** el id y el destino:
+   * si el slug viniera del request se purgaría la vidriera de otro negocio, y si viniera el plan el
+   * entitlement se compraría escribiendo `negocio` en un hidden.
+   */
   const result = await transitionUnit(
-    session.ctx,
-    session.tenant.slug,
+    panelActor(session),
     parsed.data.listingId,
     parsed.data.to,
   );
