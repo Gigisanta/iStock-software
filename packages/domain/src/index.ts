@@ -106,7 +106,14 @@ export {
   suggestSlug,
 } from './slug';
 
+/**
+ * Criterio único de "texto vacío". Se exporta a propósito: la vidriera decide lo mismo aguas
+ * arriba (`resolveModelName`) y tiene que decidirlo con **esta** función, no con una copia.
+ */
+export { isBlank } from './text';
+
 export {
+  NAME_SOURCES,
   STOREFRONT_DOMAIN,
   buildWaMessage,
   buildWaUrl,
@@ -114,6 +121,7 @@ export {
   normalizeWaPhone,
   storefrontHost,
   storefrontUrl,
+  type NameSource,
   type WaListing,
 } from './wa';
 

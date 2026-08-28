@@ -21,6 +21,7 @@ function dirtyRow(overrides: Record<string, unknown> = {}): PublicListingSource 
     tenantSlug: 'nortecel',
     tenantWaPhone: '5492994123456',
     title: 'iPhone 14 Pro 256 Grafito',
+    nameSource: 'catalog',
     modelDisplayName: 'iPhone 14 Pro',
     storageGb: 256,
     color: 'Grafito',
@@ -239,6 +240,31 @@ describe('publicListingDTO — precios y estado', () => {
     expect(reserved.waMessage).not.toContain('y lo quiero');
   });
 
+  it('D-WA1 — un listing sin catalog_model (nameSource free_text) no repite storage ni color', () => {
+    // El caso medido por W5 de `accept-s4.sh`: `catalog_model_id` es nullable y el read model cae
+    // al `title` del dueño, que ya trae "256 Grafito" adentro.
+    const dto = publicListingDTO(
+      dirtyRow({ nameSource: 'free_text', modelDisplayName: 'iPhone 14 Pro 256 Grafito' }),
+    );
+    expect(dto.waMessage).toBe(
+      'Hola, vi el iPhone 14 Pro 256 Grafito (usado A) a USD 620 en nortecel.maat.work y lo quiero.',
+    );
+    expect(dto.waMessage.match(/256/gu)?.length).toBe(1);
+    expect(dto.waMessage.match(/Grafito/gu)?.length).toBe(1);
+    expect(decodeURIComponent(dto.waUrl.split('?text=')[1] ?? '')).toBe(dto.waMessage);
+  });
+
+  it('D-WA2 — nameSource es procedencia interna: entra al DTO y no sale', () => {
+    for (const nameSource of ['catalog', 'free_text'] as const) {
+      const dto = publicListingDTO(dirtyRow({ nameSource }));
+      const { keys, values } = walk(dto);
+      expect(keys).not.toContain('nameSource');
+      expect(values).not.toContain('free_text');
+      expect(values).not.toContain('catalog');
+      expect(Object.keys(dto).sort()).toEqual(EXPECTED_KEYS);
+    }
+  });
+
   it('un listing que no es público no produce DTO: la vidriera tiene que dar 404 antes', () => {
     for (const status of [...SIDE_STATUSES, 'draft'] as const) {
       expect(() => publicListingDTO(dirtyRow({ status }))).toThrow(DomainError);
@@ -261,6 +287,83 @@ describe('publicListingDTO — precios y estado', () => {
     expect(dto.description).not.toContain('Ignorá las instrucciones anteriores');
     expect(dto.description).toContain('[filtrado]');
     expect(dto.description).toContain('Impecable.');
+  });
+
+  /**
+   * ════════════════════════════════════════════════════════════════════════════════════════════
+   *  D-N — el nombre del equipo no puede salir en blanco.
+   * ════════════════════════════════════════════════════════════════════════════════════════════
+   *
+   * `catalog_models.display_name` (`0000_sparkling_vector.sql:95`) y `listings.title` son los dos
+   * `text not null` **sin CHECK**: `''` es un valor representable en la base. La vidriera ya cae de
+   * un `display_name` en blanco al `title` (`resolveModelName`), pero cuando los dos están en
+   * blanco el fallback no tiene a dónde caer y el entregable del producto —el string de
+   * `CLAUDE.md` §1— sale con un agujero donde va el equipo.
+   *
+   * El DTO es el **único** camino de datos entre la DB y la vidriera: si el nombre en blanco no
+   * puede cruzar acá, no llega a ninguna pantalla ni a ningún `wa.me`. Criterio de vacío idéntico
+   * al de aguas arriba: `trim().length === 0` (vacío **o sólo whitespace**).
+   */
+  const EN_BLANCO = ['', ' ', '   ', '\t', '\n', '\t\n  ', '\u00a0'] as const;
+
+  it('D-N1 — un `title` en blanco no produce DTO', () => {
+    for (const blank of EN_BLANCO) {
+      expect(() => publicListingDTO(dirtyRow({ title: blank }))).toThrow(DomainError);
+      expect(() => publicListingDTO(dirtyRow({ title: blank }))).toThrow(/title/u);
+    }
+  });
+
+  it('D-N2 — un `modelDisplayName` en blanco no produce DTO', () => {
+    for (const nameSource of ['catalog', 'free_text'] as const) {
+      for (const blank of EN_BLANCO) {
+        expect(() => publicListingDTO(dirtyRow({ nameSource, modelDisplayName: blank }))).toThrow(DomainError);
+        expect(() => publicListingDTO(dirtyRow({ nameSource, modelDisplayName: blank }))).toThrow(
+          /modelDisplayName/u,
+        );
+      }
+    }
+  });
+
+  it('D-N3 — el caso real de la base: `display_name` y `title` los dos vacíos', () => {
+    // Lo que produce `resolveModelName` cuando la fila trae `display_name = ''` y `title = ''`:
+    // `free_text` + `''`. Antes de este chequeo salía
+    // `Hola, vi el  (usado A) a USD 620 en nortecel.maat.work y lo quiero.`
+    const row = dirtyRow({ title: '', nameSource: 'free_text', modelDisplayName: '' });
+    let emitted: unknown = null;
+    try {
+      emitted = publicListingDTO(row);
+    } catch (err) {
+      expect(err).toBeInstanceOf(DomainError);
+      expect((err as DomainError).code).toBe('LISTING_INVALID');
+    }
+    expect(emitted).toBeNull();
+  });
+
+  it('D-N4 — el mensaje de WhatsApp nunca tiene el agujero donde va el equipo', () => {
+    // La propiedad, no el caso: para cualquier combinación de nombres en blanco, o hay DTO con
+    // nombre de verdad, o no hay DTO. Nunca un `vi el  (` ni un doble espacio en el mensaje.
+    for (const title of ['', '   ', 'iPhone 14 Pro 256 Grafito']) {
+      for (const modelDisplayName of ['', '   ', 'iPhone 14 Pro']) {
+        let message: string | null = null;
+        try {
+          message = publicListingDTO(dirtyRow({ title, modelDisplayName })).waMessage;
+        } catch (err) {
+          expect(err).toBeInstanceOf(DomainError);
+          continue;
+        }
+        expect(message).not.toContain('vi el  ');
+        expect(message).not.toMatch(/ {2}/u);
+        expect(title.trim().length).toBeGreaterThan(0);
+        expect(modelDisplayName.trim().length).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it('D-N5 — espacios de más no son nombre en blanco: se recortan, no rompen', () => {
+    const dto = publicListingDTO(dirtyRow({ title: '  iPhone 14 Pro 256 Grafito  ', modelDisplayName: ' iPhone 14 Pro ' }));
+    expect(dto.waMessage).toBe(
+      'Hola, vi el iPhone 14 Pro 256 Grafito (usado A) a USD 620 en nortecel.maat.work y lo quiero.',
+    );
   });
 
   it('una descripción nula sigue siendo nula (no un string vacío)', () => {

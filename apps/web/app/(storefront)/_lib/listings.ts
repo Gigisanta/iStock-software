@@ -21,6 +21,7 @@ import {
 import { withStorefrontDb, type StorefrontTx } from './storefront-db';
 import { isReservedSubdomain, isSlugShaped } from './host';
 import { listingTag, storefrontTag, tenantConfigTag } from './cache-tags';
+import { resolveModelName } from './model-name';
 import { STOREFRONT_MISS_LIFE, cacheStorefrontMiss } from './cache-life';
 
 /**
@@ -276,10 +277,15 @@ function toSource(
     tenantSlug: tenant.slug,
     tenantWaPhone: tenant.waPhone,
     title: row.title,
-    // Los accesorios no tienen `catalog_model`. El título es su nombre de display y es lo que
-    // tiene que entrar al mensaje de WhatsApp: "vi el Cargador 20W USB-C" se entiende; "vi el
-    // null" no.
-    modelDisplayName: row.modelDisplayName ?? row.title,
+    // `nameSource` + `modelDisplayName`, los dos de la misma decisión y en el mismo objeto.
+    //
+    // Los accesorios no tienen `catalog_model`, y tampoco lo tiene el equipo cargado sin elegir
+    // modelo ni ninguno de los que quedan huérfanos por el `on delete set null`. El título es el
+    // nombre de display de todos esos: "vi el Cargador 20W USB-C" se entiende; "vi el null" no.
+    // Lo que **no** se puede es pasarlo como si viniera del catálogo: el título del dueño ya suele
+    // traer storage y color adentro, y `describeListing` se los appendearía otra vez. Ese era el
+    // `iPhone 14 Pro 256 Grafito 256 Grafito` que midió W5. Ver `./model-name.ts`.
+    ...resolveModelName(row),
     storageGb: row.storageGb,
     color: row.color,
     condition: row.condition,

@@ -20,8 +20,9 @@ import { DomainError } from './errors';
 import { applyFx, fxRateToDecimalString, type FxRate, type FxRoundingMode } from './fx';
 import { formatArs, formatUsd } from './money';
 import { sanitizeDescription } from './sanitize';
+import { isBlank } from './text';
 import { conditionLabel, isPublicStatus, type Condition, type ListingStatus, type PublicStatus } from './types';
-import { buildWaMessage, buildWaUrl, type WaListing } from './wa';
+import { buildWaMessage, buildWaUrl, type NameSource, type WaListing } from './wa';
 
 /** Una foto tal como viene del read model. Puede traer la key del master: no sale de acá. */
 export interface PhotoSource {
@@ -52,6 +53,13 @@ export interface PublicListingSource {
   /** Teléfono del tenant para el `wa.me`. No se publica: se usa para armar la URL. */
   readonly tenantWaPhone: string;
   readonly title: string;
+  /**
+   * De dónde salió `modelDisplayName`: `'catalog'` si es el `display_name` del `catalog_model`,
+   * `'free_text'` si el read model cayó al `title` del dueño (`catalog_model_id` es nullable y
+   * además `on delete set null`). Requerido y sin default: el mapeo tiene que decidirlo, porque de
+   * eso depende que el mensaje de WhatsApp no repita storage y color. Ver `NAME_SOURCES` en `wa.ts`.
+   */
+  readonly nameSource: NameSource;
   readonly modelDisplayName: string;
   readonly storageGb: number | null;
   readonly color: string | null;
@@ -139,6 +147,33 @@ function pickupDTO(point: PickupPointSource): PublicPickupDTO {
 }
 
 /**
+ * Un nombre en blanco es un nombre **ausente**, y una ficha sin nombre no se publica.
+ *
+ * `listings.title` y `catalog_models.display_name` son los dos `text not null` **sin CHECK**
+ * (`packages/db/drizzle/0000_sparkling_vector.sql:95` para el segundo; ninguno de los 46 CHECK de
+ * esa migración toca a ninguno de los dos). `NOT NULL` no es `no vacío`: `''` entra en las dos
+ * columnas, y con él entran `'   '` y `'\t\n'`.
+ *
+ * `title` es el `<h1>` de la ficha, el `<title>` de la pestaña, el texto del Open Graph y el `alt`
+ * de fallback de todas las fotos. `modelDisplayName` es lo que va adentro del mensaje de WhatsApp.
+ * Ninguno de los dos tiene una degradación aceptable: una ficha con el `<h1>` vacío y un `wa.me`
+ * que dice `Hola, vi el  (usado A)` es peor que un 404, porque parece que funciona.
+ *
+ * El DTO es el **único** camino de datos entre la DB y la vidriera (`ARCHITECTURE.md` §Límites de
+ * confianza), así que tirar acá saca el caso de todas las pantallas de una vez. Criterio de vacío:
+ * `isBlank`, el mismo que usa `resolveModelName` en la vidriera. Ver `text.ts`.
+ */
+function assertNamed(value: string, field: 'title' | 'modelDisplayName'): void {
+  if (isBlank(value)) {
+    throw new DomainError(
+      'LISTING_INVALID',
+      `\`${field}\` está vacío o en blanco (${JSON.stringify(value)}): un listing sin nombre no se ` +
+        'publica. `NOT NULL` no es `no vacío`; el fix va en el mapeo o en la fila, no acá.',
+    );
+  }
+}
+
+/**
  * Construye el DTO público. Tira si el listing no es públicamente visible: la vidriera tiene que
  * dar 404 **antes** de llegar acá, no confiar en que el DTO devuelva algo vacío.
  */
@@ -151,7 +186,15 @@ export function publicListingDTO(listing: PublicListingSource & Record<string, u
   }
   const status: PublicStatus = listing.status;
 
+  // Antes de construir nada: si el listing no tiene nombre, no hay DTO. `describeListing` volvería
+  // a chequear `modelDisplayName` más abajo (es export público y tiene que defenderse solo), pero
+  // el mensaje de error de acá dice **qué campo** de la fila está mal, que es lo que necesita quien
+  // lo lea en Sentry. `title` no pasa por `describeListing` y no tendría quién lo mire.
+  assertNamed(listing.title, 'title');
+  assertNamed(listing.modelDisplayName, 'modelDisplayName');
+
   const waListing: WaListing = {
+    nameSource: listing.nameSource,
     modelDisplayName: listing.modelDisplayName,
     storageGb: listing.storageGb,
     color: listing.color,
@@ -167,6 +210,8 @@ export function publicListingDTO(listing: PublicListingSource & Record<string, u
 
   // ── ALLOWLIST EXPLÍCITA ──────────────────────────────────────────────────────────────────────
   // Nada de `...listing`. Cada línea es una decisión de publicar ese dato.
+  // `nameSource` **no** está acá: es procedencia interna del dato, no información para el
+  // comprador. Entra al DTO como insumo del mensaje de WhatsApp y muere en esta función.
   return {
     id: listing.id,
     slug: listing.slug,

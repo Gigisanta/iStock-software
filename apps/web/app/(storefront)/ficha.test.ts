@@ -282,3 +282,33 @@ describe('S3.3 · la ficha distingue el tenant que no existe del equipo que no e
     }
   });
 });
+
+/**
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *  El nombre del equipo sale de UNA decisión, no de dos líneas que se pueden desincronizar
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ * `model-name.test.ts` prueba que la decisión es correcta. Lo que no puede ver desde adentro es que
+ * `listings.ts` la siga usando: el modo de falla concreto es alguien que agrega un campo, ve el
+ * `TS2322` de `nameSource` faltante y lo calla escribiendo `nameSource: 'catalog'` al lado de un
+ * `?? row.title`. Eso compila, pasa todos los tests de dominio y devuelve el bug de W5 exacto.
+ * Por eso el discriminante no se escribe a mano en ningún lado de la vidriera.
+ */
+describe('la procedencia del nombre no se escribe a mano', () => {
+  const READ_MODEL = FILES.find((f) => f.rel === '_lib/listings.ts');
+
+  it('el read model arma nombre y procedencia con `resolveModelName`, en una sola expresión', () => {
+    expect(code(READ_MODEL?.src ?? '')).toMatch(/\.\.\.resolveModelName\(row\)/u);
+  });
+
+  it('nadie en la vidriera escribe el literal del discriminante', () => {
+    // El único archivo que puede nombrar `catalog`/`free_text` es el que decide cuál es.
+    const escriben = FILES.filter((f) => /nameSource:\s*'(catalog|free_text)'/u.test(code(f.src)));
+    expect(escriben.map((f) => f.rel)).toEqual(['_lib/model-name.ts']);
+  });
+
+  it('el fallback al título del dueño vive en un solo lugar', () => {
+    // `?? row.title` en el mapeo es la forma exacta que tenía el bug: elige el nombre sin elegir la
+    // procedencia. Si vuelve a aparecer en el read model, este test se pone rojo antes que W5.
+    expect(code(READ_MODEL?.src ?? '')).not.toMatch(/\?\?\s*row\.title/u);
+  });
+});
