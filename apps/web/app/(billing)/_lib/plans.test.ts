@@ -39,6 +39,12 @@ vi.mock('../../(app)/_lib/db/session', () => ({
     fn({ select: () => ({ from: () => ({ where: () => ({ limit: () => [] }) }) }) }),
 }));
 
+// El resolver de `app-agent`, real y entero, cargado **acá y no adentro del `it`**. Vitest sube
+// los `vi.mock` por encima de todos los `import` del archivo, así que los dos mocks de arriba ya
+// están puestos cuando este módulo se instancia: la posición no cambia qué se carga, cambia
+// quién paga los ~3,5 s de instanciar el grafo. Ver el segundo docblock, sección del reloj.
+import * as resolver from '../../(app)/_lib/entitlements';
+
 describe('catálogo de planes', () => {
   it('los tres planes del producto, y sólo esos', () => {
     expect(PLAN_TIERS).toEqual(['trial', 'base', 'negocio']);
@@ -128,11 +134,38 @@ describe('catálogo de planes', () => {
  * deja de medir. **No hay forma de detectarlo en runtime** —dos strings iguales son iguales, se
  * hayan escrito una vez o dos—, así que la propiedad se sostiene con este párrafo y con el
  * comentario de abajo, y no con una aserción.
+ *
+ * ── El reloj NO es la palanca (medido el 2026-08-28, LEAD + billing-agent) ───────────────────
+ * Este test se puso rojo en la suite completa sin que nadie lo tocara: el archivo está byte a
+ * byte igual desde que se escribió. Lo que creció fue la suite **alrededor** — cuatro columnas
+ * sumaron tests en paralelo y ninguna podía ver el costo agregado de las otras tres. El que paga
+ * la cuenta termina siendo el chequeo cruzado entre `billing-agent` y `app-agent`, o sea lo único
+ * que impide que las dos columnas se separen. Se rompe por acumulación y no tiene autor; tratarlo
+ * como "alguien lo hizo lento" es buscar un culpable donde hay un costo compartido.
+ *
+ * Dónde estaba el tiempo, cronometrado con `performance.now()` adentro del `it`, en la suite
+ * completa (37 archivos en paralelo):
+ *
+ *     await import('../../(app)/_lib/entitlements')   3489 ms
+ *     las 12 llamadas a featureAccess()                 10 ms   (1 ms con Promise.all)
+ *
+ * El 99,7% no era la medición: era **instanciar el grafo de módulos adentro del cuerpo
+ * cronometrado**. Aislado ese mismo import cuesta 932 ms; la diferencia es contención de CPU con
+ * los otros 36 archivos. No es contención de pool — este archivo mockea `withTenantDb` y no abre
+ * ninguna conexión. Y paralelizar las 12 llamadas compra 9 ms de 3500: no alcanza porque no toca
+ * el problema.
+ *
+ * Por eso el `import` del resolver es **estático y está arriba de todo**: el costo se paga en el
+ * `collect` del archivo, como el de cualquier otro import, y deja de contar contra el timeout de
+ * una aserción cuyo sujeto no es cargar módulos.
+ *
+ * **No subir el `testTimeout` ni pasarle `{ timeout: N }` al `it`.** Un reloj más largo deja el
+ * veredicto dependiendo de qué más corre al lado, que es exactamente el defecto: una carrera
+ * reportada como test — la misma familia que ADR-020/021/023, una aserción cuyo resultado deriva
+ * de algo que no es su sujeto. El costo se arregla, el reloj no se toca.
  */
 describe('coherencia con el resolver de entitlements (app-agent)', () => {
   it('los tres planes por TODAS las features facturables: el resolver coincide con el catálogo', async () => {
-    const resolver = await import('../../(app)/_lib/entitlements');
-
     // Dos declaraciones independientes del mismo string, comparadas. NO convertir en re-export:
     // ver el docblock de arriba, esta línea es la única que ata los dos archivos.
     expect(resolver.FEATURE_RESERVATIONS).toBe(FEATURE_RESERVATIONS);
