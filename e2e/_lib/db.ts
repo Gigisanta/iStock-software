@@ -37,6 +37,7 @@
  * proceso quede con un socket abierto al terminar.
  */
 
+import { createHash } from 'node:crypto';
 import postgres from 'postgres';
 import type { Sql } from 'postgres';
 
@@ -176,6 +177,23 @@ export async function listingById(listingId: string): Promise<ListingRow | null>
   return rows[0] ?? null;
 }
 
+/**
+ * El slug público del equipo, que es la **única** forma de armar la URL que ve un desconocido:
+ * `{tenant}.maat.work/p/{listingSlug}`. Lo genera el alta a partir del título (no lo elige el
+ * test), así que hay que ir a buscarlo.
+ *
+ * Va aparte y no como una columna más de `LISTING_COLUMNS` a propósito: esa lista la consumen los
+ * specs de S1/S2 para afirmar sobre el estado interno del equipo, y meterle el slug ahí mezclaría
+ * dos cosas distintas —lo que el panel guarda y lo que la vidriera publica— en la misma fila.
+ */
+export async function listingSlugById(listingId: string): Promise<string | null> {
+  const q = sql();
+  const rows = await q<{ slug: string }[]>`
+    select slug from public.listings where id = ${listingId}::uuid limit 1
+  `;
+  return rows[0]?.slug ?? null;
+}
+
 /** Cuántas fotos tiene el equipo **según la base**, que es lo que la pantalla debería reflejar. */
 export async function listingPhotoCount(listingId: string): Promise<number> {
   const q = sql();
@@ -248,6 +266,157 @@ export async function seedListing(listing: SeedListing): Promise<string> {
   const id = rows[0]?.id;
   if (id === undefined) throw new Error(`no se pudo sembrar el listing ${listing.slug}`);
   return id;
+}
+
+/**
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *  S3 · las PRECONDICIONES de la vidriera que todavía no tienen pantalla en el panel
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * `fx_settings` y `locations` son dos de los 15 campos de la ficha y hoy **no se pueden cargar
+ * desde el panel**: la pantalla de tipo de cambio es S5 y la de puntos de retiro también. Un
+ * tenant creado por el camino real del dueño nace sin TC, y sin TC `getStorefrontCatalog()`
+ * devuelve la grilla vacía a propósito (no le inventamos un dólar al reseller).
+ *
+ * O sea que sin estas dos filas no hay ni una foto en la grilla que medir, y el spec de bytes
+ * fallaría por una razón que no tiene nada que ver con lo que afirma.
+ *
+ * Sembrarlas por SQL es correcto **porque no están bajo prueba**: son el decorado, no la escena.
+ * La regla de este archivo —lo que el test afirma tiene que nacer por el camino real— se sigue
+ * cumpliendo donde importa: el equipo, la foto y la publicación pasan por el panel.
+ *
+ * El día que S5 exista, esto se reemplaza por el journey de la pantalla de TC y este comentario
+ * se borra. Mientras tanto queda escrito acá para que nadie lo lea como "los e2e siembran datos
+ * bajo prueba".
+ */
+export async function seedFxSettings(
+  tenantId: string,
+  arsPerUsd = '1487.50',
+  rounding = 'ceil_1000',
+): Promise<void> {
+  const q = sql();
+  await q`
+    insert into public.fx_settings (tenant_id, ars_per_usd, rounding)
+    values (${tenantId}::uuid, ${arsPerUsd}::numeric, ${rounding}::fx_rounding_mode)
+    on conflict (tenant_id)
+      do update set ars_per_usd = excluded.ars_per_usd, rounding = excluded.rounding
+  `;
+}
+
+export interface SeedLocation {
+  readonly name?: string;
+  readonly address?: string;
+  readonly hours?: string;
+}
+
+/** Un punto de retiro activo. Campo obligatorio de la ficha; su pantalla también es S5. */
+export async function seedLocation(tenantId: string, location: SeedLocation = {}): Promise<void> {
+  const q = sql();
+  await q`
+    insert into public.locations (tenant_id, name, address, hours, city, is_active, sort_order)
+    values (${tenantId}::uuid,
+            ${location.name ?? 'Local QA centro'},
+            ${location.address ?? 'Av. Argentina 200, Neuquén'},
+            ${location.hours ?? 'lun a vie de 10 a 18'},
+            'Neuquén', true, 0)
+  `;
+}
+
+/**
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *  Una unidad YA PUBLICADA, por SQL. Sólo para el spec que mide **queries**, nunca para el que
+ *  mide bytes.
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * La distinción es la de siempre y acá se ve clarísima:
+ *
+ * - El spec de **bytes** mide el objeto que produjo `packages/media`, así que la foto tiene que
+ *   haber entrado por el `<input type="file">` del panel. Un `insert` de keys inventadas mediría
+ *   un 404. Ese spec **no** usa esta función.
+ * - El spec de **db-hits** mide cuántas sentencias le manda el server a Postgres al renderizar la
+ *   ficha y cuántas le manda cuando la sirve desde el cache. Esa cuenta no cambia ni un dígito
+ *   según cómo nació la fila: lo que se está auditando es el `'use cache'` de la vidriera. Pagar
+ *   un journey de panel de un minuto (login + negocio + 3 subidas de 12 MP) para producir una
+ *   fila que el propio spec no mira sería tiempo de corrida a cambio de nada.
+ *
+ * `status: 'available'` dispara el trigger `listings_stamp_published_at` (migración 0002), que es
+ * lo que pone `published_at` — la policy de `anon` exige `published_at is not null` y no puede
+ * depender de que el que inserta se acuerde. Que la fila nazca visible para `anon` **por el mismo
+ * trigger que en producción** es justamente lo que hace que este atajo no cambie lo que se mide.
+ *
+ * Los campos peligrosos (`imei`, `cost_usd`, `supplier`, `internal_notes`) se siembran **a
+ * propósito**: una ficha de fixture sin datos sensibles convierte cualquier chequeo de fuga en un
+ * chequeo vacuo, y M4 de `scripts/accept-s3.sh` barre el HTML servido buscando exactamente esto.
+ */
+export interface SeedPublicUnit {
+  readonly tenantId: string;
+  readonly slug: string;
+  readonly title: string;
+  readonly priceUsd?: number;
+  readonly imei?: string;
+  readonly costUsd?: number;
+}
+
+export async function seedPublicUnit(unit: SeedPublicUnit): Promise<string> {
+  const q = sql();
+  const rows = await q<{ id: string }[]>`
+    insert into public.listings (
+      tenant_id, slug, kind, title, storage_gb, color, condition, battery_pct,
+      screen_original, icloud_status_text, warranty_text, provenance_text,
+      price_usd, cost_usd, supplier, internal_notes, imei, qty, status
+    )
+    values (
+      ${unit.tenantId}::uuid, ${unit.slug}, 'unit', ${unit.title}, 256, 'Grafito',
+      'used_excellent'::listing_condition, 89,
+      true, 'Libre de iCloud, verificado en el local', '90 días de garantía del local',
+      'Compra directa a cliente en Cipolletti',
+      ${unit.priceUsd ?? 620}, ${unit.costUsd ?? 500}, 'Canje mostrador QA',
+      'Entró por canje, revisar batería', ${unit.imei ?? null}, 1, 'available'
+    )
+    returning id
+  `;
+  const id = rows[0]?.id;
+  if (id === undefined) throw new Error(`no se pudo sembrar la unidad pública ${unit.slug}`);
+  return id;
+}
+
+/**
+ * Una fila de `listing_photos` con keys **con la forma pública real** (`v1/{ab}/{sha256_32}.webp`)
+ * pero **sin bytes detrás**.
+ *
+ * Es exactamente lo que el spec de db-hits necesita y nada más: ese spec pide la ficha con
+ * `request.get()` —sin browser— así que no baja una sola subrecurso y la foto nunca se descarga.
+ * Lo único que la fila tiene que hacer es existir, para que la ficha recorra el mismo camino de
+ * queries que en producción (`photosByListing` es una de las seis).
+ *
+ * **No se usa donde se miden bytes.** Una key sin objeto detrás devuelve 404 y 404 pesa poco: un
+ * spec de presupuesto que midiera esto daría verde midiendo la nada.
+ */
+export async function seedListingPhoto(
+  tenantId: string,
+  listingId: string,
+  sortOrder = 0,
+): Promise<void> {
+  const q = sql();
+  const digest = (tag: string): string =>
+    createHash('sha256')
+      .update(`qae2e/${listingId}/${String(sortOrder)}/${tag}`)
+      .digest('hex')
+      .slice(0, 32);
+  const key = (tag: string): string => {
+    const hash = digest(tag);
+    return `v1/${hash.slice(0, 2)}/${hash}.webp`;
+  };
+
+  await q`
+    insert into public.listing_photos (
+      tenant_id, listing_id, sort_order, alt, master_key, thumb_key, card_key, detail_key,
+      width, height, card_bytes
+    )
+    values (${tenantId}::uuid, ${listingId}::uuid, ${sortOrder}, null,
+            ${`originals/${tenantId}/${listingId}/${digest('master')}.webp`},
+            ${key('thumb')}, ${key('card')}, ${key('detail')}, 1600, 1200, 50692)
+  `;
 }
 
 /** `public.users` cuelga de `auth.users` con `on delete cascade`: se borra la raíz. */

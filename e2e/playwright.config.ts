@@ -2,6 +2,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defineConfig, devices } from '@playwright/test';
 import { APEX_URL, E2E_PORT } from './_lib/env';
+import { startPgSpy } from './_lib/pg-spy';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -76,6 +77,29 @@ function assertCensusReporterSurvives(): void {
 
 assertCensusReporterSurvives();
 
+/**
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *  El `DATABASE_URL` del server bajo prueba pasa por el contador de queries.
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * `CLAUDE.md` §3 promete que **el 95% de los hits de la vidriera no tocan Postgres**. Esa promesa
+ * se verifica contando sentencias, y para contarlas hay que estar en el medio del cable: el
+ * `next start` se conecta a un proxy TCP transparente que reenvía todo sin tocarlo y lleva la
+ * cuenta al pasar. Ver `_lib/pg-spy.ts` — ahí está el motivo por el que el contador vive acá y no
+ * adentro de `apps/web` (`qa-agent` no edita el código que audita) y por qué no se mide con un
+ * timing.
+ *
+ * Se arranca a nivel de módulo, no en `globalSetup`, por orden de ejecución: Playwright levanta el
+ * `webServer` **antes** del global setup, así que un espía que naciera ahí llegaría tarde y el
+ * server ya estaría hablando con Postgres directo. El módulo se evalúa siempre y antes que todo.
+ *
+ * Si el espía no puede escuchar, `startPgSpy()` devuelve igual la URL con el proxy y el server no
+ * conecta: la suite se cae con un error de conexión ruidoso. Es la falla correcta. La alternativa
+ * —caer de vuelta a la URL real en silencio— haría que el contador diga 0 para siempre y que M5
+ * pase reportando "no toca Postgres" cuando la verdad es "no vi nada".
+ */
+const SPIED_DATABASE_URL = startPgSpy();
+
 export default defineConfig({
   testDir: '.',
   testMatch: /.*\.spec\.ts/u,
@@ -111,7 +135,7 @@ export default defineConfig({
     stdout: 'pipe',
     stderr: 'pipe',
     env: {
-      DATABASE_URL: process.env['DATABASE_URL'] ?? 'postgresql://localhost:5432/istock_dev',
+      DATABASE_URL: SPIED_DATABASE_URL,
       AUTH_DRIVER: 'local',
       AUTH_LOCAL_SECRET: process.env['AUTH_LOCAL_SECRET'] ?? 'e2e-local-secret-32-chars-minimum',
       MEDIA_DRIVER: 'local',

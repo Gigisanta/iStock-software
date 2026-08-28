@@ -24,11 +24,100 @@ export interface NewBusiness {
   readonly name: string;
   readonly slug: string;
   readonly waPhone?: string;
+  /**
+   * El TC en pesos por dólar, **tal cual lo tipea el dueño**: el input es `type="text"` y el
+   * parser del borde (`_lib/tenants/parse-fx.ts`) acepta coma o punto y rechaza el separador de
+   * miles. Es obligatorio en el alta desde S3.1 y no es un olvido de UX: `CLAUDE.md` §1 manda que
+   * el TC lo ponga una persona, y sin fila en `fx_settings` la vidriera no publica **nada**.
+   *
+   * Opcional acá porque a la mayoría de los specs el número les da igual — lo que necesitan es un
+   * negocio que exista. El que publica ARS y afirma el precio lo pasa explícito.
+   */
+  readonly fxRate?: number | string;
   readonly acceptsTradeIn?: boolean;
+}
+
+/**
+ * TC de los fixtures. Es el mismo `1487.50` que siembra `seedFxSettings()` en `_lib/db.ts`, a
+ * propósito: los specs que además upsertean el TC por SQL escriben el número que el alta ya dejó,
+ * así que ese `insert ... on conflict` no puede cambiar en silencio lo que la vidriera publica.
+ */
+export const FIXTURE_FX_RATE = '1487.50';
+
+/**
+ * El `<form>` del alta. Se ancla en un campo que el panel ya tenía (`slug`) y no en un testid: el
+ * alta del negocio no tiene contrato de `data-testid` y `qa-agent` no inventa uno.
+ */
+function createBusinessForm(page: Page): Locator {
+  return page.locator('form:has(input[name="slug"])').first();
+}
+
+/**
+ * Los controles `required` del alta que quedaron **vacíos**, por `name`.
+ *
+ * ## Por qué existe esta función
+ * El día que el panel agregó `fxRate` required, este helper siguió llenando tres campos, apretó
+ * el botón, el alta se rechazó y los **seis** specs que crean un negocio murieron en el mismo
+ * `waitForURL` con la palabra "Timeout" y nada más. El costo no fue el rojo — el rojo estaba
+ * bien— sino que el rojo no nombraba la causa.
+ *
+ * Se lee el DOM en vez de `form.checkValidity()` porque el formulario se sirve con `noValidate`
+ * (el panel valida en el server y muestra los mensajes en castellano): con `noValidate` el browser
+ * **no** frena el submit, así que apoyarse en la validación nativa daría un guard que no guarda
+ * nada. El atributo `required` sigue siendo la declaración de intención del panel y eso es lo que
+ * se lee.
+ *
+ * Checkbox, radio y file quedan afuera: "vacío" no significa lo mismo para ellos y un helper que
+ * los reportara mentiría con un campo opcional tildado.
+ */
+async function emptyRequiredFields(form: Locator): Promise<readonly string[]> {
+  const controls = form.locator('input[required], select[required], textarea[required]');
+  const total = await controls.count();
+  const empty: string[] = [];
+  for (let index = 0; index < total; index += 1) {
+    const control = controls.nth(index);
+    const type = ((await control.getAttribute('type')) ?? 'text').toLowerCase();
+    if (type === 'checkbox' || type === 'radio' || type === 'file') continue;
+    if ((await control.inputValue()).trim() !== '') continue;
+    empty.push((await control.getAttribute('name')) ?? '(un campo sin atributo name)');
+  }
+  return empty;
+}
+
+/** Lo que el alta muestra en pantalla después de un envío que no navegó. */
+async function createBusinessProblems(form: Locator): Promise<string> {
+  const alerts = form.locator('[role="alert"]');
+  const alertTotal = await alerts.count();
+  const messages: string[] = [];
+  for (let index = 0; index < alertTotal; index += 1) {
+    const text = ((await alerts.nth(index).textContent()) ?? '').trim();
+    if (text !== '') messages.push(text);
+  }
+
+  const invalid = form.locator('[aria-invalid="true"]');
+  const invalidTotal = await invalid.count();
+  const fields: string[] = [];
+  for (let index = 0; index < invalidTotal; index += 1) {
+    fields.push((await invalid.nth(index).getAttribute('name')) ?? '(sin name)');
+  }
+
+  if (messages.length === 0 && fields.length === 0) {
+    return '(el formulario no muestra ningún error: el alta no respondió, o respondió y no redirigió)';
+  }
+  return (
+    `campos marcados inválidos: ${fields.length === 0 ? '(ninguno)' : fields.join(', ')}` +
+    ` · mensajes: ${messages.length === 0 ? '(ninguno)' : messages.join(' | ')}`
+  );
 }
 
 export async function createBusiness(page: Page, business: NewBusiness): Promise<void> {
   await page.goto(`${APEX_URL}/app/crear-negocio`);
+
+  const form = createBusinessForm(page);
+  await expect(
+    form,
+    `${APEX_URL}/app/crear-negocio no sirvió el formulario de alta (¿la sesión no quedó?)`,
+  ).toBeVisible({ timeout: 20_000 });
 
   await page.locator('input[name="name"]').fill(business.name);
   // El campo del link es controlado y se autocompleta desde el nombre: escribirlo marca
@@ -36,8 +125,25 @@ export async function createBusiness(page: Page, business: NewBusiness): Promise
   // no quiere el link sugerido.
   await page.locator('input[name="slug"]').fill(business.slug);
   await page.locator('input[name="waPhone"]').fill(business.waPhone ?? '299 555 1234');
+  // El TC. Sin él el alta se rechaza entera: es un campo del formulario, no un default nuestro.
+  await page
+    .locator('input[name="fxRate"]')
+    .fill(business.fxRate === undefined ? FIXTURE_FX_RATE : String(business.fxRate));
   if (business.acceptsTradeIn === true) {
     await page.locator('input[name="acceptsTradeIn"]').check();
+  }
+
+  // ── Antes de apretar: que el helper no pueda fallar en silencio ──────────────────────────────
+  // Si el panel sumó otro campo obligatorio que este helper no conoce, el rojo tiene que decir
+  // **cuál**, acá y ahora, y no 30 segundos después en forma de timeout sin causa.
+  const pending = await emptyRequiredFields(form);
+  if (pending.length > 0) {
+    throw new Error(
+      `el alta del negocio tiene campo(s) obligatorio(s) que este helper dejó vacío(s): ` +
+        `${pending.join(', ')}.\n` +
+        '  El panel agregó un `required` y `createBusiness()` quedó atrás: agregalo a ' +
+        '`NewBusiness` y llenalo acá. NO se saca el `required` del panel para poner esto en verde.',
+    );
   }
 
   // La disponibilidad se consulta con debounce; el botón queda deshabilitado si el slug está
@@ -46,8 +152,17 @@ export async function createBusiness(page: Page, business: NewBusiness): Promise
   await expect(submit).toBeEnabled({ timeout: 15_000 });
   await submit.click();
 
-  // `createTenantAction` redirige a `/app` sólo si el alta salió bien.
-  await page.waitForURL(/\/app(\/)?$/u, { timeout: 30_000 });
+  // `createTenantAction` redirige a `/app` sólo si el alta salió bien. Cuando no sale bien la
+  // persona se queda en la misma pantalla con el motivo escrito: eso es lo que hay que reportar.
+  try {
+    await page.waitForURL(/\/app(\/)?$/u, { timeout: 30_000 });
+  } catch {
+    throw new Error(
+      `el alta no redirigió a /app: el negocio "${business.slug}" no se creó.\n` +
+        `  url actual: ${page.url()}\n` +
+        `  ${await createBusinessProblems(form)}`,
+    );
+  }
 }
 
 // ══════════════════════════════════════════════════════════════════════════════════════════════
@@ -464,4 +579,53 @@ export async function createUnitWithPhotos(
     await addPhoto(page, upload, total);
   }
   return created;
+}
+
+/**
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *  S3 · publicar. El último clic antes de que el equipo exista para un desconocido.
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * Se aprieta el botón real (`data-testid="submit-publicar"`, contrato del LEAD) y no se hace un
+ * `update listings set status='available'`. La diferencia no es de pureza: publicar dispara
+ * `invalidateStorefrontUnit()`, que es lo que purga `storefront:{slug}` y `tenant-config:{slug}`.
+ * Un `update` por SQL dejaría la fila publicada y el cache de la vidriera intacto — o sea, la
+ * grilla vacía y un spec rojo culpando al render.
+ *
+ * El botón nace `disabled` hasta que hay 3 fotos (`MIN_PHOTOS_TO_PUBLISH`), así que primero se
+ * espera a que se habilite: si nunca se habilita, el rojo tiene que decir "el panel no deja
+ * publicar" y no "no encontré el botón". El `disabled` es cortesía de UI y quien autoriza es
+ * `checkTransition()` adentro de la Server Action; acá se navega como el dueño y punto.
+ */
+export async function publishUnit(page: Page): Promise<void> {
+  const button = page.getByTestId('submit-publicar');
+  await expect(
+    button,
+    'la pantalla de fotos no tiene data-testid="submit-publicar" (contrato de S2/S3)',
+  ).toBeAttached({ timeout: 20_000 });
+
+  await expect(
+    button,
+    'el botón de publicar sigue deshabilitado: el panel no considera publicable a este equipo ' +
+      `(faltan fotos, o falta el modelo de catálogo). Aviso en pantalla: ${
+        (await missingPhotosText(page)) ?? '(no hay data-testid="faltan-fotos")'
+      }`,
+  ).toBeEnabled({ timeout: 20_000 });
+
+  await button.click();
+
+  // `after="stock"` redirige a `/app/stock` sólo si la transición salió bien. Si la acción la
+  // rechaza, el dueño se queda en la pantalla de fotos con un `role="alert"`, y eso es lo que hay
+  // que contar en el mensaje: un timeout pelado mandaría a leer el trace.
+  try {
+    await page.waitForURL(STOCK_URL_RE, { timeout: 30_000 });
+  } catch {
+    const alert = page.getByRole('alert');
+    const shown = (await alert.count()) > 0 ? ((await alert.first().textContent()) ?? '').trim() : '';
+    throw new Error(
+      `publicar no llevó a ${STOCK_PATH}: el equipo quedó sin publicar.\n` +
+        `  url actual: ${page.url()}\n` +
+        `  alerta: ${shown === '' ? '(sin alerta en pantalla)' : shown}`,
+    );
+  }
 }
