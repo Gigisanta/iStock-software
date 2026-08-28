@@ -27,7 +27,7 @@ import { z } from 'zod';
 import type { PublicListingDTO } from '@istock/domain';
 import type { TtlCache } from './cache';
 import type { CatalogChunk } from './chunks';
-import { buildChatContext, type ChatContext } from './context';
+import { buildChatContext, type ChatContext, type ContextTrimReport } from './context';
 import { assertWithinBudget } from './budget';
 import {
   assertChatEntitled,
@@ -103,13 +103,53 @@ export interface ChatAnswer {
   readonly waMessage: string;
   readonly provider: 'primary' | 'fallback' | 'none';
   readonly model: string | null;
-  /** Tokens de entrada **medidos por nosotros**: es el número contra el que se asserta la dieta. */
+  /**
+   * Tokens de entrada **medidos por nosotros**: es el número contra el que se asserta la dieta.
+   *
+   * **Es el MÁXIMO de los prompts del turno, no la suma, y por eso no sirve para la factura.** La
+   * dieta es un techo por request (`≤1200`), así que la pregunta que contesta este número es "¿el
+   * prompt más grande entró?". La factura hace otra pregunta —"¿cuánta entrada procesó el
+   * proveedor?"— y en un turno con tool la respuesta es **dos prompts**. Usar éste para costear
+   * subcontaba el turno con tool 2,16× (lo midió `cost-auditor`, C8). El número de la factura es
+   * {@link ChatAnswer.billed}.
+   */
   readonly promptTokens: number;
   /** Lo que reportó el proveedor, o nuestra estimación si no reporta. */
   readonly tokensIn: number;
   readonly tokensOut: number;
   readonly guardViolations: readonly string[];
+  /**
+   * Qué tuvo que tirar la dieta para que este prompt entrara. `null` = **no se armó ningún
+   * prompt**: el turno se resolvió antes (entitlement, soft cap, intención) y no hay nada que
+   * reportar. No es lo mismo que "no se recortó nada", y por eso no es un objeto de ceros.
+   *
+   * Está en la firma pública porque la degradación **no aparece en la factura**: el prompt sigue
+   * entrando en 1200, no se mueve ningún número, y lo que baja es la calidad de la respuesta. Sin
+   * esto, el único modo de falla que el producto no puede ver es el que más le importa al tenant
+   * que paga el plan Negocio — el chatbot se olvida de lo que el comprador dijo dos mensajes atrás
+   * y nadie se entera. Lo miran la eval y, cuando exista, la telemetría de `apps/web`.
+   */
+  readonly trimmed: ContextTrimReport | null;
+  /**
+   * Lo que la **factura** ve de este turno: suma de todas las llamadas que un proveedor atendió.
+   *
+   * Un turno con tool paga el prompt **dos veces** (la segunda con el resultado adentro) y un
+   * primario que contesta vacío paga una tercera. `promptTokens` es el máximo y `billed.tokensIn`
+   * es la suma: son dos preguntas distintas y confundirlas es subcontar. `calls: 0` = el turno se
+   * resolvió sin llamar a nadie y **cuesta cero**, que es la defensa más barata del sistema.
+   */
+  readonly billed: BilledUsage;
 }
+
+/** Consumo facturable de un turno. Suma, no máximo. */
+export interface BilledUsage {
+  readonly calls: number;
+  readonly tokensIn: number;
+  readonly tokensOut: number;
+}
+
+/** Un turno que no llamó a ningún proveedor. */
+const NOTHING_BILLED: BilledUsage = { calls: 0, tokensIn: 0, tokensOut: 0 };
 
 function answerFromHandoff(
   listing: PublicListingDTO,
@@ -121,6 +161,8 @@ function answerFromHandoff(
     readonly tokensIn: number;
     readonly tokensOut: number;
     readonly guardViolations: readonly string[];
+    readonly trimmed: ContextTrimReport | null;
+    readonly billed: BilledUsage;
   },
 ): ChatAnswer {
   const handoff = buildHandoff(listing, reason);
@@ -135,6 +177,8 @@ function answerFromHandoff(
     tokensIn: extra.tokensIn,
     tokensOut: extra.tokensOut,
     guardViolations: extra.guardViolations,
+    trimmed: extra.trimmed,
+    billed: extra.billed,
   };
 }
 
@@ -161,21 +205,36 @@ async function generateWithFallback(
   deps: ChatDeps,
   context: ChatContext,
   tools: LlmRequest['tools'],
-): Promise<{ readonly result: LlmResult; readonly provider: 'primary' | 'fallback' }> {
+): Promise<{
+  readonly result: LlmResult;
+  readonly provider: 'primary' | 'fallback';
+  /**
+   * Cuántas llamadas **atendió** un proveedor en esta ronda, y cuánta salida generaron entre todas.
+   * Un primario que contesta vacío y obliga a ir al fallback igual se factura: el prompt entró, el
+   * proveedor lo procesó, y la factura no distingue "vacío" de "útil". Una llamada que **tiró** no
+   * se cuenta: ahí no hubo request atendido.
+   */
+  readonly servedCalls: number;
+  readonly servedTokensOut: number;
+}> {
   const attempts: readonly { readonly provider: 'primary' | 'fallback'; readonly llm: LlmProvider; readonly model: string }[] =
     [
       { provider: 'primary', llm: deps.primary, model: deps.env.primaryModel },
       { provider: 'fallback', llm: deps.fallback, model: deps.env.fallbackModel },
     ];
   const failures: string[] = [];
+  let servedCalls = 0;
+  let servedTokensOut = 0;
   for (const attempt of attempts) {
     try {
       const result = await attempt.llm.generate(requestFor(context, attempt.model, deps.env, tools));
+      servedCalls += 1;
+      servedTokensOut += result.tokensOut;
       if (result.text.trim().length === 0 && result.toolCalls.length === 0) {
         failures.push(`${attempt.provider}: respuesta vacía`);
         continue;
       }
-      return { result, provider: attempt.provider };
+      return { result, provider: attempt.provider, servedCalls, servedTokensOut };
     } catch (error) {
       failures.push(`${attempt.provider}: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -189,7 +248,16 @@ export async function answerChat(input: ChatInput, deps: ChatDeps): Promise<Chat
   // Antes de armar nada: sin medidor no hay techo de factura, y eso se falla cerrado y ruidoso.
   const messagesToday = requireMeasuredUsage(input.usage);
 
-  const noTokens = { promptTokens: 0, tokensIn: 0, tokensOut: 0, guardViolations: [] as readonly string[] };
+  // Sin prompt armado no hay recorte que reportar, y `trimmed: null` lo dice: un objeto de ceros
+  // diría "no se recortó nada", que es una afirmación sobre un prompt que nunca existió.
+  const noTokens = {
+    promptTokens: 0,
+    tokensIn: 0,
+    tokensOut: 0,
+    guardViolations: [] as readonly string[],
+    trimmed: null,
+    billed: NOTHING_BILLED,
+  };
 
   if (softCapReached(messagesToday)) {
     return answerFromHandoff(input.listing, 'soft_cap', { provider: 'none', model: null, ...noTokens });
@@ -215,7 +283,17 @@ export async function answerChat(input: ChatInput, deps: ChatDeps): Promise<Chat
   );
   assertWithinBudget(context.budget);
 
+  // `promptTokens` es la cota de la DIETA (máximo) y `billed` es la FACTURA (suma). Dos números
+  // porque son dos preguntas: uno responde "¿entró?", el otro "¿cuánto se procesó?".
   let promptTokens = context.budget.tokensIn;
+  let billed: BilledUsage = NOTHING_BILLED;
+  const addBilled = (servedCalls: number, servedTokensOut: number): void => {
+    billed = {
+      calls: billed.calls + servedCalls,
+      tokensIn: billed.tokensIn + context.budget.tokensIn * servedCalls,
+      tokensOut: billed.tokensOut + servedTokensOut,
+    };
+  };
   let provider: 'primary' | 'fallback' = 'primary';
   let result: LlmResult;
 
@@ -223,8 +301,17 @@ export async function answerChat(input: ChatInput, deps: ChatDeps): Promise<Chat
     const first = await generateWithFallback(deps, context, runtime.specs);
     result = first.result;
     provider = first.provider;
+    addBilled(first.servedCalls, first.servedTokensOut);
   } catch {
-    return answerFromHandoff(input.listing, 'provider_down', { provider: 'none', model: null, ...noTokens });
+    // El prompt SÍ se armó acá, así que su recorte se reporta aunque no se haya facturado nada: la
+    // degradación describe lo que la dieta tuvo que tirar, no lo que salió en la factura.
+    return answerFromHandoff(input.listing, 'provider_down', {
+      provider: 'none',
+      model: null,
+      ...noTokens,
+      trimmed: context.trimmed,
+      billed,
+    });
   }
 
   for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
@@ -243,6 +330,8 @@ export async function answerChat(input: ChatInput, deps: ChatDeps): Promise<Chat
         tokensIn: result.tokensIn,
         tokensOut: result.tokensOut,
         guardViolations: [],
+        trimmed: context.trimmed,
+        billed,
       });
     }
 
@@ -254,15 +343,21 @@ export async function answerChat(input: ChatInput, deps: ChatDeps): Promise<Chat
         tokensIn: result.tokensIn,
         tokensOut: result.tokensOut,
         guardViolations: [],
+        trimmed: context.trimmed,
+        billed,
       });
     }
 
-    // El resultado de la tool vuelve como un turno más y el contexto se **re-arma y se re-mide**:
+    // El resultado de la tool vuelve al contexto y el contexto se **re-arma y se re-mide**:
     // agregarlo a mano al array de mensajes saltearía la dieta justo en el turno más largo.
-    const withToolResult: readonly ChatTurn[] = [
+    //
+    // Va por `toolResult` y **no** metido en `turns`, que es donde estaba. Adentro de `turns` lo
+    // agarraba `trimTurns`, que lo re-sanitizaba —borrándole los delimitadores que `tools.ts`
+    // acababa de ponerle— y lo cortaba a 45 tokens, el presupuesto de un turno viejo de historial.
+    // Medido sobre una ficha `reserved`, el `RESERVADO` se perdía en ese corte.
+    const withCurrentTurn: readonly ChatTurn[] = [
       ...input.turns,
       { role: 'user', content: input.userMessage },
-      { role: 'assistant', content: `[${outcome.name}] ${outcome.content}` },
     ];
     context = buildChatContext(
       {
@@ -270,8 +365,9 @@ export async function answerChat(input: ChatInput, deps: ChatDeps): Promise<Chat
         storeName: input.storeName,
         catalogModelId: input.catalogModelId,
         chunks: input.chunks,
-        turns: withToolResult,
+        turns: withCurrentTurn,
         userMessage: input.userMessage,
+        toolResult: `[${outcome.name}] ${outcome.content}`,
       },
       { limit: deps.env.maxInputTokens, ...(deps.listingCache === undefined ? {} : { listingCache: deps.listingCache }) },
     );
@@ -282,6 +378,7 @@ export async function answerChat(input: ChatInput, deps: ChatDeps): Promise<Chat
       const next = await generateWithFallback(deps, context, runtime.specs);
       result = next.result;
       provider = next.provider;
+      addBilled(next.servedCalls, next.servedTokensOut);
     } catch {
       return answerFromHandoff(input.listing, 'provider_down', {
         provider: 'none',
@@ -290,6 +387,8 @@ export async function answerChat(input: ChatInput, deps: ChatDeps): Promise<Chat
         tokensIn: 0,
         tokensOut: 0,
         guardViolations: [],
+        trimmed: context.trimmed,
+        billed,
       });
     }
   }
@@ -303,6 +402,8 @@ export async function answerChat(input: ChatInput, deps: ChatDeps): Promise<Chat
       tokensIn: result.tokensIn,
       tokensOut: result.tokensOut,
       guardViolations: verdict.violations,
+      trimmed: context.trimmed,
+      billed,
     });
   }
 
@@ -317,5 +418,7 @@ export async function answerChat(input: ChatInput, deps: ChatDeps): Promise<Chat
     tokensIn: result.tokensIn > 0 ? result.tokensIn : promptTokens,
     tokensOut: result.tokensOut > 0 ? result.tokensOut : countTokens(verdict.text),
     guardViolations: [],
+    trimmed: context.trimmed,
+    billed,
   };
 }

@@ -114,11 +114,30 @@ export function softCapReached(count: number, cap: number = SOFT_CAP_MESSAGES_PE
  * apaga el cap sin que nada se ponga rojo**. Un cero fabricado es indistinguible de un cero real
  * cuando los dos son el mismo `number`.
  *
- * La cuenta que hace que esto importe (medida, no estimada — `pnpm --filter @istock/ai eval`):
- * USD 0,00008032 por mensaje de vidriera × 40 mensajes/día × 30 días = **USD 0,0964/mes** por
- * tenant al tope. Sin contador no hay tope: el techo del WAF es por IP (`/api/chat`, 20/600s) y un
- * límite por IP no puede acotar un costo por tenant — son ejes distintos, y el peor caso por IP
- * queda en ~USD 6,94/mes contra un plan Negocio de USD 35.
+ * ## La cuenta, y por qué el WAF no la reemplaza
+ * **El costo por mensaje no se escribe acá.** Lo emite `pnpm --filter @istock/ai eval` en el bloque
+ * generado de `README.md`, y esta línea llegó a tener una copia vieja (`USD 0,00008032`, de una
+ * corrida anterior a que el corpus ejerciera tools) al lado del número generado — el mismo defecto
+ * de dos fuentes que `evals/report-md.ts` existe para no repetir. Lo que se escribe acá es la
+ * **forma** de la cuenta, que no cambia cuando cambia la tarifa:
+ *
+ * - Con contador: `costo por mensaje × 40 × 30` = el gasto máximo de un tenant al tope del cap.
+ *   Son centavos al mes contra un plan Negocio de USD 35. El cap hace su trabajo.
+ * - Sin contador: **no hay techo por tenant**. El único límite que queda es el del WAF, que es
+ *   `chatbot-rl` en `config/firewall-rules.json`: **20 requests / 600 s, y el eje es la IP**.
+ *   Eso es 2 req/min = 86.400 mensajes/mes **por IP**, todos llegando al modelo (un abusador no
+ *   pregunta cosas que derivan gratis, así que no le aplica la tasa mezclada sino la facturada).
+ *
+ * Con la tarifa medida el 2026-08-28 —USD 0,1257 por mil mensajes facturados, bloque generado del
+ * README— eso da **~USD 11/mes por IP**, contra los ~USD 34 netos que deja un plan Negocio después
+ * de Mercado Pago. Tres IPs y el tenant es deficitario **sin que nadie viole ninguna regla**, y el
+ * multiplicador real es peor: `ARCHITECTURE.md` §Seguridad dice que los contadores del WAF son por
+ * región, así que el límite global efectivo es N×20/600s.
+ *
+ * La conclusión no depende del número exacto y por eso se escribe la forma: **un límite por IP no
+ * puede acotar un costo por tenant, son ejes distintos**. El techo de la factura es el contador, y
+ * el contador todavía no existe (ADR C1). Por eso `requireMeasuredUsage` falla cerrado en vez de
+ * asumir cero — es lo único que hoy impide que la ausencia del contador se pague en la factura.
  *
  * ## Por qué un tipo con marca y no un `number` "bien documentado"
  * `messagesToday` no es un número: es **un parte de un contador**, y un parte tiene dos estados

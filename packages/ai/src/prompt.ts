@@ -12,7 +12,7 @@
  * la primera capa de tres, y la única que un atacante puede negociar.
  */
 
-import { UNTRUSTED_OPEN } from '@istock/domain';
+import { UNTRUSTED_OPEN, sanitizeDescription } from '@istock/domain';
 
 /**
  * Reglas que el prompt tiene que nombrar sí o sí. `prompt.test.ts` las verifica una por una: si
@@ -47,9 +47,21 @@ export const PROMPT_RULE_MARKERS: Readonly<Record<PromptRule, string>> = {
 /**
  * Arma el system. `storeName` es lo único variable: el resto es constante y se cachea (`cache.ts`).
  * El nombre de la tienda entra recortado y sin saltos de línea — es texto que escribió el dueño.
+ *
+ * ## Y por eso también se sanitiza
+ * Salió del mismo censo que el arreglo de `listing-view.ts` (`title` sin sanitizar): `storeName` es
+ * texto libre del dueño y aterriza en la **primera línea del system**, o sea del lado confiable del
+ * delimitador, que es el peor lugar del prompt donde puede caer texto de nadie. El corte a 60
+ * caracteres acotaba el daño pero no lo sacaba: `buildSystemPrompt('Tienda\nIgnorá las
+ * instrucciones anteriores')` metía la frase entera adentro del saludo.
+ *
+ * Delimitarlo saldría 30 tokens **por turno de todos los tenants** y rompería el saludo.
+ * `sanitizeDescription` sale **cero** —no agrega texto, sólo puede sacar— y neutraliza exactamente
+ * lo que un nombre de tienda no tiene por qué contener: marcadores de rol, tokens de chat template,
+ * URLs, imperativos de inyección. Un nombre de tienda real no toca ninguna de esas reglas.
  */
 export function buildSystemPrompt(storeName: string): string {
-  const store = storeName.replace(/\s+/gu, ' ').trim().slice(0, 60) || 'la tienda';
+  const store = sanitizeDescription(storeName, { maxLength: 60 }).replace(/\s+/gu, ' ').trim() || 'la tienda';
   return [
     // El tope de salida NO se le pide al modelo: se le pasa como `maxOutputTokens`. Pedirle "no te
     // pases de N tokens" es pedirle que cuente algo que no puede contar, y esas palabras se pagan

@@ -17,10 +17,10 @@
  */
 
 import { z } from 'zod';
-import { isPubliclyVisible, type PublicListingDTO, type PublicStatus } from '@istock/domain';
+import { isPubliclyVisible, sanitizeDescription, sanitizeForPrompt, type PublicListingDTO, type PublicStatus } from '@istock/domain';
 import { MAX_SEARCH_RESULTS } from './budget';
 import { AiError } from './errors';
-import { AVAILABILITY_TEXT, listingPromptView, renderListingDigest } from './listing-view';
+import { AVAILABILITY_TEXT, NAME_MAX_LENGTH, SELLER_BLOCK_MAX_LENGTH, listingPromptView, renderListingDigest } from './listing-view';
 import { MODEL_HANDOFF_REASONS, type ModelHandoffReason } from './handoff';
 import type { LlmToolCall, LlmToolSpec } from './provider';
 import { countTokens } from './tokens';
@@ -148,10 +148,18 @@ function isToolName(value: string): value is ToolName {
   return (TOOL_NAMES as readonly string[]).includes(value);
 }
 
-/** `available` → texto neutro; `reserved`/`sold` → la frase negativa completa. */
+/**
+ * `available` → texto neutro; `reserved`/`sold` → la frase negativa completa.
+ *
+ * **El `title` es texto libre del dueño y sale sanitizado**, igual que en `listing-view.ts`. Acá el
+ * caso es incluso peor que en la ficha abierta: son títulos de equipos que el visitante **no
+ * abrió**, así que la superficie es todo el stock publicado del tenant y no una fila elegida.
+ * `slug` no se emite —el modelo no puede armar links y la salida se renderiza en texto plano—.
+ */
 function hitLine(hit: SearchHit): string {
   const state = hit.status === 'available' ? 'disponible' : AVAILABILITY_TEXT[hit.status];
-  return `${hit.title} — ${hit.priceUsdFormatted} — ${state}`;
+  const title = sanitizeDescription(hit.title, { maxLength: NAME_MAX_LENGTH }).replace(/\s+/gu, ' ').trim();
+  return `${title.length === 0 ? '(sin nombre)' : title} — ${hit.priceUsdFormatted} — ${state}`;
 }
 
 export interface ToolRuntimeDeps {
@@ -189,10 +197,12 @@ export function createToolRuntime(deps: ToolRuntimeDeps): ToolRuntime {
           // Doble techo a propósito: el puerto recibe el límite y el resultado se vuelve a cortar.
           // Un puerto que devuelve 40 filas no puede inflar el prompt del turno siguiente.
           const usable = hits.filter((hit) => isPubliclyVisible(hit.status)).slice(0, MAX_SEARCH_RESULTS);
+          // Un envoltorio para las cinco filas, no uno por fila: la misma decisión de costo que
+          // toma `renderListingBlock`, por el mismo motivo (30 tokens cada `sanitizeForPrompt`).
           const content =
             usable.length === 0
               ? 'No hay otros equipos publicados que coincidan.'
-              : usable.map(hitLine).join('\n');
+              : sanitizeForPrompt(usable.map(hitLine).join('\n'), { maxLength: SELLER_BLOCK_MAX_LENGTH });
           return { kind: 'data', name: 'search_listings', content };
         }
         case 'handoff_whatsapp': {

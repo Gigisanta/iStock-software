@@ -14,10 +14,13 @@ import {
   fxRateFromDecimal,
   publicListingDTO,
   type Condition,
+  type PickupPointSource,
   type PublicListingDTO,
   type PublicListingSource,
   type PublicStatus,
 } from '@istock/domain';
+import { DESCRIPTION_TOKEN_BUDGET, MAX_PAYMENT_METHODS, MAX_PICKUP_POINTS } from '../listing-view';
+import { countTokens } from '../tokens';
 
 export interface ListingFixtureOverrides {
   readonly status?: PublicStatus;
@@ -25,6 +28,8 @@ export interface ListingFixtureOverrides {
   readonly priceUsdCents?: number;
   readonly condition?: Condition;
   readonly title?: string;
+  readonly pickupPoints?: readonly PickupPointSource[];
+  readonly paymentMethods?: readonly string[];
 }
 
 const BASE: PublicListingSource = {
@@ -92,6 +97,8 @@ export function listingFixture(overrides: ListingFixtureOverrides = {}): PublicL
     ...(overrides.priceUsdCents === undefined ? {} : { priceUsdCents: overrides.priceUsdCents }),
     ...(overrides.condition === undefined ? {} : { condition: overrides.condition }),
     ...(overrides.title === undefined ? {} : { title: overrides.title }),
+    ...(overrides.pickupPoints === undefined ? {} : { pickupPoints: overrides.pickupPoints }),
+    ...(overrides.paymentMethods === undefined ? {} : { paymentMethods: overrides.paymentMethods }),
   });
 }
 
@@ -121,3 +128,65 @@ export function bloatedListingFixture(): PublicListingDTO {
     description: 'Detalle del equipo con muchísimo texto de relleno escrito por el dueño. '.repeat(60),
   });
 }
+
+/**
+ * ## La ficha del **plan Negocio**: el peor caso REALISTA, y por eso está en el corpus
+ *
+ * No tiene ni un campo inflado. Tiene lo que `CLAUDE.md` §1 le vende al tenant de USD 35 —**3
+ * puntos de retiro**— con horarios escritos como los escribe una persona, seis medios de pago con
+ * nombre humano, y una descripción del largo que da `DESCRIPTION_TOKEN_BUDGET`. O sea: los topes de
+ * `listing-view.ts` saturados con contenido creíble.
+ *
+ * Existe porque el p95 publicado salía de fichas más chicas y el margen contra el techo terminaba
+ * dependiendo de qué fichas tenía el corpus, no del producto. Medido el 2026-08-28, antes del
+ * escalón de medios de pago: **1192 de 1200 tirando los cuatro turnos de historial y un chunk**. El
+ * costo no subía —el prompt entraba— y lo que bajaba era la calidad, en el cliente que más paga.
+ *
+ * `DESCRIPCION_AL_TOPE` se afirma en `fixtures.test.ts`: si algún día mide menos que el
+ * presupuesto, el "peor caso" deja de serlo en silencio, que es exactamente cómo se envejece un
+ * corpus.
+ */
+export const DESCRIPCION_AL_TOPE =
+  'Equipo impecable, siempre con funda y vidrio templado desde el primer día. Se entrega con ' +
+  'cargador nuevo, cable y caja original. Nunca fue abierto ni reparado, no tiene golpes ni ' +
+  'rayones en el chasis. La batería da toda la jornada con uso normal. Se puede probar en el ' +
+  'local antes de cerrar, sin apuro, y se prueban cámaras, altavoces y Face ID delante tuyo. ' +
+  'También tomamos tu equipo usado como parte de pago si te sirve.';
+
+/** Los 3 puntos de retiro del plan Negocio, con horario de largo humano. */
+export const NEGOCIO_PICKUP_POINTS: readonly PickupPointSource[] = [
+  { name: 'Cipolletti centro', address: 'Yrigoyen 500', hours: 'Lunes a viernes de 10 a 18, sábados de 10 a 13' },
+  { name: 'Neuquén capital', address: 'Alcorta 1200', hours: 'Lunes a viernes de 9 a 17, sábados de 10 a 13' },
+  { name: 'General Roca', address: 'Tucumán 800', hours: 'Lunes a viernes de 10 a 19' },
+];
+
+/** Seis medios de pago con nombre humano: es el tope de `listing-view.ts`, no una exageración. */
+export const NEGOCIO_PAYMENT_METHODS: readonly string[] = [
+  'Efectivo',
+  'Transferencia bancaria',
+  'Débito',
+  'Crédito hasta 6 cuotas',
+  'Mercado Pago',
+  'Dólares billete',
+];
+
+/** La ficha del plan Negocio, con los dos topes saturados y la descripción en su presupuesto. */
+export function businessPlanListingFixture(overrides: ListingFixtureOverrides = {}): PublicListingDTO {
+  return listingFixture({
+    description: DESCRIPCION_AL_TOPE,
+    pickupPoints: NEGOCIO_PICKUP_POINTS,
+    paymentMethods: NEGOCIO_PAYMENT_METHODS,
+    ...overrides,
+  });
+}
+
+/**
+ * Lo que este fixture afirma sobre sí mismo, para que el "peor caso" no se degrade sin que nadie lo
+ * vea. Se exporta como datos y lo asserta `fixtures/listing.test.ts`.
+ */
+export const NEGOCIO_FIXTURE_CLAIMS = {
+  pickupPoints: MAX_PICKUP_POINTS,
+  paymentMethods: MAX_PAYMENT_METHODS,
+  descriptionTokens: DESCRIPTION_TOKEN_BUDGET,
+  measuredDescriptionTokens: countTokens(DESCRIPCION_AL_TOPE),
+} as const;

@@ -60,9 +60,12 @@ export {
 export {
   AVAILABILITY_TEXT,
   DESCRIPTION_TOKEN_BUDGET,
+  MAX_PAYMENT_METHODS,
+  MAX_PICKUP_POINTS,
   listingPromptView,
   renderListingBlock,
   renderListingDigest,
+  withPaymentMethodsKept,
   type ListingPromptView,
 } from './listing-view';
 
@@ -86,6 +89,7 @@ export {
 } from './prompt';
 
 export {
+  TOOL_RESULT_TOKEN_BUDGET,
   buildChatContext,
   type BuildContextOptions,
   type ChatContext,
@@ -164,6 +168,7 @@ export {
 export {
   answerChat,
   chatRequestSchema,
+  type BilledUsage,
   type ChatAnswer,
   type ChatDeps,
   type ChatInput,
