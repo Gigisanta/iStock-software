@@ -149,6 +149,47 @@ async function estado(reservationId: string): Promise<{ status: string; attempts
   return { status: row.status, attempts: row.sweep_attempts };
 }
 
+/**
+ * ── El parte de la corrida, y por que el gate no puede conformarse con el exit code ────────────
+ *
+ * `accept-s6.sh` citaba esta probe por su `exit 0`, y eso no alcanza: una probe que dejara de armar
+ * el fixture —un `beforeEach` que borra de mas, un `EXPIRE_BATCH_SIZE` que se va a 0— sigue saliendo
+ * 0 con las aserciones ejecutadas sobre la nada. Es el mismo modo de falla que `accept-fase3.sh`
+ * tuvo con su conteo de paquetes clavado: verde por coincidencia, sobre cero medicion.
+ *
+ * Cada caso deja su numero aca y `afterAll` lo imprime en UNA linea. El gate parsea esa linea y
+ * compara cada campo contra un literal escrito en el shell, o sea en otro archivo y en otro
+ * lenguaje: para que el gate mienta hay que romper la probe Y el gate a la vez, en la misma
+ * direccion. Mismo contrato que `MEDIDO s6 reserva` y `MEDIDO s6 radio` ya tienen en V8 y V9.
+ *
+ * `ausente` es -1 y no 0 a proposito: un caso que no corrio tiene que distinguirse de uno que
+ * midio cero, porque `skipped_sobre_vencidas=0` es un PASS y `sin medir` es un FAIL.
+ */
+const medido: Record<string, number> = {
+  corridas: 0,
+  envenenadas: -1,
+  sanas: -1,
+  sanas_vencidas_c2: -1,
+  intentos_tras_fallo: -1,
+  reintento_tras_recuperarse: -1,
+  tope: MAX_SWEEP_ATTEMPTS,
+  abandonadas_en_el_tope: -1,
+  unrecorded: -1,
+  skipped_sobre_vencidas: -1,
+  status_base_sana: -1,
+  status_con_abandonada: -1,
+};
+
+/**
+ * Cuenta las corridas de verdad: si un caso deja de invocar el barrido, `corridas` lo delata.
+ * Cuenta las invocaciones **directas**; el caso F entra por el handler HTTP y no pasa por acá, que
+ * es lo que se quiere: F mide el status del cron, no el barrido.
+ */
+async function barrer(): ReturnType<typeof expireDueReservations> {
+  medido.corridas = (medido.corridas ?? 0) + 1;
+  return expireDueReservations(new Date());
+}
+
 beforeAll(async () => {
   // Que la base no esté levantada es FAIL, no skip: sin medición no hay PASS (ADR-020). El mensaje
   // dice cómo levantarla porque un gate que falla sin decir qué hacer se termina comentando.
@@ -189,6 +230,14 @@ afterAll(async () => {
   await cliente.unsafe(`drop trigger if exists probe_hol_no_bump on reservations`);
   await cliente.unsafe(`drop function if exists probe_hol_no_bump()`);
   if (tenantId !== '') await cliente`delete from tenants where id = ${tenantId}::uuid`;
+  // Se imprime SIEMPRE, tambien cuando un caso fallo: el gate tiene que poder distinguir "no
+  // midio" de "midio mal", y un parte que solo sale en verde no distingue nada.
+  console.log(
+    'MEDIDO cron barrido · ' +
+      Object.entries(medido)
+        .map(([k, v]) => `${k}=${String(v)}`)
+        .join(' · '),
+  );
   await cliente.end({ timeout: 5 });
 });
 
@@ -212,9 +261,12 @@ describe('S6 · el barrido no se traba detrás de una fila rota', () => {
       // Todas más viejas que la sana: 500 minutos para arriba.
       venenosas.push(await unidadVencida(uuidVenenoso(i), 500 + i));
     }
-    const sana = await unidadVencida(uuidSano(), 1);
+    const sanas = [await unidadVencida(uuidSano(), 1)];
+    const sana = sanas[0]!;
+    medido.envenenadas = venenosas.length;
+    medido.sanas = sanas.length;
 
-    const corrida1 = await expireDueReservations(new Date());
+    const corrida1 = await barrer();
 
     // El fixture tiene que ser fiel ANTES de que la aserción signifique algo: si la sana hubiera
     // entrado al lote de la corrida 1, esto no estaría midiendo head-of-line, estaría midiendo nada.
@@ -234,8 +286,10 @@ describe('S6 · el barrido no se traba detrás de una fila rota', () => {
       'la fila que falló no quedó con el intento anotado. El `+1` se rolleó junto con el error: el ' +
         'techo nunca se alcanza y el head-of-line vuelve entero, con el arreglo escrito y sin efecto.',
     ).toBe(1);
+    medido.intentos_tras_fallo = (await estado(venenosas[0]!.reservationId)).attempts;
 
-    const corrida2 = await expireDueReservations(new Date());
+    const corrida2 = await barrer();
+    medido.sanas_vencidas_c2 = corrida2.expired;
 
     expect(
       (await estado(sana.reservationId)).status,
@@ -262,7 +316,7 @@ describe('S6 · el barrido no se traba detrás de una fila rota', () => {
     await unidadVencida(uuidVenenoso(9001), 300, MAX_SWEEP_ATTEMPTS);
     const sana = await unidadVencida(uuidSano(), 200);
 
-    const corrida = await expireDueReservations(new Date());
+    const corrida = await barrer();
 
     expect(corrida.scanned, 'la fila que pasó el techo no puede entrar al lote').toBe(1);
     expect(corrida.failed, 'y por lo tanto no puede fallar de nuevo').toBe(0);
@@ -272,6 +326,7 @@ describe('S6 · el barrido no se traba detrás de una fila rota', () => {
       'la fila abandonada no se contó. Una unidad trabada en `reserved` que ya nadie va a intentar ' +
         'liberar, y que además no figura en ningún número, es el mismo bug con otro disfraz.',
     ).toBe(1);
+    medido.abandonadas_en_el_tope = corrida.abandoned;
   });
 
   /**
@@ -286,7 +341,7 @@ describe('S6 · el barrido no se traba detrás de una fila rota', () => {
     const id = uuidVenenoso(9100);
     const fila = await unidadVencida(id, 400);
 
-    const corrida1 = await expireDueReservations(new Date());
+    const corrida1 = await barrer();
     expect(corrida1.failed).toBe(1);
     expect((await estado(fila.reservationId)).attempts).toBe(1);
 
@@ -294,7 +349,7 @@ describe('S6 · el barrido no se traba detrás de una fila rota', () => {
     await cliente.unsafe(`alter table listing_events drop constraint probe_hol_poison`);
     let corrida2;
     try {
-      corrida2 = await expireDueReservations(new Date());
+      corrida2 = await barrer();
     } finally {
       // `not valid` porque el barrido que acaba de andar YA dejó su fila en `listing_events` con el
       // listing envenenado: validar las filas viejas haría fallar el re-alta por haber funcionado.
@@ -314,6 +369,7 @@ describe('S6 · el barrido no se traba detrás de una fila rota', () => {
     ).toBe(1);
     expect(corrida2.expired).toBe(1);
     expect((await estado(fila.reservationId)).status).toBe('expired');
+    medido.reintento_tras_recuperarse = corrida2.scanned;
   });
 
   /**
@@ -337,7 +393,7 @@ describe('S6 · el barrido no se traba detrás de una fila rota', () => {
       create trigger probe_hol_no_bump before update on reservations
       for each row execute function probe_hol_no_bump()`);
 
-    const corrida = await expireDueReservations(new Date());
+    const corrida = await barrer();
 
     await cliente.unsafe(`drop trigger probe_hol_no_bump on reservations`);
 
@@ -348,6 +404,7 @@ describe('S6 · el barrido no se traba detrás de una fila rota', () => {
         'head-of-line vuelve sin dejar rastro: la fila no avanza hacia el techo y nadie se entera.',
     ).toBe(1);
     expect((await estado(fila.reservationId)).attempts, 'el contador no pudo moverse').toBe(0);
+    medido.unrecorded = corrida.unrecorded;
   });
 
   /**
@@ -361,7 +418,7 @@ describe('S6 · el barrido no se traba detrás de una fila rota', () => {
     await unidadVencida(uuidSano(), 10);
     await unidadVencida(uuidSano(), 20);
 
-    const corrida = await expireDueReservations(new Date());
+    const corrida = await barrer();
 
     expect(corrida.scanned).toBe(2);
     expect(corrida.expired).toBe(2);
@@ -371,6 +428,7 @@ describe('S6 · el barrido no se traba detrás de una fila rota', () => {
         'intento y no vence: se cuenta como atendida y vuelve mañana igual.',
     ).toBe(0);
     expect(corrida.failed + corrida.stuck + corrida.unrecorded + corrida.abandoned).toBe(0);
+    medido.skipped_sobre_vencidas = corrida.skipped;
   });
 
   /**
@@ -393,11 +451,13 @@ describe('S6 · el barrido no se traba detrás de una fila rota', () => {
       );
 
     await unidadVencida(uuidSano(), 30);
-    expect((await pedir()).status, 'una corrida limpia tiene que ser 200').toBe(200);
+    medido.status_base_sana = (await pedir()).status;
+    expect(medido.status_base_sana, 'una corrida limpia tiene que ser 200').toBe(200);
 
     await unidadVencida(uuidVenenoso(9300), 300, MAX_SWEEP_ATTEMPTS);
+    medido.status_con_abandonada = (await pedir()).status;
     expect(
-      (await pedir()).status,
+      medido.status_con_abandonada,
       'hay una unidad trabada en `reserved` que el barrido ya no va a intentar liberar, y el cron ' +
         'contesta 200. Un cron verde mientras nada se vence es la falla que se descubre semanas ' +
         'después y del lado del cliente.',

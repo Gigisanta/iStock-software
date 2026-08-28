@@ -353,6 +353,66 @@ else
   sed 's/^/        /' /tmp/s6-hol.txt | grep -E '×|FAIL|Error|→' | head -8
 fi
 
+# ── V10b · el parte de la probe, campo por campo ───────────────────────────────────────────────
+#
+# Hasta el 2026-08-28 V10 terminaba en la linea de arriba, o sea citaba la probe por su `exit 0`.
+# Eso deja pasar el unico modo de falla que importa: una probe que dejo de armar el fixture sigue
+# saliendo 0 con las aserciones corriendo sobre la nada. No es hipotetico — es exactamente lo que
+# `accept-fase3.sh` hacia con su conteo de paquetes clavado, y es la razon por la que la celda T25
+# del board pide una linea `MEDIDO` y declara "ausencia de la linea = FAIL".
+#
+# Los esperados de abajo son literales ESCRITOS ACA, en shell, en otro archivo que la probe. No se
+# derivan de `EXPIRE_BATCH_SIZE` ni de `MAX_SWEEP_ATTEMPTS` leyendo el fuente a proposito (ADR-023):
+# una comparacion del mismo origen pasa cuando los dos lados estan mal igual. Bajar el lote a 50 es
+# una decision legitima; lo que no puede ser es que se baje sin que nadie toque este numero.
+sec 'V10b · el parte del barrido existe y sus numeros son los esperados'
+HOL=$(grep -aoE 'MEDIDO cron barrido · .*' /tmp/s6-hol.txt | head -1 || true)
+if [ -z "$HOL" ]; then
+  no 'no hay linea "MEDIDO cron barrido": la probe no dejo parte de lo que midio y el gate NO pasa por ausencia de medicion'
+  inf 'Formato: MEDIDO cron barrido · corridas=<N> · envenenadas=<N> · sanas=<N> · sanas_vencidas_c2=<N> · intentos_tras_fallo=<N> · reintento_tras_recuperarse=<N> · tope=<N> · abandonadas_en_el_tope=<N> · unrecorded=<N> · skipped_sobre_vencidas=<N> · status_base_sana=<N> · status_con_abandonada=<N>'
+else
+  inf "$HOL"
+  campo_hol() { printf '%s' "$HOL" | sed -nE "s/.*[[:space:]]$1=([^ ·]*).*/\1/p"; }
+
+  # `corridas` se compara con `-ge` y el resto con `=`. No es laxitud: agregar un caso nuevo a la
+  # probe sube las corridas y eso es sano, mientras que un caso que deja de invocar el barrido las
+  # baja y eso es el fixture evaporandose. La cota mide lo segundo sin castigar lo primero.
+  CORRIDAS=$(campo_hol 'corridas')
+  case "$CORRIDAS" in
+    ''|*[!0-9]*) no "el parte no trae \`corridas\` legible ('$CORRIDAS'): cambio el formato de la linea — arreglar el gate, no la linea" ;;
+    *) [ "$CORRIDAS" -ge 7 ] \
+         && ok "la probe invoco el barrido $CORRIDAS veces" \
+         || no "la probe invoco el barrido solo $CORRIDAS veces (minimo 7, una por caso mas las dos de A y C). Un caso dejo de correr el barrido: sus aserciones estan midiendo la nada" ;;
+  esac
+
+  # nombre_del_campo:esperado:que_significa_si_no_da
+  for PAR in \
+    'envenenadas:200:el lote de la corrida 1 no vino lleno (EXPIRE_BATCH_SIZE cambio y nadie toco este gate): sin lote lleno no hay head-of-line que medir' \
+    'sanas:1:el fixture de A dejo de tener la reserva sana, que es la unica fila que la slice promete liberar' \
+    'sanas_vencidas_c2:1:la reserva sana NO vencio en la corrida 2. Es el bug entero: fallar no manda al fondo de la cola' \
+    'intentos_tras_fallo:1:el `+1` se rolleo junto con el error. El techo nunca se alcanza y el head-of-line vuelve entero, con el arreglo escrito y sin efecto' \
+    'reintento_tras_recuperarse:1:una fila que fallo una vez y dejo de fallar NO volvio al lote. El arreglo se volvio un apagador: cada deadlock legitimo deja una unidad trabada' \
+    'tope:5:MAX_SWEEP_ATTEMPTS cambio y nadie toco este gate' \
+    'abandonadas_en_el_tope:1:la fila que paso el techo no se conto como abandonada. Una unidad trabada en `reserved` que ademas no figura en ningun numero es el mismo bug con otro disfraz' \
+    'unrecorded:1:el `+1` fallo y el barrido no lo conto. Es el estado en el que el head-of-line vuelve sin dejar rastro' \
+    'skipped_sobre_vencidas:0:el dominio dijo "nada que hacer" sobre una reserva vencida: esa fila se cuenta como atendida y vuelve manana igual' \
+    'status_base_sana:200:el cron NO contesta 200 con la base sana. Un handler que contesta siempre lo mismo no distingue nada, y medir solo el 500 no lo detecta' \
+    'status_con_abandonada:500:el cron contesta 200 con una unidad trabada. Un cron verde mientras nada se vence es la falla que se descubre semanas despues y del lado del cliente' \
+  ; do
+    N=${PAR%%:*}; RESTO=${PAR#*:}; E=${RESTO%%:*}; POR=${RESTO#*:}
+    V=$(campo_hol "$N")
+    if [ -z "$V" ]; then
+      no "el parte no trae \`$N\`: cambio el formato de la linea — arreglar el gate, no la linea"
+    elif [ "$V" = "-1" ]; then
+      no "\`$N\` vale -1: el caso que lo mide no llego a correr. Ausencia de medicion es FAIL, nunca PASS"
+    elif [ "$V" = "$E" ]; then
+      ok "$N=$V"
+    else
+      no "$N=$V y se esperaba $E · $POR"
+    fi
+  done
+fi
+
 # ══════════════════════════════════════════════════════════════════════════════════════════════
 printf '\n'
 if [ "$fail" = "0" ]; then
