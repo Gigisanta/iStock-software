@@ -1,7 +1,9 @@
 # DECISIONS — ADRs
 
-_Owner: `architect`. Una decisión que no está acá **no existe**._
-_Formato en `.claude/agents/architect.md`._
+_Qué es: el registro de decisiones de arquitectura. Una decisión que no está acá **no existe**._
+_Para quién: cualquiera que vaya a escribir código y necesite saber qué ya se cerró y por qué._
+_Cuándo se actualiza: cuando el LEAD cierra una decisión. La escribe `docs-keeper`, la **ratifica**
+el LEAD (`CLAUDE.md` §4 — el rol `architect` era de FASE 1 y está dormido)._
 
 ---
 
@@ -438,3 +440,158 @@ distinguir polo: el perfil corto del miss hacía fallar el mismo gate que lo exi
 satisfacía renombrando el literal a una constante** — o sea que había dejado de guardar. El conflicto
 lo **reportó `storefront-agent` en vez de resolverlo a escondidas**, y tenía razón.
 Un ADR que borra de dónde vino una corrección se lee como si nunca hubiera habido un error.
+
+---
+
+## ADR-013 — En `/app/*`, "no existe" y "no es tuyo" son la misma respuesta
+- **Estado:** aceptada · **Fecha:** 2026-08-28 · **Autor:** LEAD (FASE 4, S2) · redactada por `docs-keeper`
+- **Insumo:** código de S2 (`apps/web/app/(app)/app/(panel)/stock/[id]/fotos/page.tsx:35-41`,
+  `_lib/listings/queries.ts`) y el e2e de `qa-agent`
+  `e2e/s2-las-fotos-de-un-equipo-ajeno-no-existen.spec.ts`.
+- **Pariente, no gemela, de ADR-011.** Ver la tabla de abajo: se parecen en el resultado y no
+  comparten ni el sujeto ni el motivo. **No se fusionan.**
+
+### Contexto
+`/app/stock/{id}/fotos` recibe un UUID por la URL. `loadUnitWithPhotos` filtra por
+`eq(listings.tenantId, ctx.tenantId)` **además** de RLS y devuelve `null` **sin distinguir** "no
+existe" de "no es de este tenant".
+
+### Decisión
+Ese `null` se convierte en **`notFound()`** (`page.tsx:115` y `:118`). **Nunca un 403, nunca un
+mensaje propio, nunca un texto distinto** para el recurso ajeno.
+
+El motivo es **anti-enumeración**, y es distinto del de ADR-011: si el recurso ajeno diera 403 —o
+404 con otro cuerpo, u otro tiempo de respuesta— el status sería un **oráculo** que le confirma a
+cualquiera que ese id existe en la base, y de yapa que es de otro. Un id que no es mío tiene que ser
+idéntico a un id que no es de nadie.
+
+**El invariante chequeable es la indistinguibilidad, no el status code.** Esto no es una preferencia
+de estilo del test: el status no está disponible como invariante bajo Cache Components (es la mitad
+técnica que ADR-011 ya midió), así que fijarlo es pedir un imposible. La igualdad entre las dos
+respuestas, en cambio, se puede exigir siempre y **sigue siendo cierta el día que Next permita el
+404 real**, sin que nadie toque el test.
+
+### En qué se diferencia de ADR-011 — para que nadie las fusione
+
+| | **ADR-011** | **ADR-013** (esta) |
+|---|---|---|
+| sujeto | la **vidriera**, `{slug}.maat.work` | el **panel**, `/app/*` |
+| quién pide | un visitante anónimo que erró el subdominio | alguien logueado que pega un id que no es suyo |
+| motivo | el 404 real es inalcanzable bajo `cacheComponents`, y **el chequeo en el proxy está prohibido por costo** (una query por pageview) | **anti-enumeración**: el status no puede ser un oráculo de existencia cross-tenant |
+| respuesta | página **propia y legible** con `noindex, nofollow` (variante B, 797 B de body) | **`notFound()`**: el 404 genérico de Next, sin título ni datos, con `noindex` |
+| qué se paga | se pierde el 404 como señal de monitoreo | nada: la pantalla en blanco es la respuesta correcta acá |
+
+**Lo que las une** es sólo el corolario: en las dos, **el invariante que se testea no es el status**.
+
+### Corrección de una premisa que circulaba y es falsa
+Se dijo, al pedir esta ADR, que el panel *"sirve una página legible del panel, no un 404 duro"*.
+**No es lo que hace el código**, y la diferencia importa: `page.tsx` llama `notFound()`, no hay
+`not-found.tsx` bajo `apps/web/app/(app)/` (el único del repo es
+`apps/web/app/(storefront)/s/[slug]/not-found.tsx`, que es el de ADR-011), y el cuerpo que recibe el
+curioso es el 404 genérico de Next: **sin título, sin slug, sin un dato**. Que sea genérico **es la
+decisión**, no un pendiente de diseño: una pantalla propia y bonita sería un lugar donde volver a
+filtrar algo.
+
+### Verificación — `e2e/s2-las-fotos-de-un-equipo-ajeno-no-existen.spec.ts`
+El invariante está asertado, no descrito: `expect(theirs.status).toBe(ghost.status)` (`:364-368` por
+el browser, `:411-415` por HTTP crudo con la cookie de sesión). Además, y **antes** que el status
+—porque un título ajeno en el cuerpo es la slice entera y un status distinto es una molestia—, se
+buscan los marcadores de fuga (título, slug, nombre y uuid del tenant ajeno) en el HTML **completo**,
+payload de Flight incluido. Las tres puertas: browser, HTTP crudo con sesión, y sin sesión.
+
+El único status que este archivo sí fija es el **control positivo**: `mine.status === 200`
+(`:321-326`). Sin él, la igualdad daría verde con la ruta rota para todos.
+
+### Consecuencia para el resto del panel
+Toda ruta futura de `/app/*` que reciba un identificador por la URL hereda esta ADR: filtro de
+tenant explícito en la query, `null` indistinguible, `notFound()`. Un 403 con mensaje propio en el
+panel es causal de rechazo de review.
+
+---
+
+## ADR-014 — `export const instant = false` es una excepción por ruta, con dos condiciones
+- **Estado:** aceptada · **Fecha:** 2026-08-28 · **Autor:** LEAD (FASE 4, S2) · redactada por `docs-keeper`
+- **Pedida por `app-agent`**, que la aplicó en S2 y dejó el razonamiento en un docblock.
+- **Insumo, todo verificable en el árbol:**
+  `apps/web/app/(app)/app/(panel)/stock/[id]/fotos/page.tsx:58-105` ·
+  `scripts/guard-routes.sh` (tabla `ESPERADO`) ·
+  `apps/web/app/(app)/app/(panel)/stock/[id]/fotos/agregar-foto-form.tsx:19-24`.
+- **Por qué existe la ADR:** la decisión vivía en un docblock y en un comentario de un guard. Un
+  docblock que alguien "limpia" deja una línea de configuración sin razonamiento, y el efecto de
+  borrarla no se ve en ningún test unitario: se ve en producción, sin JavaScript.
+
+### La regla por default
+**Las rutas del panel no bloquean el render.** Bajo `cacheComponents: true` salen como
+`compute=resuming / response=initial`: shell estático primero, contenido después. Está **fijado**,
+ruta por ruta, en la tabla `ESPERADO` de `scripts/guard-routes.sh` — `/app`, `/app/ajustes`,
+`/app/canjes`, `/app/crear-negocio`, `/app/stock`, `/app/stock/nuevo`, `/ingresar`.
+
+Ese guard existe por un invariante que es de seguridad y no de performance: **una ruta de `/app/*`
+que pase a `compute=static` es un leak cross-tenant** — contenido autenticado horneado en un archivo
+que el CDN le sirve al siguiente que pida la URL. No lo detecta ningún test de RLS (la policy nunca
+se evalúa: la respuesta no toca Postgres) ni ningún e2e logueado (pide con sesión, por definición).
+
+### La excepción
+**Una sola ruta hoy:** `/app/stock/[id]/fotos`, con `export const instant = false`
+(`page.tsx:105`) y **cero `<Suspense>` de tope**. Queda en `compute=blocking / response=empty`, y
+así está fijado en `guard-routes.sh`.
+
+### La condición para usarla — dos, y las dos a la vez
+No es un permiso general. Se justifica **por ruta**, y las dos razones están medidas en el gate de
+S2, no supuestas. Un `<Suspense>` de tope parte la respuesta: primero el shell (status 200 +
+esqueleto) y el contenido real al final, dentro de un `<div hidden id="S:…">` que recoloca un script
+inline (`$RC`). Eso rompe:
+
+1. **El status de `notFound()` llega tarde.** Se manda con el shell, antes de que corra
+   `loadUnitWithPhotos()`: la respuesta salía 200 con cuerpo de 404. El cuerpo **nunca** filtró nada
+   —el filtro de tenant siempre corrió—, pero para quien lea el status son dos respuestas distintas.
+   Es la ruta que materializa ADR-013.
+2. **Sin JavaScript la pantalla es un esqueleto permanente.** Si `$RC` no corre, el form de
+   `agregar-foto-form.tsx` nunca sale del `<div hidden>`. El form postea sin JS y está bien armado,
+   pero **a un form invisible no se lo puede tocar**: la promesa de progressive enhancement era falsa
+   por culpa del boundary, no del form.
+
+**La condición, entonces:** la ruta (a) puede hacer `notFound()` por un identificador que viene de la
+URL **y** (b) tiene un form que promete funcionar sin JavaScript. Una sola de las dos **no alcanza**.
+
+`export const instant = false` es la salida que nombra el propio Next en el texto del error
+`blocking-prerender-runtime`, y según `instant.md` §"Disabling static shell validation" también saca
+a la ruta de la validación de shell estático de Cache Components. Ningún ancestro declara `instant`,
+así que este `false` es el más alto del árbol de esa ruta.
+
+### El precio, aceptado y declarado
+En la tabla de `next build` la ruta pasa de `◐ (Partial Prerender)` a `ƒ (Dynamic)`: el primer byte
+espera la sesión, los params y la query de la unidad. **No hay esqueleto instantáneo.** Es tráfico
+autenticado del dueño, a una pantalla a la que se llega desde una fila del stock. Una respuesta
+correcta vale más que un esqueleto rápido que después se contradice.
+
+### Alcance, y qué NO es esta decisión
+El resto del panel sigue con su `<Suspense>` y su shell en `◐`, y los dos boundaries del layout
+(header y bottom nav) siguen donde estaban. **Si otra ruta del panel se cae a `ƒ`, no es esta
+decisión: es un efecto colateral y se revierte.**
+
+### Cómo se verifica
+`scripts/guard-routes.sh`, que **no lee la tabla de `next build`**: lee
+`.next/prerender-manifest.json`. El motivo está medido y es la clase de bug que justifica un guard —
+el LEAD leyó `◐` en `/app/stock/[id]/fotos` y concluyó que `instant = false` no había hecho nada,
+mientras el manifest decía `compute=blocking`. La columna `○ ◐ ƒ` es un dibujo para humanos y
+confunde tres estados distintos. **Un invariante que se verifica leyendo un glifo no es un
+invariante.**
+
+### Hueco declarado — qué le falta al LEAD para cerrar esta ADR
+
+**No se inventa el motivo de nada de lo de arriba: todo está en el código.** Lo que falta son dos
+cosas, y se dejan escritas en vez de rellenarlas:
+
+1. **Nadie midió el status de esta ruta después del cambio.** El docblock de `page.tsx:69-72` afirma
+   que `instant = false` le devuelve el 404 real a la unidad ajena. El encabezado de
+   `e2e/s2-las-fotos-de-un-equipo-ajeno-no-existen.spec.ts:22-36` afirma lo contrario en general
+   —bajo Cache Components el status no se puede fijar— y por eso **no lo asserta**: exige igualdad
+   entre las dos respuestas. Las dos afirmaciones pueden ser ciertas a la vez (la del spec habla del
+   caso con shell; ésta es `blocking/empty`, sin shell), pero **nadie lo midió sobre esta ruta**. Es
+   una medición con `curl`, del mismo tamaño que la que produjo ADR-011, y **no cambia ADR-013** en
+   ninguno de los dos resultados: el invariante sigue siendo la indistinguibilidad.
+2. **La condición de arriba no la hace cumplir ningún guard.** `guard-routes.sh` fija **el modo** de
+   cada ruta, así que un cambio no puede pasar en silencio — pero la regla de cuándo se *permite* la
+   excepción vive en prosa. Hoy alcanza, porque la excepción es una sola y agregar la segunda obliga
+   a tocar el guard. Si aparece una tercera, esto se convierte en trabajo del LEAD.

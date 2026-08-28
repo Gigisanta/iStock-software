@@ -2,7 +2,7 @@
 
 _Owner: `cost-auditor`. **Escrito por el LEAD en FASE 1** (excepción declarada en `CLAUDE.md` §4).
 Números con fuente salvo los marcados `[EST]` / `[UNVERIFIED]`, que **no** son evidencia._
-_Fecha: 2026-08-27. Insumos: R1 (wildcard/ISR), R2 (R2/imágenes), R3 (LLM), R7 (amenazas)._
+_Fecha: 2026-08-28. Insumos: R1 (wildcard/ISR), R2 (R2/imágenes), R3 (LLM), R7 (amenazas)._
 _Re-medido el 2026-08-27 después de **ADR-011** (el slug inexistente dejó de ser 404) y **ADR-012**
 (los dos polos del cache). Lo que cambió está en §2.1; lo que **no** cambió también, y dice por qué._
 
@@ -15,11 +15,15 @@ El **piso fijo** se cuenta **aparte** del marginal. No mezclar.
 
 **Se cumple, y con margen — pero no por donde parecía en FASE 0.**
 
-| | FASE 0 `[EST]` | FASE 1 (con fuente) |
-|---|---|---|
-| Marginal plan **Base** | ~USD 0.03 | **USD 0.07** |
-| Marginal plan **Negocio** | 0.03 + `[R3]` | **USD 0.24 – 0.30** |
-| Headroom del Negocio contra el objetivo | «~15× abajo» | **~1.7×** |
+| | FASE 0 `[EST]` | FASE 1 (con fuente) | FASE 4 (S1 + S2 **medidas**) |
+|---|---|---|---|
+| Marginal plan **Base** | ~USD 0.03 | USD 0.07 | **USD 0.09** |
+| Marginal plan **Negocio** | 0.03 + `[R3]` | USD 0.24 – 0.30 | **USD 0.25 – 0.31** |
+| Headroom del Negocio contra el objetivo | «~15× abajo» | ~1.7× | **~1.6×** |
+
+**S2 (pipeline de fotos) aporta USD 0.013/tenant/mes** y el 70% de eso **no es R2**: es el
+Active CPU de `sharp` en el upload por Server Action. R2 entero —storage, writes, reads, egress—
+cuesta **USD 0.005/tenant/mes**, el 1% del objetivo. Ver §2.2.
 
 La frase de FASE 0 *«el `base` está ~15× abajo»* era optimista y ya no aplica al plan que importa.
 **El chatbot se come el 70–77% del presupuesto de infra del plan Negocio.** No está mal — está
@@ -54,8 +58,12 @@ es sólo la razón por la que el objetivo está escrito sobre el marginal y no s
 
 | vector | cálculo | USD/mes | fuente |
 |---|---|---|---|
-| R2 storage + Class A/B | ~140 MB, redondeo al alza de R2 | **~0.001** | R2: USD 0.015/GB-mes |
+| R2 storage | **120,2 MB medidos** (240 fotos × 500.938 B) × USD 0.015/GB | **0.0018** | **§2.2, medido** |
+| R2 Class A (writes) | 288 PutObject/mes × USD 4.50/1M | **0.0013** | **§2.2, medido** |
+| R2 Class B (reads) | ~4.320 GET de origen/mes × USD 0.36/1M | **0.0016** `[EST]` | §2.2 |
 | R2 egress | **0 por diseño** | **0** | R2: egress Free |
+| **Upload: Active CPU de `sharp`** | 72 fotos/mes × 1,35 s × USD 0.128/CPU-h | **0.0035** `[UNVERIFIED el precio]` | **§2.2, CPU medido** |
+| Upload: memoria + invocaciones + transferencia a R2 | ver §2.2 | **0.0056** `[EST]` | §2.2 |
 | **ISR Writes** | ~200 mutaciones/mes × 15 write units | **0.012** | R1: USD 4.00/1M units de 8 KB (iad1) |
 | ISR Reads | sólo en CDN miss | ~0 | R1: USD 0.40/1M |
 | Edge Requests | 10M incluidos ≈ 80 tenants; después USD 2.00/1M | **~0.04** | R1 (iad1) |
@@ -63,8 +71,13 @@ es sólo la razón por la que el objetivo está escrito sobre el marginal y no s
 | Postgres | 95% de hits cacheados | ~0 | ADR-007 |
 | LLM plan **Base** | **widget ausente** | **0** | `CLAUDE.md` §3 |
 | LLM plan **Negocio** | 1.200 msgs × USD 0.000144–0.000192 | **0.17 – 0.23** | R3 |
-| **Marginal Base** | | **~USD 0.07** | |
-| **Marginal Negocio** | | **USD 0.24 – 0.30** | |
+| **Marginal Base** | | **~USD 0.09** | |
+| **Marginal Negocio** | | **USD 0.25 – 0.31** | |
+
+La línea vieja de R2 decía **«~140 MB → ~0.001»** y estaba baja **4,7×**, no por el storage
+(120 MB medidos contra 140 supuestos: acertó) sino porque **contaba Class A y Class B como si
+fueran cero**. No lo son; son chicos, que es otra cosa. Y aparecieron dos renglones que R2 no
+tiene: el upload pasa por una Vercel Function y `sharp` cuesta CPU. Detalle en §2.2.
 
 **Las dos líneas que no estaban en FASE 0 y ahora pesan:** el WAF rate limiting (USD 0.06, **12% del
 presupuesto** — el precio de no fragmentar el cache filtrando en el edge en vez de en la app) y los
@@ -187,6 +200,310 @@ Mitigación esperada en S2 (no en S1): las mutaciones de una misma sesión de ca
 sola invalidación, o se invalida al terminar la tanda. **Cargar 15 equipos tiene que costar 1
 regeneración, no 15.** Es gate de `cost-auditor` para S2.
 
+### 2.2 Medido en S2 — el pipeline de fotos (2026-08-28)
+
+Segunda slice que se **mide**. Método: los bytes de las tres variantes públicas salen del gate del
+LEAD (`scripts/accept-s2.sh` M1, que corre `scripts/probes/s2-media-measure.test.ts`); los bytes del
+master y los **milisegundos de CPU** salen de `pnpm --filter @istock/media bench`, re-corrido hoy por
+`cost-auditor`. Imagen de referencia: **4000×3000 (12 MP) JPEG q88, 2.935,9 KB**, determinista.
+
+⚠️ **Es una Mac, no Vercel.** Los bytes no dependen de la máquina (`sharp`/libwebp son
+deterministas para el mismo input y los mismos parámetros). Los **677 ms de CPU sí**, y el precio
+del Active CPU de Vercel **no está en ninguna research de este repo** — ver §7.
+
+#### Los bytes, medidos por dos writers distintos
+
+| objeto | gate del LEAD | bench del owner | techo | uso | bucket |
+|---|---:|---:|---:|---:|---|
+| `thumb` | **7.718 B** | 7,5 KiB | 25 KiB | 30% | `istock-media` (púb.) |
+| `card` | **50.692 B** | 49,5 KiB | 150 KiB | 33% | `istock-media` (púb.) |
+| `detail` | **128.570 B** | 125,6 KiB | 250 KiB | 50% | `istock-media` (púb.) |
+| `master` | **el gate NO lo mide** | **306,6 KiB = 313.958 B** | 350 KiB (blando) | 88% | `istock-originals` (**privado**) |
+| **por foto** | 186.980 B públicos | **500.938 B con master** | | | |
+
+**El hueco que hay que decir en voz alta:** el gate del LEAD verifica que el master esté en el
+bucket privado y que su key no sea derivable, pero **no cuántos bytes pesa**. Y el master es el
+**62,7%** de los bytes almacenados de S2. O sea: la línea de storage más grande de esta slice sale
+de una medición hecha por el mismo writer que escribió el encoder. No es un FAIL —el número es
+plausible y el techo es blando a propósito— pero es una medición de una punta sola y así se
+registra. Se cierra agregando el `master` al probe del LEAD, que ya tiene el objeto en la mano.
+
+#### 1. Bytes y operaciones por tenant
+
+**Supuestos, explícitos:** `MIN_PHOTOS_TO_PUBLISH = 3` (`packages/domain/src/listing-status.ts`),
+así que **3 fotos es el piso del producto, no una estimación**. Uso 4 fotos/listing en el caso base
+para no romper la continuidad con §2, y 3 en los extremos del rango del ICP (20–200 equipos).
+Rotación mensual del stock: **30%** `[EST]` — un reseller que vende y repone ~18 de 60 equipos.
+
+```
+bytes/foto = 7.718 (thumb) + 50.692 (card) + 128.570 (detail) + 313.958 (master) = 500.938 B
+```
+
+| tenant | fotos | bytes | GB | storage USD/mes (×0.015) |
+|---|---:|---:|---:|---:|
+| 20 equipos × 3 fotos | 60 | 30.056.280 | 0,0301 | **0.00045** |
+| **60 equipos × 4 fotos (caso base §2)** | **240** | **120.225.120** | **0,1202** | **0.0018** |
+| 200 equipos × 3 fotos (techo del ICP) | 600 | 300.562.800 | 0,3006 | **0.0045** |
+
+**El tenant más grande del ICP cuesta menos de medio centavo de storage.** A 100 tenants del caso
+base son 12,02 GB, de los cuales **10 GB son free tier**: la factura real de storage de la flota
+entera es **USD 0.03/mes**. Uso igual el número sin free tier (0.0018) porque el free tier es piso
+de plataforma y este documento no mezcla piso con marginal (§0).
+
+**Class A (writes).** `uploadListingPhoto` hace exactamente **4 `PutObject` por foto** (3 variantes
++ 1 master) y **cero `GetObject`**. No es una estimación: está en el tipo (`classAOps: 4`) y el
+probe del LEAD lo cuenta.
+
+```
+carga inicial:  240 fotos × 4 = 960 ops    (UNA vez, no mensual) × USD 4.50/1M = USD 0.0043
+régimen (30%):   72 fotos × 4 = 288 ops/mes                      × USD 4.50/1M = USD 0.0013
+flota de 100 tenants en régimen: 28.800 ops/mes = 2,9% del free tier de 1M
+```
+
+**Class B (reads) — acá el modelo ingenuo estaba mal.** «Class B ≈ 0 porque el CDN cachea» es
+falso: el CDN de Cloudflare cachea **por PoP**, así que el piso de Class B no lo fija el tráfico,
+lo fija **objetos × PoPs que reciben tráfico**, y se paga otra vez cada vez que un objeto se cae
+del cache del PoP.
+
+```
+objetos públicos por tenant = 240 fotos × 3 variantes = 720
+tráfico regional (6 PoPs argentinos/vecinos):  720 × 6   =   4.320 GET/mes → USD 0.0016
+techo absurdo (300+ PoPs, tráfico global):     720 × 300 = 216.000 GET/mes → USD 0.078  ← 16% del objetivo
+```
+
+El caso regional es el real para un reseller del Alto Valle y es el que va al modelo. **El techo
+está escrito para que exista el número**: si una vidriera se hace viral fuera del país, Class B es
+el único renglón de R2 que se mueve de verdad, y se mueve 48×. `[EST]`: no hay medición porque no
+hay bucket (B1) ni vidriera con fotos (S3).
+
+#### 2. Egress — el camino sale por Cloudflare, verificado en el código
+
+| eslabón | qué dice el código | veredicto |
+|---|---|---|
+| armado de la URL | `packages/media/src/url.ts` concatena `NEXT_PUBLIC_MEDIA_BASE_URL` + key, y **nadie más arma URLs** (gate M5 de `accept-s2.sh`) | ✅ |
+| `r2.dev` | `url.ts` y `env.ts` **lanzan** si la base termina en `.r2.dev` (rate-limited, sin cache: cada request sería un Class B) | ✅ |
+| Vercel Image Optimization | `next/image` prohibido por gate M5 y por la regla W006 de `web-lint` | ✅ |
+| Supabase Storage | no aparece en el pipeline; el único driver es R2 (+ uno local de dev) | ✅ |
+| `/_media/{key}` en Vercel | la ruta **devuelve 404 cuando `MEDIA_DRIVER=r2`**, a propósito y comentado | ✅ |
+| original >500 KB al browser | el master (306,6 KB) vive en `istock-originals`, privado, y su key no matchea el regex de la ruta pública. Lo más pesado que puede bajar un visitante es `detail` = **128.570 B** | ✅ |
+
+**Egress de imágenes: 0 GB/mes por Vercel y 0 por Supabase. Cero bytes, no «pocos».**
+
+**El hallazgo, y ahora está cerrado en el código: un `superRefine` que lo bloquea en el boot.**
+`media-agent` cerró el hueco en `packages/media/src/env.ts`. `NEXT_PUBLIC_MEDIA_BASE_URL` pasó de
+tener default **`http://localhost:3000/_media`** a ser `.optional()`, con ese default aplicado
+recién en un `.transform()` final — así el `superRefine` puede distinguir "no la setearon" de "la
+setearon". Dos reglas nuevas sobre esa distinción: (a) con `MEDIA_DRIVER=r2`, si
+`NEXT_PUBLIC_MEDIA_BASE_URL` falta o viene en blanco, **el boot falla**; (b) se agregó
+`VERCEL_ENV` al schema y **`VERCEL_ENV === 'production' && MEDIA_DRIVER !== 'r2'` también hace
+fallar el boot**, citando en el mensaje de error el número de abajo. El repo sigue sin
+`vercel.json` — no hace falta: el gate vive en el schema de Zod que corre en cada arranque del
+proceso, no en config de plataforma.
+
+Lo que costaría ese deploy si esta regla no existiera, con los precios de R1 (`iad1`) — la cuenta
+que hoy cita el propio mensaje de error:
+```
+3.000 pageviews × 5 imágenes            = 15.000 imágenes/mes/tenant
+Edge Requests (se cobran en el 100%, HIT incluido):
+  15.000 × USD 2.00/1M                  = USD 0.030/tenant/mes
+Fast Origin Transfer del 5% que no pega en el CDN de Vercel:
+  750 × 50.692 B = 38 MB × USD 0.06/GB  = USD 0.0023   (en gru1, ×6,8 = USD 0.016)
+                                        ─────────────
+                                          USD 0.033/tenant/mes  ≈ 7% del objetivo, por UNA env var
+                          a 100 tenants:  USD 3.30/mes de puro desperdicio
+```
+**Qué lo detecta ahora y cuándo:** falla en el *boot* del proceso — antes de que el deploy sirva un
+solo byte — no en el browser del visitante. La versión vieja de este bug era invisible para el
+sistema: cero excepciones en Sentry (nunca hay un `fetch` server-side que falle), el `<img src>`
+se rompe del lado del visitante, y ese HTML con la imagen rota queda **cacheado por ISR** hasta la
+próxima invalidación. Un boot roto es ruidoso por diseño; un `<img>` roto en producción no le avisa
+a nadie.
+
+**Qué NO cubre:** la regla (b) mira `VERCEL_ENV`. Un deploy fuera de Vercel (otro host, un
+contenedor propio) no la dispara — la variable simplemente no está seteada ahí, y esa validación no
+corre. El día que exista otro host de producción, esta regla queda dormida y hay que repetir el
+mecanismo con lo que ese host sí exponga.
+
+#### 3. El multiplicador de la deduplicación: **no existe. Es 1,00×.**
+
+La key pública es content-addressed (`v1/{ab}/{sha256_32}.webp`), así que dos tenants que suben la
+misma foto comparten el objeto. Suena a palanca de costo. **Con los números medidos, no lo es**, y
+por tres motivos independientes:
+
+1. **El master no dedupea nunca, por construcción.** Su key es `originals/{tenantId}/{listingId}/
+   {hash}.webp` — jerárquica, con el tenant adentro. Dos tenants con la foto idéntica guardan dos
+   masters. Y el master es **313.958 de 500.938 B = 62,7% de los bytes**. O sea que la dedup no
+   puede tocar más del **37,3%** del storage, ni en el caso perfecto.
+2. **Requiere que coincida el byte de *salida*, no la escena.** Dos resellers fotografiando el
+   mismo iPhone 14 Pro sobre su propio escritorio producen píxeles distintos → hashes distintos.
+   Sólo colisionan archivos literalmente iguales: la foto de prensa del fabricante, la imagen que
+   circuló por el broadcast del mayorista, o el mismo dueño re-subiendo el mismo archivo.
+3. **No ahorra ni una operación de escritura.** `upload.ts` hace `driver.put` de las 4 keys
+   **siempre**, sin `head()` previo. Re-subir una foto que ya existe cuesta los mismos 4 Class A.
+
+La aritmética del mejor escenario que me animo a defender (20% de fotos duplicadas en la flota —
+generoso, asume catálogo de mayorista compartido):
+```
+ahorro = 0,20 × 0,373 × USD 0.0018/tenant/mes = USD 0.00013/tenant/mes
+```
+**Trece cienmilésimas de dólar.** Es cien veces menos que el redondeo de la factura de R2. Cambiar
+el `put` por `head`+`put` condicional convertiría 1 Class A (USD 4.50/1M) en 1 Class B
+(USD 0.36/1M): ahorra **USD 0.0000041 por foto duplicada** y agrega un round-trip a R2 en el hot
+path del upload. **No se hace.**
+
+**Entonces la dedup no se escribe en el modelo como ahorro, porque no lo es.** Es una palanca de
+**corrección**, y ahí sí paga: retry idempotente (re-subir no duplica), **cero purga de CDN jamás**
+(cambia el byte → cambia la URL) y **cero `tenant_id` en la URL pública**. Venderla como ahorro
+sería mentir por 0,0001 dólares.
+
+**Corolario que sí cuesta plata, en la otra dirección:** como la key es compartida, `CLAUDE.md` §2
+prohíbe borrar el objeto al borrar un listing, y `unlinkListingPhotos` devuelve `deletedObjects: 0`
+por tipo. El recolector existe (`collectOrphanObjects`, testeado) pero **hoy no tiene ni un caller
+en todo el repo** — no hay cron. Consecuencia: el storage crece monótono.
+```
+tenant con rotación anual completa: 240 fotos/año × 500.938 B = +0,120 GB/año de bytes huérfanos
+al cabo de 1 año:  0,120 GB huérfanos × USD 0.015/GB-mes = +USD 0.0018/tenant/MES
+al cabo de 3 años: 0,360 GB huérfanos + 0,120 GB vivos   =  4× el storage del stock vivo
+```
+**No es una emergencia de plata** (a tres años el renglón sigue siendo USD 0.007/tenant/mes). Es que la métrica «GB por tenant» de §5 se vuelve ilegible: deja de medir stock y
+pasa a medir historia. El cron de GC es higiene de métrica, no de factura, y se agenda como tal.
+
+#### 4. El upload cuesta CPU de Vercel, y es el renglón más grande de S2
+
+**Medido hoy:** `sharp` tarda **677 ms** en decodificar el JPEG de 12 MP y producir los 4 encodes
+(promedio de 3 corridas: 687 / 664 / 680 ms, Apple Silicon). Es el único costo que S2 agrega fuera
+de R2, y es **el 70% del delta de la slice**.
+
+```
+factor de conversión a vCPU de Vercel: ×2  [EST, conservador]  → 1,35 s de Active CPU por foto
+
+régimen (72 fotos/mes):   72 × 1,35 s =  97 s = 0,0270 CPU-h × USD 0.128/CPU-h = USD 0.0035/mes
+memoria provisionada:     0,0270 h × 2 GB = 0,054 GB-h × USD 0.0106/GB-h       = USD 0.0006/mes
+invocaciones:             72 × USD 0.60/1M                                     = USD 0.00004/mes
+transferencia función→R2: 72 × 500.938 B = 36 MB, techo USD 0.15/GB            = USD 0.0054/mes
+                                                                               ──────────────────
+                                                                                 USD 0.0095/mes
+mes de onboarding (240 fotos): 324 s = 0,090 CPU-h                             = USD 0.0115 extra
+```
+Los tres precios de fluid compute (Active CPU, memoria provisionada, invocaciones) están
+`[UNVERIFIED]`: **no aparecen en ninguna research del repo** — `docs/research/wildcard-isr.md` trae
+la tabla de ISR / Edge Requests / Transfer pero no las tres líneas de compute. Ver §7.
+
+**Lo que esto resuelve para el ADR de S2.1** (`vercel-request-body-limit.md` §COST le pide
+explícitamente a `cost-auditor` que lo cuantifique antes de decidir):
+
+| camino | CPU de la función por sesión de onboarding (15 equipos × 3 fotos = 45 uploads) | USD |
+|---|---:|---:|
+| **hoy**: Server Action → `sharp` → R2 | 45 × 1,35 s = 61 s | **0.0022** |
+| S2.1: presigned PUT, la función sólo firma | 45 × ~2 ms = 0,09 s | **0.000003** |
+
+**El argumento económico de la subida directa a R2 es nulo: ahorra dos milésimas de dólar por
+onboarding.** Si S2.1 se hace, que se haga por UX o por el techo de 4 MB, **nunca citando costo**.
+Y la advertencia que va con el número: con presigned PUT el resize deja de ser server-side, y
+«original de 12 MP entrando a R2» es un **fallo automático** de §6. Un S2.1 mal hecho cuesta tres
+órdenes de magnitud más que todo lo que ahorra.
+
+#### 5. El gate de coalescing que S1 le dejó a S2: cumplido en el eje que importa
+
+S1 exigía: *«Cargar 15 equipos tiene que costar 1 regeneración, no 15»*. Lo que S2 implementó,
+leído del código:
+
+| paso | invalida | por qué |
+|---|---|---|
+| `create-listing.ts` | **0** | nace en `draft`; el borrador no existe para el visitante |
+| `add-photo.ts` (fotos 2 y 3) | **0** | `if (isPublicStatus(unit.status))` — un `draft` no lo es |
+| `publish-listing.ts` / `transitionUnit` | **1 por unidad** | la arista `draft → available` sí cambia la vidriera |
+
+**El eje que S2 introducía —las fotos— coalesce a cero por construcción**, y era el peligroso: sin
+esa guarda, 4 fotos por unidad habrían multiplicado las invalidaciones por 4. Lo que queda es 1 por
+unidad publicada, que es comportamiento de S1, no de S2.
+
+**La letra del gate no se cumple (son 15, no 1). El costo que el gate protegía, sí:**
+```
+techo absoluto de una tanda de 15 altas: 15 × 8 write units × USD 4.00/1M = USD 0.00048
+```
+y las invalidaciones **sólo se pagan cuando cae un visitante entre dos de ellas**: los renders
+fríos están acotados por `min(invalidaciones, pageviews de la ventana)`, y 3.000 pageviews/mes son
+~4 por hora. Una tarde de carga cuesta 2–4 regeneraciones reales, no 15.
+
+En régimen, con la mitigación de S2 puesta, el vector que el objetivo protege queda así:
+```
+invalidaciones/mes = publicaciones + ventas + despublicaciones ≈ 18 + 18 + 4 = 40   [EST]
+40 / 3.000 pageviews = 1,3 %          (alarma: 5 %; la proyección de S1 era 6,7 %)
+```
+**No se implementa coalescing por sesión.** Costaría estado compartido entre Server Actions para
+ahorrar medio milésimo de dólar y bajar 1,3% a 0,9%. Sería costo tonto en la dirección contraria.
+
+#### 6. Lo que S2 **no** midió, y con qué comando se mediría
+
+Un costo no medido escrito como si estuviera medido es peor que un hueco declarado. Estos son
+huecos, no estimaciones prolijas:
+
+| qué falta | por qué no se midió | comando / fuente que lo cierra |
+|---|---|---|
+| **bytes del `master`** en el gate del LEAD | el probe verifica bucket y key, no tamaño | agregar `master` al `console.log('MEDIDO …')` de `scripts/probes/s2-media-measure.test.ts` (el objeto ya está en memoria) |
+| **Class B real** contra R2 | no hay bucket: **B1** | panel de R2 → *Metrics* → Class B/día por bucket, o Cloudflare GraphQL Analytics API `r2OperationsAdaptiveGroups` filtrado por `istock-media` |
+| **bytes por pageview de vidriera con fotos** | la grilla y la ficha son **S3** | tras S3: `curl -s https://{slug}.maat.work/ \| grep -o 'img\.maat\.work/[^"]*' \| sort -u`, y sumar los `content-length` de cada uno |
+| **Active CPU real en Vercel** | los 677 ms son de una Mac, no de un vCPU de Vercel | Observability → *Active CPU* de la función de `/app/stock/nuevo` tras el primer deploy; o `console.time` alrededor de `buildVariants` con el número en el log estructurado |
+| **precio de Active CPU / memoria provisionada / invocaciones (Pro)** | no está en ninguna research del repo | `vercel.com/docs/pricing` — una lectura, 1 minuto, igual que B2 |
+| **si Vercel cobra la transferencia función→R2, y bajo qué línea** | no verificado si es Fast Data Transfer, Fast Origin Transfer o nada | factura del primer mes con uso real; hasta entonces el renglón va a su techo (USD 0.15/GB) |
+| **cuántos GB de huérfanos hay de verdad** | no hay GC ni bucket | `wrangler r2 object list istock-media` menos las keys referenciadas en `listing_photos` (service role, cruzando tenants) |
+
+#### 7. Un hallazgo que no cuesta plata hoy pero rompe la medición de S3
+
+`cardSrcSet()` (`packages/media/src/url.ts`) emite `card 800w, detail 1600w` y **hoy no tiene ni un
+caller** — la grilla de la vidriera es S3. Cuando lo tenga: sin atributo `sizes`, el browser asume
+`100vw`, y un teléfono de 390 px con DPR 3 pide 1170w → **elige `detail` (128.570 B) y nunca `card`
+(50.692 B)**. Con egress $0 eso **no cuesta un centavo** y por eso no es un FAIL de costo. Pero:
+
+- el criterio de aceptación del board dice *«`card` ≤150KB medido»*, y **`card` sería el byte que
+  nadie descarga**: el gate estaría midiendo la variante equivocada;
+- `card` pasa a ser **10% del storage y 1 de cada 4 Class A ops** comprando nada
+  (240 fotos × 50.692 B = 12,2 MB/tenant, 72 ops/mes) — no es plata, es peso muerto declarado;
+- el que paga es el visitante en Cipolletti con datos móviles: 128 KB en vez de 50 por foto.
+
+**Gate para S3, de `cost-auditor`:** o la grilla lleva `sizes` acorde al ancho real de la tarjeta,
+o el criterio de aceptación se corrige para medir `detail`. Las dos cosas están bien; medir una y
+servir la otra, no.
+
+#### 8. Veredicto de S2
+
+```
+COST_VERDICT: PASS
+DELTA_POR_TENANT_MES: USD 0.013   (régimen)   ·   USD 0.030 en el mes de onboarding
+
+  R2 storage        120,2 MB medidos × USD 0.015/GB                 = 0.0018
+  R2 Class A        288 PutObject/mes × USD 4.50/1M                 = 0.0013
+  R2 Class B        ~4.320 GET de origen/mes × USD 0.36/1M          = 0.0016  [EST]
+  R2 egress         por Cloudflare, verificado en el código          = 0.0000
+  Active CPU        97 s/mes × USD 0.128/CPU-h                      = 0.0035  [precio UNVERIFIED]
+  memoria + invoc.  0,054 GB-h + 72 invocaciones                    = 0.0006  [EST]
+  función → R2      36 MB/mes al techo de USD 0.15/GB               = 0.0054  [EST, techo]
+                                                                    ─────────
+                                                                      0.0142
+  menos el renglón viejo de R2 que este reemplaza (−0.001)            0.0132
+
+marginal Base    = 0.073 + 0.013 = USD 0.086   →  17% del objetivo de 0.50
+marginal Negocio = 0.30  + 0.013 = USD 0.313   →  63% del objetivo de 0.50 (headroom 1,6×)
+```
+
+**SUPUESTOS:** 3.000 pageviews/mes/tenant `[EST]` · 60 listings × 4 fotos (piso del producto: 3) ·
+rotación mensual del stock 30% `[EST]` · 6 PoPs de Cloudflare con tráfico `[EST]` · plan Negocio
+con el soft cap de 40 msgs/día · región `iad1` · factor ×2 de la CPU de la Mac al vCPU de Vercel.
+
+**VECTOR_MAS_RIESGOSO:** el **Active CPU del upload por Server Action**. No porque sea caro hoy
+—USD 0.0035— sino porque es el único renglón de S2 que escala con la actividad del dueño en vez
+de con el stock, porque su **precio unitario no está verificado en ningún artefacto del repo**, y
+porque una regresión en `sharp` (un `effort` subido, un `qualityLadder` que ahora hace 5 intentos
+en vez de 1) lo multiplica sin tocar un solo byte de los que el gate mide. Los cuatro objetos de
+hoy salen en **1 intento cada uno**: ese `intentos: 1` es la medición que protege este renglón.
+
+**METRICA_A_VIGILAR:** **`ms de CPU de `buildVariants` por foto subida`**, con alarma en **> 1.500 ms**
+(2,2× la medición de hoy). Es la única que avisa antes: los bytes de salida pueden quedar idénticos
+mientras el costo se duplica, así que ningún techo de bytes la detecta. La de R2 —`Class A del mes
+/ fotos del mes > 5`— sigue vigente, pero R2 tiene dos órdenes de magnitud de aire y no es por ahí
+que esto se rompe.
+
 ### La decisión de una línea que rompe el objetivo entera
 | `cacheLife` | ISR Writes/tenant/mes | contra el objetivo |
 |---|---|---|
@@ -227,7 +544,7 @@ por tenant en DB. R7 lo llama *el mayor riesgo de costo del producto*: sin el ca
 |---|---|
 | Postgres | ~0 **si** el ISR está bien |
 | R2 egress | **0** por diseño |
-| R2 Class B | ~750k reads → el que más sube, aun así centavos |
+| R2 Class B | **techo: 720 objetos × PoPs, no 15 por pageview.** El renglón viejo («~750k reads») modelaba mal: un objeto se lee de origen una vez por PoP, no una vez por visita. Aunque el pico traiga tráfico de los 300+ PoPs, son **216.000 reads = USD 0.078**, y no vuelve a pagarse al día siguiente |
 | Edge Requests + WAF | ~400k requests → **~USD 1.00 en el día**, el vector real |
 | Vercel functions | sólo en misses |
 | LLM | acotado por el soft cap de 40 msgs/tenant/día |
@@ -245,8 +562,11 @@ ser gratis. Deployar en pico de tráfico es un evento de costo.
 | DB | **% de hits de vidriera que llegan a Postgres** | **> 5%** |
 | cache | `x-vercel-cache: HIT` ratio en vidriera | cualquier caída sostenida |
 | cache | `set-cookie` en respuesta de `(storefront)` | **cualquiera** — apaga el CDN entero |
-| imágenes | ratio Class A / fotos procesadas | **> 5** (anomalía, no capacidad) |
-| storage | GB por tenant | huérfanos de listings borrados |
+| imágenes | ratio Class A / fotos procesadas | **> 5** (anomalía, no capacidad; el valor de diseño es **4**, en el tipo: `classAOps`) |
+| **imágenes** | **ms de CPU de `buildVariants` por foto subida** | **> 1.500 ms** (2,2× los 677 ms medidos en S2). **Es la única métrica de S2 que no se deduce de los bytes**: la salida puede pesar exactamente lo mismo mientras el costo se duplica |
+| imágenes | bytes de la variante que el browser **elige** (no la que el gate mide) | que `sizes` falte y la grilla baje `detail` (128.570 B) donde el modelo dice `card` (50.692 B) — §2.2.7 |
+| imágenes | `MEDIA_DRIVER` y `NEXT_PUBLIC_MEDIA_BASE_URL` del deploy de producción | **cualquier valor que no sea `r2` / `https://img.maat.work`** — es la única forma de que un byte de foto salga por Vercel (§2.2.2) |
+| storage | GB por tenant | huérfanos de listings borrados — hoy **crecen sin techo**: `collectOrphanObjects` existe y **no tiene caller** |
 | LLM | **tokens reales/turno por tenant** | > 1200 in o > 180 out, o modelo frontier en el log |
 | proxy | CPU-ms del proxy por pageview | **> 2 ms**, o cualquier llamada de red |
 | edge | Edge Requests/mes | acercarse a 10M (≈ 80 tenants) |
@@ -258,7 +578,13 @@ Fotos por Supabase Storage público o Vercel Image Optimization · original >500
 modelo frontier en hot path · Realtime para anónimos · vidriera pegándole a Postgres en cada hit ·
 worker 24/7 en vez de cron · **spend cap de Supabase apagado** · **`revalidate` por tiempo corto en
 la vidriera** · **rate limiting con contador en Postgres sobre la vidriera** · `set-cookie`
-server-side en la vidriera.
+server-side en la vidriera · **deploy de producción con `MEDIA_DRIVER != 'r2'` o con
+`NEXT_PUBLIC_MEDIA_BASE_URL` apuntando a `/_media`** (agregado en S2: es la única forma de que un
+byte de foto salga por Vercel; cerrado en el código desde S2 — el `superRefine` de
+`packages/media/src/env.ts` hace fallar el boot antes de que esto llegue a producción, salvo que el
+deploy no sea Vercel, § 2.2.2) ·
+**`head()` antes del `put` "para aprovechar la dedup"** (ahorra USD 0.0000041 por foto y agrega un
+round-trip a R2 en el upload — §2.2.3: costo tonto en la dirección contraria).
 
 **BotID Deep Analysis (USD 1/1000 llamadas): NO activar preventivamente.** A 10.000 conversaciones/mes
 son USD 10/mes — **el 53% del precio de lista de un plan Base**. (Precio, no margen: el margen
@@ -292,6 +618,20 @@ unitario del Base no está calculado en ningún artefacto — ver §7.)
 - **Si Vercel cobra el techo de 8 KB de ISR Write por archivo o por entrada.** Cambia la entrada
   del tenant de 5 a 8 units (60%). No mueve el número de §2, que usa 15 como techo, pero sí
   mueve cualquier cuenta futura que use el valor medido.
+- **Precio de fluid compute de Vercel Pro: Active CPU (USD/CPU-h), memoria provisionada
+  (USD/GB-h) e invocaciones (USD/1M).** Los tres se usan en §2.2.4 y **ninguno sale de una research
+  del repo**: `docs/research/wildcard-isr.md` tiene ISR, Edge Requests y Transfer, pero no compute.
+  Los valores escritos (0.128 / 0.0106 / 0.60) son **memoria, no fuente** — el mismo defecto que el
+  precio de Supabase, y se cierra igual de rápido: una lectura de `vercel.com/docs/pricing`.
+  Sostienen el renglón más grande de S2.
+- **Si Vercel factura la transferencia de la función a R2, y bajo qué línea** (Fast Data Transfer,
+  Fast Origin Transfer, o nada). El renglón de §2.2.4 va a su **techo** (USD 0.15/GB = 0.0054) hasta
+  que haya una factura real. Si no se cobra, el delta de S2 baja de 0.013 a 0.008.
+- **Bytes del `master`.** Los 306,6 KB salen de `pnpm --filter @istock/media bench`, o sea del
+  **owner del paquete**, no del gate del LEAD — que verifica el bucket y la key del master pero no
+  su tamaño. Es el **62,7% de los bytes almacenados** de S2 medido por una sola punta.
+- **Class B contra R2 real.** El 6 de «6 PoPs» es mío. El rango entre el caso regional (USD 0.0016)
+  y el global (USD 0.078) es de **48×**, y sólo se cierra con métricas del bucket → **B1**.
 - **Región de funciones.** `iad1` es 1.6× más barato que `gru1` en ISR y ~7× en Fast Origin Transfer
   (USD 0.06 vs 0.41/GB), pero está más lejos si Supabase queda en `sa-east-1`. Falta la medición de
   latencia real contra el Alto Valle → **ADR-010 abierta**. Todos los números de §2 asumen `iad1`.
@@ -306,5 +646,18 @@ sólo en el código. Lo que se movió fue el tamaño medido de la entrada de ISR
 por un archivo que la primera pasada no contó) y apareció un vector de plataforma nuevo —el
 costo de writes de un escaneo de subdominios— que **no** es marginal por tenant. Ninguno cambia
 el número de §2.
-**Abierto:** precio de Supabase (B2) · comisión de MP (B3, ADR-008) · región (ADR-010) ·
-todos los supuestos de tráfico, hasta la primera vidriera real.
+**S2 auditada (2026-08-28): PASS, delta USD 0.013/tenant/mes** — ver §2.2. Los bytes de las tres
+variantes públicas y los 677 ms de CPU de `sharp` están **medidos**; el master lo midió el owner y
+no el gate. Tres correcciones al modelo: (a) el renglón de R2 de §2 estaba bajo **4,7×** por contar
+Class A/B como cero, (b) Class B **no** escala con pageviews sino con **objetos × PoPs**, lo que
+además abarata el escenario de estrés de §4, y (c) apareció un renglón que R2 no tiene y que es el
+**70% del delta**: el Active CPU del upload. **La dedup de keys content-addressed no es una palanca
+de costo** (1,00×): el master, que es el 62,7% de los bytes, no dedupea nunca.
+El gate de coalescing que S1 le dejó a S2 se cumple **en el eje de las fotos** (un `draft` no
+invalida nada), no en la letra: una tanda de 15 altas son 15 invalidaciones, USD 0.00048 y 1,3% de
+hits a Postgres contra una alarma de 5%.
+
+**Abierto:** precio de Supabase (B2) · **precio de fluid compute de Vercel (§7)** · comisión de MP
+(B3, ADR-008) · región (ADR-010) · **Class B real y bytes del master (B1)** ·
+**bytes por pageview de vidriera con fotos (S3)** · todos los supuestos de tráfico, hasta la
+primera vidriera real.

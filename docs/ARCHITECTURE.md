@@ -61,6 +61,30 @@ Request Host                          proxy.ts (Node.js, O(1), 0 I/O)
 - El proxy **no es un control de acceso**: un `matcher` que excluye un path también saltea las
   Server Functions de ese path. La autorización va dentro de cada Server Function.
 
+### Qué NO se reescribe, aunque el host sea de un tenant  ·  agregado en S2
+Tres espacios de URL son **globales al deploy** y el proxy los deja pasar antes de mirar el host
+(`proxy.ts`, guardas en `(storefront)/_lib/host.ts`):
+
+| path | qué pasa | por qué |
+|---|---|---|
+| `/_next/**`, `/__nextjs*` | passthrough | es el runtime de la app; reescribirlo rompe el RSC payload |
+| `/_media/**` (y la forma `%5Fmedia`) | passthrough | la key es content-addressed (ADR-006): sin `tenant_id` adentro, **dos tenants comparten el objeto**. Reescribir a `/s/{slug}/_media/…` deja sin fotos a **todas** las vidrieras |
+| `/s/**` | 404 del proxy, sin invocar la app | es el destino interno del rewrite, no una URL pública |
+
+**`/api/**` bajo un host de tenant se reescribe a `/s/{slug}/api/…` y da 404. Eso es querido, no
+una fuga.** El panel y sus endpoints viven en el apex; `app` y `api` son labels reservados
+(`host.test.ts`), así que no hay un `api.maat.work` que sea tenant. Si alguien lo reporta como bug,
+la respuesta es esta línea: no se "arregla" agregando `/api` a los passthrough — eso haría que la
+API del apex sea alcanzable desde el dominio de cualquier tenant.
+
+**Hueco conocido, todavía abierto: los file conventions de metadata de Next.** Un `icon.png` o
+`apple-icon.png` por tenant se sirve en `/icon.png` → sufijo `.png` → cae en la exclusión por
+extensión del `matcher` → sin rewrite → **el visitante de `acme.maat.work` recibe el ícono del
+apex**. Es la misma clase de bug que `/_media` (el matcher excluye por **sufijo**, el router de
+Next matchea por **segmento**), con la diferencia de que el guard de `qa-agent` hoy **no lo vería**:
+`ROUTE_FILES` enumera sólo `page.*` y `route.*`. `opengraph-image` sí queda cubierto: su URL no
+lleva extensión. Se cierra antes de S3 → ver `SLICE_BOARD.md`, entrada **P2**.
+
 ## Cache e invalidación  ·  **cerrado en FASE 1 (ADR-007, R1 PASS)**
 `cacheComponents: true` · `'use cache'` · `cacheTag(...)` · `cacheLife('max')` ·
 `revalidateTag(tag, perfil)` (la forma de 1 argumento está deprecada) · `updateTag(tag)` en Server
