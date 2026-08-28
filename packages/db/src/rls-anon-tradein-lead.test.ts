@@ -40,12 +40,23 @@ import { openAdmin, openStorefrontSession, type Session } from './test-session';
 // `reservations-sweep-attempts` (9002) ni `sales-one-sale-per-listing` (9003).
 const TENANT_A = '00000000-0000-4000-9004-000000000001';
 const TENANT_B = '00000000-0000-4000-9004-000000000002';
+/**
+ * El tercer tenant existe desde 0009 y es el único del archivo con `accepts_trade_in = false`.
+ *
+ * Antes de 0009 esta distinción no se podía hacer desde la base: la policy no miraba la bandera,
+ * así que A, B y C eran la misma cosa para el `WITH CHECK` y "el dueño no toma canje" lo sostenía
+ * **sólo** el `and t.accepts_trade_in` del handler. El bloque `g` es lo que ese tenant existe para
+ * medir.
+ */
+const TENANT_C = '00000000-0000-4000-9004-000000000003';
 const SLUG_A = 'canje-a';
 const SLUG_B = 'canje-b';
+const SLUG_C = 'canje-c';
 
 const admin = openAdmin();
 let vidrieraA: Session;
 let vidrieraB: Session;
+let vidrieraC: Session;
 let sinClaim: Session;
 
 async function adminRows<T>(text: string): Promise<T[]> {
@@ -72,22 +83,29 @@ function leadMinimo(tenant: string, extraCols = '', extraVals = ''): string {
 }
 
 beforeAll(async () => {
-  await admin.unsafe(`delete from tenants where id in ('${TENANT_A}', '${TENANT_B}')`);
+  await admin.unsafe(`delete from tenants where id in ('${TENANT_A}', '${TENANT_B}', '${TENANT_C}')`);
+  // `accepts_trade_in` va EXPLÍCITO en las tres filas, incluida la que lo apaga. El default de la
+  // columna es `false` (`schema/tenants.ts`), así que omitirlo en A y B dejaría todo el archivo
+  // rojo desde 0009 — y, peor, un fixture que depende del default es un fixture que cambia de
+  // significado el día que alguien cambia el default.
   await admin.unsafe(`
-    insert into tenants (id, slug, name, wa_phone, status) values
-      ('${TENANT_A}', '${SLUG_A}', 'Canje A', '5492990000041', 'active'),
-      ('${TENANT_B}', '${SLUG_B}', 'Canje B', '5492990000042', 'active')`);
+    insert into tenants (id, slug, name, wa_phone, status, accepts_trade_in) values
+      ('${TENANT_A}', '${SLUG_A}', 'Canje A', '5492990000041', 'active', true),
+      ('${TENANT_B}', '${SLUG_B}', 'Canje B', '5492990000042', 'active', true),
+      ('${TENANT_C}', '${SLUG_C}', 'Canje C', '5492990000043', 'active', false)`);
 
   vidrieraA = openStorefrontSession(SLUG_A);
   vidrieraB = openStorefrontSession(SLUG_B);
+  vidrieraC = openStorefrontSession(SLUG_C);
   sinClaim = openStorefrontSession(null);
 });
 
 afterAll(async () => {
   await vidrieraA?.close();
   await vidrieraB?.close();
+  await vidrieraC?.close();
   await sinClaim?.close();
-  await admin.unsafe(`delete from tenants where id in ('${TENANT_A}', '${TENANT_B}')`);
+  await admin.unsafe(`delete from tenants where id in ('${TENANT_A}', '${TENANT_B}', '${TENANT_C}')`);
   await admin.end({ timeout: 5 });
 });
 
@@ -535,5 +553,150 @@ describe('f · la forma del privilegio, leída de la BASE y no del archivo de mi
       `select obj_description('public.tradein_leads'::regclass) as comment`,
     );
     expect(r[0]?.comment ?? '').toContain('El rol anon inserta 9 columnas');
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════════════════════
+describe('g · `accepts_trade_in` es del MOTOR desde 0009, no del handler (S9)', () => {
+  /**
+   * ## Qué se rompió y cómo se reprodujo
+   * `adversary-reviewer` lo levantó sobre S8 ya commiteada y verde. El `WITH CHECK` de
+   * `tradein_leads_storefront_insert` decía sólo `tenant_id = storefront_tenant_id()` y no
+   * nombraba `accepts_trade_in` en ninguna parte. Medido contra Postgres real, con un tenant en
+   * `accepts_trade_in = false` y una sesión `anon` con su claim de slug: **`INSERT 0 1`**.
+   *
+   * La única defensa viva era el `and t.accepts_trade_in` del `select from tenants` del handler
+   * (`apps/web/app/(storefront)/s/[slug]/api/tradein/route.ts`). O sea exactamente la clase de
+   * afirmación que el encabezado de este archivo dice que no alcanza: *"una afirmación que vive
+   * sólo en el borde se pierde el día que aparece un segundo caller"*.
+   *
+   * La consecuencia no es abstracta: un tenant que APAGÓ el canje empieza a recibir nombre y
+   * teléfono de personas reales —PII— en un inbox que por definición no mira.
+   *
+   * ## Por qué el caso positivo está primero
+   * El riesgo de esta migración no es que deje pasar de más: es que **falle cerrado**. El
+   * `exists` corre como `anon`, así que depende de que `anon` tenga el GRANT de columna sobre
+   * `tenants` y de que `tenants_storefront_anon_select` le muestre la fila. Si cualquiera de esas
+   * dos cosas se cae, la policy pasa a ser insatisfacible y el canje **entero** deja de entrar.
+   * Un test que sólo probara el rechazo estaría verde en ese mundo.
+   */
+
+  it('C tiene el canje apagado y su vidriera NO puede dejar un lead: lo frena la POLICY', async () => {
+    // El caso reproducido: antes de 0009 esto devolvía `INSERT 0 1`.
+    const antes = await leadsDe(TENANT_C);
+    const fallo = await vidrieraC.expectFailure(leadMinimo(TENANT_C));
+    expect(fallo.code).toBe('42501');
+    // `row-level security policy` y no `permission denied`: el privilegio está intacto (el GRANT
+    // es por tabla+columna y no sabe nada de tenants), lo que rechaza es el `WITH CHECK`.
+    expect(fallo.message).toMatch(/row-level security policy/i);
+    expect(await leadsDe(TENANT_C)).toBe(antes);
+  });
+
+  it('tampoco con todas las columnas del GRANT: no es un problema de qué campos manda', async () => {
+    const antes = await leadsDe(TENANT_C);
+    const fallo = await vidrieraC.expectFailure(
+      leadMinimo(
+        TENANT_C,
+        ', storage_gb, color, declared_condition, battery_pct, notes',
+        `, 128, 'Medianoche', 'used_excellent', 87, 'Lo quiero canjear igual'`,
+      ),
+    );
+    expect(fallo.code).toBe('42501');
+    expect(fallo.message).toMatch(/row-level security policy/i);
+    expect(await leadsDe(TENANT_C)).toBe(antes);
+  });
+
+  it('ni `default values`, que es la sentencia que no nombra ninguna columna', async () => {
+    const fallo = await vidrieraC.expectFailure(`insert into tradein_leads default values`);
+    expect(fallo.code).toBe('42501');
+    expect(fallo.message).toMatch(/row-level security policy/i);
+  });
+
+  it('la vidriera de C tampoco puede plantar el lead en A, que SÍ toma canje', async () => {
+    // Las dos mitades del `WITH CHECK` son independientes: apagar una no habilita la otra.
+    const antes = await leadsDe(TENANT_A);
+    const fallo = await vidrieraC.expectFailure(leadMinimo(TENANT_A));
+    expect(fallo.code).toBe('42501');
+    expect(fallo.message).toMatch(/row-level security policy/i);
+    expect(await leadsDe(TENANT_A)).toBe(antes);
+  });
+
+  it('el dueño lo prende y el canje entra; lo apaga y deja de entrar, sin deploy', async () => {
+    // Es la pantalla de Ajustes: una bandera por tenant, no una constante del código. Se mide el
+    // ciclo completo porque el rechazo de arriba también sería verde si la policy fuera
+    // insatisfecha SIEMPRE — que es el modo de falla caro de esta migración.
+    const antes = await leadsDe(TENANT_C);
+    await admin.unsafe(`update tenants set accepts_trade_in = true where id = '${TENANT_C}'`);
+    expect(await vidrieraC.affected(leadMinimo(TENANT_C))).toBe(1);
+    expect(await leadsDe(TENANT_C)).toBe(antes + 1);
+
+    await admin.unsafe(`update tenants set accepts_trade_in = false where id = '${TENANT_C}'`);
+    const fallo = await vidrieraC.expectFailure(leadMinimo(TENANT_C));
+    expect(fallo.code).toBe('42501');
+    expect(await leadsDe(TENANT_C)).toBe(antes + 1);
+
+    await admin.unsafe(`delete from tradein_leads where tenant_id = '${TENANT_C}'`);
+  });
+
+  it('un tenant `suspended` con el canje prendido tampoco: el subselect pasa por la RLS de tenants', async () => {
+    // El `exists` corre como `anon`, así que además del GRANT pasa por
+    // `tenants_storefront_anon_select` (`status = 'active' and slug = storefront_slug()`). Sin esa
+    // segunda capa, un tenant dado de baja seguiría recibiendo canjes.
+    await admin.unsafe(
+      `update tenants set accepts_trade_in = true, status = 'suspended' where id = '${TENANT_C}'`,
+    );
+    try {
+      const fallo = await vidrieraC.expectFailure(leadMinimo(TENANT_C));
+      expect(fallo.code).toBe('42501');
+      expect(fallo.message).toMatch(/row-level security policy/i);
+      expect(await leadsDe(TENANT_C)).toBe(0);
+    } finally {
+      await admin.unsafe(
+        `update tenants set accepts_trade_in = false, status = 'active' where id = '${TENANT_C}'`,
+      );
+    }
+  });
+
+  it('`anon` puede EVALUAR el subselect: sin estos dos privilegios la policy falla cerrado siempre', async () => {
+    // `GRANT` y RLS son dos capas y se evalúan las dos (`CLAUDE.md` §2). Éste es el test que
+    // convierte "el canje dejó de andar en producción" en "el diff que recortó el GRANT no
+    // mergea": en local la conexión suele ser superusuario y el síntoma no aparece.
+    const r = await vidrieraA.query<{ id: boolean; flag: boolean; tabla: boolean }>(`
+      select has_column_privilege('anon', 'public.tenants', 'id', 'SELECT') as id,
+             has_column_privilege('anon', 'public.tenants', 'accepts_trade_in', 'SELECT') as flag,
+             has_table_privilege('anon', 'public.tenants', 'SELECT') as tabla`);
+    expect(r[0]?.id).toBe(true);
+    expect(r[0]?.flag).toBe(true);
+    // Y sigue siendo por columna, no por tabla: un GRANT de tabla alcanzaría a `fx_rate`,
+    // `plan_tier` y a toda columna futura de `tenants`.
+    expect(r[0]?.tabla).toBe(false);
+  });
+
+  it('y VE la fila de su propio tenant: el privilegio sin policy leería cero filas', async () => {
+    const r = await vidrieraA.query<{ n: string }>(
+      `select count(*)::text as n from tenants where accepts_trade_in`,
+    );
+    expect(Number(r[0]?.n ?? '-1')).toBe(1);
+  });
+
+  it('el `WITH CHECK` de la base nombra las DOS mitades, leído de pg_policies y no del .sql', async () => {
+    const r = await adminRows<{ wc: string | null }>(`
+      select with_check as wc from pg_policies
+      where schemaname = 'public' and policyname = 'tradein_leads_storefront_insert'`);
+    const wc = r[0]?.wc ?? '';
+    expect(wc).toContain('storefront_tenant_id');
+    expect(wc).toContain('accepts_trade_in');
+    // Correlacionado con la fila que se está insertando, no con una segunda llamada al claim. Es
+    // la forma que se eligió en 0009: dice "el tenant DE ESTA FILA toma canje" y por lo tanto no
+    // depende de que el otro conjunto siga existiendo.
+    expect(wc).toMatch(/t\.id\s*=\s*tradein_leads\.tenant_id/i);
+  });
+
+  it('la policy lleva el porqué escrito en la base, no sólo en el .sql', async () => {
+    const r = await adminRows<{ c: string | null }>(`
+      select obj_description(p.oid, 'pg_policy') as c
+      from pg_policy p join pg_class c on c.oid = p.polrelid
+      where c.relname = 'tradein_leads' and p.polname = 'tradein_leads_storefront_insert'`);
+    expect(r[0]?.c ?? '').toContain('accepts_trade_in');
   });
 });
