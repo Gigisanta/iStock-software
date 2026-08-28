@@ -307,6 +307,93 @@ else
   no "sin HTML de ficha: los 15 campos quedaron sin medir"
 fi
 
+# ── M3b · el boton wa.me, que es el unico campo de los 15 que nadie chequeaba ─
+# Agregado por el LEAD el 2026-08-28, y el motivo de que faltara vale mas que el modulo: habia
+# TRES pruebas alrededor del `wa.me` y ninguna sobre la pagina servida.
+#   1. `packages/domain/src/wa.test.ts` fija el string canonico byte a byte — pero fuera de la
+#      pagina: prueba la funcion, no que alguien la llame.
+#   2. `apps/web/app/(storefront)/ficha.test.ts` cuenta que UN solo componente emite el enlace —
+#      pero cuenta en el FUENTE. Un componente que existe y no se renderiza pasa igual.
+#   3. `e2e/_lib/miss.ts:96` exige que el miss NO tenga `wa.me` — en negativo. Una vidriera que
+#      perdio el boton en todas sus fichas satisface esa asercion perfectamente.
+# Tres pruebas que rodean el invariante y ninguna que lo afirme. La ficha minima de `CLAUDE.md` §1
+# tiene 15 campos, este gate aseguraba 14, y el que faltaba es el unico por el que entra la plata:
+# los otros 14 informan, este convierte. Un producto cuyo "done cobrable" es "recibe WhatsApps esa
+# noche" no puede tener el boton de WhatsApp como el campo sin cubrir.
+if [ -s "$HTML" ] && [ -s "$GRID" ]; then
+  # El conteo va sobre ANCHORS (`<a ... wa.me ...>`), no sobre ocurrencias del texto. Medido en la
+  # ficha servida: `wa.me` aparece 3 veces y hay UN solo anchor — las otras dos son el payload de
+  # RSC que Next escribe al final del body, que repite el mismo `<a>` serializado. Contar
+  # ocurrencias daria 3 y haria fallar la regla de "UN boton" contra una ficha correcta.
+  ANCHORS=$(grep -aoE '<a[^>]*href="https://wa\.me/[^"]*"[^>]*>' "$HTML" | wc -l | tr -d ' ')
+  case "$ANCHORS" in
+    1) ok "campo: UN solo boton wa.me en la ficha (CLAUDE.md §1)" ;;
+    0) no "campo FALTANTE en la ficha: el boton wa.me. Es el campo por el que entra la plata" ;;
+    *) no "la ficha tiene $ANCHORS botones wa.me y el producto pide UNO: dos precios distintos en dos botones es como se pierde una venta" ;;
+  esac
+
+  # La grilla NO lleva boton: sin ficha no hay equipo ni precio que nombrar en el mensaje, y un
+  # `wa.me` en la grilla manda un "hola" pelado que el dueño tiene que descifrar a mano.
+  GANCHORS=$(grep -aoE '<a[^>]*href="https://wa\.me/[^"]*"[^>]*>' "$GRID" | wc -l | tr -d ' ')
+  [ "$GANCHORS" = "0" ] && ok "la grilla no tiene boton wa.me (sin ficha no hay precio que nombrar)" \
+    || no "la grilla tiene $GANCHORS boton(es) wa.me: manda un 'hola' sin equipo ni precio"
+
+  WA_HREF=$(grep -aoE 'https://wa\.me/[^"]+' "$HTML" | head -1)
+  if [ -z "$WA_HREF" ]; then
+    no "sin href de wa.me: no puedo medir ni el telefono ni el texto"
+  else
+    # Telefono: sale del seed, no de este archivo. `SEED_DEMO_WA_PHONE` pisa el fallback sin tocar
+    # codigo (`seed-data.ts:28`), asi que el gate lee la misma variable que la siembra. Hardcodear
+    # el numero aca haria que el gate mienta el dia que alguien exporte otro.
+    WANT_PHONE="${SEED_DEMO_WA_PHONE:-5492990000000}"
+    case "$WA_HREF" in
+      "https://wa.me/${WANT_PHONE}"*) ok "el wa.me apunta al telefono del tenant ($WANT_PHONE)" ;;
+      *) no "el wa.me NO apunta al telefono del tenant: esperaba $WANT_PHONE en $(printf '%s' "$WA_HREF" | cut -c1-60)" ;;
+    esac
+
+    # Decodificado del `text=`. Sin python ni node: `%XX` → `\xXX` y `printf '%b'` lo resuelve,
+    # UTF-8 incluido (probado con `Neuqu%C3%A9n` → `Neuquén`). El `sed` va en C para que un byte
+    # alto no vuelva a tirar `illegal byte sequence`, como ya paso limpiando ANSI del log del gate.
+    #
+    # El `printf` toma el string como ARGUMENTO de `%b` y no como formato: al reves, un `%` del
+    # texto se comeria el siguiente caracter. Y NO va por `xargs`: la primera version decia
+    # `| xargs -0 printf '%b'` y fue medida antes de confiar en ella — `xargs` procesa las
+    # barras invertidas por su cuenta y entrega `\x2C` ya pelado, asi que `printf` recibia `x2C` y
+    # devolvia `Holax2Cx20vix20el...`. El detalle que lo hace peligroso es que ESO SIGUE PARECIENDO
+    # TEXTO: no es un error ni un vacio, es una cadena plausible que ningun `set -e` detiene.
+    WA_TEXT=$(printf '%s' "$WA_HREF" | sed 's/^[^?]*?//; s/^text=//; s/&.*$//' \
+              | LC_ALL=C sed 's/+/ /g; s/%/\\x/g')
+    WA_TEXT=$(printf '%b' "$WA_TEXT")
+    inf "wa.me text= decodificado: $(printf '%s' "$WA_TEXT" | cut -c1-110)"
+
+    waq() { case "$WA_TEXT" in *"$2"*) ok "el mensaje de WA nombra $1 ('$2')" ;;
+                               *) no "el mensaje de WA NO nombra $1: falta '$2'" ;; esac; }
+    waq "el precio en dolares" "USD 620"
+    waq "la vidriera de donde vino" "demo.maat.work"
+    waq "la intencion de compra" "y lo quiero."
+
+    # ## El par de registros, que es lo que ningun otro test puede ver
+    # `CLAUDE.md` §1 lo ratifico en FASE 2 y es contraintuitivo a proposito: la MISMA pagina dice
+    # `usado excelente` en el cuerpo (M3 ya lo exige) y `usado A` en el mensaje de WhatsApp. No es
+    # un bug de consistencia: la ficha le habla a un comprador y el mensaje a un reseller, que usa
+    # esa jerga. Son dos mapas distintos en `packages/domain` (`WA_CONDITION_LABELS`, `types.ts:69`).
+    # Este es el unico lugar del proyecto donde se pueden observar los DOS a la vez, sobre el mismo
+    # HTML: el unit de dominio ve un mapa por vez y no sabe que hay una pagina. Y es exactamente la
+    # clase de decision que muere en silencio — el dia que alguien "arregle la inconsistencia"
+    # unificando los mapas, todos los tests unitarios van a seguir verdes.
+    case "$WA_TEXT" in
+      *"usado A"*) ok "el mensaje de WA usa el registro reseller ('usado A', FASE 2)" ;;
+      *) no "el mensaje de WA perdio el registro reseller: esperaba 'usado A' (WA_CONDITION_LABELS)" ;;
+    esac
+    case "$WA_TEXT" in
+      *"usado excelente"*) no "el mensaje de WA copio el registro de la FICHA ('usado excelente'): los dos mapas se unificaron y la decision de FASE 2 se perdio" ;;
+      *) ok "el mensaje de WA no usa el registro de la ficha: los dos mapas siguen separados" ;;
+    esac
+  fi
+else
+  no "sin HTML de ficha o de grilla: el boton wa.me quedo sin medir"
+fi
+
 # ── M4 · cero campos prohibidos EN LOS BYTES ────────────────────────────────
 # Este es el tier caro y va contra el HTML servido, incluido el payload de RSC que Next escribe al
 # final del body: ahi es donde un objeto crudo se filtra sin aparecer en pantalla. Los valores son
