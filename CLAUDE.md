@@ -31,6 +31,15 @@ Diseña, orquesta, verifica y re-ejecuta los comandos de aceptación.
    (`S8.2` y `T50`) y registrarlo sin arbitrarlo, que es lo correcto de su parte. **Se resolvió
    haciendo cierta la regla, no aflojándola:** `S8.2` no tenía a nadie encima, así que se sumó
    al encargo abierto del mismo writer. No es una excepción y no sienta una.
+   **Segunda precisión, LEAD, 2026-08-28, y es el modo de falla opuesto:** `doing` marca **un
+   writer**, no una pregunta abierta. Una fila cuyo trabajo es *auditar*, *censar* o *decidir*, sin
+   nadie editando archivos, va a `todo` o `blocked` — nunca a `doing`. Lo levantó `docs-keeper` al
+   ver que `T19` seguía en `doing` sobre `packages/ai` con el árbol limpio, y registrarlo sin
+   arbitrarlo. El costo no es cosmético en ninguna de las dos direcciones: un `doing` sin writer
+   **reserva un directorio que nadie está usando** —si hubiera significado lo que decía, despachar
+   `ai-agent` ese mismo día habría violado esta regla— y al mismo tiempo **hace que el conteo deje
+   de medir lo que dice medir**, que es el defecto de la primera precisión visto del otro lado.
+   `T19` pasa a `todo`: su trabajo es un censo de `TEST_MATRIX.md` que nadie tomó.
 2. Nada es `done` sin (a) artefacto en `/docs` y (b) comando de aceptación que **el LEAD re-ejecuta**.
 3. **Dos fallos en la misma slice → STOP y re-plan.** No hay tercer intento a ciegas.
 4. Slice = spec en `SLICE_BOARD.md` → test → impl → typecheck/lint/test → adversary → commit.
