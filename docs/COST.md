@@ -8,7 +8,17 @@ _Re-medido el 2026-08-27 después de **ADR-011** (el slug inexistente dejó de s
 (los dos polos del cache). Lo que cambió está en §2.1; lo que **no** cambió también, y dice por qué._
 
 ## Objetivo duro
-> **Costo marginal de infra < USD 0.50 / mes por tenant activo, hasta 100 tenants.**
+> **Base ≤ USD 0,50 · Negocio ≤ USD 1,50** por tenant activo, hasta 100 tenants, donde el 1,50 es
+> **0,50 + hasta 1,00 atribuible al chat**.
+
+Ratificado por el LEAD (`ARCHITECTURE.md` §153, `DECISIONS.md` §21-28, commit `ea26a02`). **La forma
+importa más que el número:** el 1,50 **no** es una vara más floja para las mismas cosas — una slice
+de vidriera, de panel o de media se mide contra **0,50 aunque el tenant esté en Negocio**. Si no,
+«Negocio ≤ 1,50» licencia en silencio una vidriera de 1,40 y el chat se queda sin lugar. Corolario
+operativo: **un número por tenant que no dice qué parte es chat no se puede comparar contra ninguno
+de los dos techos**, así que en este documento el marginal va siempre atribuido (§2.5.6).
+
+§2.4.7 dejaba esto como «acotación abierta para ratificación». **Está ratificado y cerrado.**
 
 El **piso fijo** se cuenta **aparte** del marginal. No mezclar.
 
@@ -16,12 +26,19 @@ El **piso fijo** se cuenta **aparte** del marginal. No mezclar.
 
 **Se cumple, y con margen — pero no por donde parecía en FASE 0.**
 
-| | FASE 0 `[EST]` | FASE 1 (con fuente) | FASE 4 (S1 + S2 **medidas**) | T1 (WAF **acotado**) | **S6 (reservas + cron)** |
-|---|---|---|---|---|---|
-| Marginal plan **Base** | ~USD 0.03 | USD 0.07 | USD 0.09 | USD 0.03 | **USD 0.088** |
-| Marginal plan **Negocio** | 0.03 + `[R3]` | USD 0.24 – 0.30 | USD 0.25 – 0.31 | USD 0.20 – 0.26 | **USD 0.259 – 0.319** |
-| Headroom del Negocio contra el objetivo | «~15× abajo» | ~1.7× | ~1.6× | ~1.9 – 2.5× | **~1.6 – 1.9×** |
-| **% de hits de vidriera que llegan a Postgres** `[EST]` | — | — | «1,3 %» (**mal modelado**) | — | **39,4 %** (alarma: 5 %) |
+| | FASE 0 `[EST]` | FASE 1 (con fuente) | FASE 4 (S1 + S2 **medidas**) | T1 (WAF **acotado**) | S6 (reservas + cron) | **HEAD `68c0bd6` (radio MEDIDO)** |
+|---|---|---|---|---|---|---|
+| Marginal plan **Base** | ~USD 0.03 | USD 0.07 | USD 0.09 | USD 0.03 | USD 0.088 | **USD 0.025 – 0.026** |
+| Marginal plan **Negocio** | 0.03 + `[R3]` | USD 0.24 – 0.30 | USD 0.25 – 0.31 | USD 0.20 – 0.26 | USD 0.259 – 0.319 | **USD 0.196 – 0.257** |
+| Headroom del Negocio contra el objetivo | «~15× abajo» | ~1.7× | ~1.6× | ~1.9 – 2.5× | ~1.6 – 1.9× | **5.8 – 7.6×** (contra 1.50 por plan) |
+| **% de hits de vidriera que llegan a Postgres** `[EST]` | — | — | «1,3 %» (**mal modelado**) | — | 39,4 % (alarma: 5 %) | **4,6 %** (radio 2, **medido** por V9) |
+
+> **La última columna es de la re-auditoría del 2026-08-28 y está en §2.5.** Todo lo que dicen las
+> columnas anteriores sobre el 39,4% y sobre «la palanca pendiente» es **historia**: la palanca de
+> §2.4.5 se accionó en `f504d69`, el radio de invalidación es **2** y lo **cuenta** V9 de
+> `accept-s6.sh` desde la línea `MEDIDO s6 radio` del e2e. Se dejan escritas las columnas viejas
+> porque un documento de costo que borra sus errores deja de ser auditable — pero **el estado es
+> la última columna**.
 
 **La columna T1 no baja porque el código se haya puesto más rápido: baja porque una regla de WAF
 dejó de apuntar a la vidriera.** El renglón de WAF pasó de USD 0.06 a **USD 0.002 – 0.003**, o sea
@@ -53,10 +70,15 @@ casi todo **ISR Writes por invalidación ancha**. Ver §2.4.
 
 **Y la corrección que S6 destapó, que es más grande que S6:** la fila de arriba dice 39,4% donde
 §2.2.5 decía 1,3%, y **el que estaba mal es el 1,3%** — se calculó como `invalidaciones / pageviews`,
-fórmula que sólo vale si una purga alcanza una página. `invalidateStorefrontUnit()` emite
-`storefront:{slug}`, que la **ficha también registra**, así que **una reserva purga las 61 páginas
-del tenant, no 1**. Sin S6 el número ya era 32,1%. La palanca son dos ediciones de una línea cada
-una (§2.4.5) y baja a **4,7%**; es gate de la próxima slice de vidriera.
+fórmula que sólo vale si una purga alcanza una página. `invalidateStorefrontUnit()` emitía
+`storefront:{slug}`, que la **ficha también registraba**, así que **una reserva purgaba las 61
+páginas del tenant, no 1**. Sin S6 el número ya era 32,1%.
+
+> **Cerrado el 2026-08-28 (§2.5.1).** Las dos ediciones de §2.4.5 se hicieron en `f504d69`: la
+> ficha ya no registra `storefront:{slug}` y `invalidateStorefrontUnit()` ya no emite
+> `tenant-config:{slug}`. **Radio = 2, y no es una lectura del fuente: lo cuenta V9 de
+> `accept-s6.sh` con `esperado=2` y controles anti-vacuidad.** El vector de DB queda en **4,6 %**,
+> bajo la alarma, e ISR Writes caen de USD 0,071 a **USD 0,0085** — el 62% del marginal Base.
 
 **Y el hallazgo que importa más que todo lo anterior:** con los números de R4, la **comisión de
 Mercado Pago (~USD 1.03/mes por cliente pagador `[UNVERIFIED]`) cuesta 3–4× toda la infraestructura
@@ -97,20 +119,22 @@ supuesto y sin él el vector de Postgres no se puede calcular (§2.4.4).
 | R2 egress | **0 por diseño** | **0** | R2: egress Free |
 | **Upload: Active CPU de `sharp`** | 72 fotos/mes × 1,35 s × USD 0.128/CPU-h | **0.0035** `[UNVERIFIED el precio]` | **§2.2, CPU medido** |
 | Upload: memoria + invocaciones + transferencia a R2 | ver §2.2 | **0.0056** `[EST]` | §2.2 |
-| **ISR Writes** — pre-S6 | 962 renders fríos/mes × 15 write units | **0.058** | **§2.4.4.** La línea vieja decía «~200 mutaciones × 15 = 0.012» y contaba **una** página por invalidación; son 61 |
-| **ISR Writes** — delta S6 | +221 renders fríos × 15 write units | **0.0133** | **§2.4.4** |
+| ~~**ISR Writes** — pre-S6~~ | ~~962 renders fríos/mes × 15 write units~~ | ~~0.058~~ | **superado por §2.5.1** — valía con radio 61 |
+| ~~**ISR Writes** — delta S6~~ | ~~+221 renders fríos × 15 write units~~ | ~~0.0133~~ | **superado por §2.5.1** |
+| **ISR Writes — vigente (radio 2, MEDIDO)** | ≤141 renders fríos/mes × 15 write units | **0.0085** | **§2.5.1.** El radio lo cuenta V9 de `accept-s6.sh` (`esperado=2`); el tráfico sigue siendo `[EST]` |
 | ISR Reads | sólo en CDN miss | ~0 | R1: USD 0.40/1M |
 | **Server Actions reservar/cancelar** | 32/mes × USD 0.60/1M | **0.00002** | §2.4.7 |
 | **Cron `*/5` amortizado a 100 tenants** | (0.028 – 0.133) ÷ 100 | **0.0003 – 0.0013** | **§2.4.2 — es piso (§1), va acá sólo para que se vea que es ruido** |
 | Edge Requests | 10M incluidos ≈ 80 tenants; después USD 2.00/1M | **~0.04** | R1 (iad1) |
 | **WAF Rate Limiting** — Base | ≤3.000 allowed req/mes × USD 0.80/1M | **0.0024** | **§2.3, T1** |
 | **WAF Rate Limiting** — Negocio | ≤4.200 allowed req/mes × USD 0.80/1M | **0.0034** | **§2.3, T1** |
-| Postgres | **60,6% de hits cacheados, no 95%** (§2.4.4) | ~0 en USD, **8× la alarma** en el vector | **§2.4.4** — el objetivo de ADR-007 **no se cumple** y la palanca está en §2.4.5 |
+| Postgres | **95,4% de hits cacheados** (§2.5.1) | ~0 en USD, **4,6%** contra una alarma de 5% | **§2.5.1** — el objetivo de ADR-007 **se cumple** desde `f504d69`; §2.4.4 (60,6%) es historia |
 | LLM plan **Base** | **widget ausente** | **0** | `CLAUDE.md` §3 |
 | LLM plan **Negocio** | 1.200 msgs × USD 0.000144–0.000192 | **0.17 – 0.23** | R3 |
-| **Marginal Base — modelo corregido, sin S6** | | **USD 0.074** | §2.4.4 |
-| **Marginal Base — con S6** | | **USD 0.088** | §2.4.7 |
-| **Marginal Negocio — con S6** | | **USD 0.259 – 0.319** | §2.4.7 |
+| ~~Marginal Base — con S6~~ | | ~~USD 0.088~~ | §2.4.7, con radio 61 |
+| ~~Marginal Negocio — con S6~~ | | ~~USD 0.259 – 0.319~~ | §2.4.7, con radio 61 |
+| **Marginal Base — VIGENTE** | no-chat, contra el techo de 0.50 | **USD 0.025 – 0.026** | **§2.5.6** |
+| **Marginal Negocio — VIGENTE** | no-chat 0.026 + chat 0.17 – 0.23 | **USD 0.196 – 0.257** | **§2.5.6** — atribuido, contra 0.50 (no-chat) y 1.00 (chat) |
 
 La línea vieja de R2 decía **«~140 MB → ~0.001»** y estaba baja **4,7×**, no por el storage
 (120 MB medidos contra 140 supuestos: acertó) sino porque **contaba Class A y Class B como si
@@ -943,6 +967,13 @@ que a este perfil de uso son **~42.000 tenants**. No es un límite que vayamos a
 
 #### 3. `EXPIRE_BATCH_SIZE = 200`: no es problema de costo ni de producto. El problema es otro.
 
+> **Recalibrado el 2026-08-28 en §2.5.2.** La conclusión de esta sección se mantiene —el techo no es
+> la variable— pero el framing de abajo («si alguna vez hubiera 200 de ésas») pedía 200 filas rotas
+> **independientes**, que este producto no va a ver. El modo de falla real es **una causa sistémica
+> que envenena el 100% de las filas de una** (un `GRANT` que falta, una migración editada después de
+> aplicada), y ahí el número de filas es irrelevante: con dos filas debidas y las dos fallando, ya
+> no vence nada nadie. Sigue leyéndose esta sección; el cierre está en §2.5.
+
 Saturar el batch requiere 200 reservas vencidas en una ventana de 5 minutos.
 
 ```
@@ -1112,20 +1143,25 @@ Negocio, con S6              : 0,088 − 0,0024 (WAF Base) + 0,0034 (WAF Negocio
 (Con las 8 write units que midió §2.2.5 en vez del techo de 15 que usa §2, el renglón de ISR sería
 0,031 y el Base 0,047. Se usa 15 por conservador, igual que el resto del documento.)
 
-| | antes de S6, modelo viejo | antes de S6, **corregido** | **con S6** | objetivo | headroom |
-|---|---|---|---|---|---|
-| Marginal **Base** | USD 0,030 | USD 0,074 | **USD 0,088** | 0,50 | 5,7× |
-| Marginal **Negocio** | USD 0,20 – 0,26 | USD 0,245 – 0,305 | **USD 0,259 – 0,319** | 0,50 | **1,6 – 1,9×** (era 1,9 – 2,5×) |
-| % de hits de vidriera a Postgres | «1,3 %» | 32,1 % `[EST]` | **39,4 %** `[EST]` | **5 %** | **−8×** |
+**Esta tabla es el estado del 2026-08-28 por la mañana, con radio 61. El estado vigente está en
+§2.5.6** — la palanca se accionó esa misma tarde y las tres filas se movieron.
+
+| | antes de S6, modelo viejo | antes de S6, **corregido** | con S6 (radio 61) | **HEAD, radio 2 (§2.5.6)** | objetivo | headroom hoy |
+|---|---|---|---|---|---|---|
+| Marginal **Base** | USD 0,030 | USD 0,074 | USD 0,088 | **USD 0,025 – 0,026** | 0,50 | **19×** |
+| Marginal **Negocio** | USD 0,20 – 0,26 | USD 0,245 – 0,305 | USD 0,259 – 0,319 | **USD 0,196 – 0,257** | 1,50 (0,50 no-chat + 1,00 chat) | **5,8 – 7,6×** |
+| % de hits de vidriera a Postgres | «1,3 %» | 32,1 % `[EST]` | 39,4 % `[EST]` | **4,6 %** (radio **MEDIDO**) | **5 %** | **adentro** |
 
 **Ninguna meta de dinero se rompe. La que se rompe es la del vector de DB, y la palanca de §2.4.5
 la devuelve a 4,7% — o sea, adentro.**
 
-> **Nota sobre el objetivo del plan Negocio.** El LEAD encargó esta auditoría contra
-> «Base ≤ 0,50 y Negocio ≤ 1,50». **`CLAUDE.md` y el §Objetivo de este documento dicen 0,50 para
-> todo**, sin distinguir plan. La tabla de arriba usa **0,50** porque aflojar un objetivo es una
-> decisión, no un cálculo, y no la puede tomar el auditor de costo en el cuerpo de una medición.
-> Contra 1,50 el Negocio quedaría a 5,5–7×. Queda como **acotación abierta para ratificación**.
+> **Nota sobre el objetivo del plan Negocio. RATIFICADA Y CERRADA (`ea26a02`, 2026-08-28.)** Esta
+> auditoría la dejó como acotación abierta porque aflojar un objetivo es una decisión y no un
+> cálculo. El LEAD la decidió: **Base ≤ 0,50 · Negocio ≤ 1,50, donde el 1,50 es 0,50 + hasta 1,00
+> atribuible al chat**, y una slice de vidriera, panel o media se mide contra **0,50 aunque el
+> tenant esté en Negocio**. Está en `ARCHITECTURE.md` §153 y `DECISIONS.md` §21-28, y en el
+> §Objetivo de este documento. El corolario operativo es que el marginal va **atribuido**: ver
+> §2.5.6.
 
 **COST_VERDICT: PASS, con gate nombrado para la próxima slice de vidriera.**
 
@@ -1139,6 +1175,12 @@ tenant** — o sea, la que empeora justo cuando el producto funciona.
 de §2.4.5, juntas, más la medición de §2.4.6. **Una slice de vidriera que pase por encima de este
 gate es FAIL de costo**, igual que S1 le dejó el gate de coalescing a S2.
 
+> **CUMPLIDO en `f504d69` (S6.2), verificado el 2026-08-28.** Las dos ediciones se hicieron juntas
+> —más una tercera que ninguna de las dos anticipaba: `page.tsx` era un **cuarto** registrante de
+> tags y sin tocarlo el arreglo no movía el número que lo justificaba— y el radio dejó de estimarse:
+> lo **cuenta** V9 de `accept-s6.sh`. Radio **2**, vector de DB **4,6%**. Detalle en §2.5.1. El gate
+> no se retira: se convierte en el fallo automático permanente de §6 («radio > 2 = FAIL»).
+
 #### 8. El orden de magnitud que relativiza toda esta sección
 
 Todo el delta marginal de S6 es **USD 0,015/tenant/mes**. La comisión de Mercado Pago es
@@ -1149,6 +1191,359 @@ La palanca de §2.4.5 vale la pena **por el invariante y por la latencia del pri
 por los USD 0,053/mes que ahorra. Y el que lea esta sección y salga queriendo mover el cron a
 `*/15` para ahorrar USD 0,09/mes la leyó al revés: eso es exactamente el «costo tonto en la
 dirección contraria» de §2.2.3.
+
+### 2.5 Cerrado en la re-auditoría del 2026-08-28 (HEAD `68c0bd6`) — el barrido que se atraganta
+
+Dos cosas en esta sección. La primera es una **corrección a mi favor que igual va escrita**: el
+renglón más grande de §2.4 ya no existe, la palanca se accionó y el radio está **medido**. La
+segunda es el hallazgo de §2.4.3 que quedó como métrica y nunca se cerró: lo cierro acá, con la
+aritmética y con la aserción que lo mantiene arreglado.
+
+#### 1. La palanca de §2.4.5 **se accionó**. El 39,4% de §0 y de §2 es historia, no estado.
+
+Verificado contra el árbol de hoy, no contra el commit message:
+
+```
+apps/web/app/(app)/_lib/tenants/storefront-cache.ts:166-169
+    invalidateStorefrontUnit()  →  emite [ storefront:{slug} , listing:{uuid} ]   (cayó tenant-config)
+apps/web/app/(storefront)/_lib/listings.ts:532
+    getStorefrontListing()      →  registra listing:{uuid}                        (cayó storefront:{slug})
+apps/web/app/(storefront)/_lib/listings.ts:360
+    la grilla                   →  registra storefront:{slug} + tenant-config:{slug}
+apps/web/app/(storefront)/_lib/listings.ts:556  (listingMiss)
+    el miss de la ficha         →  conserva storefront:{slug}, a propósito
+```
+
+Radio = **grilla + la ficha de esa unidad = 2**, que es exactamente lo que §2.4.5 pedía. Y no es
+una lectura mía del fuente: `accept-s6.sh` V9 lo **cuenta** desde la línea `MEDIDO s6 radio` que
+emite el e2e, con `esperado=2`, con controles anti-vacuidad (toda página en HIT antes de la
+mutación, una sola request después, la request fría tiene que producir `statements > 0`) y con un
+caso que **rechaza** el arreglo que baja el radio a cero rompiendo la invalidación. Corrida del
+LEAD en `f504d69`: `rerender=2 · esperado=2 · sobrevivieron=[ficha-a,ficha-c,ficha-d]`.
+
+**Recalculo el vector de DB con radio 2, misma fórmula de renovación de §2.4.4, mismos supuestos:**
+
+```
+I = 72 mutaciones/mes que emiten tag  ·  λ_grilla = 1.500/mes  ·  λ_ficha = 25/mes  ·  60 fichas
+purgas que le tocan a cada ficha : 72 / 60 = 1,2 /mes
+
+grilla : 1.500 × 72/(1.500+72)      =  68,7 misses
+fichas :    60 × 25 × 1,2/(25+1,2)  =  68,7 misses     (techo grueso de §2.4.5: ≤ 72)
+                                      ───────────────
+                                       137,4 / 3.000  =  4,6 %      (techo: ≤141 = 4,7 %)
+```
+
+**El vector de DB queda en 4,6 % `[EST]`, bajo la alarma de 5 %.** Era 39,4%. Se usa el techo
+**4,7 %** en las tablas, por conservador.
+
+```
+ISR Writes con radio 2 : ≤141 renders fríos × 15 write units × USD 4,00/1M = USD 0,0085 /tenant/mes
+                         (era 0,071 con radio 61 — cae 8,4×, que es el mismo factor del radio)
+```
+
+> **Corrección de aritmética de este documento.** §2.4.5 dice que la palanca lleva ISR Writes de
+> «0,071 → 0,018». **El 0,018 no sale de su propia fórmula**: `141 × 15 × 4,00/1M = 0,0085`, y para
+> llegar a 0,018 harían falta ~300 renders fríos, que no aparecen en ningún cálculo de esa sección.
+> Vale el 0,0085. Es un error mío, chico y en la dirección conservadora, y queda escrito porque la
+> alternativa —corregirlo en silencio— es cómo un documento de costo deja de ser auditable.
+
+#### 2. El hallazgo de §2.4.3 sigue vivo. Verificado contra el código de hoy, no repetido de memoria.
+
+`398fff7` («the closing status comes from the domain, not a literal») **no tocó este archivo**:
+`git log -- expire-reservations.ts` termina en `83bc673` (S6.1). Lo que cambió esta semana fue
+`reserve-unit.ts`, su hermano del panel. El barrido está tal cual, y lo que sostiene el hallazgo
+son cuatro hechos del fuente, todos verificables en una lectura:
+
+1. **La clave de orden no cambia cuando la fila falla.** El `select` es
+   `where status='active' and expires_at <= now order by expires_at asc limit 200`. Una fila que
+   tira deja la transacción rolleada: sigue `active`, con el mismo `expires_at` en el pasado. Por
+   `asc`, es **la primera de la próxima corrida, y de la siguiente, para siempre**.
+2. **No hay dónde anotar que ya falló.** `packages/db/src/schema/commerce.ts` — `reservations`
+   tiene `id · tenant_id · listing_id · status · minutes · expires_at · customer_label ·
+   created_by · closed_at · created_at · updated_at`. **Ninguna columna de intentos.** Sin estado,
+   no hay forma de distinguir el primer fallo del octomilésimo.
+3. **El `try/catch` es por fila y está dentro del loop**, así que `expireDueReservations()` nunca
+   propaga. El único `catch` del route rodea la llamada entera y sólo se dispara si tira el
+   `select`. Consecuencia exacta: **una corrida donde fallan las 200 filas devuelve `200 OK`**, con
+   `{ ok: true, scanned: 200, expired: 0, failed: 200 }`. Para el dashboard de Vercel Cron es
+   idéntica a una corrida perfecta.
+4. **El test que parece cubrirlo, no lo cubre.** `expire-reservations.test.ts` tiene
+   *«una fila podrida no frena el barrido → cuenta el fallo, loguea el id y sigue con la
+   siguiente»*, y pasa (13/13, corrido hoy). Afirma la resiliencia **dentro de una corrida**.
+   El hallazgo es **entre corridas**, y no hay un solo test que ejecute el barrido dos veces.
+   Es el peor tipo de cobertura: la que tranquiliza sobre el eje equivocado.
+
+**Y el framing de §2.4.3 estaba mal calibrado, así que lo corrijo.** Ahí escribí «si alguna vez
+hubiera 200 de ésas». Pedir 200 filas rotas *independientes* es pedir algo que este producto no
+va a ver: a 100 tenants el barrido atiende ~33 expiraciones/día (§2.4.2). Pero el modo de falla
+real no es «200 filas rotas», es **una causa sistémica que envenena el 100% de las filas de una**,
+y para eso el número de filas es irrelevante — con dos filas debidas y las dos fallando, el
+producto ya no vence nada. Las causas están todas nombradas en las reglas de este repo:
+
+| causa | SQLSTATE | qué la dispara | por qué no la ve CI |
+|---|---|---|---|
+| tabla sin `GRANT` para `service_role` | `42501` | una migración nueva; los DEFAULT PRIVILEGES están revocados (`CLAUDE.md` §2) | *«el síntoma no aparece en CI: aparece el día que se prende el cron»* — textual, `CLAUDE.md` §3 |
+| migración editada después de aplicada | `23514` / `22P02` | la trampa del `created_at` de Drizzle (`CLAUDE.md` §3) | en CI la base nace limpia |
+| check/NOT NULL nuevo en `listing_events` | `23502` / `23514` | el `insert` del barrido escribe 5 columnas y ninguna la elige el barrido | ningún test corre el barrido contra Postgres real |
+| lock retenido por el panel | `55P03` / timeout | el dueño con una transacción abierta | no es determinista, pero se repite |
+
+Las tres primeras son **deterministas**: fallan igual en la corrida 1 y en la 8.640.
+
+#### 3. Cuánto cuesta, en plata y en producto
+
+**En plata nuestra: nada, y ése es exactamente el problema.**
+
+```
+corridas            : */5 → 288/día → 8.640/mes                             (§2.4.1, sin cambio)
+costo de una corrida: (USD 0,028 – 0,133) / 8.640 = USD 3,2e-6 – 1,5e-5     [EST]
+por fila envenenada : 8.640 intentos/mes, cada uno 2 UPDATE + rollback
+CPU extra por fila  : 8.640 × [EST] 5 ms = 43,2 s = 0,012 CPU-h × 0,128  =  USD 0,0015 /mes
+líneas de log       : 8.640 `reservation.expire.failed` idénticas /mes /fila
+```
+
+**USD 0,0015 por mes por unidad trabada.** Nuestro presupuesto no se entera nunca: haría falta que
+se trabaran **330 unidades a la vez** para gastar lo que gasta el chat de **un** tenant en un mes.
+Un gate de dinero no puede detectar esto, y por eso este renglón no se defiende con el objetivo de
+§Objetivo: se defiende con la métrica de §5.
+
+**En producto, que es donde sí cuesta.** Una unidad trabada es una unidad que existe, que el dueño
+tiene en la mano, y que su único canal de venta muestra como no comprable:
+
+- **Vidriera** (`(storefront)/_lib/status.ts:58-64`): badge `Reservado`, y el CTA se degrada de
+  *«Lo quiero — escribir por WhatsApp»* a *«Preguntar por WhatsApp si se libera»*. El copy dice
+  literalmente *«si la reserva se cae, avisamos»* — una promesa que esta unidad **no va a cumplir
+  nunca**, repetida a cada visitante.
+- **Panel** (`_lib/reservations/presentation.ts:60`): con la reserva vencida el countdown dice
+  **«venció, se libera en unos minutos»**. Para siempre. Es la peor mitad del hallazgo y no estaba
+  escrita en ningún lado: **la UI le dice al dueño que no haga nada**, exactamente en el caso en el
+  que lo único que arregla el problema es que él apriete «Soltar».
+- **Base** (`reservations_one_active_per_listing`, índice único parcial sobre `status='active'`):
+  mientras esa fila viva, **no se puede crear otra reserva para esa unidad**. El comprador real que
+  aparece no puede ser señado.
+
+Cuantificado con los supuestos de §2 (60 listings publicados, ~18 ventas/mes) y el precio de
+ejemplo de `CLAUDE.md` §1 (iPhone 14 Pro a USD 620):
+
+```
+probabilidad mensual de venta de una unidad publicada : 18/60 = 30 %
+margen bruto del reseller por equipo  [EST, no medido]: 8 – 12 % × USD 620 = USD 50 – 74
+costo esperado de UNA unidad trabada un mes           : 0,30 × (50 – 74)  = USD 15 – 22 /mes
+```
+
+**USD 15 – 22 por mes, para el tenant, por una unidad. El plan Base cuesta USD 19.** O sea: **una
+sola unidad trabada le come al reseller el equivalente al abono entero**, mientras a nosotros nos
+cuesta USD 0,0015. La asimetría es de **~10.000×** y toda cae del lado del cliente. Y el costo de
+verdad no es ése: es que el software le prometió por escrito, en dos pantallas distintas, que eso
+se resolvía solo. **Eso no se factura, se cancela.** Un tenant que churnea son USD 19/mes
+recurrentes, que es **730× el marginal de infra completo de ese tenant** (§2.5.5).
+
+#### 4. La recomendación. No la implemento: `apps/web/app/(app)/**` es de `app-agent`.
+
+Cuatro cambios, en orden de cuánto compran. **El 1 habilita al 2 y al 3**; el 4 es el que convierte
+una pérdida invisible en un ticket de soporte.
+
+**R1 · `db-agent`** — una columna en `reservations`:
+```sql
+sweep_attempts  integer not null default 0
+```
+Con su `GRANT` explícito para `service_role` (`CLAUDE.md` §2: tabla/columna nueva sin GRANT no la
+lee nadie) y con el cuidado de la trampa del `created_at` de Drizzle: si la migración se edita
+después de aplicada, la base de desarrollo nunca recibe la corrección y `migrate` dice `OK`.
+**No una tabla de dead-letter**: una tabla nueva cuesta migración + GRANT + policy + un lector que
+nadie va a escribir; un contador sobre una fila que ya existe cuesta cero.
+
+**R2 · `app-agent`** — la fila envenenada pierde su lugar en la fila:
+```
+order by sweep_attempts asc, expires_at asc
+where  status='active' and expires_at <= now and sweep_attempts < MAX_SWEEP_ATTEMPTS
+```
+y el `+1` se escribe **en su propia transacción**, no dentro de la que falló — si va adentro se
+rollea con ella y el contador nunca avanza, que es la forma más fácil de escribir este arreglo mal.
+`MAX_SWEEP_ATTEMPTS = 5` `[EST]`: generoso para que una carrera perdida contra el dueño cancelando
+desde el panel (`40P01`) nunca llegue al tope, y chico para que una fila determinista deje de
+costar 8.640 intentos/mes y pase a costar 5, una sola vez.
+
+**R3 · `app-agent`** — el route deja de mentirle a Vercel Cron. **El predicado importa más que el
+código**: `failed > 0` a secas es el predicado equivocado. A 0,12 expiraciones por corrida la
+mayoría de las corridas no vacías traen **una** fila, así que una sola carrera perdida pintaría el
+cron de rojo, y un cron que se pone rojo con la contención normal enseña a ignorar el rojo — el
+mismo error que este repo ya cometió con los gates vacuamente verdes, del otro lado. El predicado
+correcto es **cross-run, y R1 lo hace posible sin estado nuevo**:
+
+> **500 si alguna fila de esta corrida falló teniendo ya `sweep_attempts >= 1`.**
+
+Una fila que falla dos veces no es una carrera perdida. Y cuando una fila cruza el tope, **una**
+línea, una sola vez en su vida: `logEvent('reservation.expire.quarantined', { reservationId,
+tenantId, attempts })`. Eso reemplaza 8.640 líneas idénticas por mes con 5 más una — el mismo
+argumento que el propio route ya aceptó para `misconfiguredLogged`, aplicado a la otra punta.
+
+**R4 · `app-agent`** — el copy del panel deja de prometer lo que el sistema ya no hace.
+`reservationCountdown()` dice «venció, se libera en unos minutos» mirando **sólo** el reloj. Con
+R1 puede mirar también el contador: en cuarentena, la línea tiene que decir que **no** se liberó
+sola y que hay que soltarla a mano. El botón ya está en pantalla; lo que falta es que el texto de
+al lado deje de desaconsejar apretarlo. **Sin R4, R1–R3 arreglan la métrica y no arreglan la
+unidad**: alguien tiene que ir y soltarla, y el único que puede es el dueño.
+
+**Lo que NO hay que hacer**, porque es costo tonto en la dirección contraria:
+- **Bajar `EXPIRE_BATCH_SIZE`.** No es la variable. La capacidad es 1.745× la demanda a 100 tenants
+  (§2.4.3); el problema es que una fila conserva su lugar, no que el lote sea grande.
+- **Reintentar dentro de la misma corrida.** Contra un error determinista es una segunda
+  transacción facturada con el mismo resultado; contra un deadlock vuelve a entrar al mismo ciclo
+  de locks — lo dice el docblock del propio módulo.
+- **Un worker que vigile el cron.** Es literalmente el «worker 24/7» que `CLAUDE.md` §3 prohíbe.
+  La señal es el exit code del cron, que ya existe y es gratis.
+- **Subir la frecuencia del cron** «para que se recupere antes». Una fila envenenada falla más
+  rápido, nada más.
+
+#### 5. La aserción. Qué se **cuenta** — porque un gate afirma una conducta medida, nunca un identificador
+
+Este documento ya vio cómo se arruina esto: V5 de `accept-s6.sh` se llamaba «no purga la vidriera
+entera» y ejecutaba un `grep` de `invalidateStorefrontUnit`, y acompañó el defecto de S6.2 de punta
+a punta en verde. Así que acá no se propone buscar `sweep_attempts` en ningún archivo. Se propone
+**correr el barrido más de una vez y contar filas**.
+
+**Aserción A — la que cierra el hallazgo, y es un número que hoy vale 0.**
+
+> Fixture: `EXPIRE_BATCH_SIZE` filas vencidas cuya escritura tira `23514` (determinista) **más una
+> fila sana**, todas vencidas, la sana la más nueva. Se corre el barrido **dos veces**.
+> **Se cuenta: cuántas filas sanas venció la corrida 2.**
+> Hoy vale **0** — las 200 envenenadas siguen siendo las primeras. Tiene que valer **1**.
+
+Es la afirmación exacta del hallazgo, es un entero, y **no se puede satisfacer con un grep** ni
+renombrando nada.
+
+**Aserción B — el tope existe y frena.** Sobre una sola fila `23514`, corriendo el barrido
+`MAX_SWEEP_ATTEMPTS + 3` veces: **intentos de escritura contra esa reserva == `MAX_SWEEP_ATTEMPTS`**
+(hoy: crecen linealmente con las corridas, sin techo), y **líneas de log de esa fila == tope + 1**.
+
+**Aserción C — la polaridad, sin la cual B se aprueba no barriendo nada.** Dos filas, dos SQLSTATE,
+expectativas opuestas en la **misma** corrida:
+- `23514` (determinista) → cuarentena al llegar al tope.
+- `40P01` (carrera perdida) → **se reintenta en la corrida siguiente**; una fila puesta en
+  cuarentena por perder un lock deja una unidad trabada por el motivo que el arreglo vino a evitar.
+- y en las mismas corridas, **`sanas_vencidas == sanas`**. Sin este control, «cero intentos» pasa
+  el gate rompiendo el barrido entero, que es el modo de fallo que V9 ya tuvo que cubrir con su
+  caso que rechaza el radio cero.
+
+**Aserción D — el status HTTP, contado, no razonado.** Dos códigos en la misma medición:
+- corrida con una fila que falla **por segunda vez** → **500**.
+- corrida con una fila que falla **por primera vez** y otra que sí venció → **200**.
+
+Sin la segunda mitad, «devolver 500 si algo falló» pasa el gate y produce un cron rojo permanente.
+
+**Aserción E — el `skipped`, que `398fff7` volvió posible y hoy es inalcanzable.** El barrido tiene
+un segundo sumidero silencioso: `transition === null || closesAs === null → skipped`, que **no
+loguea nada por fila**. Hoy es inalcanzable por construcción — sobre una fila `active` con
+`expires_at <= now`, `expireReservation()` siempre devuelve `reserved → available` y
+`closingStatusFor('reserved','available','expire')` siempre devuelve `'expired'` — y por eso **no
+es un defecto**. Pero es una línea de `packages/domain/src/listing-status.ts` de distancia: si esa
+tabla dejara de responder para la arista del cron, **todas** las corridas quedarían en
+`scanned: N, skipped: N, 200 OK` y **sin una sola línea de log por fila**, o sea peor que el caso
+`failed`. Se cuenta: **`skipped` sobre filas que el propio `where` del barrido declaró vencidas
+== 0**.
+
+**Dónde vive y qué cuesta.** No necesita Postgres, ni build, ni el puerto 3100: el `tx` falso que
+ya usa `expire-reservations.test.ts` alcanza para las cinco aserciones. Va en la columna del LEAD
+(`scripts/probes/`, junto a `s6-cron-fail-closed.test.ts`, que ya espía este mismo barrido para
+probar un orden), **no** en `apps/web`: `CLAUDE.md` §4 — la auditoría de referencia no puede ser
+del mismo writer que el código que audita. La copia de `app-agent` se queda como red de regresión
+y ningún gate la cita.
+
+Línea de medición sugerida, en la convención del repo:
+```
+MEDIDO cron barrido · corridas=<K> · envenenadas=<N> · sanas=<N> · sanas_vencidas_c2=<N>
+ · intentos_23514=<N> · intentos_40P01=<N> · tope=<N> · lineas_log_por_envenenada=<N>
+ · skipped_sobre_vencidas=<N> · status_segundo_fallo=<código> · status_primer_fallo=<código>
+```
+El gate lee los campos y compara enteros. Ninguno de ellos se puede producir sin ejecutar el
+barrido dos veces.
+
+#### 6. El objetivo marginal, revisado contra el árbol de hoy
+
+Se adopta la forma **por plan**, que el LEAD ya ratificó en `ARCHITECTURE.md` §153 y `DECISIONS.md`
+§21-28 y que §2.4.7 dejó como «acotación abierta»: **la acotación está cerrada**. Y la forma
+importa más que el número: `Negocio ≤ 1,50` **no** es una vara más floja para las mismas cosas.
+Todo lo que no es chat se mide contra **0,50** aunque el tenant esté en Negocio; el chat tiene
+**1,00** propio. Un número por tenant que no dice qué parte es chat no se puede comparar contra
+ninguno de los dos techos, así que va atribuido:
+
+```
+NO-CHAT (vidriera + panel + media + WAF + cron amortizado), por tenant/mes
+    R2 storage                                      0,0018   [MEDIDO S2]
+    R2 Class A (writes)                             0,0013   [MEDIDO S2]
+    R2 Class B (reads)                              0,0016   [EST]
+    Active CPU de `sharp` en el upload              0,0035   [CPU MEDIDO, precio UNVERIFIED]
+    upload: memoria + invocaciones + transferencia  0,0056   [EST]
+    ISR Writes — radio 2, ≤141 renders fríos        0,0085   [radio MEDIDO, tráfico EST]
+    Server Actions reservar/cancelar (32/mes)       0,00002
+    WAF Rate Limit (Base 0,0024 / Negocio 0,0034)   0,0024
+    cron */5 amortizado a 100 tenants               0,0003 – 0,0013
+                                                   ─────────────────
+                                        Base        USD 0,025 – 0,026     contra 0,50  →  19×
+                                        Negocio     USD 0,026 – 0,027     contra 0,50  →  18×
+
+CHAT (sólo Negocio)
+    1.200 msgs/mes × USD 0,000144 – 0,000192        USD 0,17 – 0,23       contra 1,00  →  4,3 – 5,9×
+
+TOTAL Negocio                                       USD 0,196 – 0,257     contra 1,50  →  5,8 – 7,6×
+```
+
+**Base cae de USD 0,088 a USD 0,025 – 0,026, y no porque se haya agregado nada barato: porque el
+radio de invalidación pasó de 61 a 2 y con él ISR Writes de 0,071 a 0,0085.** Es el 62% del
+marginal Base de la semana pasada, borrado por dos ediciones de una línea cada una.
+
+**Lo que se agregó esta semana, auditado renglón por renglón:**
+
+| commit | qué agrega | delta de costo | por qué |
+|---|---|---|---|
+| `f504d69` S6.2 | radio de invalidación 61 → 2 | **−USD 0,062 /tenant/mes** | el renglón más grande del Base, borrado |
+| `1fc0e59` media/incidentes | `variantUrl` devuelve un centinela en vez de tirar | **≤ 0, probablemente < 0** | un throw adentro de un render cacheado cuelga el stream de una página ya medio enviada: eso es wall time y memoria provisionada **facturados** hasta el `maxDuration`. Dejar de tirar saca un modo de falla que se paga por request |
+| `c43bfaf` vidriera/fotos | omite la foto no servible; ficha sin fotos publica igual | **≤ 0** | menos bytes servidos, nunca más. La ficha de cero fotos sirve **0 KB** de imagen |
+| `c43bfaf` `reportMediaIncident` | una línea de log por foto omitida | **~0** | corre **adentro** de `photosByListing`, o sea dentro del `'use cache'`: se paga por **render frío** (≤141/mes/tenant), no por pageview. Si estuviera afuera del cache serían 3.000/mes/tenant y sería un renglón |
+| `1fc0e59` reporter | `setMediaIncidentReporter` **sin cablear** en `apps/web` | 0 | el default es `console.warn`, acotado igual por el cache. Cablearlo a Sentry es de la columna de app y no tiene fila en el board |
+| `398fff7` reserve-unit | el estado de cierre lo deriva del dominio | 0 | mismo número de escrituras |
+| `f691daf` V9 + `guard-gates` | gates que cuentan en vez de grepear | 0 en infra | corren en CI sin base ni build |
+
+**Ninguna línea de esta semana agrega un vector de costo.** Una lo borra, dos lo bajan y el resto
+es neutro. **La semana es neta negativa en costo y positiva en evidencia**, que es la combinación
+que este documento quiere premiar.
+
+#### 7. Veredicto
+
+```
+COST_VERDICT: PASS
+
+DELTA_POR_TENANT_MES:  Base    USD 0,025 – 0,026   (era 0,088; el radio de invalidación pagó la diferencia)
+                       Negocio USD 0,196 – 0,257   (no-chat 0,026 + chat 0,17 – 0,23)
+   no-chat  0,0018+0,0013+0,0016+0,0035+0,0056+0,0085+0,00002+0,0024 = 0,0247  (+0,0003–0,0013 de cron)
+   chat     1.200 msgs × USD 0,000144 – 0,000192                     = 0,17 – 0,23
+
+SUPUESTOS: 3.000 pv/mes/tenant · 50% grilla / 50% fichas · 60 listings publicados · 4 fotos/listing
+           · 25 reservas/mes/tenant, 18 terminan en venta · 40 msgs/día de chat (soft cap) · 100 tenants
+
+VECTOR_MAS_RIESGOSO: el cron — y no por lo que cuesta (USD 0,0015/mes por unidad trabada) sino por
+           lo que **no** cuesta: es el único vector del producto cuya falla total es indistinguible
+           de su éxito total desde afuera (`200 OK` con `failed: 200`), y cuyo precio lo paga
+           íntegro el tenant (USD 15 – 22/mes por unidad, ≈ el abono del plan Base) mientras nuestra
+           factura no se mueve. Un objetivo expresado en dólares nuestros no lo puede detectar.
+
+METRICA_A_VIGILAR: **corridas consecutivas de `cron.expire_reservations.done` con `scanned > 0`
+           y `expired + released == 0`.** Alarma en **≥ 2** (10 minutos). Dos corridas seguidas
+           donde el barrido vio trabajo y no aterrizó nada no es una carrera perdida: es
+           envenenamiento. Es la única métrica del documento que avisa **antes** de que un tenant
+           llame preguntando por qué su equipo sigue reservado — y hoy no la emite nadie, porque
+           el barrido no distingue una corrida vacía de una corrida que falló entera.
+```
+
+**Este PASS no cierra el hallazgo: lo cierra R1–R4 con las aserciones A–E.** El hallazgo no rompe
+el objetivo de dinero y nunca lo iba a romper — la plata es USD 0,0015 por unidad trabada. Bloquear
+un merge por eso sería teatro. Lo que se pide es una **fila en el board con dueño**: `db-agent` la
+columna, `app-agent` la query, el status y el copy del panel, el LEAD la probe. Y queda como
+**gate de la próxima slice que toque `_lib/reservations/**` o el route del cron**: si esa slice
+pasa por encima de A–E, es **FAIL de costo**, con la misma vara que S1 le dejó el coalescing a S2 y
+que §2.4.7 le dejó la palanca del radio a S6.2 — palanca que, dicho sea de paso, **se accionó y se
+midió**, que es la razón por la que este documento puede hoy afirmar 4,6% donde afirmaba 39,4%.
+
 
 ## 3. Techo de LLM a 50 tenants `negocio`
 ```
@@ -1200,9 +1595,10 @@ ser gratis. Deployar en pico de tráfico es un evento de costo.
 ## 5. La métrica a vigilar (una por vector)
 | vector | métrica | alarma |
 |---|---|---|
-| DB | **% de hits de vidriera que llegan a Postgres** | **> 5%** — **hoy en 39,4% `[EST]`, ver §2.4.4.** No es la métrica que avisa: es la que ya se disparó |
-| **DB (la que avisa antes)** | **radio de purga de una mutación de unidad = páginas que registran el tag emitido** | **> 2** (grilla + ficha propia). Es la única de este documento que se puede leer del **código** en vez de esperar tráfico: si `getStorefrontListing` registra `storefront:{slug}`, el radio ya es `1 + N_listings` y el % de arriba es consecuencia aritmética |
-| **cron** | **`failed` de `cron.expire_reservations.done` entre corridas** | **> 0 sostenido** — una fila que falla siempre es la primera del `order by expires_at asc` **para siempre**; 200 de ésas paran el barrido de todos los tenants con `200 OK` (§2.4.3) |
+| DB | **% de hits de vidriera que llegan a Postgres** | **> 5%** — **hoy en 4,6% `[EST]` (§2.5.1)**, después de que la palanca de §2.4.5 se accionara en `f504d69`. Sigue sin ser la métrica que avisa: es la consecuencia |
+| **DB (la que avisa antes)** | **radio de purga de una mutación de unidad = páginas que registran el tag emitido** | **> 2** (grilla + ficha propia). **Hoy vale 2 y está MEDIDO**, no leído: V9 de `accept-s6.sh` lo cuenta desde `MEDIDO s6 radio` con `esperado=2`. Es la única alarma de este documento que ya tiene gate ejecutable |
+| **cron (la que avisa antes)** | **corridas CONSECUTIVAS de `cron.expire_reservations.done` con `scanned > 0` y `expired + released == 0`** | **≥ 2** (10 minutos). Dos corridas seguidas que vieron trabajo y no aterrizaron nada no son una carrera perdida: son envenenamiento (§2.5). **Hoy no la emite nadie** — el barrido devuelve `200 OK` con `failed: 200` y desde afuera es idéntico a una corrida perfecta |
+| cron | `failed` de `cron.expire_reservations.done` | **> 0 sostenido sobre la MISMA fila** — una fila que falla siempre conserva su lugar en el `order by expires_at asc` y se reintenta 8.640 veces/mes; la unidad queda `reserved` para siempre, la vidriera promete «si la reserva se cae, avisamos» y el panel dice «se libera en unos minutos». Cuesta USD 0,0015/mes nuestros y USD 15 – 22/mes del tenant (§2.5.3) |
 | **cron** | duración y Active CPU de una corrida vacía | **> 2 s de wall time** — hoy es horquilla `[EST]` de 4,8× y es el único término del piso de S6 que no está medido (§2.4.1) |
 | cache | `x-vercel-cache: HIT` ratio en vidriera | cualquier caída sostenida |
 | cache | `set-cookie` en respuesta de `(storefront)` | **cualquiera** — apaga el CDN entero |
@@ -1237,11 +1633,19 @@ a cada pageview: cuadruplica el marginal del plan Base (§2.3) ·
 **Managed Rulesets / OWASP CRS prendido sin ADR ratificado** (§2.3: 6,4× el marginal Base, y el
 daño no aparece en ningún diff) ·
 **agregado en S6: una mutación de UNA unidad que emita un tag registrado por las fichas de las
-OTRAS unidades** — hoy `invalidateStorefrontUnit()` emite `storefront:{slug}` **y**
-`tenant-config:{slug}`, que la ficha registra, así que una reserva purga las 61 páginas del tenant
-en vez de 2. Es el caso «cache mal invalidada» de `CLAUDE.md`, cuesta 8× la alarma del vector de DB
-y la palanca son dos líneas (§2.4.5). **La próxima slice que toque `(storefront)` o
-`storefront-cache.ts` sin accionarla es FAIL de costo.**
+OTRAS unidades** — es el caso «cache mal invalidada» de `CLAUDE.md` y costaba 8× la alarma del
+vector de DB. **Arreglado en `f504d69` y medido: radio 2** (§2.5.1). La regla queda como fallo
+automático permanente: **la slice que vuelva a subir el radio arriba de 2 es FAIL de costo**, y no
+se discute leyendo el diff — se mide con V9 de `accept-s6.sh`, que lo **cuenta**. ·
+**agregado el 2026-08-28: un job periódico que devuelva `200 OK` en una corrida donde vio trabajo y
+no aterrizó nada** — hoy el barrido de reservas lo hace (`{ ok: true, scanned: 200, failed: 200 }`)
+y desde el dashboard de Vercel Cron es indistinguible de una corrida perfecta. La falla total de un
+job no puede parecerse a su éxito total: **el precio no lo pagamos nosotros (USD 0,0015/mes por
+unidad trabada), lo paga el tenant (USD 15 – 22/mes, ≈ el abono del plan Base) y termina en churn**
+(§2.5.3). Recomendación con dueño y aserciones contables en §2.5.4 y §2.5.5. ·
+**y su hermano: una fila que falla y conserva su lugar en la cola de un barrido ordenado** — sin
+contador de intentos, el `order by` la pone primera para siempre y el trabajo del resto de los
+tenants queda detrás de ella.
 
 **BotID Deep Analysis (USD 1/1000 llamadas): NO activar preventivamente.** A 10.000 conversaciones/mes
 son USD 10/mes — **el 53% del precio de lista de un plan Base**. (Precio, no margen: el margen
@@ -1331,7 +1735,13 @@ unitario del Base no está calculado en ningún artefacto — ver §7.)
   implementado** — falta saber qué scope de token permite `publish`. **Entre el archivo que audité y
   la factura no hay verificación automática**: todo §2.3 vale mientras nadie publique una condición
   distinta de la del repo. Es el riesgo residual de T1 y es de configuración, no de código.
-- **Agregado en S6 — el 39,4% del vector de DB es `[EST]`, no `[MEDIDO]`.** Sale de un modelo de
+- **Agregado en S6, MEDIO CERRADO el 2026-08-28 — el % del vector de DB sigue siendo `[EST]`, pero
+  su término dominante ya no.** El **radio** pasó de «hecho leído del código» a **medido** (V9 de
+  `accept-s6.sh`, `esperado=2`, §2.5.1) y vale **2**, así que el porcentaje bajó de 39,4% a **4,6%**.
+  Lo que sigue sin medir es el **tráfico** que lo convierte en porcentaje. El párrafo de abajo se
+  conserva porque su método sigue siendo el correcto; sólo cambió el radio.
+
+  **(texto original de S6)** El 39,4% del vector de DB es `[EST]`, no `[MEDIDO]`. Sale de un modelo de
   renovación (`I/(λ+I)` por página) sobre dos supuestos míos: el reparto **50% grilla / 50% fichas**
   de los 3.000 pageviews y las **~25 reservas/mes/tenant**. El **radio de purga sí es un hecho leído
   del código** (`listings.ts:330/424/468` contra `storefront-cache.ts`), y es el que manda: con radio
@@ -1421,8 +1831,36 @@ no de código, y se cierra con el gate: ninguna slice de producto lo va a cerrar
 **Y el marco, para que nadie optimice lo que no importa:** el delta entero de S6 es USD 0.015. La
 comisión de Mercado Pago es ~USD 1.03 por pagador/mes `[UNVERIFIED]` — **69× S6 completo**.
 
+**Re-auditoría del 2026-08-28 contra HEAD `68c0bd6`: PASS. Base USD 0.025 – 0.026 · Negocio
+USD 0.196 – 0.257** — ver §2.5. Dos resultados:
+
+1. **La palanca de §2.4.5 se accionó (`f504d69`) y el radio está MEDIDO en 2**, contado por V9 de
+   `accept-s6.sh` desde la línea `MEDIDO s6 radio` del e2e, con controles anti-vacuidad y un caso
+   que rechaza el «arreglo» que baja el radio a cero rompiendo la invalidación. El vector de DB cae
+   de 39,4% a **4,6%** —bajo la alarma— e ISR Writes de USD 0.071 a **USD 0.0085**, que es el **62%
+   del marginal Base**. El punto 1 de la entrada de S6, acá arriba, es historia: se deja escrito.
+   De paso, una corrección de aritmética mía: §2.4.5 decía «0,071 → 0,018» y de su propia fórmula
+   sale **0,0085**.
+2. **El hallazgo de §2.4.3 sigue vivo y queda cuantificado y con recomendación.** `398fff7` no tocó
+   `expire-reservations.ts` (`git log` termina en `83bc673`). Una fila que falla siempre conserva su
+   lugar en el `order by expires_at asc` —no hay columna de intentos en `reservations`— y el route
+   devuelve **`200 OK` con `failed: 200`**, así que **la falla total del barrido es indistinguible
+   de su éxito total**. En plata nuestra son **USD 0,0015/mes por unidad trabada**; para el tenant
+   son **USD 15 – 22/mes por unidad** (≈ el abono del plan Base) mientras la vidriera le promete al
+   comprador «si la reserva se cae, avisamos» y el panel le dice al dueño «se libera en unos
+   minutos», las dos cosas para siempre. **La recomendación (R1–R4, con dueño) está en §2.5.4 y las
+   aserciones contables (A–E) en §2.5.5.** No se implementa acá: `apps/web/app/(app)/**` es de
+   `app-agent` y la columna de `reservations` es de `db-agent`.
+3. **Lo que se agregó esta semana no suma ningún vector** (§2.5.6): `1fc0e59` saca un modo de falla
+   que se pagaba por request (un throw adentro de un render cacheado cuelga el stream), `c43bfaf`
+   sólo puede bajar bytes y su `reportMediaIncident` corre **dentro** del `'use cache'` —o sea por
+   render frío, ≤141/mes/tenant, no por pageview—, y `398fff7` no cambia el número de escrituras.
+
 **Abierto:** precio de Supabase (B2) · comisión de MP (B3, ADR-008) · región (ADR-010) ·
 **Class B real y bytes del master (B1)** · **bytes por pageview de vidriera con fotos (S3)** ·
-**medir el 39,4% en vez de modelarlo, y medir una corrida del cron (S6, §7)** · todos los supuestos
-de tráfico, hasta la primera vidriera real.
+**medir el 4,6% en vez de modelarlo** (el **radio** ya está medido; el **tráfico** que lo convierte
+en un porcentaje, no) · **medir una corrida del cron** (§7) · **la fila del board para R1–R4 del
+barrido** · todos los supuestos de tráfico, hasta la primera vidriera real.
 **Cerrado en S6:** precio de fluid compute de Vercel (§7).
+**Cerrado el 2026-08-28:** el radio de invalidación (medido, 2) · el objetivo por plan
+(Base ≤ 0,50 / Negocio ≤ 1,50, ratificado en `ea26a02`; §2.4.7 lo dejaba abierto).
