@@ -18,3 +18,10 @@ test-results/
 # Raiz del driver local de `packages/media` (MEDIA_LOCAL_ROOT). Es el sustituto de R2 mientras B1
 # siga bloqueado: son bytes de prueba, no fuente. Se llena sola al correr el panel o los e2e.
 .media-local/
+
+# Directorios temporales de los arneses de polaridad de los gates (`scripts/_lib.test.sh`,
+# `scripts/guard-firewall.test.sh`). Los borra un `trap ... EXIT`, pero un Ctrl-C en el momento
+# justo los deja, y son fixtures con reglas de WAF deliberadamente rotas: commitearlas seria
+# sembrar el repo de config invalida que despues alguien lee como si fuera un ejemplo.
+scripts/.libtest-tmp/
+scripts/.wafpol-tmp/

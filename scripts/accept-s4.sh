@@ -244,12 +244,24 @@ rm -f "$FWOUT"
 
 # ──────────────────────────────────────────────────────────────────────────────────────────────
 sec "W8 · las prohibiciones de siempre, sobre lo que toco S4"
-none "cero imei/cost/margin/notas internas en lo que escribio S4" \
-     '\b(imei|cost_?[uU]sd[A-Za-z_]*|margin[A-Za-z_]*|internal_?[nN]otes|supplier)\b' "$HDIR" "$COMP"
-none "sin console.log en el handler ni en los componentes de la vidriera" \
-     'console\.(log|info|debug)\(' "$HDIR" "$COMP"
-noneraw "sin 'despues el RLS/R2/cache' en la unica escritura sin autenticar del producto" \
-     '(TODO|FIXME|XXX)' "$HDIR"
+# `none()`/`noneraw()` sobre un directorio que NO EXISTE devuelven vacio, o sea PASS. Es verde por
+# ausencia: la regla no puede fallar y por lo tanto no distingue un arbol limpio de uno que todavia
+# no existe. W0 ya marca la falta, pero una regla que no puede fallar es peor que no tenerla, asi
+# que aca se dice explicito en vez de sumar tres PASS que no midieron nada.
+if [ -d "$HDIR" ]; then
+  none "cero imei/cost/margin/notas internas en lo que escribio S4" \
+       '\b(imei|cost_?[uU]sd[A-Za-z_]*|margin[A-Za-z_]*|internal_?[nN]otes|supplier)\b' "$HDIR" "$COMP"
+  none "sin console.log en el handler ni en los componentes de la vidriera" \
+       'console\.(log|info|debug)\(' "$HDIR" "$COMP"
+  noneraw "sin 'despues el RLS/R2/cache' en la unica escritura sin autenticar del producto" \
+       '(TODO|FIXME|XXX)' "$HDIR"
+else
+  no "sin handler: las prohibiciones de W8 no se pueden evaluar (un grep sobre un directorio inexistente da PASS por vacio, y eso no es una medicion)"
+  # Los componentes SI existen y se auditan igual: es la mitad del arbol que ya esta escrita.
+  none "cero imei/cost/margin/notas internas en los componentes de vidriera" \
+       '\b(imei|cost_?[uU]sd[A-Za-z_]*|margin[A-Za-z_]*|internal_?[nN]otes|supplier)\b' "$COMP"
+  none "sin console.log en los componentes de vidriera" 'console\.(log|info|debug)\(' "$COMP"
+fi
 
 # ──────────────────────────────────────────────────────────────────────────────────────────────
 if [ "$FIXTURE" = "1" ]; then
