@@ -32,7 +32,7 @@ La **vidriera no tiene DB propia**: lee el mismo Postgres a través de cache/ISR
 ## Planes
 | plan | precio | incluye | no incluye |
 |---|---|---|---|
-| `trial` | 0, 14 días | todo | — |
+| `trial` | 0, 14 días | todo, **mientras está vigente** | nada, **una vez vencido** — **ADR-018** |
 | `base` | ~USD 19/mes | stock, vidriera, WhatsApp, FX, 1 punto de retiro | chatbot, reservas, margen |
 | `negocio` | ~USD 35/mes | + chatbot, reservas, margen, 3 puntos de retiro | — |
 
@@ -63,5 +63,5 @@ WhatsApps esa misma noche** que mencionan el equipo y el precio.
 |---|---|---|
 | P1 | ¿Qué pasa con la vidriera al vencer el trial sin pago? | 7 días de gracia con banner → luego vidriera en modo "contactá al vendedor" (fichas visibles, sin precios). **No** 404: rompe links ya compartidos en WhatsApp. |
 | P2 | ¿La ficha de un equipo vendido devuelve 404? | No. 200 con "vendido" + link a similares. Los links viven en chats de WhatsApp para siempre. |
-| P3 | ¿Duración default de la reserva? | 60 min (rango permitido 30–120, configurable por tenant). |
+| P3 | ¿Duración default de la reserva? | 60 min (rango permitido 30–120). **Implementado en S6, a medias:** el rango y el default son constantes del dominio (`RESERVATION_MIN/MAX/DEFAULT_MINUTES`), sostenidas además por el `CHECK` `reservations_minutes_range`; **el "configurable por tenant" no existe** y no tiene fila en el board. Fuera de rango se **rechaza**, no se clampea. |
 | P4 | ¿El seller puede publicar (`draft → available`)? | Sí, pero **no** ve ni edita `cost_usd`. |

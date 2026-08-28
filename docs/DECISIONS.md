@@ -737,8 +737,13 @@ verificación contra la fuente cerró la pregunta antes de empezar: el schema of
 `openapi.vercel.sh/vercel.json` el **2026-08-28**.
 
 ### Decisión
-1. **`vercel.json` no existe en el repo, y no lo va a crear esta necesidad.** La regla **F5** de
-   `scripts/guard-firewall.sh` falla si alguien lo crea creyendo declarar el límite ahí.
+1. **Esta necesidad no crea `vercel.json`.** La regla **F5** de `scripts/guard-firewall.sh` falla si
+   alguien lo crea creyendo declarar el límite ahí.
+   > **Corregido el 2026-08-28 por drift:** hasta hoy esta línea decía *"`vercel.json` no existe en
+   > el repo"*, y **desde S6 (`cbbfa2f`) existe** — declara el `crons` del barrido de reservas
+   > (**ADR-017**) y nada más. La decisión no cambia y F5 tampoco: el gate siempre tuvo las dos
+   > ramas, y con el archivo presente afirma que **no pretende declarar rate limits**
+   > (`guard-firewall.sh:237-240`). Lo que estaba mal era el doc, no el código.
 2. Las reglas viven **versionadas en `config/firewall-rules.json`**, con su `$doc`, su `$owner` y su
    `$apply` adentro del propio archivo.
 3. **Se aplican por CLI** (`vercel firewall rules add …` + `vercel firewall publish`), que **no es
@@ -756,9 +761,15 @@ verificación contra la fuente cerró la pregunta antes de empezar: el schema of
    una por `host` sin acotar path, o un catch-all.
 6. **El gate es del LEAD, no de los agentes que escriben las rutas** — el mismo principio que sacó
    `scripts/probes/**` de `packages/media`: **el gate no puede ser del mismo writer que el código que
-   audita**. Y `guard-firewall.sh` **censa `apps/web/app/api/**`**: toda ruta HTTP está cubierta por
+   audita**. Y `guard-firewall.sh` **censa `apps/web/app` ENTERO**: toda ruta HTTP está cubierta por
    una regla **o** exceptuada con motivo escrito, así que **una ruta nueva sin decidir rompe el gate
    el día que se crea**, no el día que la floodean.
+   > **Corregido el 2026-08-28 por drift:** esta línea decía `apps/web/app/api/**`, que era el
+   > alcance de la **primera** versión del gate — y por eso no veía `/_media/[...key]`, que vive en
+   > el route group `(app)` y sirve los BYTES de las fotos, o sea el endpoint de mayor egress del
+   > producto. El alcance ancho es deliberado y está en `guard-firewall.sh:154-168`; `CLAUDE.md` §4
+   > ya se había corregido en `cf9d1fb` y esta ADR se quedó atrás. Un censo que no ve el endpoint
+   > más caro es peor que no tener censo: da tranquilidad.
 
 ### Alternativa descartada — la regla de vidriera por `host`, y cuánto costaba
 El research proponía `host suf .maat.work`. **Rechazada.** El rate limit se factura por *allowed
@@ -799,6 +810,134 @@ corrió nunca. Ver `SLICE_BOARD.md` §"Seis gates rojos o dormidos". La verifica
 es a mano, en macOS, por el LEAD.
 
 ---
+
+## ADR-017 — Los jobs son **Vercel Cron**, no Inngest, y el `vercel.json` declara sólo el `crons`
+- **Estado:** aceptada · **Fecha:** 2026-08-28 · **Autor:** LEAD (S6) · redactada por `docs-keeper`
+- **Implementó:** el **LEAD** (`vercel.json` y `scripts/**` son suyos por §4) y `app-agent` (el
+  handler). Commits `cbbfa2f` (slice + `vercel.json`), `7a96033` (schedule + las dos probes),
+  `10d31b6` (el gate entra a CI).
+- **Insumo:** `docs/research/vercel-cron-limits.md` (2026-08-28). Costo: `docs/COST.md` §2.4.
+
+### Contexto — la disyuntiva estaba escrita y nadie la había cerrado
+`CLAUDE.md` §3 dice *"Jobs: Vercel Cron o Inngest free tier. **No** worker 24/7"* y
+`ARCHITECTURE.md` §Jobs repetía el *"(o Inngest free)"*. **S6 la cerró de hecho** —eligió Vercel Cron
+y escribió el `vercel.json`— sin que existiera esta ADR. Se escribe ahora para que la próxima slice
+con un job no vuelva a abrirla.
+
+### Decisión
+1. **Los jobs de Capa 1 son Vercel Cron.** Hoy hay exactamente uno:
+   `GET /api/cron/expire-reservations`, `*/5 * * * *`.
+2. **`vercel.json` declara el `crons` y nada más.** No puede declarar más aunque se quiera: el schema
+   oficial tiene `additionalProperties: false` en la raíz, así que una clave de más **no se ignora,
+   rompe el deploy**. El rate limit del WAF sigue donde lo puso **ADR-016**, y la regla **F5** de
+   `guard-firewall.sh` sigue vigilando que nadie lo mueva acá.
+3. **`crons[]` tiene dos campos y los dos son requeridos: `path` y `schedule`.** Sin query string
+   (no está documentado); la credencial viaja por `Authorization`, no por URL.
+4. **La autenticación es `CRON_SECRET` con ese nombre exacto**, que Vercel manda solo con prefijo
+   `Bearer `. El handler compara **hashes** con `timingSafeEqual` y **falla cerrado ante env ausente
+   o vacía** (`cronSecret()` devuelve `null` para las dos).
+
+### Por qué Vercel Cron, y qué NO se está afirmando de Inngest
+**Vercel Pro ya es obligatorio por licencia** (`CLAUDE.md` §3: Hobby prohíbe el uso comercial, y la
+vidriera es exactamente eso), así que el cron **no agrega proveedor, ni credencial, ni blocker
+humano** — y hoy hay **seis** blockers humanos abiertos en el board, todos de credenciales. Con Pro
+el intervalo mínimo es **1/min** con precisión per-minute, así que `*/5` es legal y la deriva máxima
+de una reserva vencida es ~5 min + el barrido, sobre un reloj de 30–120 min. En Hobby el mínimo es
+**una vez por día** y una expresión más frecuente **rompe el deploy**: con Hobby esta feature no
+existiría, lo que es una razón para Pro independiente de la licencia.
+
+**Lo que esta ADR no dice: que Inngest sea peor.** No se investigó — no hay archivo en
+`docs/research/` sobre Inngest y ningún límite suyo fue medido. El descarte es por **superficie**, no
+por números: un proveedor más, una credencial más, un webhook más que firmar, para un job que hoy es
+un `GET` cada cinco minutos. Si aparece un job que necesite **reintentos con backoff, fan-out o
+durabilidad**, esta ADR se reabre **con research primero**, porque es justo lo que Vercel Cron no da.
+
+### Consecuencias — lo que se pierde, sin redondear
+| se pierde | cuánto duele hoy | mitigación |
+|---|---|---|
+| **Sin reintentos.** *"Vercel will not retry an invocation if a cron job fails."* | poco: el barrido es **idempotente** (`expireReservation()` es puro, con `now` inyectado) y la corrida siguiente es 5 min después | el diseño idempotente + la frecuencia **son** la política de reintento |
+| **Sin backoff ni cola** | poco: una sola tarea, sin dependencias entre corridas | — |
+| **Granularidad atada al plan** | nada mientras haya Pro; todo si alguien degrada a Hobby | el `*/5` rompería el deploy en Hobby, así que falla ruidoso |
+| **Un 3xx completa la corrida sin más requests** | **mucho**: apaga el job **en silencio** — sin log, sin error, sin alerta. El síntoma aparece semanas después: *"mi equipo sigue reservado"* | `scripts/probes/s6-cron-reachability.test.ts` |
+| **Un `path` inexistente da 404, se ejecuta igual y se factura igual** | medio: un typo en `vercel.json` es un 404 recurrente que no rompe nada visible | la misma probe: V1 exige que el `path` agendado apunte a un handler que existe |
+
+**Las dos probes son del LEAD y eso no es protocolo, es la única forma de que midan algo.** La de
+alcanzabilidad cruza **tres columnas** —`vercel.json` (LEAD), `proxy.ts` (`storefront-agent`) y el
+route handler (`app-agent`)— y **ninguna de las tres ve el camino entero**; hoy no hay redirect
+porque `resolveHost` manda `*.vercel.app`, el apex y todo host desconocido a `marketing`, y eso se
+decidió por otro motivo, así que **nada lo ataba**. La de fail-closed afirma algo que un status code
+no puede afirmar: **el orden**. *"Sin credencial válida no toca Postgres"* es una propiedad sobre qué
+pasa antes de qué; un handler que barre primero y decide el status después devuelve los mismos 401 y
+es una escritura abierta. Por eso espía el barrido en vez de comparar respuestas, y por eso **no
+delega en `route.test.ts`**, que es del mismo writer que el handler (`CLAUDE.md` §4).
+
+### Costo
+No lo fija esta ADR. `cost-auditor` lo auditó en **`docs/COST.md` §2.4**, y el titular es incómodo y
+conviene leerlo: **las 8.640 invocaciones/mes (USD 0,0052 · 0,086% del allotment de Edge Requests de
+Pro) son sólo el 4–19% de lo que cuesta el cron**; el resto es Active CPU y memoria, y **el renglón
+caro de S6 no es el cron sino la invalidación**. Citar el 0,0052 como "el costo del cron" es citar
+una línea de tres.
+
+### Verificación
+`bash scripts/accept-s6.sh` — **V1** (el `path` de `vercel.json` apunta a un handler que existe **y**
+el cron llega hasta él, corriendo `s6-cron-reachability.test.ts`) y **V2** (fail-closed medido por
+invocación, `s6-cron-fail-closed.test.ts`). Step en CI desde `10d31b6` (`ci.yml:236`) — **declarado,
+no ejecutado**: ver §Notas operativas, *"un gate tiene dos niveles"*.
+
+## ADR-018 — El trial da el producto completo **mientras está vivo**; vencido no conserva ninguna feature
+- **Estado:** aceptada · **Fecha:** 2026-08-28 · **Autor:** LEAD (S6, D2 del despacho) · redactada por `docs-keeper`
+- **Implementó:** `app-agent` — `apps/web/app/(app)/_lib/entitlements.ts` (`cbbfa2f`).
+
+### Contexto
+`PRODUCT.md` vende el trial como 14 días del producto **completo**, y `packages/db/src/seed.ts` crea
+la suscripción como `plan: 'negocio', status: 'trialing'`. O sea: mientras corre, el trial **incluye
+reservas**, que es feature del plan `negocio`. Un trial que no deja probar lo que se paga no vende
+nada, así que esa mitad nunca estuvo en duda.
+
+La otra mitad sí. La versión anterior del módulo daba `trial: [FEATURE_RESERVATIONS]` **sin mirar
+`trial_ends_at`**, apoyada en que *"cuando el trial vence, `billing-agent` baja el plan"*.
+**`billing-agent` es FASE 6 y no existe**: hoy nada baja ese plan. Consecuencia real, no teórica: un
+tenant con el trial vencido hace seis meses seguía reservando gratis, **para siempre**.
+
+### Decisión
+1. **El trial incluye reservas mientras está vigente.** Ratificado, no era una pregunta abierta.
+2. **Vencido, el plan `trial` no da ninguna feature.** No se difiere a `billing-agent`: diferirlo era
+   deuda con otro nombre, y `CLAUDE.md` §2 rechaza esa herencia se la escriba como se la escriba.
+3. **La vigencia se resuelve en la resolución de entitlements, no en el call site.** `featureAccess()`
+   es el **único** lugar del repo que mira `trial_ends_at` para decidir una feature. Un chequeo que
+   cada pantalla tiene que acordarse de hacer no es un chequeo: es una lista de lugares donde
+   todavía no falló.
+4. **El rechazo pega en la Server Action, no en el render.** Que el botón no se dibuje es cortesía;
+   la puerta es la acción. Lo afirma **V4** de `accept-s6.sh`.
+5. **Un trial sin fecha de fin está vencido.** `tenants.trial_ends_at` es nullable; `createTenant()`
+   y el seed siempre la escriben, así que `null` con `plan = 'trial'` es una fila que nadie sabe
+   explicar. Se falla cerrado: un trial sin vencimiento **es** el trial infinito que esta decisión
+   viene a matar.
+6. **La fila explícita de `entitlements` sigue mandando, también acá.** La vigencia apaga lo que da
+   el **plan**, que es el default; una fila es una palanca que alguien movió a mano. Sin esa
+   precedencia no habría forma de darle una cortesía a un negocio sin inventarle un cambio de plan
+   — justo lo que `billing-agent` todavía no puede hacer. **La fila no es el trial; el trial es el plan.**
+7. **`cancelReservation` no pide entitlement, y esto es producto, no un detalle de implementación.**
+   Soltar una unidad no puede quedar bloqueado por facturación: el equipo está en el mostrador y la
+   alternativa es una unidad trabada por una deuda de USD 19. Reservar pide entitlement; **soltar,
+   nunca**.
+
+### Alternativa descartada
+**Esperar a `billing-agent`.** Habría dejado un agujero de facturación abierto toda la FASE 4 y la
+FASE 5, con el modo de falla más caro que hay: no falla nada, funciona gratis.
+
+### Consecuencias
+- El plan sigue definido **en un lugar** (el fallback por plan) y las filas de `entitlements` quedan
+  para las excepciones, que es lo que significa la columna `enabled`. Sembrar una fila por feature en
+  el alta convertiría cada feature nueva en una migración de datos sobre los tenants existentes.
+- **`P1` de `PRODUCT.md` sigue abierta y esta ADR no la toca:** qué pasa con **la vidriera** al vencer
+  el trial es otra pregunta. Esto decide qué pasa con **las features del panel**.
+- El mensaje al dueño dice **qué pasó**, no *"no autorizado"*: no hizo nada mal, se le terminó la
+  prueba.
+
+### Verificación
+`bash scripts/accept-s6.sh` **V4** (el entitlement se chequea **adentro** de la Server Action) +
+`apps/web/app/(app)/_lib/entitlements.test.ts`.
 
 ## Notas operativas — hallazgos que no son ADR
 

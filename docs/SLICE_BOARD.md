@@ -145,7 +145,7 @@ cuyo gate no pudo correr: las cinco quedan `todo` hasta que el gate corra **ente
 | S3 | grilla + ficha mínima | **done** | `storefront-agent` | `bash scripts/accept-s3.sh`: los **15 campos** de `CLAUDE.md` §1 —los 15 de verdad recién desde **M3b** (`0edb661`), que agregó el botón `wa.me`—; cero campos prohibidos en el HTML; el byte medido es el que **pide el browser** (P3). **Re-ejecutado entero por el LEAD el 2026-08-28: 58 PASS · 0 FAIL · `S3: ACEPTADA`** (la corrida que la aceptó dio 50; M3b sumó 8 aserciones) |
 | S4 | botón `wa.me` + tracking de eventos | **done** | `domain-agent` → `storefront-agent` | texto exacto byte a byte; evento registrado sin PII. **Re-ejecutado entero por el LEAD el 2026-08-28, sin fixture: `./scripts/accept-s4.sh` → 37 PASS · 0 FAIL**, con la suite e2e ejecutada de verdad (73 passed) y `pnpm typecheck && pnpm lint && pnpm test` en 1004 passed / 0 failed. Las dos mitades del *byte a byte* siguen afirmadas por separado y hacen falta las dos: `packages/domain/src/wa.test.ts` U14 fija el string (`toBe(CANONICAL_TEXT)`) y M3b de `accept-s3.sh` prueba que la página servida lo lleva — **W1 de `accept-s4.sh` nombra las dos aserciones, no los archivos**, así que borrar M3b pone roja también a S4. Lo nuevo es el evento: W2/W3 (no hay dónde poner PII; `anon` gana exactamente un privilegio de columna y ni uno más), W5 (con JS apagado el botón sigue abriendo WhatsApp), W6/W6b (medición viva, y el cruce de tenant escribe **cero** filas), W7 (el endpoint nace con techo declarado en `config/firewall-rules.json`). **Deja abierta S4.1**, defecto del texto en el camino real |
 | S5 | FX → precio en ARS | **done** | `domain-agent` → `app-agent` | TC del dueño; redondeo testeado; ARS visible en ficha. **Los tres tercios están afirmados y por comandos que el LEAD ya re-ejecutó**, aunque S5 nunca tuvo un `accept-s5.sh` propio: (1) el TC lo carga el dueño en el alta — campo `fxRate` en `create-tenant-form.tsx:192` → `fx_settings` por tenant (`create-tenant.ts:320` en `main`, sembrado por **S3.1**); (2) `applyFx` (`packages/domain/src/fx.ts:117`) con `DEFAULT_FX_ROUNDING = 'ceil_1000'` (`:35`) y los 4 modos testeados en `fx.test.ts` — `pnpm --filter @istock/domain test` → **187 passed / 12 archivos**; (3) el ARS sale en la ficha y lo exige **M3 de `accept-s3.sh`** con la forma de `formatArs`, en la corrida de **58 PASS · 0 FAIL** del LEAD. **El hueco que queda no es de S5: es T12** — el dueño no puede *editar* el TC después del alta. Ver §S5 abajo |
-| S6 | reserva + cron de expiración | **doing** | `app-agent` | reserva 30–120min; cron libera; vidriera revalida. **DB y dominio listos; falta panel + ruta de cron + `revalidateTag`, y el `vercel.json` con el schedule (lo escribe el LEAD, hoy no existe).** Ver §S6 abajo |
+| S6 | reserva + cron de expiración | **done** | `app-agent` | reserva 30–120min; cron libera; vidriera revalida. Entregado en `cbbfa2f`: Server Actions de **reservar** y **cancelar** en el panel, barrido detrás de `GET /api/cron/expire-reservations`, invalidación de la ficha pública **por unidad** (`invalidateStorefrontUnit`, no el catálogo entero — el defecto que cerró S3.2) y el `vercel.json` con `*/5 * * * *`, que lo escribió el LEAD porque el archivo es suyo (§4). **`adversary-reviewer` la rechazó primero**, y el bloqueante era una regresión de la propia slice — ver §S6 abajo, es lo único de esta fila que hay que leer entero. Aceptación: `bash scripts/accept-s6.sh` (V1…V8), con step en CI después de `accept-s4` (`ci.yml:236`, `10d31b6`). **Medición de la corrida real, citada en el mensaje de `cbbfa2f`:** `estado_tras_reservar=reserved · vidriera_dice="Reservado" · tras_expirar=available · publicar_estando_reservada=rechazado(listing=reserved; reserva=active)`. **Residuo declarado, y hay que leerlo con el `done`:** esa barrida es **anterior** a `10d31b6`, que reescribió la V8 —hasta ahí grepeaba el FUENTE y daba PASS con dos comentarios y cero corridas—. La medición de arriba **satisface los seis campos** que la V8 nueva exige, así que el hecho está medido; lo que no tiene corrida registrada es **el gate en su forma actual**. **Deja abierta S6.1** |
 | S7 | venta manual | todo | `app-agent` | `→ sold`; sale de la grilla; URL directa no rompe |
 | S8 | canje: form + inbox + accept-to-stock | todo | `app-agent` | crea unidad en `draft` con costo; seller no ve el costo |
 | S9 | copy list para estados de IG/WA | todo | `app-agent` | export con precios y links; cero IMEI |
@@ -319,11 +319,15 @@ cuyo gate no pudo correr: las cinco quedan `todo` hasta que el gate corra **ente
 > **T2 cerró el 2026-08-28** (`9b3d7d2`, `W015` en `main`) **y al cerrarse abrió T16**: su alcance
 > medido es `apps/web` y `packages/**` sigue sin gate. Cerrar una fila sin nombrar lo que su alcance
 > deja afuera es cómo un gate angosto se lee después como cobertura completa.
-> **S4.1 es la entrada nueva del 2026-08-28**, y sale de la misma clase de corrida: apareció porque
-> `accept-s4.sh` **imprime el `href` entero** en vez de aseverar sobre él. El defecto es
-> preexistente de S3; lo que cambió es que ahora se ve. Su código y su gate ya están en `main`
-> (`7e40856` + `07c42ff`); lo que falta es **la corrida del LEAD**, que es lo único que mueve un
-> estado en este board.
+> **S4.1 cerró el 2026-08-28** con la barrida completa del LEAD anterior a `cbbfa2f`. Había salido de
+> la misma clase de corrida: apareció porque `accept-s4.sh` **imprime el `href` entero** en vez de
+> aseverar sobre él. El defecto era preexistente de S3; lo que cambió es que se volvió visible, y
+> después asertable.
+> **Entradas nuevas del 2026-08-28, las dos al cerrar S6:** **S6.1** —la regla de en qué queda una
+> reserva cerrada estaba en `apps/web` y es de la máquina de estados, no de la capa de aplicación— y
+> la **deuda de proceso de S5**, que está `done` sin comando de aceptación propio y sin que ningún
+> gate la nombre. La segunda no es una fila con owner de paquete: es del **LEAD**, porque los gates
+> son suyos por §4. Las dos tienen su sección abajo.
 
 | id | título | estado | owner | bloqueo | gate de aceptación | artefacto |
 |---|---|---|---|---|---|---|
@@ -342,7 +346,8 @@ cuyo gate no pudo correr: las cinco quedan `todo` hasta que el gate corra **ente
 | S3.1 | un tenant real nace sin `fx_settings` y sin `locations` | **done** | `app-agent` | — | **severidad alta** — alta o onboarding siembran un `fx_settings` y ≥ 1 punto de retiro; un tenant nuevo que carga 3 equipos ve grilla con precio y retiro, no vacía. **Cerrada por la corrida de `accept-s3.sh` del LEAD (2026-08-28, 50 PASS/0 FAIL):** M3 exige el punto de retiro, el horario y el ARS con la forma de `formatArs`, y los tres salen de las filas sembradas | `apps/web/app/(app)/_lib/tenants/create-tenant.ts` (`eaccfee`) |
 | S3.2 | publicar un equipo purga el catálogo entero del tenant | **done** | `app-agent` | — | al mutar una unidad se emite además `updateTag(listingTag(id))`; los dos tags de tenant dejan de ser la única invalidación. **Cerrada por la misma corrida:** `MEDIDO s3 db-hits · primera=9 · cacheada=0` | `apps/web/app/(app)/_lib/tenants/storefront-cache.ts` (`eaccfee`) |
 | S3.3 | bajo un **tenant** inexistente la ficha dice que el equipo se vendió | **done** | `storefront-agent` | — | una ficha bajo un slug de tenant que no existe contesta el *tenant-miss* (`STOREFRONT_MISS_TITLE`, "No hay ninguna vidriera en esta dirección"), no el *listing-miss* ("Este equipo ya no está publicado"); el `null` del tenant se sigue cacheando con `STOREFRONT_MISS_LIFE`. **Verificado por el LEAD contra server real** (`next build` + `next start`, leyendo el HTML servido y no el fuente) y `accept-s3.sh` re-ejecutado: **58 PASS · 0 FAIL · S3 ACEPTADA**, con `MEDIDO s3 db-hits · primera=9 · cacheada=0` — el mismo número de antes del fix, o sea que **el camino feliz no se encareció**. Tabla de los 4 casos en §S3.3 abajo | `apps/web/app/(storefront)/s/[slug]/p/[listing]/page.tsx` + `apps/web/app/(storefront)/ficha.test.ts` (15 → 24 tests) (`042e24e`) |
-| S4.1 | el mensaje de WhatsApp repite storage y color cuando el listing no tiene `catalog_model` | doing — **código y gate en `main`; falta la corrida del LEAD** | `domain-agent` + `storefront-agent` | — | el `href` medido sobre la **ficha servida** de un listing **sin `catalog_model`** dice el string canónico de `CLAUDE.md` §1 **byte a byte** —no por substrings—, y el fix decide **qué significa `modelDisplayName` cuando no hay catálogo** en vez de parchear el `??`. **Gate primero, en rojo, `7e40856`** (M3b de `accept-s3.sh` + W5 de `accept-s4.sh`: *ningún token repetido en el equipo nombrado*); **fix en `07c42ff`**: `nameSource` es requerido en `WaListing` y `PublicListingSource`, `resolveModelName` es el único constructor, `isBlank` trata `''` como ausente. **Lo único que falta es la re-ejecución** — ver §S4.1 abajo | `apps/web/app/(storefront)/_lib/model-name.ts:54` (`resolveModelName`) · `packages/domain/src/wa.ts:51` (`nameSource`) · `packages/domain/src/text.ts:22` (`isBlank`) (`07c42ff`) |
+| S4.1 | el mensaje de WhatsApp repite storage y color cuando el listing no tiene `catalog_model` | **done** | `domain-agent` + `storefront-agent` | — | el `href` medido sobre la **ficha servida** de un listing **sin `catalog_model`** dice el string canónico de `CLAUDE.md` §1 **byte a byte** —no por substrings—, y el fix decide **qué significa `modelDisplayName` cuando no hay catálogo** en vez de parchear el `??`. **Gate primero, en rojo, `7e40856`** (M3b de `accept-s3.sh` + W5 de `accept-s4.sh`: *ningún token repetido en el equipo nombrado*); **fix en `07c42ff`**: `nameSource` es requerido en `WaListing` y `PublicListingSource`, `resolveModelName` es el único constructor, `isBlank` trata `''` como ausente. **Cerrada por la barrida completa del LEAD del 2026-08-28**, la que precede a `cbbfa2f`: `accept-s1..s4` + `accept-s6`, `accept-fase2`, `accept-fase3` y la suite e2e entera (80 tests, 0 skip), **todo verde** — o sea que los dos comandos que cierran la fila corrieron **después** de `07c42ff` y con la aserción de `7e40856` adentro. **Sin conteo de PASS registrado para esa corrida**, a diferencia del resto del board: lo que consta es el veredicto. Ver §S4.1 abajo | `apps/web/app/(storefront)/_lib/model-name.ts:54` (`resolveModelName`) · `packages/domain/src/wa.ts:51` (`nameSource`) · `packages/domain/src/text.ts:22` (`isBlank`) (`07c42ff`) |
+| S6.1 | la regla de en qué queda una reserva cerrada vive en `apps/web`, no en el dominio | todo | `domain-agent` → `app-agent` | — | `grep -rn 'closingStatusFor' apps/web/app` → **cero**, y las aristas de cierre las decide `TransitionEffects` con test propio en `packages/domain`; `apps/web` ejecuta, no decide. **Nace de cerrar S6:** es regla de la máquina de estados y `CLAUDE.md` §Monorepo la pone en `packages/domain`. Los **dos pasos** están en vuelo **sin commitear**, y el paso 1 creció de dos valores a tres (`expired` para el camino del cron) — ver §S6.1 | `packages/domain/src/listing-status.ts` · `apps/web/app/(app)/_lib/listings/publish-listing.ts:231` |
 | T8 | los dos specs que miden S3 no emiten ninguna medición | **done** | `qa-agent` | — | las dos líneas `MEDIDO` exactas (ver abajo); **la de imagen se mide sobre la grilla**, no sobre la ficha. **Emitidas y verificadas por el LEAD el 2026-08-28** (`transferSize=51016B` / `primera=9 · cacheada=0`) | `e2e/s3-la-grilla-en-un-telefono-no-baja-la-foto-grande.spec.ts`, `e2e/s3-la-ficha-cacheada-no-le-pega-a-postgres.spec.ts` (`09c9bc3`) |
 | T9 | forma de `listings.slug` en `domain` + en el motor | **done** | `domain-agent` + `db-agent` | resto en vuelo con `storefront-agent` | ver abajo | `packages/domain/src/slug.ts`, `packages/db/drizzle/0003_listing_slug_format.sql` |
 | T10 | ocho comandos de aceptación corrían la suite entera creyendo filtrar | **done** | **LEAD** (`.claude/**`, §4) | — | el comando de cada contrato **filtra de verdad**, verificado en las dos polaridades (filtra, y falla con exit 1 ante un patrón que no matchea) | 4 `.claude/agents/*.md` + 4 `.claude/skills/*/SKILL.md` + `scripts/accept-fase3.sh` (`0d647c6`) |
@@ -1364,7 +1369,7 @@ chico y más caro de explicar: en el `/demo` que se le muestra a un reseller, **
 la página dice otra**. Es exactamente el tipo de detalle que un reseller sí mira, porque el color es
 parte del precio.
 
-### S4.1 · el mensaje de WhatsApp repite storage y color sin `catalog_model`  ·  `domain-agent` + `storefront-agent`
+### S4.1 · el mensaje de WhatsApp repite storage y color sin `catalog_model`  ·  **CERRADA el 2026-08-28** (`7e40856` + `07c42ff`)
 
 Abierta el 2026-08-28, **medida y no inferida**. La imprime W5 de `./scripts/accept-s4.sh` sobre un
 browser real contra un build real:
@@ -1414,7 +1419,7 @@ pruebas alrededor y ninguna encima, cerrada con M3b— y la forma es idéntica: 
 correcta y el invariante seguía descubierto.** El gate que cierra S4.1 tiene que comparar el string
 **completo**, sobre la **ficha servida**, con un listing **sin `catalog_model`**.
 
-#### Lo que aterrizó (verificado contra `main` el 2026-08-28) — y lo que falta, que es una sola cosa
+#### Lo que aterrizó (verificado contra `main` el 2026-08-28)
 
 **Primero el gate, en rojo: `7e40856`.** Toca `scripts/accept-s3.sh` (M3b) y `scripts/accept-s4.sh`
 (W5) y agrega la misma aserción a los dos. No compara contra un string literal —el modelo, el
@@ -1436,14 +1441,21 @@ Con `nameSource: 'free_text'` los atributos se appendean **sólo si no están ya
 tenía antes y que era correcto **cuando el nombre venía del catálogo**. `nameSource` **no** viaja al
 DTO público (`dto.ts:213`): es procedencia interna del dato.
 
-**Falta la corrida, y sólo eso.** Regla 5 de este board: el estado lo fija la re-ejecución del LEAD,
-no la entrega del código — la misma regla que tuvo a S1 en `doing` y a S3.1/S3.2 en `todo` un día
-entero con el código en `main`. Los dos comandos que cierran la fila:
+**La corrida llegó, y con eso la fila cierra.** Regla 5 de este board: el estado lo fija la
+re-ejecución del LEAD, no la entrega del código. Los dos comandos que cerraban la fila:
 
 ```
 bash scripts/accept-s3.sh     # M3b: el equipo se nombra una sola vez, sobre la ficha SERVIDA
 bash scripts/accept-s4.sh     # W5:  mismo invariante sobre el unico href medido de un browser real
 ```
+
+**Los dos corrieron en verde en la barrida completa del LEAD del 2026-08-28**, la que precede a
+`cbbfa2f` (`accept-s1..s4` + `accept-s6`, `accept-fase2`, `accept-fase3`, la suite e2e entera con 80
+tests y 0 skip, más `typecheck`, `lint` y 1173 unit tests). Lo que importa del orden: esa barrida es
+**posterior** a `07c42ff` (el fix) y a `7e40856` (la aserción), así que no es el caso de S4 —donde el
+número citado era de la corrida que **imprimió** el defecto y lo dejó pasar—. **Salvedad honesta:
+para esta corrida consta el veredicto, no el conteo de PASS**, que es la forma en que el resto de
+este board cita sus cierres.
 
 **La evidencia que este board cita hoy para S4 es anterior al fix, y conviene saberlo al leerla.**
 Los `37 PASS · 0 FAIL` de la fila S4 son de la corrida que **imprimió** el defecto en W5 y lo dejó
@@ -1464,10 +1476,14 @@ código, no contra la memoria.
 | **redondeo testeado** | `applyFx` (`packages/domain/src/fx.ts:117`), `FxRoundingMode = 'exact' \| 'ceil_100' \| 'nearest_1000' \| 'ceil_1000'` (`:33`), `DEFAULT_FX_ROUNDING = 'ceil_1000'` (`:35`) — el default ratificado por el LEAD en FASE 2, punto 2 | `packages/domain/src/fx.test.ts`; `pnpm --filter @istock/domain test` → **187 passed / 12 archivos** (2026-08-28) |
 | **ARS visible en ficha** | `s/[slug]/p/[listing]/page.tsx`, con el cartel de que el peso es **informativo** (FASE 2, punto 3) | **M3 de `scripts/accept-s3.sh`**, que exige el ARS con la forma de `formatArs`; corrida del LEAD **58 PASS · 0 FAIL** |
 
-**S5 no tiene `accept-s5.sh` y no lo va a tener.** Su gate está repartido entre `accept-s3.sh` (la
-mitad que se ve) y la suite de `@istock/domain` (la mitad que calcula), y las dos las re-ejecutó el
-LEAD. Se anota explícito porque *"no encontré el comando"* no puede volver a leerse como *"no está
-verificado"*.
+**S5 no tiene `accept-s5.sh`.** Su gate está repartido entre `accept-s3.sh` (la mitad que se ve) y
+la suite de `@istock/domain` (la mitad que calcula), y las dos las re-ejecutó el LEAD. Se anota
+explícito porque *"no encontré el comando"* no puede volver a leerse como *"no está verificado"*.
+**Que eso alcance para el `done` es otra pregunta, y quedó abierta como deuda de proceso:** ningún
+comando del repo *nombra* a S5, así que borrar M3 de `accept-s3.sh` le saca la evidencia sin poner
+nada en rojo. La versión anterior de este párrafo decía *"y no lo va a tener"*: eso era una decisión,
+y `docs-keeper` no las toma. La decide el LEAD — ver §"S5 quedó `done` sin comando de aceptación
+propio".
 
 **El hueco real, y por qué es T12 y no S5.** El dueño **no puede editar el TC después del alta**:
 `app/(panel)/ajustes/page.tsx` es sólo lectura, cero `'use server'` en el directorio, y la única
@@ -1477,56 +1493,193 @@ mutación de `fx_settings` en todo el repo es el `insert` del alta. Eso es exact
 parecería que falta el FX entero cuando lo que falta es una pantalla de edición. La fila que hay que
 mirar para el TC es T12.
 
-### S6 · reserva + cron de expiración  ·  `doing` · `app-agent`
+### S6 · reserva + cron de expiración  ·  **CERRADA el 2026-08-28** (`cbbfa2f`, `10d31b6`)
 
-**Lo que ya está, y no hay que volver a escribirlo:**
+**Lo que entró**, y de dónde sale cada tercio del gate:
 
-- **La invariante en el motor, no en el código.** `packages/db/src/schema/commerce.ts`: tabla
-  `reservations` con `uniqueIndex('reservations_one_active_per_listing')` **parcial**
-  (`where status = 'active'`) — dos reservas simultáneas de la misma unidad las rechaza Postgres, no
-  un `if`. Más `check('reservations_minutes_range', minutes between 30 and 120)`, el índice parcial
-  `reservations_active_expiry_idx` por el que barre el cron, y `tenantPolicies` + `enableRLS()`.
-- **La regla pura.** `packages/domain/src/reservation.ts`: `RESERVATION_MIN_MINUTES = 30` /
-  `MAX = 120` / `DEFAULT = 60` (`:13-15`), `createReservation` (`:45`), `isReservationExpired`
-  (`:72`), `reservationMsRemaining` (`:78`) y **`expireReservation` (`:95`), puro e idempotente, con
-  `now` inyectado** — *"el cron lo llama, no al revés"* (`:7`).
-- **La invalidación ya tiene su función.** `invalidateStorefrontUnit(slug, listingId)`
-  (`_lib/tenants/storefront-cache.ts:127`) es la que corresponde: expirar una reserva cambia **una**
-  unidad, no el catálogo entero. `invalidateStorefront` (2 tags) es para lo que afecta a todas las
-  fichas —el TC, por ejemplo—; usarla acá purgaría de más y es el defecto que S3.2 cerró.
+| tercio | dónde | nota |
+|---|---|---|
+| **reserva 30–120 min** | `_lib/reservations/` (`schema.ts`, `reserve-unit.ts`, `queries.ts`) + `stock/reservation-actions.ts` + `stock/_ui/reserve-form.tsx` y `cancel-reservation-button.tsx` | el rango **se rechaza, no se clampea** (`schema.ts:15-20`): clampear le devolvería al vendedor una reserva que no pidió. Lo sostienen tres capas: Zod, el `CHECK` `reservations_minutes_range` y el dominio |
+| **cron libera** | `app/api/cron/expire-reservations/route.ts` + `_lib/reservations/expire-reservations.ts` + `vercel.json` (`*/5 * * * *`) | el barrido es idempotente (`expireReservation` del dominio es puro, con `now` inyectado) |
+| **vidriera revalida** | `invalidateStorefrontUnit(slug, listingId)` | **por unidad**, no por catálogo: expirar una reserva cambia una ficha. Purgar de más es el defecto que cerró S3.2 |
 
-**Lo que falta, y de dónde sale el `doing`:** el panel (reservar / cancelar desde `stock/`), la
-**ruta de cron** y el `revalidateTag` colgado de la expiración. **En `main` (`c854b99`) no hay nada
-de eso:** `apps/web/app/api/` tiene exactamente dos handlers, `health` y `tenants/slug-check`, más
-`s/[slug]/api/track` del lado de la vidriera. Ninguno es de cron.
+**El `vercel.json` existía como pregunta abierta en esta misma sección y ya no lo es.** Lo escribió el
+LEAD (§4) y declara **una sola cosa**, el `crons`. No puede declarar más: el schema oficial tiene
+`additionalProperties: false` en la raíz. La elección de Vercel Cron sobre Inngest, que `CLAUDE.md`
+§3 y `ARCHITECTURE.md` §Jobs dejaban como disyuntiva, quedó escrita en **ADR-017**.
 
-**Trabajo en vuelo, sin commitear — y se movió dos veces mientras se escribía esta sección.** Las
-dos lecturas de `git status` del 2026-08-28, en el orden en que se tomaron:
+#### El rechazo del `adversary-reviewer`, que es lo que hay que leer de esta slice
 
-| momento | `_lib/reservations/` | `_lib/entitlements` | `app/api/cron/` |
-|---|---|---|---|
-| primera lectura | 3 archivos, **los tres `.test.ts`**; importaban `./schema`, ausente | sólo `entitlements.test.ts`, con `await import('./entitlements')` contra un archivo ausente | no existía |
-| segunda lectura | 7 archivos: los 3 tests **más** `schema.ts`, `reserve-unit.ts`, `expire-reservations.ts`, `queries.ts` | `entitlements.ts` ya existe | `expire-reservations/route.test.ts`, **sin `route.ts`** |
+El bloqueante **no era preexistente: lo introdujo S6**. La slice le agregó el parámetro `extras` a
+`transitionContextFor()` y dejó atrás a un caller, así que `transitionUnit()` evaluaba **toda**
+transición con `activeReservation: null`. Consecuencia medible: *"Publicar"* sobre una unidad
+`reserved` devolvía ok, el equipo volvía a la vidriera como **Disponible con la seña puesta**, y
+quedaba irreservable —`reserveUnit` chocaba contra el índice único parcial
+`reservations_one_active_per_listing` y contestaba *"Ya tiene una reserva activa"* sobre una fila
+cuyo badge decía "En vidriera"—, sin salida por UI.
 
-Es test-primero, y está bien —es la misma disciplina de `7e40856`, gate en rojo antes que el código—
-pero **nada de esto es artefacto todavía**: `CLAUDE.md` §Phantom-file guard dice que archivo
-inexistente = la tarea no pasó, y en cada lectura hubo un test cuyo sujeto todavía no existía. **Los
-números de línea que cita esta sección son de `main`, no del árbol de trabajo**, justamente porque el
-árbol se mueve entre dos lecturas y un board que cita un archivo sucio miente al día siguiente.
+**Por qué el typecheck no lo vio, que es la lección transferible:** el parámetro era **opcional y su
+default era un valor válido**. `strict` no distingue *"no me lo pasaron"* de *"me pasaron que no hay
+reserva"*. **El fix fue borrar el default**, no pasar el dato: ahora el compilador atrapa al caller
+olvidado, y los dos sitios que sólo renderizan pasan una constante con nombre
+(`DRAFT_PUBLISH_EXTRAS`, `unit-row.tsx:137` y `fotos/page.tsx:132`) que documenta por qué ahí la
+mentira es inofensiva. Un default válido en un parámetro opcional es un `any` con mejores modales.
 
-**Dos cosas que S6 tiene que decidir por escrito antes de dar por cerrado el cron**, porque no están
-resueltas en el repo y no las inventa este board:
+Segunda mitad del mismo bloqueante: `transitionEffects().closesReservation` está comentado en el
+dominio como *"Efecto obligatorio"* (`packages/domain/src/listing-status.ts:85`) y **tenía cero
+consumidores**. Ahora se ejecuta dentro de la misma transacción que mueve el listing. Lo cubre
+`scripts/guard-effects.sh` (`5befc94`), en CI desde `e3a7c5e`.
 
-1. **El `vercel.json` con el `schedule` lo escribe el LEAD** (`vercel.json` es suyo por §4) y **hoy
-   no existe** — `ls vercel.json` → *No such file or directory*. `ARCHITECTURE.md` §Jobs dice Vercel
-   Cron o Inngest free tier, no worker 24/7; cuál de los dos es una decisión que va a `DECISIONS.md`
-   y la ratifica el LEAD.
-2. **La ruta de cron es un route handler nuevo, así que rompe `guard-firewall.sh` el día que nace**
-   —F3 camina **`apps/web/app` entero**, no sólo `app/api` (`guard-firewall.sh:156-159`: la primera
-   versión censaba sólo `app/api` y por eso no veía `/_media/[...key]`, el endpoint de mayor egress
-   del producto), y exige que cada handler esté cubierto por una regla o justificado en la
-   allowlist—, y `config/firewall-rules.json` también es del LEAD. Es un pedido, no una edición.
-   Es la misma secuencia que dejó a `guard-routes` rojo tres commits en S4.
+#### Las dos probes del LEAD, y por qué el `route.test.ts` de `app-agent` no puede ocupar su lugar
+
+`scripts/probes/` es del LEAD por §4: **el gate no puede ser del mismo writer que el código que
+audita**. `app/api/cron/expire-reservations/route.test.ts` existe, es de `app-agent`, y sirve como
+red de regresión propia; si `accept-s6.sh` lo citara como evidencia, `app-agent` estaría firmando su
+propio certificado.
+
+- **`s6-cron-reachability.test.ts` — que el cron LLEGUE.** Cruza `vercel.json` (LEAD), `proxy.ts`
+  (`storefront-agent`) y el route handler (`app-agent`): **tres columnas, y ninguna ve el camino
+  entero**. Existe porque un endpoint de cron que devuelve **3xx completa sin más requests** y
+  Vercel **no reintenta**: un redirect apaga el job sin log, sin error y sin alerta, y el síntoma
+  aparece semanas después del lado del cliente. Hoy no hay redirect **por casualidad para este uso**
+  —`resolveHost` manda `*.vercel.app`, el apex y todo host desconocido a `marketing` → passthrough,
+  y eso se decidió por otro motivo—, así que nada lo ataba hasta esta probe.
+- **`s6-cron-fail-closed.test.ts` — que el 401 vaya ANTES del barrido.** La propiedad no es *"devuelve
+  401"*, es **"sin credencial válida no toca Postgres"**, que es una afirmación sobre el **orden** de
+  dos cosas: un handler que barre primero y decide el status después devuelve los mismos 401 y es una
+  escritura abierta. Por eso espía la función del barrido en vez de comparar un status. **El caso que
+  justifica el archivo es la env ausente:** la comparación cae contra `undefined`, y el endpoint que
+  vacía reservas queda público respondiendo 200, sin nada raro en los logs.
+
+`GET /api/cron/expire-reservations` es la **única puerta HTTP sin sesión que escribe** en todo el
+producto, y **no lleva regla de rate limit**: la excepción está escrita con su motivo en
+`config/firewall-rules.json:75-76` (falla cerrado, así que un flood no abre una conexión; y una regla
+mal calibrada apaga el cron y las reservas no vencen nunca, en silencio).
+
+#### El gate, y el residuo que hay que leer junto al `done`
+
+`bash scripts/accept-s6.sh` — V1 (el schedule apunta a un handler que existe y el cron llega hasta
+él) · V2 (fail-closed medido por invocación) · V3 (fuera de rango se rechaza) · V4 (el entitlement se
+chequea **adentro** de la Server Action) · V5 (expirar invalida la unidad, no la vidriera entera) ·
+V6 (nada de lo que S6 agrega filtra costo, margen ni IMEI) · V7 (el barrido cruza tenants para
+**leer** y escribe atado al tenant de cada fila) · V8 (medición e2e del ciclo).
+
+**La V8 es el cuarto caso del repo de la misma familia**, y lo marcó `qa-agent` **en su propio
+reporte, con el gate ya en verde y a su favor**: grepeaba el **fuente** buscando `MEDIDO s6 reserva`,
+cadena que aparece en el docblock del spec y en el del helper que la arma, así que daba **PASS con
+dos comentarios y cero corridas**. Desde `10d31b6` corre el spec, lee la línea de la **salida real** y
+exige seis campos. En el mismo commit se acotó la **V3**, que dio su tercer falso positivo matcheando
+un `Math.max(0, expiresAt - now)` que es un piso de cuenta regresiva, no un clamp de duración.
+
+**Residuo declarado.** La barrida del LEAD que cita esta sección es **anterior** a `10d31b6`, o sea
+que corrió la V8 en su forma vieja. La **medición** que dejó registrada satisface los seis campos que
+la V8 nueva exige —el hecho está medido, no inferido—, pero **el gate en su forma actual no tiene
+corrida registrada**. Es nivel 1 con un asterisco, y se anota acá porque este board ya pagó dos veces
+la diferencia entre *"el gate existe"* y *"el gate corrió"* (ver §"Seis gates rojos o dormidos").
+
+### S6.1 · la regla de en qué queda una reserva cerrada vive en `apps/web`, no en el dominio
+
+**Abierta el 2026-08-28 al cerrar S6, verificada contra `main`.** La regla es:
+
+> una reserva que se cierra por `reserved → sold` queda **`confirmed`**; desde cualquier otro destino
+> queda **`cancelled`**.
+
+Hoy vive como helper **local y privado** en
+`apps/web/app/(app)/_lib/listings/publish-listing.ts:231` (`closingStatusFor`, no exportado), con su
+justificación escrita ahí mismo. El dominio declara **que** hay que cerrar la reserva
+(`transitionEffects().closesReservation`, `packages/domain/src/listing-status.ts:177`) y **no en qué
+estado queda** — `TransitionEffects` es hoy un objeto de cuatro booleanos.
+
+**Por qué es una fila y no una preferencia de estilo.** `packages/domain` es *"TS puro, cero I/O:
+FX, máquina de estados, …"* (`CLAUDE.md` §Monorepo), y esto es máquina de estados: mapea una arista
+del listing a un estado de reserva. Dejarla en `apps/web` la deja **fuera de la suite del dominio**,
+que es donde se prueban las aristas, y crea el segundo lugar donde se decide qué significa cerrar una
+reserva — el primero es el cron, que escribe `expired` porque tiene la definición de "venció"
+(`expireReservation()`). **Dos definiciones de cerrada repartidas en dos paquetes es exactamente cómo
+se pierde un borde cerrado**, y el propio docblock del helper ya lo dice.
+
+`ReservationClosingStatus` **ya existe en el dominio** (`reservation.ts`, definido por exclusión de
+`'active'` para que agregar un estado obligue a decidir), así que el tipo de llegada está puesto: lo
+que falta es que `TransitionEffects` lo use.
+
+| paso | owner | qué hace |
+|---|---|---|
+| 1 | `domain-agent` | la regla se muda a `TransitionEffects`; el efecto deja de ser un booleano y dice **en qué queda** la reserva. Test propio en `packages/domain`. **Entregado sin commitear, y con más alcance del pedido — ver abajo** |
+| 2 | `app-agent` | `publish-listing.ts` consume el efecto y **borra** `closingStatusFor`. **Entregado sin commitear** |
+
+**Gate:** `grep -rn 'closingStatusFor' apps/web/app` → **cero** resultados (sin `apps/web/.next`,
+que es build), y la suite de `@istock/domain` cubre las aristas de cierre sin que `apps/web` decida
+nada.
+
+#### Estado real al 2026-08-28: los **dos pasos** están en vuelo, **sin commitear**, y el paso 1 creció
+
+Verificado contra el **árbol de trabajo**, no contra `main` — y **cambió tres veces mientras se
+escribía esta sección**: la primera lectura de `git status` estaba limpia, la segunda tenía el
+dominio, la tercera tenía también `apps/web`. Es lo mismo que le pasó a §S6 cuando S6 estaba
+`doing`, y la regla es la misma: **los números de línea de `main` se citan como tales y lo de acá se
+marca como en vuelo**, porque un board que cita un árbol sucio miente al día siguiente.
+
+`domain-agent` entregó el paso 1 y **no** es la mudanza literal del helper: la regla pasó de **dos
+valores a tres**. `TransitionEffects.closesReservation: boolean` **desaparece** y lo reemplaza
+`closesReservationAs: ReservationClosingStatus | null`, y `transitionEffects()` toma un tercer
+parámetro **obligatorio** `intent: TransitionIntent | null`. Con eso:
+
+| arista | estado de cierre |
+|---|---|
+| `reserved → sold` | `confirmed` (sin importar el `intent`: no existe una venta que venció) |
+| `reserved → available` con `intent: 'expire'` | **`expired`** — el mismo valor que ya devuelve `expireReservation()` |
+| `reserved → cualquier otro destino` | `cancelled`, incluso si la reserva ya estaba vencida |
+
+**La tercera fila es alcance que el despacho no pedía**, y el motivo escrito en el propio archivo es
+el que corresponde: el helper de `apps/web` dejaba `cancelled` en el camino del cron y el barrido
+escribía `expired` por su lado, o sea **dos historias del mismo hecho**. Es reemplazo y no agregado a
+propósito: un `boolean` con un estado al lado deja representable el estado ilegal `true` + `null`, y
+deja abierta la puerta de leer *"cierra"* y elegir el estado por fuera — que es exactamente el bug.
+El parámetro `intent` es **obligatorio y admite `null`**, aplicando la lección de S6: un parámetro
+opcional con default válido no distingue *"no me lo pasaron"* de *"me pasaron que no hay"*.
+
+**El paso 2 también aterrizó, y no era cosmético:** el cambio es **rompiente** —`closesReservation`
+desaparece y `transitionEffects()` toma un tercer argumento obligatorio—, así que hasta que
+`app-agent` lo consumiera el árbol no typecheckeaba. Hoy `publish-listing.ts` ejecuta el efecto con
+el estado que le da el dominio y **`closingStatusFor` ya no existe en `apps/web/app`**; el barrido
+del cron pasa `intent: 'expire'` explícito (`expire-reservations.ts:194`), que es la arista nueva.
+`scripts/guard-effects.sh` mira lo mismo desde el otro lado: un efecto declarado sin consumidor es
+FAIL.
+
+**Y aun así la fila sigue abierta**, por el único motivo que mueve estados en este board: **nada de
+esto está commiteado y el LEAD no re-ejecutó nada.** `CLAUDE.md` §Phantom-file guard + regla 5. Lo
+que cierra la fila es el commit más una corrida de `pnpm typecheck && pnpm lint && pnpm test`,
+`bash scripts/guard-effects.sh` y `bash scripts/accept-s6.sh` — este último porque el cambio toca la
+arista que su V8 mide de punta a punta.
+
+### S5 quedó `done` sin comando de aceptación propio  ·  **deuda de proceso**, no de producto
+
+> **Qué es:** el registro de un hueco en el **proceso**, no en el código. **Para quién:** el LEAD, que
+> es el único que puede cerrarlo — los gates son suyos por `CLAUDE.md` §4 y no pueden ser del writer
+> que auditan. **Cuándo se actualiza:** cuando el LEAD decide cuál de las dos salidas toma.
+
+`CLAUDE.md` §0 regla 2: *"nada es `done` sin (a) artefacto en `/docs` y (b) comando de aceptación que
+el LEAD re-ejecuta"*. **S5 está `done` y no tiene un comando propio.** La §S5 de este board argumenta
+—y sigue siendo cierto— que sus tres tercios están afirmados por comandos que el LEAD sí re-ejecutó:
+`accept-s3.sh` (M3, el ARS en la ficha servida) y la suite de `@istock/domain` (los 4 modos de
+redondeo). Lo que ese argumento **no** cubre es el punto que lo vuelve deuda:
+
+**nada nombra a S5.** `grep -rn 'S5' scripts/ .github/workflows/ci.yml` devuelve **dos comentarios**
+en `accept-s3.sh` (`:271` y `:277`) y **cero aserciones**. Consecuencia concreta: **si mañana se borra
+o se afloja M3 de `accept-s3.sh`, S5 pierde su evidencia y ningún comando se pone rojo.** El repo ya
+resolvió este problema exacto una vez y la solución está a la vista: **W1 de `accept-s4.sh` nombra las
+dos aserciones que sostienen S4** —no los archivos— así que borrar M3b pone roja también a S4. S5 no
+tiene ese hilo.
+
+**Las dos salidas, y la elección es del LEAD:**
+
+1. **`scripts/accept-s5.sh`**, aunque sólo encadene lo que ya existe. Barato y explícito.
+2. **Una verificación al estilo W1** dentro de `accept-s3.sh` que **nombre** las aserciones de las que
+   S5 depende, de modo que borrarlas ponga rojo el gate citando a S5.
+
+Lo que **no** es salida es dejarlo como está y confiar en que se recuerde: *"no encontré el comando"*
+y *"no está verificado"* se leen igual seis semanas después, y esta línea existe para que la próxima
+lectura no tenga que reconstruir el argumento. **No lo arregla `docs-keeper`.**
 
 ## FASE 5 — Chatbot (post S4/S8)
 Capa 2. Se **diseña** en FASE 1, se **codea** después de S4/S8. Ver `docs/CHATBOT.md`.

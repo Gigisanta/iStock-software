@@ -177,8 +177,15 @@ bajar el objeto entero **rompa el build** · `experimental.taint: true` · filtr
 en la query (`CLAUDE.md` §5).
 
 ## Jobs
-Vercel Cron (o Inngest free) para expirar reservas. **Sin worker 24/7.**
-Idempotente: correr el cron dos veces no rompe nada.
+**Vercel Cron** para expirar reservas — la disyuntiva *"o Inngest free"* la cerró S6 y está en
+**ADR-017**. **Sin worker 24/7.** Idempotente: correr el cron dos veces no rompe nada, y eso **es**
+la política de reintento, porque Vercel **no reintenta** una corrida fallida.
+
+Uno solo hoy: `GET /api/cron/expire-reservations`, `*/5 * * * *`, declarado en `vercel.json` —el
+único contenido de ese archivo, ver ADR-016 y ADR-017—. Dos cosas que no son obvias y tienen gate
+propio (`accept-s6.sh` V1/V2): **un 3xx apaga el job en silencio** (la corrida figura completa) y
+**sin `CRON_SECRET` válido el handler no toca Postgres**, que es una afirmación sobre el orden y no
+sobre el status code.
 
 ## Límites de confianza
 | desde | hacia | qué puede cruzar |

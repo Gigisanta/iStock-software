@@ -83,9 +83,22 @@ componente es un fallo de seguridad, no una decisión de UI.
 Test obligatorio: agregar un campo nuevo al modelo de DB **no** debe hacerlo aparecer en el DTO.
 
 ## Reservas
-`duration ∈ [30, 120]` minutos, default 60. Entitlement `reservations` (plan `negocio`).
+`duration ∈ [30, 120]` minutos, default 60 (`RESERVATION_MIN/MAX/DEFAULT_MINUTES`). **Fuera de rango
+se rechaza, no se clampea:** clampear le devuelve al vendedor una reserva que no pidió, y el cliente
+del otro lado del WhatsApp escucha un plazo que nadie guardó.
 `expireReservation(reservation, now)` es **puro** — `now` se inyecta. El cron sólo la invoca.
-Al expirar: `reserved → available` + revalidate. Una unidad tiene **como máximo una** reserva activa.
+Al expirar: `reserved → available` + revalidate. Una unidad tiene **como máximo una** reserva activa,
+y eso lo sostiene el índice único **parcial** `reservations_one_active_per_listing`, no un `if`.
+
+**Entitlement `reservations`:** plan `negocio` **y** plan `trial` **mientras esté vigente**. Un trial
+vencido no conserva ninguna feature, la vigencia se resuelve en `featureAccess()` y el rechazo pega
+en la Server Action — **ADR-018**. **Cancelar no pide entitlement**: soltar una unidad no puede
+quedar bloqueado por facturación.
+
+**En qué queda una reserva que se cierra** —`confirmed` si la transición fue a `sold`, `cancelled` si
+la soltó una persona, `expired` si la venció el cron— es regla de la máquina de estados y le
+corresponde a `packages/domain`. Al 2026-08-28 vive a medias en `apps/web`: es la fila **S6.1** del
+board, y esta línea se actualiza cuando cierre.
 
 ## Mensaje de WhatsApp
 Ver skill `wa-payload`. Texto canónico en `CLAUDE.md` §1. Función pura en `packages/domain/src/wa.ts`

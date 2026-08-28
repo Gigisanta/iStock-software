@@ -12,12 +12,12 @@ Lo escribe `docs-keeper` (`CLAUDE.md` §4).
 | [PRODUCT.md](PRODUCT.md) | producto ejecutable: ICP, recorrido que factura, planes, fuera de alcance | `product-scribe` | cambio de producto (raro — no se reabre) |
 | [DOMAIN.md](DOMAIN.md) | glosario, entidades, máquina de estados, FX, visibilidad por rol, `publicListingDTO` | `product-scribe` + `domain-agent` | cada slice que toca reglas de negocio |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | monorepo, host→tenant, cache, camino de una foto, RLS, límites de confianza, **qué NO reescribe el proxy** | LEAD en FASE 1, después `docs-keeper` | FASE 1 + §"Qué NO se reescribe" agregada en **S2** |
-| [DECISIONS.md](DECISIONS.md) | ADRs numeradas con alternativas descartadas y verificación + **§"Notas operativas"** (hallazgos verificados que no abren ADR) | LEAD en FASE 1, después `docs-keeper`; **el LEAD ratifica** cada ADR nueva | **ADR-001..016; 008 y 010 abiertas.** ADR-011 supersede el corolario 4 de ADR-007; ADR-012 lo precisa con el polo negativo; **013** (indistinguibilidad en el panel) y **014** (`instant = false`, **enmendada el 2026-08-28 con la medición del status**) salieron de S2; **015** (el matcher excluye por nombre, no por sufijo) cierra P1+P2; **016** (el rate limit del WAF vive en `config/firewall-rules.json` y no en `vercel.json`, que no existe) cierra el nivel 1 de T1. **Notas operativas abiertas el 2026-08-28**: los dos gates que daban verde por ausencia, el `head()` que pisaba el comando `head`, **"un invariante puede tener tres pruebas alrededor y ninguna encima"** (el botón `wa.me`, cerrado con M3b), la **consulta duplicada del tenant en el miss frío** (deuda aceptada de S3.3, con su número), el **`noindex` del flight** que no es un `<meta>` y —2026-08-28— **"un gate tiene dos niveles"**: `ci.yml` nunca corrió, así que *"corre en CI"* significa *"el repo declara el step"* |
+| [DECISIONS.md](DECISIONS.md) | ADRs numeradas con alternativas descartadas y verificación + **§"Notas operativas"** (hallazgos verificados que no abren ADR) | LEAD en FASE 1, después `docs-keeper`; **el LEAD ratifica** cada ADR nueva | **ADR-001..018; 008 y 010 abiertas.** ADR-011 supersede el corolario 4 de ADR-007; ADR-012 lo precisa con el polo negativo; **013** (indistinguibilidad en el panel) y **014** (`instant = false`, **enmendada el 2026-08-28 con la medición del status**) salieron de S2; **015** (el matcher excluye por nombre, no por sufijo) cierra P1+P2; **016** (el rate limit del WAF vive en `config/firewall-rules.json` y no en `vercel.json`) cierra el nivel 1 de T1 — **enmendada el 2026-08-28 en dos puntos que habían driftado**: `vercel.json` ya existe (lo creó S6 y declara sólo el `crons`) y el censo de `guard-firewall.sh` camina `apps/web/app` **entero**, no `app/api`; **017** (los jobs son Vercel Cron, no Inngest) y **018** (el trial vencido no conserva features) salieron de **S6**. **Notas operativas abiertas el 2026-08-28**: los dos gates que daban verde por ausencia, el `head()` que pisaba el comando `head`, **"un invariante puede tener tres pruebas alrededor y ninguna encima"** (el botón `wa.me`, cerrado con M3b), la **consulta duplicada del tenant en el miss frío** (deuda aceptada de S3.3, con su número), el **`noindex` del flight** que no es un `<meta>` y —2026-08-28— **"un gate tiene dos niveles"**: `ci.yml` nunca corrió, así que *"corre en CI"* significa *"el repo declara el step"* |
 | [SLICE_BOARD.md](SLICE_BOARD.md) | **estado de la verdad del avance** + blockers + **FASE 4 bis** (trabajo que salió de una slice) + §**"Seis gates rojos o dormidos"** (el día que se separó *gate declarado* de *gate ejecutado*) | `docs-keeper` | cada slice, y cada vez que el LEAD re-ejecuta un gate |
 | [TEST_MATRIX.md](TEST_MATRIX.md) | unit / RLS / e2e / seguridad + **qué regla no prueba nadie todavía**, verificado contra el repo | `docs-keeper` (era `qa-agent`; **corregido por el LEAD el 2026-08-28**: quien escribe los tests que cruzan no puede escribir también el doc que declara la cobertura) | cada test nuevo, y cada corrida de gate que cambie lo cubierto |
 | [COST.md](COST.md) | piso de plataforma, marginal por tenant, estrés, métrica a vigilar | LEAD en FASE 1, después `cost-auditor` | **con fuente desde FASE 1** |
 | [CHATBOT.md](CHATBOT.md) | dieta, contexto, tools, handoff, evals, costo por 1000 msgs | `ai-agent` | FASE 5 |
-| [research/](research/) | hechos verificados con fuente y fecha | `researcher` (uno por archivo) | **7 topics de FASE 1 (6 PASS, R4 PARCIAL) + `vercel-request-body-limit.md` (S2) + `vercel-firewall-as-code.md` (T1), los dos pedidos al cerrar una slice** |
+| [research/](research/) | hechos verificados con fuente y fecha | `researcher` (uno por archivo) | **7 topics de FASE 1 (6 PASS, R4 PARCIAL) + `vercel-request-body-limit.md` (S2), `vercel-firewall-as-code.md` (T1) y `vercel-cron-limits.md` (S6), los tres pedidos al hacer o cerrar una slice** |
 
 ## Contratos que no están en /docs
 | archivo | qué es |
@@ -106,19 +106,19 @@ Lo que hay que saber sin leer nada más:
   parsear y no al hidratar), y un `insert … select from listings` en vez de `insert … values`
   (con `values`, el uuid de otro tenant resuelve a **NULL** y la fila se escribe igual por la rama
   `listing_id is null` del `WITH CHECK`).
-- **Lo que S4 dejó abierto es S4.1, y es de conversión, no de seguridad:** cuando el listing **no
-  tiene `catalog_model`**, el mensaje dice `iPhone 14 Pro 256 Grafito 256 Grafito (usado A)` — el
-  fallback al `title` (texto libre del dueño, que ya trae storage y color) más el append de
-  `describeListing`. **No es artefacto del fixture:** `catalogModelId` es nullable y
-  `onDelete: 'set null'`. Y es la segunda vez que el repo paga la misma lección: **tres pruebas
-  alrededor del string y ninguna encima del string completo en el camino real.**
-  **Al 2026-08-28 el código y el gate están los dos en `main`** — gate primero y en rojo (`7e40856`:
-  M3b de `accept-s3.sh` + W5 de `accept-s4.sh` exigen que el equipo nombrado **no repita un token**),
-  fix después (`07c42ff`: `nameSource` requerido sin default, `resolveModelName` como único
-  constructor, `isBlank` tratando `''` como ausente). **La fila sigue `doing` por una sola razón: el
-  LEAD todavía no re-ejecutó `accept-s3.sh` ni `accept-s4.sh` sobre el fix.** Los `37 PASS` que este
-  índice cita para S4 son de la corrida **anterior**, la que imprimió el defecto y lo dejó pasar, así
-  que no sirven como evidencia de S4.1.
+- **S4.1 cerró el 2026-08-28, y era de conversión, no de seguridad:** cuando el listing **no tiene
+  `catalog_model`**, el mensaje decía `iPhone 14 Pro 256 Grafito 256 Grafito (usado A)` — el fallback
+  al `title` (texto libre del dueño, que ya trae storage y color) más el append de `describeListing`.
+  **No era artefacto del fixture:** `catalogModelId` es nullable y `onDelete: 'set null'`. Y es la
+  segunda vez que el repo paga la misma lección: **tres pruebas alrededor del string y ninguna encima
+  del string completo en el camino real.** Gate primero y en rojo (`7e40856`: M3b de `accept-s3.sh` +
+  W5 de `accept-s4.sh` exigen que el equipo nombrado **no repita un token**), fix después (`07c42ff`:
+  `nameSource` requerido **sin default**, `resolveModelName` como único constructor, `isBlank`
+  tratando `''` como ausente). **La cierra la barrida completa del LEAD anterior a `cbbfa2f`**, que
+  corrió `accept-s1..s4` + `accept-s6` en verde, o sea **después** del fix y con la aserción adentro.
+  Salvedad: de esa corrida consta el veredicto, **no el conteo de PASS**. Los `37 PASS` que este
+  índice cita para S4 siguen siendo de la corrida **anterior**, la que imprimió el defecto y lo dejó
+  pasar, y no sirven como evidencia de S4.1.
 - **La forma de `listings.slug` está cerrada en las dos capas** (**T9**): `LISTING_SLUG_PATTERN`
   (3–64, sin guión en los bordes) en `packages/domain` con 15 tests, y `0003_listing_slug_format`
   en `packages/db` con 21 casos contra Postgres real, de polaridad negativa. Queda en vuelo que
@@ -162,13 +162,27 @@ Lo que hay que saber sin leer nada más:
   la ficha lo exige M3 de `accept-s3.sh` en la corrida de 58 PASS del LEAD. **El hueco que queda no
   es de S5: es T12**, que el dueño no puede *editar* el TC después del alta. Contarlo dos veces
   escondía que lo que falta es una pantalla, no el FX.
-- **S6 (reserva + cron) está `doing`, `app-agent`.** DB y dominio listos: `reservations` con índice
-  único **parcial** `reservations_one_active_per_listing` (la invariante en el motor, no en un `if`),
-  `check(minutes between 30 and 120)`, y `expireReservation` puro e idempotente en
-  `packages/domain/src/reservation.ts:95`. Falta panel + **ruta de cron** —hoy no hay ninguna— +
-  `revalidateTag` (`invalidateStorefrontUnit`, no `invalidateStorefront`). **El `vercel.json` con el
-  schedule lo escribe el LEAD y hoy no existe**, y la ruta nueva va a romper el censo de
-  `guard-firewall.sh` el día que nazca: `config/firewall-rules.json` también es del LEAD.
+  **Deuda de proceso anotada el 2026-08-28, y es del LEAD:** S5 está `done` **sin comando de
+  aceptación propio**, y `grep -rn 'S5' scripts/ .github/` devuelve **dos comentarios y cero
+  aserciones**. O sea: borrar M3 de `accept-s3.sh` le saca a S5 su evidencia **sin poner nada en
+  rojo**. El repo ya resolvió esto una vez —W1 de `accept-s4.sh` **nombra** las aserciones que
+  sostienen S4, así que borrar M3b pone roja también a S4—; S5 no tiene ese hilo. Las dos salidas
+  (un `accept-s5.sh`, o una verificación al estilo W1) están en `SLICE_BOARD.md`; la elección es del
+  LEAD, porque los gates son suyos por §4.
+- **S6 (reserva + cron) está `done`** (`cbbfa2f` + `10d31b6`, `app-agent`). Server Actions de
+  reservar/cancelar en el panel, barrido detrás de `GET /api/cron/expire-reservations`, invalidación
+  de la ficha pública **por unidad** (`invalidateStorefrontUnit`, no el catálogo entero) y
+  `vercel.json` con `*/5 * * * *` — el archivo **ya existe** y declara sólo el `crons` (**ADR-017**).
+  **`adversary-reviewer` la rechazó primero**, y el bloqueante era una regresión de la propia slice:
+  `transitionContextFor()` recibió el parámetro `extras` y quedó un caller sin actualizar, así que
+  toda transición se evaluaba con `activeReservation: null` — *"Publicar"* sobre una unidad reservada
+  devolvía ok y el equipo volvía a la vidriera **como Disponible con la seña puesta**. **El typecheck
+  no podía verlo porque el parámetro era opcional y su default un valor válido**; el fix fue **borrar
+  el default**, no pasar el dato. Dos cosas para leer junto al `done`: **(a)** la barrida que lo
+  respalda es **anterior** a `10d31b6`, que reescribió la **V8** —hasta ahí grepeaba el fuente y daba
+  PASS con dos comentarios—, así que la medición está hecha pero el gate en su forma actual **no
+  tiene corrida registrada**; **(b)** deja abierta **S6.1**: la regla de en qué queda una reserva
+  cerrada vive en `apps/web` y es de la máquina de estados.
 - **Regla de método vigente: un gate que nunca se vio fallar no es un gate.** Dos gates estaban
   verdes por vacío desde S1 (la regla del `TODO` no podía disparar nunca) y una regla del
   `guard-leaks` exigía citar el ADR equivocado. Toda regla nueva se prueba en **las dos
@@ -198,12 +212,15 @@ Lo que hay que saber sin leer nada más:
   —que no existe nunca— para subir `e2e/test-results/`.
 - **T1 cerró su nivel 1, y el `done` hay que leerlo entero** (`4fce968`). **El rate limit del WAF no
   entra en `vercel.json` y no puede entrar**: el schema oficial tipa `routes[].mitigate.action` como
-  enum cerrado `["challenge","deny"]` y `rate_limit` aparece **cero veces**. `vercel.json` sigue sin
-  existir. Las 2 reglas viven en `config/firewall-rules.json` (**LEAD**) y se aplican por CLI, que
+  enum cerrado `["challenge","deny"]` y `rate_limit` aparece **cero veces**. **`vercel.json` existe
+  desde S6 y declara sólo el `crons`** (antes esta línea decía que no existía); F5 de
+  `guard-firewall.sh` sigue afirmando que no pretende declarar rate limits. Las 2 reglas viven en `config/firewall-rules.json` (**LEAD**) y se aplican por CLI, que
   **no es parte del build**. **Declaradas y validadas ≠ aplicadas:** no hay proyecto Vercel (**B2**,
   **B5**). `/api/track` **ya existe** —aterrizó con **S4**, no con un "S4b" que nunca fue una fila del
-  board— y su regla pasó a `active`; `/api/chat` sigue esperando la **FASE 5**. Lo que hace fuerte al gate no es validar el JSON sino el **censo**: hoy 3 route
-  handlers, los 3 decididos, y una ruta nueva sin decidir lo rompe **el día que se crea** — y desde
+  board— y su regla pasó a `active`; `/api/chat` sigue esperando la **FASE 5**. Lo que hace fuerte al gate no es validar el JSON sino el **censo**: hoy **5** route
+  handlers, los 5 decididos, y una ruta nueva sin decidir lo rompe **el día que se crea** — pasó con
+  el cron de S6, que entró a la allowlist **con motivo escrito** en vez de con una regla, porque un
+  techo mal calibrado ahí apaga la expiración de reservas en silencio — y desde
   `3199a78` **el gate y su polaridad tienen step en CI** (`ci.yml:118` y `:126`), así que eso dejó de
   depender de que alguien se acuerde — *step declarado*, no ejecutado: ver el recuadro rojo al tope
   de §Estado. Y ninguna regla condiciona por `host`: se facturan los
