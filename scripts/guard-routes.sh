@@ -71,6 +71,31 @@ const ESPERADO = {
   "/s/not-a-tenant/p/[listing]":        "blocking/empty",
   "/s/not-a-tenant/p/not-a-listing":    "static/complete",
 
+  // Canje (S8). Tercera vez que un lote de rutas entra sin fila y el guard queda rojo; arriba
+  // estan narradas las dos anteriores y NO repito el diagnostico, porque la causa vuelve a ser la
+  // de S4 y sigue sin resolverse: el guard esta en CI (`ci.yml:308`) pero no hay push, asi que su
+  // unica corrida posible es la del LEAD. Es la clase de `T30` vista desde el otro lado — alli el
+  // problema era un gate ausente del workflow, aca uno presente en un workflow que nunca arranca.
+  //
+  // El par `[slug]` / `not-a-tenant` es el mismo de la grilla y de la ficha, por el mismo motivo.
+  // Lo que si merece quedar escrito es `listo` y `reintentar`, que PARECEN paginas por visitante y
+  // no lo son: ninguna de las dos toma `searchParams` —solo `params.slug`— asi que el texto que
+  // muestran es generico y cachearlo no filtra el canje de nadie. El dia que alguien les agregue
+  // un `?id=` para personalizar el mensaje, la ruta se vuelve `dynamic` y esta fila lo va a decir
+  // antes de que el cache sirva la confirmacion de un visitante al siguiente.
+  "/s/[slug]/canje":                    "blocking/empty",
+  "/s/[slug]/canje/listo":              "blocking/empty",
+  "/s/[slug]/canje/reintentar":         "blocking/empty",
+  "/s/not-a-tenant/canje":              "static/complete",
+  "/s/not-a-tenant/canje/listo":        "static/complete",
+  "/s/not-a-tenant/canje/reintentar":   "static/complete",
+
+  // Panel del canje recibido. `blocking/empty` es deliberado (`canjes/[id]/page.tsx` ·
+  // `export const instant = false`), por el mismo motivo que `/app/stock/[id]/fotos`: el formulario
+  // de aceptacion tiene que funcionar sin JavaScript, y con streaming el contenido viaja detras del
+  // swap. Lo que NO puede ser nunca es `static/*`, y de eso ya se ocupa el chequeo 1.
+  "/app/canjes/[id]":                   "blocking/empty",
+
   // Panel autenticado. NINGUNA puede ser `static`: ver el docblock.
   "/app":                   "resuming/initial",
   "/app/ajustes":           "resuming/initial",
@@ -78,6 +103,7 @@ const ESPERADO = {
   "/app/crear-negocio":     "resuming/initial",
   "/app/stock":             "resuming/initial",
   "/app/stock/nuevo":       "resuming/initial",
+  "/app/lista":             "resuming/initial",
   "/ingresar":              "resuming/initial",
   // Bloqueante a propósito (`export const instant = false`): sin esto el formulario de fotos no
   // funciona sin JavaScript, porque todo el contenido viaja escondido detrás del swap de streaming.
@@ -95,6 +121,9 @@ const ESPERADO = {
   // invisible como uno que no esta configurado. El LEAD corre los accept-*; `guard-routes` no esta
   // en ninguno de ellos, asi que su unica ejecucion posible era la que no ocurria.
   "/s/[slug]/api/track":    "dynamic",
+  // Alta de canje (S8). `dynamic` por el mismo motivo que el beacon y con mas en juego: la ruta
+  // ESCRIBE la solicitud del visitante. Prerenderizada querria decir que corrio en build time.
+  "/s/[slug]/api/tradein":  "dynamic",
 
   "/_media/[...key]":       "dynamic",
   "/api/tenants/slug-check":"dynamic",
