@@ -106,6 +106,17 @@ const ESPERADO = {
   // sostiene sin `export const dynamic` (removido en Next 16 bajo Cache Components) porque el
   // handler lee `request.headers`; esta fila es lo que avisa el dia que eso deje de ser cierto.
   "/api/cron/expire-reservations": "dynamic",
+
+  // FASE 6. Webhook de Mercado Pago, y `dynamic` es un requisito por el MISMO motivo que el cron,
+  // agravado: la ruta decide segun la FIRMA del pedido (`x-signature`, HMAC verificado en
+  // `_lib/webhook/handle-notification.ts:105`). Una respuesta horneada seria un `200` servido del
+  // CDN sin verificar firma alguna — o sea MP dandose por notificado de eventos que nunca se
+  // aplicaron al ledger, que es la unica forma de perder un pago sin que nadie vea un error.
+  // Y al reves: un `401` cacheado apaga la cobranza entera y se ve como "no llegan webhooks".
+  // Esta fila entro el 2026-08-28 porque `guard-routes` la reclamo: `(billing)` nacio untracked
+  // en esta tanda y la ruta aparecio sin decision escrita. Que el gate la haya reclamado el mismo
+  // dia que la ruta existio es exactamente para lo que esta.
+  "/billing/webhooks/mercadopago": "dynamic",
 };
 
 const m = JSON.parse(readFileSync("apps/web/.next/prerender-manifest.json", "utf8"));

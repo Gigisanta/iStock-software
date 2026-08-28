@@ -143,11 +143,49 @@ else
   ok "los $PAQ_CON_TEST paquetes con tests reportaron resumen"
   TOT=$(grep -oE 'Tests +[0-9]+ passed' /tmp/f3-test.log | grep -oE '[0-9]+' | paste -sd+ - | bc)
   ok "tests corridos en total: ${TOT:-0}"
-  if grep -qiE '[1-9][0-9]* skipped' /tmp/f3-test.log 2>/dev/null; then
-    no "hay tests skipeados: los drivers mock existen, no hay excusa"
+  # ── Skips ──────────────────────────────────────────────────────────────────────────────────
+  # Esta regla decia "cero tests skipeados: los drivers mock existen, no hay excusa" y RECHAZABA
+  # la FASE 3 el 2026-08-28. Estaba mal, y el defecto es de la regla: se escribio cuando el unico
+  # skip imaginable era pereza con un driver mock disponible. Los cuatro skips que la encendieron
+  # son los experimentos de ADR-008 y **no tienen driver mock posible**: miden que hace Mercado
+  # Pago de verdad (comision real, si MP refirma un id reentregado, si el `external_reference`
+  # sobrevive el checkout hosteado). Un mock de eso es una respuesta que escribimos nosotros, o
+  # sea la respuesta que creemos — que es exactamente lo que el experimento existe para no creer.
+  # El encargo dice "skip explicito por falta de keys" y B3 es un bloqueo HUMANO declarado.
+  #
+  # Asi que la regla no se afloja a "los skips estan bien": se le pide ancla y se le pone techo.
+  #   (a) el numero de skips esta CLAVADO aca. Un quinto skip enciende el gate, aunque sea legitimo
+  #       — se declara en este archivo, en el mismo commit, o no entra.
+  #   (b) cada `it.skip` del arbol nombra un bloqueo humano (B1..B6) y su cuerpo es
+  #       `expect.unreachable`. Un skip con cuerpo vacio pasa en verde el dia que se lo des-skipea
+  #       sin implementarlo, que es el verde vacuo de siempre con otro disfraz.
+  # Lo que esta regla NO puede ver, y se declara: que B3 siga abierto. El dia que haya credenciales,
+  # estos cuatro tienen que correr y este numero tiene que bajar a 0. No hay gate para eso; hay
+  # una fila de board.
+  SKIPS_AUTORIZADOS=4
+  # Solo la linea de RESUMEN (`Tests  N passed | M skipped`), no la de cada archivo
+  # (`archivo.test.ts (13 tests | 4 skipped)`): vitest imprime el mismo skip en las dos y sumar
+  # ambas da el doble. Me paso en la primera corrida de esta regla: dijo 8 con 4 skips reales.
+  VISTOS=$(grep -oE 'Tests +[0-9]+ passed \| [0-9]+ skipped' /tmp/f3-test.log 2>/dev/null \
+             | grep -oE '[0-9]+ skipped' | grep -oE '^[0-9]+' | paste -sd+ - | bc)
+  VISTOS=${VISTOS:-0}
+  DECL=$(grep -rn 'it\.skip\|describe\.skip\|test\.skip' apps/web packages tests \
+           --include='*.test.ts' --include='*.test.tsx' 2>/dev/null | grep -c 'it\.skip(')
+  SIN_ANCLA=$(grep -rn -A2 'it\.skip(' apps/web packages tests \
+                --include='*.test.ts' --include='*.test.tsx' 2>/dev/null \
+              | grep 'expect\.unreachable' | grep -cvE "B[1-6]:")
+  if [ "$VISTOS" -ne "$SKIPS_AUTORIZADOS" ]; then
+    no "tests skipeados: $VISTOS, autorizados: $SKIPS_AUTORIZADOS (el numero se clava en este archivo)"
     grep -iE 'skipped' /tmp/f3-test.log | sed 's/^/        /' | head -3
+  elif [ "$DECL" -ne "$SKIPS_AUTORIZADOS" ]; then
+    no "vitest reporto $VISTOS skips pero en el arbol hay $DECL \`it.skip(\`: alguno se skipea de otra forma"
+  elif [ "$SIN_ANCLA" -ne 0 ]; then
+    no "$SIN_ANCLA skip(s) sin ancla: todo \`it.skip\` lleva \`expect.unreachable('B<n>: motivo')\`"
+    grep -rn -A2 'it\.skip(' apps/web packages tests --include='*.test.ts' 2>/dev/null \
+      | grep 'expect\.unreachable' | grep -vE "B[1-6]:" | sed 's/^/        /' | head -3
   else
-    ok "cero tests skipeados"
+    ok "los $VISTOS skips son los experimentos de ADR-008, anclados a B3 y con expect.unreachable"
+    inf "el dia que B3 se abra, estos cuatro corren y SKIPS_AUTORIZADOS baja a 0"
   fi
 fi
 if ./scripts/guard-leaks.sh >/tmp/f3-guard.log 2>&1; then ok "guard-leaks"; else no "guard-leaks"; grep -A3 LEAK /tmp/f3-guard.log | sed 's/^/        /' | head -20; fi

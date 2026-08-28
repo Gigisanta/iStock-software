@@ -118,10 +118,16 @@ def limpiar(cruda, comilla):
 MARCA = re.compile(r'#\s*guard-gates:a-proposito\s+(.{20,})')
 
 roto = 0
+auditados = 0
 for f in SCRIPTS:
-    if os.path.basename(f) == '_lib.sh':
-        continue
+    # `_lib.sh` SI entra a G1, y este comentario es el arreglo de T20 (LEAD, 2026-08-28).
+    # Lo saltea G2 mas abajo, con motivo, porque alli seria vacuo. Aca no lo es: la libreria
+    # tambien puede invocar algo que no resuelve, y es el UNICO archivo donde eso se propaga a los
+    # otros veinte de una vez. Que fuera justo el archivo no auditado lo encontro `docs-keeper`
+    # discutiendo el numero impreso conmigo; los dos habiamos leido media implementacion y los dos
+    # afirmamos lo contrario de lo que dice el codigo. Esta en ADR-020, aplicada a si misma.
     propios = definidos(f)
+    auditados += 1
     disponibles = propios | (LIB if sourcea_lib(f) else set()) | BUILTINS
     term = None
     comilla = None
@@ -155,23 +161,35 @@ for f in SCRIPTS:
 # G2 — la causa raiz: un helper que _lib.sh ya da, redefinido adentro de un gate. Dos copias
 # derivan, y cuando derivan nadie lo ve. `chk`/`have` estuvieron asi hasta hoy.
 for f in SCRIPTS:
+    # Aca el salteo de `_lib.sh` SI es correcto y por eso queda: G2 caza al gate que REDEFINE un
+    # helper que la libreria ya da, y `_lib.sh` es la libreria — sus definiciones son el original,
+    # no una copia que derive. Auditarlo aca reportaria las 12 como duplicadas de si mismas.
     if os.path.basename(f) == '_lib.sh' or not sourcea_lib(f):
         continue
     for n in sorted(definidos(f) & LIB):
         print("FAIL\t%s: redefine `%s`, que ya viene de _lib.sh. Dos copias derivan." % (f, n))
         roto += 1
 
+print("AUDITADOS\t%d" % auditados)
 print("TOTAL\t%d" % roto)
 sys.exit(0)
 PY
 )
 
 HALL=$(echo "$SALIDA" | grep -c '^FAIL' || true)
-if [ "$HALL" = "0" ]; then
-  ok "los $(ls "$RAIZ"/scripts/*.sh | wc -l | tr -d ' ') scripts resuelven todos los helpers que invocan"
+# El numero que se imprime es el de los archivos que G1 AUDITO, y lo dice el barrido: hasta hoy
+# salia de un `ls` de `scripts/*.sh`, o sea contaba 21 mientras auditaba 20 —`_lib.sh` quedaba
+# afuera de los dos `for`—. Un mensaje de exito que cuenta de mas es la misma falla que este gate
+# existe para cazar, escrita en el gate: afirma sobre un conjunto que no es el que midio. T20.
+# Ausencia de la linea = FAIL, nunca PASS: sin `AUDITADOS` no se sabe sobre que se esta afirmando.
+AUD=$(echo "$SALIDA" | sed -nE 's/^AUDITADOS\t([0-9]+)$/\1/p' | head -1)
+if [ -z "$AUD" ]; then
+  no "el barrido no emitio AUDITADOS: no se puede afirmar sobre cuantos scripts se midio"
+elif [ "$HALL" = "0" ]; then
+  ok "los $AUD scripts auditados resuelven todos los helpers que invocan"
 else
-  no "$HALL invocacion(es) de un helper inexistente o duplicado"
-  echo "$SALIDA" | grep -vE '^TOTAL' | sed 's/^/        /'
+  no "$HALL invocacion(es) de un helper inexistente o duplicado (sobre $AUD scripts auditados)"
+  echo "$SALIDA" | grep -vE '^TOTAL|^AUDITADOS' | sed 's/^/        /'
 fi
 
 echo

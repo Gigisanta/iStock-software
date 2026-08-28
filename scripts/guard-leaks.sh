@@ -40,8 +40,17 @@ hits "sin console.log(listing|unit|row)" \
      $SRC_ALL --include='*.ts' --include='*.tsx' --exclude='*.test.ts'
 
 say "3 · deuda diferida sobre seguridad o costo  (§2: 'TODO: despues el RLS' = rechazo)"
+# El `[^A-Za-z]` despues del marcador NO es cosmetico y se agrego el 2026-08-28 tras un falso
+# positivo real: la frase "el cron ve las reservas vencidas de TODOS los tenants" hacia FAIL este
+# guard, porque "TODO" es prefijo de "TODOS" y "tenant" estaba a menos de 60 caracteres. O sea que
+# el gate se ponia rojo por una oracion en castellano bien escrita, sobre codigo correcto.
+# Eso no es "un falso positivo tolerable": es la forma mas barata de ensenarle al equipo que los
+# rojos de este guard se ignoran, y el dia que uno sea de verdad ya nadie lo mira. Exigir que el
+# marcador termine en un caracter no alfabetico deja pasar "TODOS"/"TODAS" y sigue agarrando
+# "TODO:", "TODO ", "FIXME(" y "HACK-". Se usa `[^A-Za-z]` y no `\b` a proposito: `\b` es una
+# extension de GNU y el grep de macOS es BSD; el gate tiene que medir igual en las dos maquinas.
 hits "sin TODO/FIXME sobre RLS, R2 o cache" \
-     "(TODO|FIXME|XXX|HACK)[^\n]{0,60}(RLS|rls|R2|cache|tenant|policy|policies)" \
+     "(TODO|FIXME|XXX|HACK)[^A-Za-z][^\n]{0,59}(RLS|rls|R2|cache|tenant|policy|policies)" \
      $SRC_ALL --include='*.ts' --include='*.tsx' --include='*.sql'
 
 say "4 · Next 16: el archivo se llama proxy.ts  (§3)"

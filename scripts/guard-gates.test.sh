@@ -43,6 +43,25 @@ printf '\n\033[1m── G2: la causa raiz, dos copias del mismo helper\033[0m\n'
 printf '#!/usr/bin/env bash\n. scripts/_lib.sh\nchk() { :; }\nchk "x" "true"\n' > "$T/scripts/fixture.sh"
 caso "ATRAPA redefinir un helper que _lib.sh ya da" FAIL
 
+printf '\n\033[1m── T20: el gate se audita a si mismo, y su numero es el que midio\033[0m\n'
+# Hasta hoy `_lib.sh` quedaba afuera de los dos `for` y el mensaje de exito contaba con un `ls`:
+# 21 impresos, 20 auditados. Justo el archivo no auditado era la libreria que importan los otros
+# veinte, o sea donde un helper inexistente se propaga a todos de una vez. Lo encontro
+# `docs-keeper` discutiendo el numero conmigo, con las dos versiones equivocadas en direcciones
+# opuestas por haber leido media implementacion cada uno. ADR-020, aplicada a si misma.
+cp scripts/_lib.sh "$T/scripts/_lib.sh"
+printf '#!/usr/bin/env bash\n. scripts/_lib.sh\nok "sano"\n' > "$T/scripts/fixture.sh"
+caso "el arbol sano del fixture, con _lib.sh adentro del barrido" PASS
+
+printf '\nlibreria_rota() { helper_que_no_existe_en_ningun_lado "$1"; }\n' >> "$T/scripts/_lib.sh"
+caso "ATRAPA una invocacion rota DENTRO de _lib.sh (se propaga a los otros veinte)" FAIL
+cp scripts/_lib.sh "$T/scripts/_lib.sh"
+
+# El otro polo de T20: G2 tiene que SEGUIR salteando `_lib.sh`. Sus definiciones son el original,
+# no una copia que derive; auditarlo alli reportaria cada helper como duplicado de si mismo.
+printf '#!/usr/bin/env bash\n. scripts/_lib.sh\nok "sano"\n' > "$T/scripts/fixture.sh"
+caso "G2 no acusa a _lib.sh de duplicar los helpers que el mismo define" PASS
+
 printf '\n\033[1m── falsos positivos que tuvo mientras se escribia (regresion)\033[0m\n'
 printf '#!/usr/bin/env bash\n. scripts/_lib.sh\nok "apps/** no nombra el bucket; no puede pedirle un byte"\n' > "$T/scripts/fixture.sh"
 caso "un ';' adentro de un string no es un separador de comandos" PASS

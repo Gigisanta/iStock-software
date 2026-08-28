@@ -326,6 +326,33 @@ else
   fi
 fi
 
+# ── V10 · el barrido no se traba detras de una fila rota ──────────────────────────────────────
+#
+# La probe mas cara de la slice, y la unica que necesita Postgres de verdad. El motivo esta escrito
+# entero en el archivo: la primera de las tres piezas del arreglo es el `order by`, y un `tx` de
+# mentira devuelve las filas en el orden en que se las metieron — no hay nada del ordenamiento que
+# pueda medir. Un fake que ignora el orden y despues "verifica el orden" es la familia de ADR-020
+# con un mock en lugar de un grep.
+#
+# Polaridad ejecutada por el LEAD antes de aceptar (2026-08-28), cuatro mutaciones sobre el codigo
+# real, cada una revertida: `order by expires_at` a secas -> cae A; sin el techo en el `where` ->
+# cae B; `degraded = false` -> cae F; el `+1` que no avanza -> cae A por la asercion del contador,
+# con su mensaje. Cuatro mutaciones, cuatro rojos DISTINTOS: ninguna asercion viaja colgada de otra.
+sec 'V10 · el barrido no se traba detras de una fila rota (Postgres real)'
+if pnpm --filter @istock/web exec vitest run --root ../.. \
+     scripts/probes/s6-sweep-head-of-line.test.ts >/tmp/s6-hol.txt 2>&1; then
+  ok "la probe de head-of-line pasa: $(grep -oE 'Tests +[0-9]+ passed' /tmp/s6-hol.txt | tail -1)"
+else
+  # Sin base no hay medicion, y ausencia de medicion es FAIL. El mensaje dice como levantarla:
+  # un gate que falla sin decir que hacer se termina comentando.
+  if grep -q 'no hay Postgres en' /tmp/s6-hol.txt; then
+    no 'la probe de head-of-line no pudo correr: no hay Postgres. Levantalo con `pnpm db:local`'
+  else
+    no 'la probe de head-of-line FALLA: el cron puede quedar trabado detras de una fila rota y devolver 200'
+  fi
+  sed 's/^/        /' /tmp/s6-hol.txt | grep -E '×|FAIL|Error|→' | head -8
+fi
+
 # ══════════════════════════════════════════════════════════════════════════════════════════════
 printf '\n'
 if [ "$fail" = "0" ]; then
