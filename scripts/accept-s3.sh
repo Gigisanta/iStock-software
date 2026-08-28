@@ -242,13 +242,37 @@ if [ -s "$HTML" ]; then
     && ok "campo: pantalla original" || no "campo FALTANTE en la ficha: pantalla original"
   grep -aqiE 'disponible|reservado|vendido' "$HTML" \
     && ok "campo: badge de stock/reserva" || no "campo FALTANTE en la ficha: badge de stock/reserva"
-  # Los cuatro que NO son de S3. Se imprimen igual para que el agujero quede a la vista en cada
-  # corrida en vez de vivir solo en el board: el que lee este gate tiene que saber que la ficha
-  # todavia no esta completa segun CLAUDE.md §1, y de quien es cada pedazo.
-  inf "declarado — faltan por slice, NO cuentan como PASS ni como FAIL:"
-  inf "  precio ARS + TC del dueño → S5   ·   punto de retiro + horario → settings de tenant"
-  inf "  medios de pago → settings de tenant   ·   acepta canje → S8"
-  inf "  este gate se aprieta cuando S5 y S8 cierren; hasta entonces la ficha esta incompleta"
+  # Los cuatro que faltaban. NO son agujero declarado: los cuatro TIENEN fuente de datos hoy y
+  # estan sembrados, asi que S3 los renderiza o no pasa. El LEAD los habia diferido a S5/S8 por
+  # error, y la correccion es del 2026-08-28, contra el schema real:
+  #   ARS            `fx_settings` (arsPerUsd=148750 → 1487,50 · rounding=ceil_1000) + domain/fx.ts
+  #   punto + horario `locations` (dos filas sembradas, con policy de anon para la vidriera)
+  #   medios de pago  `tenants.payment_methods` (array de texto, cuatro sembrados)
+  #   acepta canje    `tenants.accepts_trade_in` (true en el seed)
+  # Lo que S5 agrega es la PANTALLA para que el dueño cambie el TC y el redondeo, no el dato.
+  campo "punto de retiro"      "Local Neuquén centro"
+  campo "horario del punto"    "lun a vie de 10 a 18"
+  campo "segundo punto"        "Punto Cipolletti"
+  campo "medios de pago"       "Transferencia ARS"
+  grep -aqiE 'canje|permuta' "$HTML" \
+    && ok "campo: acepta canje" || no "campo FALTANTE en la ficha: acepta canje (tenants.accepts_trade_in)"
+  # ARS: se exige la MONEDA y que el numero publicado sea multiplo de 1000, que es lo que significa
+  # `ceil_1000` en la practica. No se exige un importe exacto: fijarlo aca haria que el gate del
+  # LEAD reimplemente `applyFx` y despues las dos cuentas se separen sin que nadie se entere.
+  # El importe exacto lo prueba `packages/domain/src/fx.test.ts`, que es donde vive la funcion.
+  if grep -aqE 'ARS|\$' "$HTML"; then
+    ok "campo: precio ARS presente"
+    grep -aqE '\.000([^0-9]|$)' "$HTML" \
+      && ok "el ARS publicado termina en 000 (ceil_1000, el default del tenant)" \
+      || no "hay ARS pero no termina en 000: el redondeo publicado no es ceil_1000"
+  else
+    no "campo FALTANTE en la ficha: precio ARS (fx_settings del tenant + domain/fx.ts)"
+  fi
+  # Y que la ficha diga que el ARS es informativo: es ratificacion del LEAD en FASE 2, la operacion
+  # se cierra por WhatsApp. Sin ese texto el precio en pesos es una oferta y no lo es.
+  grep -aqiE 'informativ|referencia|orientativ' "$HTML" \
+    && ok "la ficha aclara que el ARS es informativo (ratificado en FASE 2)" \
+    || no "el ARS se publica sin decir que es informativo (FASE 2: la operacion se cierra por WA)"
 else
   no "sin HTML de ficha: los 15 campos quedaron sin medir"
 fi
