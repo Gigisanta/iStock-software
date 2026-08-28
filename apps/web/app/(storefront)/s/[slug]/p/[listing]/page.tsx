@@ -1,15 +1,17 @@
 import type { Metadata } from 'next';
 import { cacheLife, cacheTag } from 'next/cache';
 import type { PublicListingDTO } from '@istock/domain';
-import { STOREFRONT_DOMAIN, isListingSlugShaped } from '@istock/domain';
+import { STOREFRONT_DOMAIN } from '@istock/domain';
 import { listingTag, storefrontTag, tenantConfigTag } from '../../../../_lib/cache-tags';
 import { cacheStorefrontMiss } from '../../../../_lib/cache-life';
 import { PRERENDER_SEED_SLUG, isSlugShaped } from '../../../../_lib/host';
 import { PRERENDER_SEED_LISTING, STOREFRONT_HOME_PATH } from '../../../../_lib/routes';
 import { getStorefrontListing } from '../../../../_lib/listings';
+import { getStorefrontTenant } from '../../../../_lib/tenant';
 import { SECONDARY_PHOTO_SIZES } from '../../../../_lib/photo';
 import { statusBadge } from '../../../../_lib/status';
 import { LISTING_MISS_METADATA, ListingMiss } from '../../../../_components/listing-miss';
+import { STOREFRONT_MISS_METADATA, StorefrontMiss } from '../../../../_components/storefront-miss';
 import { StatusBadge } from '../../../../_components/status-badge';
 import { StorefrontHeroPhoto, StorefrontPhoto } from '../../../../_components/storefront-photo';
 import { WaButton } from '../../../../_components/wa-button';
@@ -63,9 +65,17 @@ import { WaButton } from '../../../../_components/wa-button';
  * nivel más abajo. La tabla completa está en `_components/listing-miss.tsx`, junto al componente
  * que la contesta; no se copia acá para que no derive.
  *
- * Consecuencia: los dos caminos negativos de esta página **devuelven** contenido. El `null` del
+ * Consecuencia: los caminos negativos de esta página **devuelven** contenido. El `null` del
  * loader se cachea igual con el perfil corto, así que un bot probando mil slugs inventados hace
  * mil queries una vez y cero después.
+ *
+ * ── Y son DOS negativos, no uno (S3.3) ───────────────────────────────────────────────────────
+ * El `null` de `getStorefrontListing()` tapaba dos hechos distintos —no existe el tenant · no
+ * existe el equipo— y los dos contestaban *"Este equipo ya no está publicado"*. A quien abría
+ * `{inventado}.maat.work/p/lo-que-sea` le decíamos que se agotó un equipo de un negocio que nunca
+ * existió, y encima `{inventado}.maat.work/` (que sí distinguía) contestaba otra cosa sobre el
+ * mismo hecho. El desempate, y por qué se pregunta **después** del `null` y no antes, están abajo
+ * en `storefrontExists()`.
  */
 
 /**
@@ -98,11 +108,15 @@ export async function generateMetadata({ params }: ListingPageProps): Promise<Me
 
   // Validar antes de `cacheTag()`: `storefrontTag()` tira con un slug basura y bajo
   // `cacheComponents` + PPR un throw de render es un stream que no cierra con el 200 ya emitido.
-  // Los dos validadores son de `@istock/domain`: el del tenant (techo 32, label DNS) y el de la
-  // ficha (techo 64, segmento de path). Por qué son dos, está en `packages/domain/src/slug.ts`.
-  if (!isSlugShaped(slug) || !isListingSlugShaped(listingSlug)) {
+  // Un slug de tenant que no pasa `isSlugShaped` **no puede existir en la base** (el CHECK
+  // `tenants_slug_format` de `packages/db` no lo deja entrar), así que la respuesta honesta es la
+  // del tenant, no la del equipo: no hay vidriera en esa dirección. El validador de la ficha
+  // (`isListingSlugShaped`, techo 64) NO se chequea acá — lo aplica `getStorefrontListing` sin
+  // abrir conexión, y así el `listingSlug` basura cae por el mismo camino que el inexistente y
+  // recibe la misma respuesta de dos ramas. Por qué son dos validadores: `packages/domain/slug.ts`.
+  if (!isSlugShaped(slug)) {
     cacheStorefrontMiss();
-    return LISTING_MISS_METADATA;
+    return STOREFRONT_MISS_METADATA;
   }
 
   cacheTag(storefrontTag(slug), tenantConfigTag(slug));
@@ -110,7 +124,11 @@ export async function generateMetadata({ params }: ListingPageProps): Promise<Me
   const listing = await getStorefrontListing(slug, listingSlug);
   if (listing === null) {
     cacheStorefrontMiss();
-    return LISTING_MISS_METADATA;
+    // El desempate de los dos miss vive UNA sola vez, en `missMetadataFor()` (abajo), para que el
+    // `<title>` no pueda decir "este equipo ya no está publicado" mientras el cuerpo dice "no hay
+    // ninguna vidriera en esta dirección". Cuerpo y metadata son dos entradas de cache distintas:
+    // si el desempate estuviera copiado, la copia deriva y nadie lo mira.
+    return await missMetadataFor(slug);
   }
 
   cacheTag(listingTag(listing.id));
@@ -145,11 +163,17 @@ export default async function ListingPage({ params }: ListingPageProps) {
   // jamás lo corta el proxy, sin invocar la app (`isStorefrontInternalPath` / `malformedHost`).
   // Entonces el contrato de esta rama es chico: no tirar, no colgarse, no filtrar y no costar caro.
   // El status no entra en el contrato, y no por olvido — ADR-011 y la medición del 2026-08-28
-  // muestran que desde acá adentro ya está decidido. Devuelve el mismo miss que el `null` del
-  // loader porque para la persona es el mismo hecho: ese equipo no está.
-  if (!isSlugShaped(slug) || !isListingSlugShaped(listingSlug)) {
+  // muestran que desde acá adentro ya está decidido.
+  //
+  // Devuelve el miss del **tenant**, no el del equipo, y sin preguntarle a Postgres: un slug que no
+  // pasa `isSlugShaped` no puede estar en `tenants` (CHECK `tenants_slug_format`, `packages/db`),
+  // así que "no hay vidriera en esta dirección" es un hecho ya decidido acá. El validador de la
+  // ficha se sacó de esta condición a propósito: lo aplica `getStorefrontListing` sin abrir
+  // conexión, y así el `listingSlug` malformado desemboca en el mismo desempate que el inexistente
+  // en vez de asumir una vidriera que quizás tampoco existe.
+  if (!isSlugShaped(slug)) {
     cacheStorefrontMiss();
-    return <ListingMiss />;
+    return <StorefrontMiss />;
   }
 
   cacheTag(storefrontTag(slug), tenantConfigTag(slug));
@@ -159,7 +183,9 @@ export default async function ListingPage({ params }: ListingPageProps) {
   const listing = await getStorefrontListing(slug, listingSlug);
   if (listing === null) {
     cacheStorefrontMiss();
-    return <ListingMiss />;
+    // Y recién ACÁ se pregunta si la vidriera existe. Ver `storefrontExists()`, abajo: el orden es
+    // el invariante de costo de esta página, no una preferencia de lectura.
+    return (await storefrontExists(slug)) ? <ListingMiss /> : <StorefrontMiss />;
   }
 
   // El tag propio de la unidad, además de los dos del tenant. Se registra recién acá porque el
@@ -234,6 +260,55 @@ export default async function ListingPage({ params }: ListingPageProps) {
       <PickupAndPayment listing={listing} />
     </main>
   );
+}
+
+/**
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *  Los dos miss de esta página son DOS HECHOS DISTINTOS, y el orden en que se preguntan es plata
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * `getStorefrontListing()` devuelve `null` por dos motivos que no se parecen en nada:
+ *
+ * | qué pasó | qué contesta | por qué |
+ * |---|---|---|
+ * | la vidriera no existe | `<StorefrontMiss />` · *"No hay ninguna vidriera en esta dirección"* | el link está mal escrito o el subdominio nunca fue de nadie |
+ * | la vidriera existe, el equipo no | `<ListingMiss />` · *"Este equipo ya no está publicado"* | se vendió, y el resto del stock **sí** está ahí |
+ *
+ * Decirle *"este equipo ya no está publicado"* a quien abrió `{inventado}.maat.work/p/lo-que-sea`
+ * es dos mentiras encima: no hay tal equipo y no hay tal negocio, y encima lo mandamos a buscar
+ * stock a un lugar que no existe. Peor todavía, `{inventado}.maat.work/` sí contestaba bien: dos
+ * URLs del mismo subdominio muerto contestaban cosas distintas sobre el mismo hecho.
+ *
+ * El desempate reusa `getStorefrontTenant()` —el mismo loader que ya usa `s/[slug]/page.tsx`, con
+ * su mismo `'use cache'`, sus mismos tags y su mismo perfil corto para el `null`— en vez de una
+ * segunda consulta escrita acá.
+ *
+ * ## Por qué se llama DESPUÉS del `null`, y nunca antes
+ * Esta pregunta **no entra en el camino feliz**. Una ficha que existe no ejecuta ni una línea de
+ * acá: `getStorefrontListing()` ya resolvió el tenant adentro de su propia transacción y devolvió
+ * el DTO. Poner el `getStorefrontTenant()` arriba, como hace la home, le sumaría una consulta a
+ * **toda** ficha —incluidas las 99 de cada 100 que sí existen— para arreglar el caso raro, y eso
+ * es exactamente lo que el §3 de `CLAUDE.md` compra con el `'use cache'` (95% de los hits sin
+ * Postgres). El costo queda confinado al miss: **una** consulta más, sólo en cache frío, y
+ * cacheada con `STOREFRONT_MISS_LIFE` (5 min) como cualquier otro `null` de la vidriera.
+ */
+async function storefrontExists(slug: string): Promise<boolean> {
+  return (await getStorefrontTenant(slug)) !== null;
+}
+
+/**
+ * El mismo desempate para la metadata, y **escrito una sola vez** para los dos.
+ *
+ * El cuerpo y la metadata son dos entradas de cache distintas, con sus propios tiempos de vida y
+ * su propio momento de resolución en el stream. Si el desempate estuviera copiado, alcanza con que
+ * una de las dos copias derive para producir la peor pantalla posible: un `<h1>` que dice "no hay
+ * ninguna vidriera acá" con un `<title>` que dice "este equipo ya no está publicado".
+ *
+ * Las dos metadatas llevan `robots: { index: false, follow: false }`, así que el desempate no puede
+ * volver indexable a ninguno de los dos miss por más que elija mal.
+ */
+async function missMetadataFor(slug: string): Promise<Metadata> {
+  return (await storefrontExists(slug)) ? LISTING_MISS_METADATA : STOREFRONT_MISS_METADATA;
 }
 
 /**
