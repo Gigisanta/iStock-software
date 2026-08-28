@@ -148,10 +148,31 @@ if [ "$FIXTURE" = "1" ]; then
 elif [ "$LISTO" = "0" ]; then
   no "no se corre la suite e2e porque faltan artefactos de S4 (W0): no hay ninguna medicion"
 else
-  pnpm --filter e2e test >"$EOUT" 2>&1 || no "la suite e2e fallo"
+  # LA MISMA TRAMPA DE accept-s1.sh:334, Y ME LA VOLVI A COMER, 2026-08-28: aca decia
+  # `pnpm --filter e2e test`. Dos errores en una linea: el paquete se llama `@istock/e2e` (el filtro
+  # `e2e` no matchea nada) y su script se llama `e2e` (no existe `test`). **pnpm no-opea con exit 0
+  # cuando el filtro o el script no existen**, asi que W4 salia en verde habiendo ejecutado CERO
+  # tests, y W5/W6/W6b fallaban por ausencia de mediciones que en realidad existian. Lo encontro
+  # `storefront-agent` corriendo la suite a mano. Por eso el nombre del script se VERIFICA antes.
+  E2E_SCRIPT=e2e
+  if ! node -e "process.exit(require('./e2e/package.json').scripts?.['$E2E_SCRIPT']?0:1)" 2>/dev/null; then
+    no "e2e/package.json no expone el script '$E2E_SCRIPT': el gate correria un no-op con exit 0"
+  fi
+  pnpm --filter @istock/e2e "$E2E_SCRIPT" >"$EOUT" 2>&1 || no "la suite e2e fallo"
 fi
 LOG=$(LC_ALL=C sed 's/\x1b\[[0-9;]*m//g' "$EOUT")
 rm -f "$EOUT"
+# Verificar el nombre del script tapa el agujero conocido; esto tapa la CLASE entera. Un log vacio
+# no es una suite en verde: es una suite que no corrio. Vale igual en modo fixture — un fixture
+# ilegible o vacio tampoco es una medicion. Ausencia de medicion = FAIL, nunca PASS.
+if [ -z "$(printf '%s' "$LOG" | tr -d '[:space:]')" ]; then
+  no "el log de e2e esta vacio: la suite no corrio (no fallo: NO CORRIO), asi que no hay mediciones"
+else
+  PASADOS=$(printf '%s\n' "$LOG" | grep -oE '[0-9]+ passed' | tail -1)
+  [ -n "$PASADOS" ] \
+    && ok "la suite e2e se ejecuto de verdad ($PASADOS)" \
+    || no "el log de e2e no declara cuantos tests pasaron: no se puede afirmar que haya ejecutado"
+fi
 
 # ──────────────────────────────────────────────────────────────────────────────────────────────
 sec "W5 · con JavaScript apagado el boton sigue abriendo WhatsApp"

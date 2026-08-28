@@ -41,7 +41,11 @@ mk("f1-action",      (c) => { r0(c).rateLimit.action = "log"; });
 mk("f1-sin-nombre",  (c) => { delete r0(c).name; });
 mk("f1-why-corto",   (c) => { r0(c).why = "porque si"; });
 mk("f1-challenge",   (c) => { r0(c).rateLimit.action = "challenge"; });
-mk("f1-planned",     (c) => { delete r0(c).lands_with; });
+// La mutacion FIJA el status en vez de asumir el del archivo real. Cuando storefront-track-rl paso
+// de planned a active (S4), borrar lands_with quedo inocuo y este caso empezo a dar PASS: el fixture
+// habia dejado de medir sin avisar. Un fixture acoplado al estado del archivo que audita se apaga
+// solo el dia que ese archivo cambia, que es justo el dia en que hace falta.
+mk("f1-planned",     (c) => { r0(c).status = "planned"; delete r0(c).lands_with; });
 mk("f1-status",      (c) => { r0(c).status = "quizas"; });
 
 // ── F2 · scoping. Cada uno de estos costaria plata, no seguridad.
