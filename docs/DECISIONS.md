@@ -1805,6 +1805,61 @@ esta misma ADR aplicada a la ADR.
 
 ---
 
+## ADR-025 (PENDIENTE DE RATIFICACIÓN DEL LEAD) — La unicidad de la venta la afirma **el motor**, y el `tenant_id` va **adentro** de la clave
+
+- **Estado:** **propuesta — redactada por `docs-keeper`, PENDIENTE de ratificación del LEAD.** No está aceptada. `docs-keeper` **no ratifica**: acá se redacta una decisión que S7 ya ejecutó y commiteó, con su porqué y sus citas; lo que la vuelve `aceptada` es la ratificación del LEAD, igual que las 24 anteriores.
+- **Fecha:** 2026-08-28 · **Origen:** S7 (venta manual), commit `6eab611`, migración `packages/db/drizzle/0007_sales_one_sale_per_listing.sql` (`db-agent`)
+- **Por qué es una ADR y no una nota operativa:** tiene alternativa descartada con motivo, tiene un precio aceptado que le queda a otro dueño (**P4**), y el próximo escritor de `sales` —un canje que cierra en venta, un import— va a tomar la misma decisión sin leer el código.
+
+### El contexto: la invariante existía y no vivía en la base
+
+*"Una unidad tiene a lo sumo una venta"* la sostenían **dos** cosas hasta S7, y las dos en `apps/web`:
+
+1. `sold` es terminal — `checkTransition` devuelve `terminal_state` desde `sold` (`packages/domain/src/listing-status.ts`), y
+2. el `eq(listings.status, from)` que `transitionUnit()` usa como guard de concurrencia (`apps/web/app/(app)/_lib/listings/publish-listing.ts`).
+
+Las dos son buenas capas y se quedan. Lo que faltaba es la afirmación **donde no depende de que el próximo writer la re-derive**. Es la misma doctrina por la que `CLAUDE.md` §2 exige el filtro de tenant en la query **además** de RLS: la máquina de estados es la primera capa, el motor es la última, y la última es la que sigue en pie cuando la primera tiene un bug.
+
+**Medido por `db-agent` contra la base sembrada, antes de escribir la migración:** dos ventas de la misma unidad, mismo tenant, sesión `authenticated` real → **las dos entran**. Después de `0007`, la segunda da `23505`.
+
+### La decisión
+
+`uniqueIndex('sales_one_sale_per_listing').on(tenantId, listingId)` — **el par**, y **reemplaza** a `sales_tenant_listing_idx` en vez de convivir con él.
+
+### Alternativas descartadas
+
+| alternativa | por qué no |
+|---|---|
+| **`unique (listing_id)` a secas** — más fuerte, y es la que sale primero | Convierte al índice en un **oráculo cruzado**: un tenant que adivina o consigue el `id` de una unidad ajena distingue *"ya vendida"* de *"no vendida"* por el `23505` que recibe, **sin haber leído una fila y sin que RLS se entere** — el error del motor se evalúa antes que cualquier policy de lectura. Con el tenant adentro de la clave, ese insert cruzado no colisiona con nada de nadie |
+| **dejar los dos índices** | El nuevo tiene **las mismas dos columnas en el mismo orden**: un btree único no se lee distinto de uno común, sólo verifica de más al escribir. Cubre todo plan que cubría el anterior. Dejar los dos es pagar dos inserciones de índice por fila para servir un único árbol de lectura. **Se buscó antes de borrar, no después:** `sales` no tenía **ninguna** consulta de producción — la tabla nunca tuvo un lector |
+| **dejarlo en la máquina de estados** (statu quo) | Es lo que había, y la medición de arriba muestra qué garantizaba: nada, apenas aparece un segundo camino de escritura |
+
+### El precio, dicho para que nadie lo descubra después
+
+**La unicidad es por tenant.** Lo que la completaría —que la venta y el listing sean del mismo tenant— **la base hoy no lo ata**: `sales.listing_id` referencia `listings(id)` a secas, sin el tenant en el par. Medido en S7: un tenant puede insertar una venta **propia** apuntando al `listing_id` de **otro** y la policy la acepta, porque el `WITH CHECK` mira `tenant_id` y es el suyo. No filtra datos (todo join contra `listings` lo corta RLS), pero con `on delete restrict` **le clava la unidad al otro tenant**.
+
+Cerrarlo pide FK compuesta contra `listings(tenant_id, id)`, o sea tocar `listings` y pagar un índice único más en la tabla más caliente del producto. **Es la fila `P4` del board**, con `db-agent` de dueño y gate del LEAD — no un cambio que S7 se tomó por su cuenta. El assert correspondiente está **deliberadamente ausente** de `tests/rls-cross-tenant.test.ts` §R9c, con el motivo escrito ahí: fallaría por el motivo correcto, y un rojo permanente con causa conocida enseña a ignorar el archivo entero.
+
+### Lo que hace que la última capa sirva: la venta se escribe adentro de la transacción
+
+`recordSale()` recibe el `tx` como primer parámetro (`apps/web/app/(app)/_lib/sales/record-sale.ts:122`) y se llama con la transacción abierta que mueve el estado (`publish-listing.ts:519`). **La versión "después del commit" de esa línea no existe**, así que el índice único y el guard de concurrencia miran el mismo instante. Dos consecuencias del mismo diseño, ninguna cosmética:
+
+- **el costo no cruza un borde:** `sales.cost_usd` se copia con un **subselect adentro del mismo `INSERT`** (`record-sale.ts:138`), no pasa por el heap de Node; y `margin_usd` es `generatedAlwaysAs(price_usd - cost_usd)`, así que el `insert` **no nombra ninguna de las dos**. Escribir el costo es escribir el margen — por eso no se escribe ninguno.
+- **una venta sin sus hechos no compila:** el pedido es una **unión discriminada** sobre el parámetro y no un campo opcional, así que `transitionUnit(actor, id, { to: 'sold' })` no typechequea. Es la misma lección que `CLAUDE.md` y ADR-019 ya pagaron dos veces (el `extras` de S6, el `intent` de S6.1): **un parámetro opcional con default válido no distingue *"no me lo pasaron"* de *"me pasaron que no hay"*.** Acá se lleva un paso más: el estado inválido es **irrepresentable**, no meramente rechazado.
+
+### Verificación
+
+- `bash scripts/accept-s7.sh` §**V4** (el único está en el motor) y §**V6** campo `segunda_venta_de_la_misma_unidad=0`, medido tras **dos** reintentos que rebotan en guardianes **distintos** — el doble submit lo para la máquina de estados (`same_state`), y el estado revertido a `available` la máquina **lo deja pasar**, así que lo único que queda es el índice. La primera versión de la probe hacía sólo el primer caso y **salía verde con el índice borrado** (medido): afirmaba el único sin tocarlo nunca.
+- `tests/rls-cross-tenant.test.ts` §**R9f** (`qa-agent`): dos resellers tienen una venta cada uno sobre el **mismo uuid** de unidad —no hay oráculo cruzado— y la segunda del mismo par choca por nombre de índice; además censa que **los únicos índices únicos de `sales` son la PK y el par de D8**.
+- `packages/db/src/sales-one-sale-per-listing.test.ts` (`db-agent`, red de regresión del propio paquete; **no** es la auditoría de referencia — `CLAUDE.md` §4).
+
+### Preguntas abiertas que esta ADR **no** cierra
+
+1. **`P4`** — la FK compuesta. Es una decisión de costo sobre `listings` y **es del LEAD**, no de esta ADR.
+2. **`P5`** — ninguna policy de `sales` mira `membership_role`, así que a nivel base un `seller` lee `cost_usd` y `margin_usd` de su tenant. Hoy lo tapa que no exista cliente Supabase de browser (**B2**). Esta ADR explica por qué el **camino de escritura** no expone el costo; **no** dice nada sobre el de lectura, y no hay que leerla como si lo hiciera.
+
+---
+
 ## Notas operativas — hallazgos que no son ADR
 
 > **Qué es:** hechos verificados que cambian cómo se escribe o se lee algo del repo, pero que **no

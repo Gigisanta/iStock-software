@@ -311,7 +311,7 @@ jobs:
 
       # S7 escribe la fila de `sales` DENTRO de la transaccion que mueve el listing, asi que su
       # aceptacion no se puede afirmar sin Postgres: va en este job y no en el de arriba. Su V6 lee
-      # `MEDIDO s7 venta` de la probe del LEAD y compara ocho campos contra literales escritos en el
+      # `MEDIDO s7 venta` de la probe del LEAD y compara nueve campos contra literales escritos en el
       # shell — otro archivo, otro lenguaje (ADR-023).
       #
       # Este paso lo escribi ANTES de que el gate estuviera verde, y no por prolijidad: `G4` de
