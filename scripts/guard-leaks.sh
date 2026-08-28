@@ -191,7 +191,7 @@ elif [ "$N" -eq 0 ]; then bad "no se encontro ningun regex de slug — se renomb
 else bad "el regex de slug divergio en $N formas:"; echo "$SLUGS" | sed 's/^/        /'; fi
 
 
-say "15 . afirmaciones superadas por ADR-011  (el miss NO es un 404)"
+say "15 . afirmaciones de 404 sin ADR que las respalde  (ADR-011 vidriera / ADR-013-014 panel)"
 # Por que existe esta regla: ADR-011 cambio una respuesta observable, y la afirmacion vieja estaba
 # escrita en 7 archivos de 5 columnas distintas -- incluida la MIA (el brief del workflow, que la
 # re-inyectaba en cada corrida). Ningun owner podia verlo desde su columna. El comentario stale no
@@ -212,8 +212,18 @@ STALE=$(git ls-files --cached --others --exclude-standard -- '*.ts' '*.tsx' '*.j
   | grep -v '^scripts/guard-leaks\.sh$' \
   | python3 -c '
 import sys,re
-PAT = re.compile(r"(slug inexistente|slug que no existe)[^.]{0,120}?404|404 cacheado|404 REAL|404 real", re.I)
-EXE = re.compile(r"ADR-011|~~|supersed|superad", re.I)
+# DOS NIVELES, y la diferencia importa. La version anterior tenia UNA sola lista de exenciones y
+# por eso daba FALSO POSITIVO sobre el PANEL: ahi un "404 real" es correcto y esta decidido por
+# ADR-013/ADR-014, no por ADR-011 -- citar ADR-011 en ese parrafo seria citar mal. Lo disparo el
+# 2026-08-28 contra e2e/s2-...spec.ts:315, que hablaba de `stock/[id]/fotos`.
+#   MISS  la afirmacion es sobre un slug inexistente de la VIDRIERA -> solo ADR-011 la exime.
+#         Es la afirmacion que ADR-011 derogo; citar ADR-013 ahi no la hace verdadera.
+#   REAL  un "404 real" a secas -> lo exime cualquiera de los tres ADRs que deciden semantica de
+#         404 en este repo. Sourced es sourced; lo que la regla persigue es la afirmacion HUERFANA.
+MISS = re.compile(r"(slug inexistente|slug que no existe)[^.]{0,120}?404|404 cacheado", re.I)
+PAT  = re.compile(r"(slug inexistente|slug que no existe)[^.]{0,120}?404|404 cacheado|404 REAL|404 real", re.I)
+EXE  = re.compile(r"ADR-011|~~|supersed|superad", re.I)
+EXE2 = re.compile(r"ADR-011|ADR-013|ADR-014|~~|supersed|superad", re.I)
 CMT = re.compile(r"^\s*(\*|/\*|//|#|--)")
 out = []
 for path in (l.strip() for l in sys.stdin if l.strip()):
@@ -231,7 +241,8 @@ for path in (l.strip() for l in sys.stdin if l.strip()):
         # sacar el lider del comentario ANTES de unir: si no, "404\n * cacheado" queda
         # como "404 * cacheado" y no matchea. Lo encontro el test negativo de esta misma regla.
         para = " ".join(re.sub(r"^\s*(\*/|/\*+|\*|//+|#|--)\s?", "", x) for x in lines[i:j+1])
-        if PAT.search(para) and not EXE.search(para):
+        exempt = EXE.search(para) if MISS.search(para) else EXE2.search(para)
+        if PAT.search(para) and not exempt:
             # anclar en la linea que trae el 404, no en el "/**" que abre el docblock
             k = next((x for x in range(i, j + 1) if "404" in lines[x]), i)
             snippet = re.sub(r"\s+", " ", lines[k].strip())[:110]
@@ -241,7 +252,7 @@ print("\n".join(out))
 ' || true)
 STALE=$(echo "$STALE" | grep -v '^$' || true)
 if [ -z "$STALE" ]; then ok "nadie afirma que el slug inexistente da 404"
-else bad "afirmacion superada por ADR-011, sin citar ADR-011 en el parrafo:"; echo "$STALE" | sed 's/^/        /'; fi
+else bad "afirmacion sobre un 404 sin ADR que la respalde (vidriera: ADR-011 · panel: ADR-013/014):"; echo "$STALE" | sed 's/^/        /'; fi
 
 echo
 [ "$fail" -eq 0 ] && echo "GUARD-LEAKS: PASS" || echo "GUARD-LEAKS: FAIL"
