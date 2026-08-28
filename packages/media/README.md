@@ -33,6 +33,52 @@ Con la key opaca de ADR-006 **no se puede derivar** la key de una variante desde
 imposibilidad *es* la feature. Por eso la función recibe el mapeo (`thumbKey`/`cardKey`/`detailKey`,
 que son exactamente las columnas de `listing_photos`) y elige, no calcula.
 
+### Dos superficies: la que tira y la que degrada
+
+| función | tira | quién la llama |
+|---|---|---|
+| `publicUrlForKey(key)` | **sí** | `uploadListingPhoto` (camino de escritura) |
+| `variantUrl` · `variantUrls` · `cardSrcSet` · `renderableVariantUrls` | **no** | render (panel + vidriera) |
+
+En el **alta**, tirar es lo correcto: el reseller ve un error y nada malo se guarda.
+
+En el **render**, tirar es lo peor que se puede hacer. Bajo `cacheComponents` una excepción adentro
+de un render cacheado no produce un 500: produce un **200 que nunca cierra el stream**, y la ficha
+queda colgada hasta el timeout (300 s medidos por `qa-agent`, con un mensaje que ni siquiera
+hablaba de media). Así que el camino de render **degrada**: `variantUrl` devuelve
+`UNRENDERABLE_VARIANT_URL` (`'about:invalid'`: cero requests, se ve el `alt`) y reporta el evento
+por `setMediaIncidentReporter`. No es `''` a propósito — un string vacío dentro del `srcset` que
+arma la vidriera (`${photo.card} 800w, …`) se lee como la URL relativa `800w` y el browser la
+pide contra la función de Next. Para omitir la foto de verdad —que es lo que la vidriera quiere— está
+`renderableVariantUrls(photo)`, que devuelve `null` y deja que el caller saltee la fila:
+
+```ts
+const urls = renderableVariantUrls(row);
+if (urls === null) continue;   // la ficha se arma con las fotos que sí sirven
+```
+
+Degradar en silencio sería cambiar un problema ruidoso por uno invisible: por eso el reporte no es
+opcional, es la mitad del arreglo.
+
+### El escáner de PII no mira el segmento de hash (y por qué eso no lo debilita)
+
+`assertPublicVariantKey` rechaza UUIDs, emails, tokens sensibles y **15 dígitos seguidos** (IMEI).
+Ese último escáner corría sobre la key entera, y una key content-addressed es hexadecimal: en hex
+un dígito sale 10 de 16 veces, así que **0,633 % de los hashes contienen 15 dígitos seguidos**
+(medido: 12.665 de 2.000.000). Eso es 1 de cada 158 variantes, **1,89 % de las fotos** y **57,6 %
+de los onboardings de 15 equipos × 3 fotos** — y como la key es un hash del byte, reintentar daba
+el mismo rechazo: esa foto **no se podía subir nunca**.
+
+El arreglo no afloja el escáner: lo aplica sobre la parte de la key **que no generamos nosotros**.
+`parseCanonicalVariantKey` exige que la key sea, carácter por carácter, el round-trip de
+`publicVariantKey` (tres segmentos, versión literal, 32 hex minúsculas, shard *derivado* del hash);
+recién entonces exime **el rango de índices del hash**, y escanea el esqueleto `v1/{ab}` + `.webp`.
+Cualquier key que no round-trippee se escanea **entera**, con los cuatro escáneres. Aflojar el
+regex de forma no extiende la exención: la rompe.
+
+`contentHash` y `publicVariantKey` no cambiaron: los mismos bytes siguen dando la misma key y dos
+tenants con la misma foto siguen compartiendo el objeto.
+
 ### Por qué `unlinkListingPhotos` y no `deleteListingPhotos`
 
 La key pública es el **hash del byte de salida**. Dos tenants que suben la misma foto producen la

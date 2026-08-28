@@ -3,7 +3,7 @@
  *
  * Lo que el resto del monorepo usa, y nada más:
  *   - `uploadListingPhoto()`   subir una foto (server-side, con resize obligatorio)
- *   - `variantUrl()`           armar la URL de una variante
+ *   - `variantUrl()`           armar la URL de una variante (no tira: degrada y reporta)
  *   - `unlinkListingPhotos()`  desvincular las fotos de un listing borrado
  *
  * Nadie fuera de este paquete conoce el bucket, la base del CDN ni el formato de las keys.
@@ -15,8 +15,22 @@
 export { uploadListingPhoto } from './upload';
 export type { UploadListingPhotoInput, UploadListingPhotoDeps } from './upload';
 
-export { variantUrl, variantUrls, publicUrlForKey, cardSrcSet } from './url';
+export {
+  variantUrl,
+  variantUrls,
+  renderableVariantUrls,
+  publicUrlForKey,
+  cardSrcSet,
+  UNRENDERABLE_VARIANT_URL,
+} from './url';
 export type { UrlOptions } from './url';
+
+export {
+  setMediaIncidentReporter,
+  resetMediaIncidentReporter,
+  reportMediaIncident,
+} from './incidents';
+export type { MediaIncident, MediaIncidentCode, MediaIncidentReporter } from './incidents';
 
 export { unlinkListingPhotos, collectOrphanObjects } from './unlink';
 export type {
@@ -48,6 +62,7 @@ export {
   isPublicVariantKey,
   isMasterObjectKey,
   assertPublicVariantKey,
+  publicVariantKeyProblem,
   PUBLIC_KEY_VERSION,
 } from './keys';
 
