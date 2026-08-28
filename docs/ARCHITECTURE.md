@@ -1,7 +1,15 @@
 # ARCHITECTURE
 
-_Owner: `architect` a partir de FASE 2. **FASE 1 la escribió el LEAD** (excepción declarada en
-`CLAUDE.md` §4), sintetizando `docs/research/*.md`. Fecha: 2026-08-27._
+_Qué es: cómo está armado el sistema — monorepo, host→tenant, cache, camino de una foto, RLS y
+límites de confianza. Para quién: el que va a escribir código y necesita saber dónde encaja._
+_Owner: **`docs-keeper`**. **FASE 1 la escribió el LEAD** (excepción declarada en `CLAUDE.md` §4),
+sintetizando `docs/research/*.md`. Fecha: 2026-08-27._
+_Corregido el 2026-08-28: esta línea decía `architect` **a partir de FASE 2** y contradecía la tabla
+de `CLAUDE.md` §4. **Manda la tabla:** el rol `architect` era de FASE 1 y está dormido. Era la última
+de las tres fuentes que decían cosas distintas — `INDEX.md` y el contrato de `docs-keeper` ya se
+habían alineado._
+_Cuándo se actualiza: cuando una slice cambia una invariante de arquitectura, o cuando una ADR nueva
+la toca._
 _Estado: **FASE 1 cerrada.** Todo lo que quedó abierto está nombrado en `## Pendiente`, con el
 bloqueador y el experimento que lo cierra. Nada quedó sin decidir por olvido._
 

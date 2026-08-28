@@ -5,7 +5,7 @@
 | [PRODUCT.md](PRODUCT.md) | producto ejecutable: ICP, recorrido que factura, planes, fuera de alcance | `product-scribe` | cambio de producto (raro — no se reabre) |
 | [DOMAIN.md](DOMAIN.md) | glosario, entidades, máquina de estados, FX, visibilidad por rol, `publicListingDTO` | `product-scribe` + `domain-agent` | cada slice que toca reglas de negocio |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | monorepo, host→tenant, cache, camino de una foto, RLS, límites de confianza, **qué NO reescribe el proxy** | LEAD en FASE 1, después `docs-keeper` | FASE 1 + §"Qué NO se reescribe" agregada en **S2** |
-| [DECISIONS.md](DECISIONS.md) | ADRs numeradas con alternativas descartadas y verificación + **§"Notas operativas"** (hallazgos verificados que no abren ADR) | LEAD en FASE 1, después `docs-keeper`; **el LEAD ratifica** cada ADR nueva | **ADR-001..015; 008 y 010 abiertas.** ADR-011 supersede el corolario 4 de ADR-007; ADR-012 lo precisa con el polo negativo; **013** (indistinguibilidad en el panel) y **014** (`instant = false`, **enmendada el 2026-08-28 con la medición del status**) salieron de S2; **015** (el matcher excluye por nombre, no por sufijo) cierra P1+P2. **Notas operativas abiertas el 2026-08-28**: los dos gates que daban verde por ausencia, el `head()` que pisaba el comando `head`, **"un invariante puede tener tres pruebas alrededor y ninguna encima"** (el botón `wa.me`, cerrado con M3b), la **consulta duplicada del tenant en el miss frío** (deuda aceptada de S3.3, con su número) y el **`noindex` del flight** que no es un `<meta>` |
+| [DECISIONS.md](DECISIONS.md) | ADRs numeradas con alternativas descartadas y verificación + **§"Notas operativas"** (hallazgos verificados que no abren ADR) | LEAD en FASE 1, después `docs-keeper`; **el LEAD ratifica** cada ADR nueva | **ADR-001..016; 008 y 010 abiertas.** ADR-011 supersede el corolario 4 de ADR-007; ADR-012 lo precisa con el polo negativo; **013** (indistinguibilidad en el panel) y **014** (`instant = false`, **enmendada el 2026-08-28 con la medición del status**) salieron de S2; **015** (el matcher excluye por nombre, no por sufijo) cierra P1+P2; **016** (el rate limit del WAF vive en `config/firewall-rules.json` y no en `vercel.json`, que no existe) cierra el nivel 1 de T1. **Notas operativas abiertas el 2026-08-28**: los dos gates que daban verde por ausencia, el `head()` que pisaba el comando `head`, **"un invariante puede tener tres pruebas alrededor y ninguna encima"** (el botón `wa.me`, cerrado con M3b), la **consulta duplicada del tenant en el miss frío** (deuda aceptada de S3.3, con su número) y el **`noindex` del flight** que no es un `<meta>` |
 | [SLICE_BOARD.md](SLICE_BOARD.md) | **estado de la verdad del avance** + blockers + **FASE 4 bis** (trabajo que salió de una slice) | `docs-keeper` | cada slice |
 | [TEST_MATRIX.md](TEST_MATRIX.md) | unit / RLS / e2e / seguridad + **qué regla no prueba nadie todavía**, verificado contra el repo | `docs-keeper` (era `qa-agent`; **corregido por el LEAD el 2026-08-28**: quien escribe los tests que cruzan no puede escribir también el doc que declara la cobertura) | cada test nuevo, y cada corrida de gate que cambie lo cubierto |
 | [COST.md](COST.md) | piso de plataforma, marginal por tenant, estrés, métrica a vigilar | LEAD en FASE 1, después `cost-auditor` | **con fuente desde FASE 1** |
@@ -34,8 +34,8 @@
 
 ## Estado — 2026-08-28
 **FASE 0, FASE 1 y FASE 2 cerradas.** El LEAD re-ejecutó el gate de FASE 2 el 2026-08-27 y **D1–D4
-pasaron a `done`** con la corrida registrada en `SLICE_BOARD.md`. **S1, S2 y S3 están ACEPTADAS** —
-las tres corridas están fechadas abajo. **FASE 3 (K1–K5) sigue sin re-ejecutar**: su gate termina en
+pasaron a `done`** con la corrida registrada en `SLICE_BOARD.md`. **S1, S2, S3 y S4 están
+ACEPTADAS** — las cuatro corridas están fechadas abajo. **FASE 3 (K1–K5) sigue sin re-ejecutar**: su gate termina en
 `next build` y no se corrió. El código de FASE 3 está escrito, pero **el gate es la corrida, no el
 código** — es la misma regla que tuvo a S1 en `doing` y a S2 en `todo` un día largo con el código ya
 en `main`.
@@ -77,6 +77,24 @@ Lo que hay que saber sin leer nada más:
   se pregunta **después** del `null` para no sumarle una consulta a toda ficha que sí existe.
   **Queda abierta T15** (prioridad baja, `db-agent`): en el `/demo`, el slug del listing dice
   `grafito` y la página dice `Negro espacial`.
+- **S4 está `done`: `./scripts/accept-s4.sh` re-ejecutado por el LEAD el 2026-08-28, sin fixture —
+  37 PASS, 0 FAIL**, con la suite e2e corrida de verdad (**73 tests**) y el repo en **1004 passed /
+  0 failed**. El click del botón de WhatsApp deja **una** fila en `wa_click_events` y nada más:
+  `filas_al_cargar=0 · filas_antes=0 · filas_despues=1` (dispara en el **click**, no en el **view**),
+  `filas_creadas=0` en el cruce de tenants, y `anchors=1 · abre_whatsapp=si` **con JavaScript
+  apagado** — la telemetría nunca se pone adelante de la venta. Sin PII: no se anonimiza, **no se
+  recibe**. Dos desvíos de la spec, los dos correctos y los dos registrados en el board: un
+  `<script>` inline de 412 B en vez de un Client Component (lo prohíbe **W001**, y encima engancha al
+  parsear y no al hidratar), y un `insert … select from listings` en vez de `insert … values`
+  (con `values`, el uuid de otro tenant resuelve a **NULL** y la fila se escribe igual por la rama
+  `listing_id is null` del `WITH CHECK`).
+- **Lo que S4 dejó abierto es S4.1, y es de conversión, no de seguridad:** cuando el listing **no
+  tiene `catalog_model`**, el mensaje dice `iPhone 14 Pro 256 Grafito 256 Grafito (usado A)` — el
+  fallback al `title` (texto libre del dueño, que ya trae storage y color) más el append de
+  `describeListing`. **No es artefacto del fixture:** `catalogModelId` es nullable y
+  `onDelete: 'set null'`. Y es la segunda vez que el repo paga la misma lección: **tres pruebas
+  alrededor del string y ninguna encima del string completo en el camino real.** En curso
+  (`domain-agent` + `storefront-agent`).
 - **La forma de `listings.slug` está cerrada en las dos capas** (**T9**): `LISTING_SLUG_PATTERN`
   (3–64, sin guión en los bordes) en `packages/domain` con 15 tests, y `0003_listing_slug_format`
   en `packages/db` con 21 casos contra Postgres real, de polaridad negativa. Queda en vuelo que
@@ -130,18 +148,30 @@ Lo que hay que saber sin leer nada más:
   enum cerrado `["challenge","deny"]` y `rate_limit` aparece **cero veces**. `vercel.json` sigue sin
   existir. Las 2 reglas viven en `config/firewall-rules.json` (**LEAD**) y se aplican por CLI, que
   **no es parte del build**. **Declaradas y validadas ≠ aplicadas:** no hay proyecto Vercel (**B2**,
-  **B5**) y las dos apuntan a rutas que todavía no existen (`/api/track` con **S4b**, `/api/chat` con
-  **FASE 5**). Lo que hace fuerte al gate no es validar el JSON sino el **censo**: hoy 3 route
-  handlers, los 3 decididos, y una ruta nueva sin decidir lo rompe **el día que se crea** — con una
-  salvedad que hay que arreglar: **`guard-firewall.sh` no está en CI**. Y ninguna regla condiciona
-  por `host`: se facturan los *allowed requests*, así que eso le cobraría peaje a cada pageview de
-  vidriera, que `ARCHITECTURE.md` declara scrapeable a propósito. **Sigue abierta T2** (guard de
-  "query sin filtro de tenant"), del **LEAD**.
+  **B5**). `/api/track` **ya existe** —aterrizó con **S4**, no con un "S4b" que nunca fue una fila del
+  board— y su regla pasó a `active`; `/api/chat` sigue esperando la **FASE 5**. Lo que hace fuerte al gate no es validar el JSON sino el **censo**: hoy 3 route
+  handlers, los 3 decididos, y una ruta nueva sin decidir lo rompe **el día que se crea** — y desde
+  `3199a78` **el gate y su polaridad corren en CI** (`ci.yml:118` y `:126`), así que eso dejó de
+  depender de que alguien se acuerde. Y ninguna regla condiciona por `host`: se facturan los
+  *allowed requests*, así que eso le cobraría peaje a cada pageview de vidriera, que
+  `ARCHITECTURE.md` declara scrapeable a propósito — y `cost-auditor` lo midió: rechazarla le sacó
+  al plan Base el **77%** de su costo marginal (0.124 → 0.03). Todo esto es **ADR-016**, abierta y
+  ratificada por el LEAD el 2026-08-28. **Lo único que sigue abierto de T1 es el nivel 2:** con S4,
+  `storefront-track-rl` pasó a `active`, y `active` significa *"el archivo declara que debe estar
+  publicada"*, **no** *"está publicada"*. El drift contra la config viva lo cierra
+  `vercel firewall diff --json`, que **no existe todavía**.
+- **T2 dejó de ser "no lo chequea nadie" y pasó a "no está commiteado".** La regla existe: es
+  **`W015`** de `apps/web/scripts/web-lint.mjs`, corre y da verde (15 tablas de negocio **derivadas
+  del schema**, no de una lista a mano). Pero `git log -S W015` sobre ese archivo devuelve **cero
+  commits** y `git status` lo marca `M`: **en `main` no existe y no corrió en ningún push.** Es la
+  tercera pregunta que este repo tuvo que aprender a hacerse —*¿hay chequeo?*, *¿lo corre alguien?*
+  y ahora **¿está en `main`?**— y la cierra el LEAD, no un doc.
 - **Deuda de los instrumentos: T3 cerró** (`d686923`). El test de RLS cruzado vive en
   `tests/rls-cross-tenant.test.ts` —`db-agent` escribe las policies, así que no puede ser dueño del
   test que las audita— y el LEAD lo re-ejecutó desde la ubicación nueva: **69 casos** verdes, total
   del repo **919**. **No eran 59:** ese número contaba `it()` literales y se comía el `it.each` sobre
-  10 columnas sensibles. Sigue abierta **T7** (`readMatchers()` trunca el matcher del proxy en el
+  10 columnas sensibles. **Y desde S4 son 79**, con R2b (el visitante anónimo no puede anotar su
+  click en la cuenta de otro) y R6c contando las policies `TO anon`, que ahora son 6. Sigue abierta **T7** (`readMatchers()` trunca el matcher del proxy en el
   primer `]`, no rompe nada hoy).
 - **Deuda nueva, abierta el 2026-08-28:** editar el **TC** y los puntos de retiro después del alta
   **no existe** —`ajustes` es sólo lectura y la única mutación de `fx_settings`/`locations` es el

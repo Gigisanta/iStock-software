@@ -135,7 +135,7 @@ cuyo gate no pudo correr: las cinco quedan `todo` hasta que el gate corra **ente
 | S1 | host → hello storefront | **done** | `storefront-agent` | `{slug}.local` resuelve al tenant; slug inexistente → página legible con `noindex` (**ADR-011**, el gate viejo "404 real en la primera request" era inalcanzable); se verifica con `bash scripts/accept-s1.sh`. **Re-ejecutado por el LEAD el 2026-08-28: EXIT=0 · 26 PASS · 0 FAIL · `S1: ACEPTADA`** |
 | S2 | listing unit + fotos R2 con variantes | **done** | `media-agent` → `app-agent` | 3 variantes generadas; `card` ≤150KB **medido sobre bytes** (`card=50692B`, techo `153600B`). **Re-ejecutado por el LEAD el 2026-08-28: EXIT=0 · 21 PASS · 0 FAIL · `S2: ACEPTADA`** |
 | S3 | grilla + ficha mínima | **done** | `storefront-agent` | `bash scripts/accept-s3.sh`: los **15 campos** de `CLAUDE.md` §1 —los 15 de verdad recién desde **M3b** (`0edb661`), que agregó el botón `wa.me`—; cero campos prohibidos en el HTML; el byte medido es el que **pide el browser** (P3). **Re-ejecutado entero por el LEAD el 2026-08-28: 58 PASS · 0 FAIL · `S3: ACEPTADA`** (la corrida que la aceptó dio 50; M3b sumó 8 aserciones) |
-| S4 | botón `wa.me` + tracking de eventos | todo — **la mitad del `wa.me` ya está entregada y medida** | `domain-agent` → `storefront-agent` | texto exacto byte a byte; evento registrado sin PII. **Lo entregado (M3b de `accept-s3.sh`, `0edb661`, re-corrido en 58 PASS):** sobre la **ficha servida** se decodifica el `href`, y se afirma UN solo anchor `wa.me`, el teléfono del tenant, el precio en USD, el dominio de la vidriera, la intención de compra (`y lo quiero.`) y **el par de registros de condición** (que diga `usado A` **y que no diga** `usado excelente`). El *byte a byte* del string completo lo fija `packages/domain/src/wa.test.ts` U14 (`toBe(CANONICAL_TEXT)`), fuera de la página: **son dos aserciones distintas y hacen falta las dos** — la de dominio prueba el string, M3b prueba que la página servida lo lleva. **Lo que queda abierto de S4 es el tracking**, y su rate limit ya está declarado (`storefront-track-rl`, `lands_with: S4b`, ver §T1) |
+| S4 | botón `wa.me` + tracking de eventos | **done** | `domain-agent` → `storefront-agent` | texto exacto byte a byte; evento registrado sin PII. **Re-ejecutado entero por el LEAD el 2026-08-28, sin fixture: `./scripts/accept-s4.sh` → 37 PASS · 0 FAIL**, con la suite e2e ejecutada de verdad (73 passed) y `pnpm typecheck && pnpm lint && pnpm test` en 1004 passed / 0 failed. Las dos mitades del *byte a byte* siguen afirmadas por separado y hacen falta las dos: `packages/domain/src/wa.test.ts` U14 fija el string (`toBe(CANONICAL_TEXT)`) y M3b de `accept-s3.sh` prueba que la página servida lo lleva — **W1 de `accept-s4.sh` nombra las dos aserciones, no los archivos**, así que borrar M3b pone roja también a S4. Lo nuevo es el evento: W2/W3 (no hay dónde poner PII; `anon` gana exactamente un privilegio de columna y ni uno más), W5 (con JS apagado el botón sigue abriendo WhatsApp), W6/W6b (medición viva, y el cruce de tenant escribe **cero** filas), W7 (el endpoint nace con techo declarado en `config/firewall-rules.json`). **Deja abierta S4.1**, defecto del texto en el camino real |
 | S5 | FX → precio en ARS | todo | `domain-agent` → `app-agent` | TC del dueño; redondeo testeado; ARS visible en ficha |
 | S6 | reserva + cron de expiración | todo | `app-agent` | reserva 30–120min; cron libera; vidriera revalida |
 | S7 | venta manual | todo | `app-agent` | `→ sold`; sale de la grilla; URL directa no rompe |
@@ -247,6 +247,49 @@ cuyo gate no pudo correr: las cinco quedan `todo` hasta que el gate corra **ente
 > y T8: **`done` lo fija la corrida del gate por el LEAD, no la entrega del código**, y estas tres
 > filas estuvieron `todo` con el código en `main` durante un día entero por esa regla.
 
+
+> **S4 ACEPTADA — 2026-08-28. El LEAD re-ejecutó `./scripts/accept-s4.sh` entero y sin fixture:
+> 37 PASS · 0 FAIL**, con la suite e2e corrida de verdad (**73 passed**, eran 70) y
+> `pnpm typecheck && pnpm lint && pnpm test` en **1004 passed / 0 failed**
+> (domain 160 · media 107 · db 283 · web 239 · tests 215).
+>
+> ```
+> MEDIDO s4 click · filas_al_cargar=0 · filas_antes=0 · filas_despues=1 · tenant_ok=si · listing_ok=si
+> MEDIDO s4 cruce · slug_atacante=… · listing_de=… · filas_creadas=0
+> MEDIDO s4 sinjs · anchors=1 · abre_whatsapp=si
+> ```
+>
+> **Las tres líneas contestan tres preguntas distintas y ninguna es redundante.** `filas_al_cargar=0`
+> y `filas_antes=0` dicen que el beacon dispara en el **click** y no en el **view**: si contara
+> pageviews, la tabla dejaría de medir intención de compra (las vistas ya las cuenta PostHog) y el
+> renglón fijo del WAF se volvería proporcional al tráfico. `filas_creadas=0` es el cruce: un POST
+> desde la vidriera de un negocio nombrando el equipo de otro no escribe nada. `anchors=1 ·
+> abre_whatsapp=si` está medido con `javaScriptEnabled: false`: **la telemetría nunca se pone
+> adelante de la venta.**
+>
+> **Dos desvíos deliberados de la spec original, los dos de `storefront-agent`, los dos correctos.**
+> Se registran acá porque son notas de diseño, no rodeos:
+>
+> 1. **El componente cliente separado era imposible.** La regla **W001** de
+>    `apps/web/scripts/web-lint.mjs` prohíbe `"use client"` en todo `(storefront)` salvo el error
+>    boundary, y `web-lint.mjs` es del LEAD: no es un archivo que esa columna pueda tocar para
+>    hacerse lugar. Quedó un `<script>` inline de **412 B** emitido desde un Server Component —
+>    **0 KB de bundle**, y el listener engancha **al parsear**, no al hidratar. Ese último renglón es
+>    el que decide el caso de uso real: alguien parado en la calle que abre el link de un estado y
+>    aprieta enseguida. Un listener que depende de la hidratación pierde exactamente los clicks más
+>    impacientes, que son los más calientes.
+> 2. **El insert es `insert … select from listings`, no `insert … values`.** Con `values` más
+>    subselect, el uuid de otro tenant **resuelve a `NULL`** y la fila se escribe igual por la rama
+>    `listing_id is null` del `WITH CHECK`: le grabaría al dueño una conversación que nadie tuvo. Con
+>    `select`, si la ficha no es de este tenant **no hay fila** — cero filas, sin error y sin dato
+>    inventado. Y como el `select … from listings` corre **como `anon`**, pasa además por
+>    `listings_storefront_anon_select`: una unidad en `draft` o un tenant `suspended` tampoco sirven
+>    de destino.
+>
+> **Lo que S4 dejó abierto: S4.1**, el mensaje repite storage y color cuando el listing no tiene
+> `catalog_model`. Es **preexistente de S3** y S4 no lo introdujo: lo hizo **visible** al imprimir el
+> `href` medido en W5. Fila propia abajo.
+
 ---
 
 ## FASE 4 bis — trabajo que salió de una slice, no del plan original
@@ -266,14 +309,17 @@ cuyo gate no pudo correr: las cinco quedan `todo` hasta que el gate corra **ente
 > **Sigue abierta T15**, que salió de medir el mensaje de WhatsApp. **T2**, **S2.1**, **S2.2**,
 > **S2.3** y **S2.4** siguen abiertas después de aceptar S1, S2 y S3: **aceptar la slice no cierra
 > sus deudas.**
+> **S4.1 es la entrada nueva del 2026-08-28**, y sale de la misma clase de corrida: apareció porque
+> `accept-s4.sh` **imprime el `href` entero** en vez de aseverar sobre él. El defecto es
+> preexistente de S3; lo que cambió es que ahora se ve.
 
 | id | título | estado | owner | bloqueo | gate de aceptación | artefacto |
 |---|---|---|---|---|---|---|
 | S2.1 | upload directo a R2 por URL prefirmada | blocked | `media-agent` → `app-agent` | **B1** + pregunta abierta de abajo | 8 fotos sin round-trip por foto; el original **nunca** es alcanzable; `card` sigue ≤150KB | `packages/media/src/*`, `apps/web/app/api/**` |
 | P1 | `robots.txt` / `sitemap.xml` por tenant — **decisión de diseño** | **done** | `storefront-agent` + `qa-agent` | — | decisión escrita **antes** de arrancar S3 → **ADR-015**, verificada por el LEAD (30 URLs contra el `path-to-regexp` compilado) | `docs/DECISIONS.md` ADR-015 · `apps/web/proxy.ts` (`117c4f0`) |
 | P2 | metadata file conventions bajo host de tenant — **decisión de diseño** | **done** | `storefront-agent` + `qa-agent` | — | ídem P1: misma causa raíz, misma ADR, mismo commit | ADR-015 · `apps/web/proxy.ts` · `tests/proxy-matcher-no-deja-la-vidriera-sin-vigilar.test.ts` |
-| T1 | rate limiting en el edge: las 2 reglas de Vercel Firewall | **done** — nivel 1 | **LEAD** (`config/**` + `scripts/**`, §4) | — | **el gate original decía "2 reglas activas + prueba de que disparan" y eso NO se cumple entero**: las 2 reglas están declaradas y validadas, y **no están aplicadas** (no hay proyecto Vercel — **B2**/**B5** —, y aplicar es un paso operativo aparte que `vercel deploy` **no** hace). Cerrado el **nivel 1**: el archivo existe, pasa las restricciones reales de Pro, y **el censo de route handlers no deja entrar una ruta sin decidir**. `bash scripts/guard-firewall.sh` → `GUARD-FIREWALL: PASS`. **Cero** contador en Postgres sobre la vidriera. Ver §T1 abajo | `config/firewall-rules.json` + `scripts/guard-firewall.sh` (`4fce968`) |
-| T2 | guard estático de "query sin filtro de tenant" | todo | **LEAD** (`scripts/**`, §4) | — | el guard falla sobre una query sin `tenant_id` **y** pasa con la excepción declarada | `scripts/guard-leaks.sh` §16 |
+| T1 | rate limiting en el edge: las 2 reglas de Vercel Firewall | **done** — nivel 1 | **LEAD** (`config/**` + `scripts/**`, §4) | — | **el gate original decía "2 reglas activas + prueba de que disparan" y eso NO se cumple entero**: las reglas están declaradas y validadas, y **no están aplicadas** (no hay proyecto Vercel — **B2**/**B5** —, y aplicar es un paso operativo aparte que `vercel deploy` **no** hace). Cerrado el **nivel 1**: el archivo existe, pasa las restricciones reales de Pro, **el censo de route handlers no deja entrar una ruta sin decidir**, y desde `3199a78` **el gate y su polaridad corren en CI** (`ci.yml:118` y `:126`). `bash scripts/guard-firewall.sh` → `GUARD-FIREWALL: PASS`. **Cero** contador en Postgres sobre la vidriera. Con S4 (`c9611b1`) `storefront-track-rl` pasó de `planned` a **`active`**: el endpoint no nace sin techo. Ver §T1 abajo | `config/firewall-rules.json` + `scripts/guard-firewall.sh` + `scripts/guard-firewall.test.sh` (`4fce968`, `3199a78`) · **ADR-016** |
+| T2 | guard estático de "query sin filtro de tenant" | doing — **implementación en vuelo, sin commitear** | **LEAD** (`apps/web/scripts/*-lint.mjs` + `scripts/**`, §4) | — | el guard falla sobre una query sin `tenant_id` **y** pasa con la excepción declarada. **Al 2026-08-28 existe `W015` en `apps/web/scripts/web-lint.mjs`, corre y da verde** (`WEB-LINT: PASS (15 reglas)`, 15 tablas de negocio derivadas del schema) — pero el archivo está **modificado y sin commitear**: `git log -S W015` sobre él devuelve **cero commits**, así que en `main` la regla no existe y no corrió en ningún push. **La fila la cierra el LEAD**, no este board | `apps/web/scripts/web-lint.mjs` (W015, sin commitear) |
 | T3 | mudar el test de RLS cruzado a `tests/` | **done** | `qa-agent` | — | los casos corren desde `tests/` contra Postgres real, verdes, sin perder ninguno; `packages/db/src/rls-cross-tenant.test.ts` deja de existir; **y en la misma mudanza se borra el encabezado que se declara `db-agent`**, derogado por la regla de desempate de `CLAUDE.md` §4. **Re-ejecutado por el LEAD desde la ubicación nueva: `rls-cross-tenant.test.ts (69 tests)` verdes** — no 59: ese número contaba `it()` literales y se comía el `it.each` sobre 10 columnas sensibles (`:625-630`). Total del repo: **919** | `tests/rls-cross-tenant.test.ts` + `tests/vitest.config.ts` (`d686923`) |
 | T4 | extraer los helpers de los gates a `scripts/_lib.sh` | **done** | **LEAD** | — | un solo juego de helpers en el repo; los gates que lo importan re-corridos con el mismo veredicto **y** el helper probado en las dos polaridades, en CI | `scripts/_lib.sh` + `scripts/_lib.test.sh` (`dc1d854`) |
 | S2.2 | `collectOrphanObjects` existe y no lo llama nadie | todo | `media-agent` (función) + `app-agent` (comentarios) | — | se elige **(a)** o **(b)** por escrito: si (a), el job corre y borra un huérfano sembrado; si (b), **ningún** comentario del repo la nombra en presente | `packages/media/src/unlink.ts`, `apps/web/app/(app)/_lib/listings/*.ts` |
@@ -284,6 +330,7 @@ cuyo gate no pudo correr: las cinco quedan `todo` hasta que el gate corra **ente
 | S3.1 | un tenant real nace sin `fx_settings` y sin `locations` | **done** | `app-agent` | — | **severidad alta** — alta o onboarding siembran un `fx_settings` y ≥ 1 punto de retiro; un tenant nuevo que carga 3 equipos ve grilla con precio y retiro, no vacía. **Cerrada por la corrida de `accept-s3.sh` del LEAD (2026-08-28, 50 PASS/0 FAIL):** M3 exige el punto de retiro, el horario y el ARS con la forma de `formatArs`, y los tres salen de las filas sembradas | `apps/web/app/(app)/_lib/tenants/create-tenant.ts` (`eaccfee`) |
 | S3.2 | publicar un equipo purga el catálogo entero del tenant | **done** | `app-agent` | — | al mutar una unidad se emite además `updateTag(listingTag(id))`; los dos tags de tenant dejan de ser la única invalidación. **Cerrada por la misma corrida:** `MEDIDO s3 db-hits · primera=9 · cacheada=0` | `apps/web/app/(app)/_lib/tenants/storefront-cache.ts` (`eaccfee`) |
 | S3.3 | bajo un **tenant** inexistente la ficha dice que el equipo se vendió | **done** | `storefront-agent` | — | una ficha bajo un slug de tenant que no existe contesta el *tenant-miss* (`STOREFRONT_MISS_TITLE`, "No hay ninguna vidriera en esta dirección"), no el *listing-miss* ("Este equipo ya no está publicado"); el `null` del tenant se sigue cacheando con `STOREFRONT_MISS_LIFE`. **Verificado por el LEAD contra server real** (`next build` + `next start`, leyendo el HTML servido y no el fuente) y `accept-s3.sh` re-ejecutado: **58 PASS · 0 FAIL · S3 ACEPTADA**, con `MEDIDO s3 db-hits · primera=9 · cacheada=0` — el mismo número de antes del fix, o sea que **el camino feliz no se encareció**. Tabla de los 4 casos en §S3.3 abajo | `apps/web/app/(storefront)/s/[slug]/p/[listing]/page.tsx` + `apps/web/app/(storefront)/ficha.test.ts` (15 → 24 tests) (`042e24e`) |
+| S4.1 | el mensaje de WhatsApp repite storage y color cuando el listing no tiene `catalog_model` | doing | `domain-agent` + `storefront-agent` | — | el `href` medido sobre la **ficha servida** de un listing **sin `catalog_model`** dice el string canónico de `CLAUDE.md` §1 **byte a byte** —no por substrings—, y el fix decide **qué significa `modelDisplayName` cuando no hay catálogo** en vez de parchear el `??`. Ver §S4.1 abajo | `packages/domain/src/wa.ts:53` + `apps/web/app/(storefront)/_lib/listings.ts:282` |
 | T8 | los dos specs que miden S3 no emiten ninguna medición | **done** | `qa-agent` | — | las dos líneas `MEDIDO` exactas (ver abajo); **la de imagen se mide sobre la grilla**, no sobre la ficha. **Emitidas y verificadas por el LEAD el 2026-08-28** (`transferSize=51016B` / `primera=9 · cacheada=0`) | `e2e/s3-la-grilla-en-un-telefono-no-baja-la-foto-grande.spec.ts`, `e2e/s3-la-ficha-cacheada-no-le-pega-a-postgres.spec.ts` (`09c9bc3`) |
 | T9 | forma de `listings.slug` en `domain` + en el motor | **done** | `domain-agent` + `db-agent` | resto en vuelo con `storefront-agent` | ver abajo | `packages/domain/src/slug.ts`, `packages/db/drizzle/0003_listing_slug_format.sql` |
 | T10 | ocho comandos de aceptación corrían la suite entera creyendo filtrar | **done** | **LEAD** (`.claude/**`, §4) | — | el comando de cada contrato **filtra de verdad**, verificado en las dos polaridades (filtra, y falla con exit 1 ante un patrón que no matchea) | 4 `.claude/agents/*.md` + 4 `.claude/skills/*/SKILL.md` + `scripts/accept-fase3.sh` (`0d647c6`) |
@@ -420,9 +467,9 @@ Las reglas viven versionadas en `config/firewall-rules.json` y se aplican **por 
 
 | nivel | qué afirma | estado |
 |---|---|---|
-| 1 · estático, sin red | el archivo existe, parsea, cabe en los límites reales de Pro, **ninguna regla le cobra peaje al HTML de la vidriera**, y **todo route handler de la app está decidido** | ✅ `bash scripts/guard-firewall.sh` → `GUARD-FIREWALL: PASS` — pero **no está en CI**, ver abajo |
+| 1 · estático, sin red | el archivo existe, parsea, cabe en los límites reales de Pro, **ninguna regla le cobra peaje al HTML de la vidriera**, y **todo route handler de la app está decidido** | ✅ `bash scripts/guard-firewall.sh` → `GUARD-FIREWALL: PASS`, **y corre en CI** desde `3199a78` (`ci.yml:118`), junto con su polaridad (`:126`) |
 | 2 · contra la config viva (`vercel firewall diff --json`) | lo declarado **es** lo aplicado | 🔴 **sin implementar**: falta verificar qué scope de token permite el `publish` (§UNVERIFIED del research) |
-| aplicación | las 2 reglas corriendo y **disparando** un `429` | 🔴 **no aplicadas**. No hay proyecto Vercel (**B2**/**B5**) y las dos están `status: "planned"` porque sus rutas **todavía no existen**: `/api/track` aterriza con **S4b** y `/api/chat` con **FASE 5** |
+| aplicación | las 2 reglas corriendo y **disparando** un `429` | 🔴 **no aplicadas**. No hay proyecto Vercel (**B2**/**B5**). Desde S4 (`c9611b1`) `storefront-track-rl` está `active` —su ruta ya existe— y `chatbot-rl` sigue `planned` porque `/api/chat` aterriza con **FASE 5** |
 
 **Lo que hace fuerte al gate no es validar el JSON** contra los límites de Pro (`keys ⊆ {ip, ja4}` —
 `header:` es Enterprise —, `algo = fixed_window`, ventana 10–600 s, ≤ 40 reglas): eso es aritmética.
@@ -445,36 +492,70 @@ cada request es un token pagado. Para abuso masivo del HTML la palanca es **Atta
 gratis en todos los planes e inmediato, sin `publish`. La regla **F2** del guard **falla** si alguien
 declara una regla por `host` sin acotar path, o un catch-all.
 
-> **Esto parece material de ADR y todavía no lo es.** Hay decisión, alternativa descartada y
-> verificación con fuente, o sea la forma exacta de una ADR — pero las ADR las **ratifica el LEAD**
-> (`CLAUDE.md` §4) y ésta no fue abierta como tal. Queda acá hasta que el LEAD diga si abre
-> **ADR-016**; `docs-keeper` no numera una decisión por su cuenta.
+> **Esto era material de ADR y ya lo es: el LEAD abrió y ratificó ADR-016** (2026-08-28). La
+> decisión, la alternativa descartada (`host suf .maat.work`, con su número de costo) y la
+> verificación con fuente viven ahí; esta sección queda como el estado de la fila.
 
-**Lo que le falta al nivel 1 para valer lo que promete: `guard-firewall.sh` no corre en cada push.**
-Verificado contra `.github/workflows/ci.yml` el 2026-08-28: los guards del job principal son
-`_lib.test.sh`, `guard-leaks`, `guard-grants`, `guard-r2`, `accept-fase2` y `guard-artifacts
---harness`; `guard-routes` corre en el job `e2e`. **`guard-firewall` no está en ninguno de los dos.**
-Y el censo es precisamente la parte que sólo sirve si corre sola: *"una ruta nueva sin decidir rompe
-el gate el día que se crea"* es falso si el gate lo corre una persona cuando se acuerda. Es la
-segunda mitad de la pregunta que este repo ya aprendió a hacerse —*¿hay chequeo?* **y** *¿lo corre
-alguien?*— y hoy la respuesta es *sí* y *no*. **Cablearlo a CI es del LEAD** (`scripts/**` y el
-workflow), y hasta que pase, este nivel 1 depende de disciplina.
+**El nivel 1 dejó de depender de disciplina: `guard-firewall.sh` corre en cada push.** Verificado
+contra `.github/workflows/ci.yml` el 2026-08-28 — está en el job principal en `:118`, y su polaridad
+(`guard-firewall.test.sh`, "cada regla se tiene que ver romper") en `:126`, las dos desde `3199a78`.
+**Este board decía lo contrario y estaba desactualizado**; se corrige acá y en `TEST_MATRIX.md`, que
+lo repetía. Importa porque el censo es la parte que sólo sirve si corre sola: *"una ruta nueva sin
+decidir rompe el gate el día que se crea"* era falso mientras lo corriera una persona cuando se
+acordaba. Es la segunda mitad de la pregunta que este repo ya aprendió a hacerse —*¿hay chequeo?*
+**y** *¿lo corre alguien?*— y hoy la respuesta es *sí* y *sí*.
+
+**Lo que sí sigue abierto es el nivel 2, y no se redondea: `active` no significa "publicada en
+Vercel".** Con S4 (`c9611b1`) `storefront-track-rl` pasó de `planned` a `active` porque el endpoint
+no nace sin techo, pero `active` significa **que este archivo declara que la regla debe estar
+publicada**, no que lo esté. La brecha entre `config/firewall-rules.json` y la config viva es el
+**riesgo residual conocido de T1** y se cierra con el gate de nivel 2 (`vercel firewall diff --json`),
+que **no existe todavía**: falta verificar qué scope de token permite el `publish`
+(`docs/research/vercel-firewall-as-code.md` §UNVERIFIED). Mientras no exista, el apply es manual y el
+procedimiento mínimo son los dos comandos de `$apply` en el propio JSON.
 
 **El borde de `CLAUDE.md` §2 sigue en pie y esta fila no lo cubre:** *rate limiting con contador en
 Postgres sobre la vidriera es rechazo automático*. Que exista el WAF **no** pone un gate sobre esa
 prohibición —son dos cosas distintas: una configura un techo en el edge, la otra prohíbe una
 implementación en el código— y eso es **T14.1**, que sigue en 🔴.
 
-### T2 · falta el guard estático de "query sin filtro de tenant"  ·  deuda de S1
+### T2 · el guard de "query sin filtro de tenant" existe y **no está commiteado**  ·  LEAD
 
-`CLAUDE.md` §2 rechaza toda query sin filtro de tenant *además* de RLS. Hoy la regla se cumple **por
-disciplina y revisión, no por lint**: `scripts/guard-leaks.sh` tiene 15 secciones y ninguna es ésta.
+`CLAUDE.md` §2 rechaza toda query sin filtro de tenant *además* de RLS. `scripts/guard-leaks.sh`
+tiene 15 secciones y **ninguna es ésta** — eso sigue siendo cierto y por eso la fila nació. Lo que
+cambió el 2026-08-28: la regla **se escribió en otro lado**, como `W015` de
+`apps/web/scripts/web-lint.mjs`, que es del LEAD por la misma tabla de §4.
+
+**Estado verificado, no reportado.** `node ./scripts/web-lint.mjs` desde `apps/web` imprime
+`ok W015 toda query sobre las 15 tablas de negocio filtra por tenant ademas de RLS` y cierra en
+`WEB-LINT: PASS (15 reglas)`. **Y `git log -S "W015" -- apps/web/scripts/web-lint.mjs` devuelve cero
+commits:** el archivo figura como `M` en `git status`. O sea que la regla **no está en `main`** y no
+se ejecutó en ningún push. Es la tercera pregunta que este repo tuvo que aprender a hacerse, después
+de *¿hay chequeo?* y *¿lo corre alguien?*: **¿está en `main`?**
+
+**Por qué la implementación es de las buenas, cuando aterrice.** Deriva la lista de tablas del
+**schema real** (las que tienen `tenantId`), así que una tabla de negocio nueva queda cubierta el día
+que nace y no el día que alguien se acuerda de una lista; **falla si no puede leer el schema**
+—ausencia de medición es FAIL, y una lista vacía haría pasar todas las queries diciendo PASS—; usa
+una ventana de sentencia **angosta a propósito**, porque una ancha produce falsos negativos (un
+`tenantId` diez líneas más arriba, de otra query, dejaría pasar a ésta); y el escape es una marca
+`web-lint:sin-tenant` con **30+ caracteres de motivo escrito**, el mismo mecanismo que el censo de
+rutas de `guard-firewall.sh`.
+
+**Dos cosas que la fila no puede dar por cerradas:**
+1. **El alcance no es el de la regla de `CLAUDE.md`.** `web-lint.mjs` recorre `apps/web/app`,
+   `apps/web/lib` y `proxy.ts`. Una query sin filtro en `packages/**` sigue sin gate.
+2. **La razón por la que la regla importa teniendo RLS está en el propio comentario y conviene
+   repetirla acá:** la RLS depende del claim de la sesión, así que **una query con `service_role`
+   —los jobs, el signup, cualquier `withServiceDb`— no tiene RLS encima**. Ahí el filtro explícito es
+   la única defensa que queda, y es justo donde menos se escribe *"total, hay RLS"*. Las dos capas se
+   caen en momentos distintos: por eso van las dos.
 
 Nota relacionada, de `app-agent`: `apps/web/app/(app)/_lib/catalog/queries.ts` es **la única query
 del panel sin `where tenant_id`**, y está justificada por escrito en el propio archivo (tabla global
 declarada en `packages/db/src/schema/catalog.ts`, sin columna `tenant_id`, `GRANT SELECT` a
-`authenticated`, sembrada por `service_role`). **Cuando exista el guard, esa excepción tiene que
-estar declarada, no descubierta.**
+`authenticated`, sembrada por `service_role`). **Esa excepción tiene que quedar declarada con la
+marca, no descubierta.**
 
 ### T3 · el test de RLS cruzado estaba en la columna equivocada  ·  **CERRADA el 2026-08-28** (`d686923`)
 
@@ -499,6 +580,17 @@ cruza un límite"*.
 seguía en `packages/db/src/` y su encabezado (`:3-6`) todavía se declaraba `Owner: db-agent` citando
 la mitad de la regla de §4 que el desempate de FASE 4 **derogó** para este archivo. Se conserva
 porque es el argumento de por qué se muda; el estado actual está abajo.
+
+> **Precisión posterior del desempate, `CLAUDE.md` §4, `6929088` — no reabre T3.** Tal como estaba
+> escrita, la regla *"cruza tenants → se muda a `tests/`"* era **demasiado ancha**: arrastraba también
+> al test con el que `db-agent` prueba su propia migración. El criterio vigente es **quién es la
+> auditoría de referencia**, y para RLS cruzado sigue siendo `qa-agent`: **este archivo no se mueve.**
+> Lo que sí cambia es el otro lado — el owner del paquete **puede** quedarse casos cruzados como red
+> de regresión propia si (a) la auditoría de referencia existe en `tests/`, (b) **ningún gate cita el
+> test del paquete como evidencia** y (c) cuando divergen **gana el de `tests/`**. Concreto y
+> vigente: `packages/db/src/rls-anon-wa-click.test.ts` **se queda con `db-agent`**, y la auditoría de
+> referencia del beacon de S4 son **R2b / R6c / R7** de `tests/rls-cross-tenant.test.ts`. La
+> duplicación es deliberada y tiene precio: dos archivos que tocar cuando cambia la policy.
 
 **CERRADA el 2026-08-28** (`d686923`). El archivo vive en `tests/rls-cross-tenant.test.ts`, el
 encabezado que se declaraba `db-agent` está borrado —ahora explica por qué vive acá y remite al
@@ -766,8 +858,12 @@ pero **después** de contar, que es donde no sirve.
 
 Sus tests unitarios corren con Postgres y R2 falsos: prueban que el lock **se pide** antes del
 `count` y del `insert`. **No pueden probar que el lock serializa** — eso necesita dos conexiones a
-Postgres real. Por la regla de desempate de `CLAUDE.md` §4 (concurrencia/RLS contra Postgres real =
-`qa-agent`, vive en `tests/`), el caso es de `qa-agent`.
+Postgres real. El caso es de **`qa-agent`** y vive en `tests/` por la regla de desempate de
+`CLAUDE.md` §4, **en su redacción precisada del 2026-08-28** (`6929088`): el criterio no es *"cruza
+tenants"* —eso era demasiado ancho y le sacaba a cada paquete el test de su propio código— sino
+**quién es la auditoría de referencia**, o sea la afirmación que un gate cita y que queda parada
+entre el defecto y el merge. Acá esa afirmación es *"el lock serializa de verdad"*, y no la puede
+firmar el mismo writer que escribió el lock.
 
 **Caso concreto:** un listing con 7 fotos, dos `addUnitPhoto` en paralelo con `withTenantDb` →
 exactamente **8** fotos al final y un `ok:false` con el texto de techo (`FULL_MESSAGE`).
@@ -1133,6 +1229,54 @@ mensaje de WhatsApp que factura es correcto (nombra el color de la página). Lo 
 chico y más caro de explicar: en el `/demo` que se le muestra a un reseller, **la URL dice una cosa y
 la página dice otra**. Es exactamente el tipo de detalle que un reseller sí mira, porque el color es
 parte del precio.
+
+### S4.1 · el mensaje de WhatsApp repite storage y color sin `catalog_model`  ·  `domain-agent` + `storefront-agent`
+
+Abierta el 2026-08-28, **medida y no inferida**. La imprime W5 de `./scripts/accept-s4.sh` sobre un
+browser real contra un build real:
+
+```
+href=https://wa.me/54…?text=Hola%2C%20vi%20el%20iPhone%2014%20Pro%20256%20Grafito%20256%20Grafito%20(usado%20A)%20…
+```
+
+Decodificado: `Hola, vi el iPhone 14 Pro 256 Grafito 256 Grafito (usado A) a USD 620 en … y lo quiero.`
+Canónico según `CLAUDE.md` §1: `… el iPhone 14 Pro 256 Grafito (usado A) …`
+
+**La causa, en dos archivos de dos columnas distintas:**
+
+- `packages/domain/src/wa.ts:53` — `describeListing` arma `[modelDisplayName, storageGb, color]`, y
+  el contrato del campo dice textual *"nombre de display del `catalog_model`"*.
+- `apps/web/app/(storefront)/_lib/listings.ts:282` — `modelDisplayName: row.modelDisplayName ?? row.title`.
+  Sin `catalog_model` cae al `title`, que es **texto libre del dueño** y en la práctica ya trae
+  storage y color adentro (*"iPhone 14 Pro 256 Grafito"* es exactamente como lo escribe un reseller).
+  Entonces se appendean por segunda vez.
+
+**No es artefacto del fixture, y esto es lo que la vuelve una fila del board.**
+`packages/db/src/schema/listings.ts:54`: `catalogModelId` es **nullable** y además
+`onDelete: 'set null'`. Dos caminos de producción, ninguno exótico: (1) el dueño carga una unidad sin
+elegir modelo de catálogo; (2) se borra un `catalog_model` y **todos** los listings que lo apuntaban
+caen al fallback **de golpe**. El fallback en sí es correcto y está justificado por escrito en el
+propio archivo —un accesorio no tiene `catalog_model` y *"vi el Cargador 20W USB-C"* se entiende
+mientras que *"vi el null"* no—: **el bug no es el `??`, es que `describeListing` sigue appendeando
+como si el nombre viniera del catálogo.** Por eso el fix tiene que decidir qué significa
+`modelDisplayName` cuando no hay catálogo; parchear el `??` mueve el bug de lugar.
+
+**Alcance: es preexistente de S3 y no lo introdujo S4.** No filtra nada y no es seguridad. Lo que
+toca es la superficie de conversión del producto: el único string por el que entra la plata.
+
+**Por qué ningún gate lo vio — y esto es lo que hay que leer, porque es un patrón que se repite.**
+Tres pruebas alrededor del string y **ninguna encima del string completo en el camino real**:
+
+| prueba | qué afirma | por qué no lo agarra |
+|---|---|---|
+| **U14** (`packages/domain/src/wa.test.ts`) | el string canónico **byte a byte** (`toBe`) | corre con `modelDisplayName` ya limpio: prueba la **función**, no el **mapeo** que la alimenta |
+| **M3b** (`scripts/accept-s3.sh`) | **substrings** sobre el HTML servido | `256 Grafito` aparece — **dos veces**, y `grep -q` no cuenta ocurrencias |
+| **W5** (`scripts/accept-s4.sh`) | imprime el `href` **entero** | sólo asevera `anchors=1` y `abre_whatsapp=si`: lo imprime, no lo compara |
+
+Es la segunda vez que este repo paga la misma lección —la primera fue el botón `wa.me` que tenía tres
+pruebas alrededor y ninguna encima, cerrada con M3b— y la forma es idéntica: **cada prueba era
+correcta y el invariante seguía descubierto.** El gate que cierra S4.1 tiene que comparar el string
+**completo**, sobre la **ficha servida**, con un listing **sin `catalog_model`**.
 
 ## FASE 5 — Chatbot (post S4/S8)
 Capa 2. Se **diseña** en FASE 1, se **codea** después de S4/S8. Ver `docs/CHATBOT.md`.

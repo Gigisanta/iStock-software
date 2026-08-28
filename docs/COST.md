@@ -579,19 +579,60 @@ elección de `iad1` para funciones **no** compra la tarifa de `iad1` para el WAF
 
 #### Cuántos requests matchean, por tenant
 
-Sólo dos rutas están bajo regla: `/api/track` (beacon de S4b, aterriza con S4b) y `/api/chat`
-(FASE 5). **Las dos están `planned`: hoy el gasto real de esta línea es USD 0.00.** El resto de la
-app —el HTML de la vidriera, `/_media`, `/api/health`, `/api/tenants/slug-check`— no matchea nada.
+Sólo dos rutas están bajo regla: `/api/track` (el beacon del click de `wa.me`, **aterrizó en S4**,
+`c9611b1`, 2026-08-28) y `/api/chat` (FASE 5). `storefront-track-rl` pasó de `planned` a **`active`**
+con `landed_in: "S4"`; `chatbot-rl` sigue `planned`. **El gasto real de esta línea sigue siendo
+USD 0.00, y desde S4 por un motivo distinto:** ya no es que el endpoint no exista —existe y tiene
+techo declarado—, es que **ninguna regla está publicada** en Vercel, porque no hay proyecto (B2/B5)
+y `publish` es un paso operativo que `vercel deploy` no hace. `active` significa *"el repo declara
+que esta regla debe estar publicada"*, **no** *"lo está"*. El resto de la app —el HTML de la
+vidriera, `/_media`, `/api/health`, `/api/tenants/slug-check`— no matchea nada.
 
 | escenario | allowed req/tenant/mes | @ USD 0.50/1M | @ USD 0.80/1M |
 |---|---|---|---|
-| Base, beacon sólo en el click de `wa.me` (~5% de 3.000 pv) `[EST]` | 150 | 0.000075 | 0.00012 |
-| **Base, beacon en cada pageview** (peor caso) | 3.000 | 0.0015 | **0.0024** |
-| Negocio, beacon por click + chat al soft cap (1.200 msgs) | 1.350 | 0.00068 | 0.0011 |
-| **Negocio, beacon por pageview + chat al cap** (peor caso) | 4.200 | 0.0021 | **0.0034** |
+| Base — beacon en el click `[MEDIDO]`, volumen ~5% de 3.000 pv `[EST]` | 150 | 0.000075 | 0.00012 |
+| **Base — reserva presupuestada** (1 beacon/pageview = 20× el volumen estimado) | 3.000 | 0.0015 | **0.0024** |
+| Negocio — beacon por click + chat al soft cap (1.200 msgs) | 1.350 | 0.00068 | 0.0011 |
+| **Negocio — reserva presupuestada** (beacon a 20× + chat al cap) | 4.200 | 0.0021 | **0.0034** |
 
-**El renglón se reserva en su peor caso: USD 0.0024 (Base) y USD 0.0034 (Negocio).** Contra el
-objetivo de 0.50 es **0,5% y 0,7%**. Contra el marginal Base entero (0.03) es el 8,5%.
+El rótulo de dos filas cambió a propósito: lo que antes se llamaba *peor caso* ahora se llama
+**reserva**. El peor caso que justificaba ese renglón —que el beacon disparara en el `view`— está
+**medido y descartado** (abajo). Lo que la reserva cubre hoy es otra cosa.
+
+**El renglón se reserva alto: USD 0.0024 (Base) y USD 0.0034 (Negocio).** Contra el objetivo de
+0.50 es **0,5% y 0,7%**. Contra el marginal Base entero (0.03) es el 8,5%.
+
+> #### El supuesto sobrevivió a su propia medición, y esto es por qué
+>
+> **S4 midió el trigger, no el volumen, y el número reservado no se mueve.** Decirlo explícito
+> importa: un supuesto que sigue en pie después de que lo midieron **parece verificado y no lo
+> está**, y esa confusión es más cara que no haber medido.
+>
+> **Lo que quedó medido `[MEDIDO en S4, 2026-08-28]`:**
+> `MEDIDO s4 click · filas_al_cargar=0 · filas_antes=0 · filas_despues=1 · tenant_ok=si`.
+> Cargar la ficha **no escribe ninguna fila**; el click escribe exactamente una. La pregunta
+> *click vs. view* está cerrada **midiéndola**, y con eso este renglón **no** es proporcional a
+> pageviews.
+>
+> **Lo que sigue `[EST]` es cuántos clicks hay.** El 5% de conversión es mío y de nadie más: no
+> existe todavía una vidriera con tráfico real de la que sacarlo. Dos razones para **no** bajar el
+> renglón de 0.0024 a 0.00012:
+>
+> 1. **El código no acota el ratio a 1 beacon por pageview.** La guarda `window.__waBeacon` impide
+>    instalar **dos listeners**, no impide **dos clicks**: el visitante que abre WhatsApp, vuelve
+>    con el botón de atrás y aprieta de nuevo manda **dos** beacons en **un** pageview. *«≤ 1 por
+>    pageview»* es un supuesto sobre conducta humana, no un invariante del código. Verificado
+>    leyendo `apps/web/app/(storefront)/_components/wa-beacon.tsx`.
+> 2. **Bajarlo no cambiaría ninguna decisión.** La diferencia entre reserva y escenario medido es
+>    **USD 0.0023/tenant/mes = 0,46% del objetivo**: más chica que el error de la tarifa que la
+>    multiplica (±37%, `[UNVERIFIED]` cuál aplica a AR) y dos órdenes de magnitud menor que el rango
+>    abierto de Class B (48×, B1). Afinar acá sería precisión falsa sobre un renglón cuyo
+>    denominador —3.000 pv/mes— tampoco está medido.
+>
+> **O sea: el número no se movió, pero cambió de qué se defiende.** Antes cubría *«el beacon podría
+> dispararse en el view»*, una pregunta abierta de **diseño**, cerrada por medición. Ahora cubre
+> *«los clicks podrían ser 20× mi estimación»*, una pregunta abierta de **tráfico**, que se cierra
+> con la primera vidriera real y no con otra slice.
 
 #### El número de 100k requests: la aritmética está bien, la atribución no
 
@@ -663,14 +704,20 @@ la función. Es el caso de libro de *costo tonto*: pagar por proteger lo que dec
 Auditado contra el archivo y contra el gate, no supuesto. **Ninguno está abierto hoy**; los tres son
 el mismo tipo de deriva y merecen quedar escritos.
 
-1. **El beacon de S4b, si dispara en el `view` en vez de en el click.** Es el camino más probable y
-   el único que no depende de que alguien se equivoque: si `/api/track` se llama en el load de la
-   ficha, **allowed requests ≈ pageviews** y la línea de WAF vuelve a ser proporcional al tráfico.
-   No es fatal —3.000 pv/mes son USD 0.0024, 1/40 de lo que costaba la regla de `host`, porque un
-   pageview son ~8 requests y el beacon es 1— pero convierte un renglón fijo en uno que crece con
-   la viralidad. **Gate para S4b, no blocker de T1:** el beacon dispara en el evento (`click` de
-   `wa.me`, `reserva`), nunca en el render. Si tiene que disparar en el render, se dice acá y el
-   renglón sube a 0.0024, que sigue entrando.
+1. **El beacon, si disparara en el `view` en vez de en el click. → CERRADO POR MEDICIÓN EN S4
+   (2026-08-28). No se materializó.** Era el camino más probable y el único que no dependía de que
+   alguien se equivocara: si `/api/track` se llamara en el load de la ficha, **allowed requests ≈
+   pageviews** y la línea de WAF volvería a ser proporcional al tráfico. No habría sido fatal
+   —3.000 pv/mes son USD 0.0024, 1/40 de lo que costaba la regla de `host`, porque un pageview son
+   ~8 requests y el beacon es 1— pero convertía un renglón fijo en uno que crece con la viralidad.
+   **El gate que T1 le dejó a la slice se cumplió, y se cumplió midiendo, no declarando:**
+   `MEDIDO s4 click · filas_al_cargar=0 · filas_antes=0 · filas_despues=1`. Las dos mitades
+   importan: el cero **no** es «llegué temprano» (el e2e de `qa-agent` espera por condición con un
+   presupuesto de 4 s que se consume entero antes de declararlo, justamente para darle al
+   hipotético beacon-en-el-view todas sus chances), y el uno prueba que el evento igual se
+   registra. En el código no hay camino de view que cerrar: el beacon es un listener delegado de
+   `click` sobre `a[data-wa="listing"]`. **Lo que queda vivo de este ítem no es el trigger sino el
+   volumen de clicks**, y por eso la reserva de arriba se mantiene.
 2. **`op: "pre"` es un prefijo, no una igualdad.** `/api/track` matchea también `/api/tracking`,
    `/api/track-v2` y cualquier ruta futura que empiece igual. Hoy no existe ninguna, y el censo F3
    del guard usa la misma lógica de prefijo, así que una ruta nueva bajo ese prefijo **hereda la
@@ -741,10 +788,12 @@ nuevo en §2**, pero sí toca dos supuestos y conviene dejarlo anotado:
 
 ```
 COST_VERDICT: PASS
-DELTA_POR_TENANT_MES: USD 0.0024 (Base)  ·  USD 0.0034 (Negocio)   ← peor caso, tarifa gru1
-                      USD 0.0000 hoy: las dos reglas están `planned`, no publicadas
+DELTA_POR_TENANT_MES: USD 0.0024 (Base)  ·  USD 0.0034 (Negocio)   ← reserva, tarifa gru1
+                      USD 0.0000 hoy: NINGUNA regla está publicada (no hay proyecto Vercel, B2/B5).
+                      `storefront-track-rl` es `active` desde S4; `chatbot-rl` sigue `planned`.
 
-  Base     3.000 allowed req/mes × USD 0.80/1M = 0.0024   (beacon en cada pageview, peor caso)
+  Base     3.000 allowed req/mes × USD 0.80/1M = 0.0024   (reserva: 20× el volumen de clicks
+                                                           estimado. El trigger es el click, MEDIDO)
   Negocio  4.200 allowed req/mes × USD 0.80/1M = 0.0034   (+1.200 msgs de chat al soft cap)
   a tarifa iad1 (USD 0.50/1M) los mismos volúmenes dan 0.0015 y 0.0021
 
@@ -753,10 +802,14 @@ DELTA_POR_TENANT_MES: USD 0.0024 (Base)  ·  USD 0.0034 (Negocio)   ← peor cas
   marginal Negocio 0.313 − 0.060 (WAF viejo) + 0.0034 = USD 0.256   → 51% del objetivo
 ```
 
-**SUPUESTOS:** 3.000 pageviews/mes/tenant `[EST]` · beacon de S4b en el peor caso (1 por pageview)
-`[EST — el trigger no está decidido]` · conversión a click de `wa.me` 5% `[EST]` · chat al soft cap
-de 40 msgs/día = 1.200/mes · tarifa `gru1` USD 0.80/1M `[UNVERIFIED que sea la que aplica a AR]` ·
-las dos reglas se publican tal como están en `config/firewall-rules.json`.
+**SUPUESTOS:** 3.000 pageviews/mes/tenant `[EST]` · **el beacon dispara en el `click`, nunca en el
+render** `[MEDIDO en S4, 2026-08-28: filas_al_cargar=0]` — esto **dejó de ser un supuesto** ·
+la reserva se mantiene en 1 beacon/pageview `[EST, conservador, y explícito]`: **cubre el volumen de
+clicks, que sigue sin medirse, no el trigger, que ya está medido** — el detalle de por qué no bajé
+el número está en §2.3 · conversión a click de `wa.me` 5% `[EST]` · chat al soft cap de 40 msgs/día
+= 1.200/mes · tarifa `gru1` USD 0.80/1M `[UNVERIFIED que sea la que aplica a AR]` · las dos reglas
+se publican tal como están en `config/firewall-rules.json` — **hoy no hay ninguna publicada**
+(B2/B5), así que el gasto real de este renglón es USD 0.00 y el modelo es una proyección.
 
 **VECTOR_MAS_RIESGOSO:** **el scoping de las reglas, no su precio.** El precio unitario del rate
 limit es irrelevante en todos los escenarios que modelé (peor caso: 0,7% del objetivo). Lo que sí
@@ -767,8 +820,11 @@ Las dos son decisiones de **una línea de configuración que no pasa por ningún
 gate de drift contra la config viva **no está implementado**.
 
 **METRICA_A_VIGILAR:** **allowed requests del WAF ÷ pageviews de vidriera del mismo período.**
-Valor de diseño **≤ 0,05** (beacon en el click) y **≤ 1,05** (beacon en cada pageview, peor caso
-aceptado). **Alarma en > 1,5**: significa que una regla se corrió al camino de render o a `/_media`
+Valor de diseño **≤ 0,05**: el beacon en el click es `[MEDIDO]` desde S4, así que 0,05 dejó de ser
+*una de dos ramas posibles* y pasó a ser **la** rama. La banda hasta **1,05** sigue siendo la
+**reserva presupuestada** —entra en el objetivo igual—, pero **ya no describe un diseño aceptado**:
+un ratio sostenido cerca de 1 significa que el beacon se soltó del click o que una regla se movió,
+y eso se investiga, no se acepta. **Alarma en > 1,5**: significa que una regla se corrió al camino de render o a `/_media`
 (donde una grilla pide ~20 imágenes de una y el ratio saltaría a ~20). Es un **ratio y no un monto**
 a propósito: el monto absoluto va a seguir siendo despreciable durante todo el tiempo en que el
 error sea barato de arreglar, así que un umbral en USD avisaría tarde. El monto (dashboard de Vercel
@@ -836,7 +892,7 @@ ser gratis. Deployar en pico de tráfico es un evento de costo.
 | LLM | **tokens reales/turno por tenant** | > 1200 in o > 180 out, o modelo frontier en el log |
 | proxy | CPU-ms del proxy por pageview | **> 2 ms**, o cualquier llamada de red |
 | edge | Edge Requests/mes | acercarse a 10M (≈ 80 tenants) |
-| **WAF** | **allowed requests ÷ pageviews de vidriera** | **> 1,5** — una regla se corrió al camino de render o a `/_media`. Valor de diseño: 0,05 (beacon en el click) a 1,05 (beacon en cada pageview). Es un ratio y no un monto porque el monto avisaría tarde: sigue siendo despreciable durante todo el tiempo en que el error es barato de arreglar (§2.3) |
+| **WAF** | **allowed requests ÷ pageviews de vidriera** | **> 1,5** — una regla se corrió al camino de render o a `/_media`. Valor de diseño: **0,05**, y desde S4 es `[MEDIDO]` que el beacon dispara en el click (`filas_al_cargar=0`), no en el render. Hasta 1,05 es **reserva presupuestada**, no diseño aceptado: sostenido cerca de 1 se investiga. Es un ratio y no un monto porque el monto avisaría tarde: sigue siendo despreciable durante todo el tiempo en que el error es barato de arreglar (§2.3) |
 | **WAF** | **líneas de facturación del Firewall activas** | **cualquiera que no sea `Rate Limit Requests`** — en particular `Managed Rulesets` / *inspected requests*, que se prende con un toggle, no aparece en ningún diff y sextuplica el marginal del plan Base (§2.3) |
 | **miss** | **ISR writes sobre slugs que no son de ningún tenant** | **cualquier ritmo sostenido** — es el único vector que no aparece en el costo de ningún tenant, y el perfil corto lo hace 12× más caro por hora que el viejo `'max'` (a cambio de que no quede nada pegado). **La palanca es Attack Challenge Mode** (gratis, inmediato, sin `publish`), no una regla de rate limit: el camino de render **no tiene regla y no la va a tener** (§2.3). Es la única alarma del documento cuya mitigación es manual — USD 2.88 por hora no mirada |
 
@@ -917,11 +973,27 @@ unitario del Base no está calculado en ningún artefacto — ver §7.)
 - **Si «inspected requests» de Managed Rulesets incluye los hits servidos desde el CDN cache.** Si
   los incluye, los USD 0.154/tenant/mes de §2.3 son un **piso**. No se verifica: se verifica el día
   que haya un ADR para prenderlo, y no hay ninguno.
-- **Cuántos requests matchean de verdad una regla.** Las dos reglas de T1 están `planned`
-  (`/api/track` aterriza con S4b, `/api/chat` con FASE 5): **hoy el gasto de esta línea es USD 0.00
-  y el número de §2.3 es una proyección sobre dos endpoints que todavía no existen.** El supuesto
-  más frágil es el **trigger del beacon** —click vs. pageview—, que decide si el renglón es fijo o
-  proporcional al tráfico. Se cierra en S4b, decidiéndolo, no midiéndolo.
+- **Cuántos requests matchean de verdad una regla.** `/api/track` **ya existe** (S4, `c9611b1`) y
+  su regla está `active`; `/api/chat` aterriza con FASE 5. **Hoy el gasto de esta línea sigue siendo
+  USD 0.00, pero ya no porque falten endpoints: porque no hay ninguna regla publicada** —no hay
+  proyecto Vercel (B2/B5) y `publish` es un paso operativo aparte—, así que §2.3 sigue siendo una
+  proyección. **Lo que S4 cerró es el trigger del beacon**, que era el supuesto más frágil:
+  `filas_al_cargar=0` `[MEDIDO]`, dispara en el `click`, y con eso el renglón es **fijo y no
+  proporcional al tráfico**. **Lo que sigue `[UNVERIFIED]` es el volumen**: cuántos clicks por
+  tenant y por mes. El 5% de conversión no tiene ninguna vidriera real atrás, y por eso §2.3
+  reserva 20× ese volumen en vez de bajar el número. Se cierra con la primera vidriera con tráfico,
+  no con otra slice.
+- **Lo que `/api/track` cuesta FUERA del WAF: nunca se midió.** Cada click es una invocación de
+  Vercel Function y un `INSERT` en Postgres, y **S4 no tiene entrada propia en §2**: este documento
+  audita el renglón de WAF del beacon y ningún otro. Orden de magnitud con los precios que ya usa
+  §2.2: 150 clicks/mes × USD 0.60/1M = **USD 0.00009/mes** de invocaciones `[EST]`, con el precio de
+  invocación `[UNVERIFIED]` como el resto de fluid compute. **El Active CPU del handler no está
+  medido**: a diferencia de `sharp` (677 ms medidos por `bench`), acá no hay ni una corrida. Es casi
+  seguro despreciable —un insert, sin imagen y sin LLM—, pero *casi seguro* no es un número y no se
+  escribe como si lo fuera. Lo que sí conviene anotar por forma, no por monto: `wa_click_events` es
+  **la primera tabla del producto que crece con el tráfico y no con el stock** (~150 filas/mes/tenant
+  `[EST]`, ruido contra los 8 GB del plan Pro), o sea la primera cuyo tamaño no lo controla el dueño
+  del negocio. Queda como hueco explícito hasta que S4 tenga auditoría de costo propia.
 - **Drift entre `config/firewall-rules.json` y la config viva del WAF.** El gate de nivel 1
   (estático) pasa; el de nivel 2 (`vercel firewall diff --json` contra Vercel) **no está
   implementado** — falta saber qué scope de token permite `publish`. **Entre el archivo que audité y
@@ -961,8 +1033,24 @@ una línea marginal: atribuirlo a un tenant solo daba 16% del budget cuando el n
 Tres cosas quedan escritas para el futuro: el **umbral** que hace neta negativa a cada regla (0,5%
 de denegación en el chat, 23% en `/api/track`), la alerta de **Managed Rulesets** (un toggle,
 6,4× el marginal Base, invisible en cualquier diff) y los **tres caminos** por los que igual
-podríamos terminar facturando pageviews — de los cuales el más probable es el trigger del beacon
-de S4b, y el más silencioso es que el gate valida el archivo pero no la config publicada.
+podríamos terminar facturando pageviews.
+
+**S4 (2026-08-28) no movió ningún total, y eso es un resultado, no una omisión.** De los tres
+caminos de arriba, **el más probable —el trigger del beacon— se cerró midiéndolo**:
+`filas_al_cargar=0`, cargar la ficha no escribe ninguna fila, el beacon vive en el `click`. El
+renglón de §2.3 **se mantiene en USD 0.0024 / 0.0034 a propósito**: la reserva de 1 beacon/pageview
+dejó de cubrir el trigger (medido) y pasa a cubrir el **volumen** de clicks (sin medir), que es 20×
+el estimado y vale 0,46% del objetivo — bajarla sería precisión falsa sobre un denominador que
+tampoco está medido. Con `storefront-track-rl` en `active`, **la regla ya no le va detrás al
+endpoint: el endpoint nació con techo declarado.** Lo que S4 **no** trajo es una auditoría de costo
+propia: su invocación de función y su fila de Postgres siguen sin medirse (§7).
+
+**El más silencioso de los tres sigue abierto, y sin fecha: el gate valida el archivo, no la config
+publicada.** `active` en `config/firewall-rules.json` significa que el repo **declara** que la regla
+debe estar publicada, no que lo esté — hoy no lo está (B2/B5). El gate de nivel 2
+(`vercel firewall diff --json`) **no existe**, así que entre el archivo que audité y la factura no
+hay ninguna verificación automática. Es el **riesgo residual conocido de T1**, es de configuración y
+no de código, y se cierra con el gate: ninguna slice de producto lo va a cerrar por su cuenta.
 
 **Abierto:** precio de Supabase (B2) · **precio de fluid compute de Vercel (§7)** · comisión de MP
 (B3, ADR-008) · región (ADR-010) · **Class B real y bytes del master (B1)** ·

@@ -721,6 +721,82 @@ está y no se toca.
 
 ---
 
+## ADR-016 — El rate limit del WAF vive en `config/firewall-rules.json`, no en `vercel.json`
+- **Estado:** aceptada · **Fecha:** 2026-08-28 · **Autor:** LEAD (FASE 4 bis, T1) · redactada por `docs-keeper`
+- **Implementó:** el **LEAD** — `config/**` y `scripts/**` son suyos por `CLAUDE.md` §4. Commits
+  `4fce968` (archivo + gate), `3199a78` (polaridad del gate + cableado a CI), `c9611b1`
+  (`storefront-track-rl` pasa a `active` con S4).
+- **Origen:** `docs/research/vercel-firewall-as-code.md`, que **demolió la premisa de la fila T1**:
+  decía *"2 reglas en `vercel.json`"* y eso no se puede escribir.
+
+### Contexto — la fila del board pedía algo imposible
+`SLICE_BOARD.md` tenía **T1** con owner *LEAD (`vercel.json`)* y artefacto *"falta definir"*. La
+verificación contra la fuente cerró la pregunta antes de empezar: el schema oficial tipa
+`routes[].mitigate.action` como **enum cerrado `["challenge","deny"]`** con
+`additionalProperties: false`, y la palabra `rate_limit` aparece **cero veces**. Verificado contra
+`openapi.vercel.sh/vercel.json` el **2026-08-28**.
+
+### Decisión
+1. **`vercel.json` no existe en el repo, y no lo va a crear esta necesidad.** La regla **F5** de
+   `scripts/guard-firewall.sh` falla si alguien lo crea creyendo declarar el límite ahí.
+2. Las reglas viven **versionadas en `config/firewall-rules.json`**, con su `$doc`, su `$owner` y su
+   `$apply` adentro del propio archivo.
+3. **Se aplican por CLI** (`vercel firewall rules add …` + `vercel firewall publish`), que **no es
+   parte del build**: un `vercel deploy` **no** sincroniza el WAF. Esto no es un detalle operativo,
+   es la fuente del único riesgo residual de la decisión (ver abajo).
+4. **Las condiciones matchean por `eq`, no por `pre`.** `pre` es prefijo: `/api/track` matchearía
+   también `/api/tracking` y `/api/track-v2`, y **como el censo del gate usa la misma lógica**, una
+   ruta futura bajo ese prefijo heredaría el techo, heredaría el medidor y **quedaría contada como
+   cubierta por decisión de nadie**. Es el único punto donde el censo podría dar verde a algo que no
+   se miró; lo encontró `cost-auditor` auditando T1. Precio del `eq`: un `POST` a `/api/track/` (con
+   barra) no matchea. No abre un agujero: Next tiene `trailingSlash: false` y devuelve **308**, que
+   en POST preserva el método y reintenta contra `/api/track`, que **sí** está cubierta. El costo del
+   bypass es un redirect, no una escritura sin techo.
+5. **Ninguna regla puede condicionar por `host`.** La regla **F2** del gate falla si alguien declara
+   una por `host` sin acotar path, o un catch-all.
+6. **El gate es del LEAD, no de los agentes que escriben las rutas** — el mismo principio que sacó
+   `scripts/probes/**` de `packages/media`: **el gate no puede ser del mismo writer que el código que
+   audita**. Y `guard-firewall.sh` **censa `apps/web/app/api/**`**: toda ruta HTTP está cubierta por
+   una regla **o** exceptuada con motivo escrito, así que **una ruta nueva sin decidir rompe el gate
+   el día que se crea**, no el día que la floodean.
+
+### Alternativa descartada — la regla de vidriera por `host`, y cuánto costaba
+El research proponía `host suf .maat.work`. **Rechazada.** El rate limit se factura por *allowed
+requests* —los que matchean **y pasan**—, así que esa regla le cobraría peaje a **cada pageview de
+vidriera**, que es exactamente lo que `ARCHITECTURE.md` declara scrapeable a propósito (*"se defiende
+lo que cuesta plata"*). **`cost-auditor` midió el marginal: rechazarla sacó el 77% del costo marginal
+del plan Base — de USD 0.124 a 0.03.** Para abuso masivo del HTML la palanca es **Attack Challenge
+Mode**, gratis en todos los planes, inmediato y sin `publish`.
+
+Las dos reglas apuntan a lo que sí cuesta plata:
+- **`/api/track`** — la única escritura **sin autenticar** del producto. Con el spend cap de Supabase
+  en ON, floodearla no infla una factura: **apaga el proyecto para todos los tenants.**
+- **`/api/chat`** — cada request es un token pagado.
+
+### Consecuencias
+- **`active` no significa "publicada en Vercel".** Significa que el archivo **declara que debe
+  estarlo**. `storefront-track-rl` pasó a `active` con S4 porque el endpoint no nace sin techo;
+  `chatbot-rl` sigue `planned` hasta FASE 5.
+- **Riesgo residual asumido y sin redondear: el drift entre el archivo y la config viva.** Lo cierra
+  el **gate de nivel 2** (`vercel firewall diff --json`), que **no existe todavía**: falta verificar
+  qué scope de token permite el `publish` (§UNVERIFIED del research). Mientras tanto el apply es
+  manual y el procedimiento mínimo son los dos comandos de `$apply` dentro del JSON.
+- Los contadores del WAF son **por región**: el límite efectivo es `N × requests`. Los números
+  (60/min de tracking, 12/min de chat) se eligieron sabiéndolo.
+
+### Verificación
+`bash scripts/guard-firewall.sh` → `GUARD-FIREWALL: PASS` (límites de Pro: `keys ⊆ {ip, ja4}` —
+`header:` es Enterprise—, `algo = fixed_window`, ventana 10–600 s, ≤ 40 reglas; más el censo de
+rutas). Y su polaridad, `bash scripts/guard-firewall.test.sh`, que exige **ver romper cada regla**:
+existe porque *"14 fixtures, 14 rompen"* se había ejercido a mano y fuera del repo, y el día que se
+volvió un comando encontró que **seis reglas no fallaban nunca** —las fixtures mutaban `algo`,
+`keys`, `window` y `action` en la **raíz** de la regla, y los límites de Pro se validan bajo
+`rateLimit`—. Hoy son **25 casos, cada uno en su polaridad**, y las fixtures se **derivan del archivo
+real en memoria**: una fixture literal se congela el día que se escribe y después falla por el motivo
+equivocado. Las dos corren en CI (`.github/workflows/ci.yml:118` y `:126`) desde `3199a78`.
+
+---
+
 ## Notas operativas — hallazgos que no son ADR
 
 > **Qué es:** hechos verificados que cambian cómo se escribe o se lee algo del repo, pero que **no
