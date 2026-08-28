@@ -37,6 +37,27 @@ import { ACCEPTED } from './status';
  * el listing huérfano), pero se quemaría un slug y un id por cada intento perdido, y el momento en
  * que la carrera se decide quedaría tres sentencias más tarde de donde se lee.
  *
+ * ── El `CONSTRAINT TRIGGER` de 0009 NO reemplaza este guard. No lo borres. ────────────────────
+ * Desde `drizzle/0009_*` la base sostiene `tradein_leads_accepted_has_listing`: un lead en
+ * `accepted` tiene `created_listing_id`. Es una invariante **por fila y de existencia**, y de ahí
+ * sale exactamente lo que cubre y lo que no:
+ *
+ *   · el trigger impide **media** operación — un lead aceptado sin unidad;
+ *   · el trigger **no** impide **dos operaciones completas**. Sin el `ne(status, 'accepted')` de
+ *     abajo, un segundo `acceptToStock()` sobre el mismo lead insertaría una segunda unidad y
+ *     repuntaría `created_listing_id` a ella: la fila final queda `accepted` **con** unidad, o sea
+ *     el trigger la deja commitear feliz. Resultado: dos equipos en el stock por un solo canje, el
+ *     primero huérfano y con un costo que ya no se puede atribuir a nada. No hay `unique` sobre
+ *     `created_listing_id` ni vínculo inverso desde `listings`, así que la base **no tiene con qué**
+ *     verlo. Este `where` es lo único que lo impide, y el caso *"el trigger de la base NO cubre
+ *     esto"* de `accept-to-stock.test.ts` lo escribe a mano contra Postgres para probarlo.
+ *
+ * Y una consecuencia de forma: el `23514` del trigger **no se atrapa** más abajo, a propósito. Si
+ * llegara a dispararse significa que esta función rompió su propia invariante, y para eso el
+ * comportamiento correcto es un 500 ruidoso con traza, no un mensaje amable que tape una escritura
+ * a medias. El fallo que la persona sí puede causar —aceptar dos veces— se atiende arriba, con
+ * mensaje en castellano, antes de que el motor tenga que gritar.
+ *
  * ══════════════════════════════════════════════════════════════════════════════════════════════
  *  3. `offer_usd` → `cost_usd`: el costo viaja de columna a columna.
  * ══════════════════════════════════════════════════════════════════════════════════════════════
@@ -79,16 +100,35 @@ import { ACCEPTED } from './status';
  * P5; no es un `TODO` disfrazado de comentario.
  *
  * ══════════════════════════════════════════════════════════════════════════════════════════════
- *  6. Lo que falta en el motor (pedido a `db-agent`, no escrito acá)
+ *  6. Lo que el motor ya sostiene (era el §6 de "lo que falta", y 0009 lo cerró)
  * ══════════════════════════════════════════════════════════════════════════════════════════════
  *
- * - **`listings.acquisition_channel` no existe.** No hay columna ni enum: medido en el schema, en
- *   `grep` sobre el repo y contra la base. Mientras tanto la procedencia queda en dos lados que sí
- *   existen: `tradein_leads.created_listing_id` (el vínculo duro) y un `listing_events` con
- *   `metadata.source = 'tradein'` (la bitácora). Ninguno de los dos es un índice por canal.
- * - **Falta un `CHECK` que ate `status = 'accepted'` a `created_listing_id is not null`.** Hoy la
- *   afirmación vive sólo en esta función, o sea en el borde, que es exactamente lo que ADR-025 dice
- *   que no alcanza cuando aparezca un segundo caller.
+ * Este bloque pedía dos cosas a `db-agent`. `drizzle/0009_*` las trajo, una tal cual y la otra con
+ * otra herramienta, y queda escrito acá **qué cambió de este lado**:
+ *
+ * - **`listings.acquisition_channel` existe** (`enum purchase | trade_in | other`,
+ *   `not null default 'purchase'`). El `insert` de arriba escribe `'trade_in'` **explícito**: el
+ *   default es correcto para un alta a mano en el panel —cargarla es haberla comprado— y sería
+ *   mentira para ésta. La procedencia deja de deducirse del join a `tradein_leads` (que arrastra
+ *   PII) o del `jsonb` de la bitácora. El `listing_events` con `metadata.source = 'tradein'` se
+ *   queda igual: es la línea de tiempo, no el estado.
+ * - **`accepted` ⇒ hay unidad creada** lo sostiene `tradein_leads_accepted_has_listing`, un
+ *   `CONSTRAINT TRIGGER … DEFERRABLE INITIALLY DEFERRED` y no el `CHECK` que este bloque pedía: un
+ *   `CHECK` no se difiere, así que habría explotado en la sentencia (1) de esta misma función
+ *   —donde el lead ya está `accepted` y todavía no hay unidad— y aceptar un canje sería un 500.
+ *   Lo que **no** cubre, y por qué el guard de concurrencia sigue vivo, está en el §2.
+ *
+ * Lo que sigue faltando: la policy por rol de `tradein_leads` (§5, S11, reportado como P5).
+ *
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *  7. El canal se escribe, no se deduce.
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * `acquisitionChannel: 'trade_in'` es una línea y vale decir por qué no se dejó al default: el
+ * default de la columna es `'purchase'`, así que **no escribirla haría que toda unidad nacida de un
+ * canje se contara como una compra** — justo el caso por el que la columna se pidió. Drizzle nombra
+ * todas las columnas en `insert().values()`, así que esto no cambia la forma de la sentencia: sólo
+ * cambia el valor, de `default` a la verdad.
  */
 
 export interface AcceptTradeinResult {
@@ -200,6 +240,8 @@ export async function acceptToStock(
           costUsd: sql`(select offer_usd from tradein_leads where id = ${input.leadId} and tenant_id = ${ctx.tenantId})`,
           qty: 1,
           status: 'draft',
+          // El canal es un hecho, no una deducción. Ver §7.
+          acquisitionChannel: 'trade_in',
           createdBy: ctx.userId,
         });
 

@@ -84,6 +84,9 @@ const TITULO = 'iPhone 13 128 Medianoche';
 /** Dos semillas fijas → dos sufijos distintos y **predecibles**. */
 const BYTES_A = new Uint8Array(8).fill(0);
 const BYTES_B = new Uint8Array(8).fill(1);
+/** Otras dos, para las unidades que el fixture escribe **sin** pasar por `acceptToStock()`. */
+const BYTES_C = new Uint8Array(8).fill(2);
+const BYTES_D = new Uint8Array(8).fill(3);
 
 /** Lo que el dueño paga (= el costo) y a cuánto lo publica. En centavos, como todo el repo. */
 const OFERTA_CENTS = 42_000;
@@ -118,6 +121,52 @@ async function insertarLead(tenantId = TENANT_ID): Promise<string> {
        'used_excellent', 87)
   `;
   return id;
+}
+
+/**
+ * Una unidad escrita **sin** pasar por `acceptToStock()`, como la dejaría cualquier otro escritor.
+ * Devuelve el id. El slug sale de una semilla fija: dos llamadas con semillas distintas no chocan.
+ */
+async function insertarUnidad(semilla: Uint8Array, costCents: number): Promise<string> {
+  const id = crypto.randomUUID();
+  await admin`
+    insert into listings
+      (id, tenant_id, slug, title, condition, price_usd, cost_usd, status, acquisition_channel,
+       created_by)
+    values
+      (${id}, ${TENANT_ID}, ${buildListingSlug(TITULO, semilla)}, ${TITULO}, 'used_excellent',
+       ${PRECIO_CENTS / 100}, ${costCents / 100}, 'draft', 'trade_in', ${OWNER_ID})
+  `;
+  return id;
+}
+
+/**
+ * Un canje aceptado **entero**, por fuera de `acceptToStock()`: la unidad, y el lead en `accepted`
+ * **con** su vínculo, `offer_usd` y `handled_by`. Devuelve el id de la unidad.
+ *
+ * ── Por qué el status y el vínculo van en UNA sentencia ───────────────────────────────────────
+ * Desde `drizzle/0009_*` un `update … set status = 'accepted'` a secas —que es lo que este fixture
+ * hacía hasta S9— revienta con `23514` en su **propio** commit: `tradein_leads_accepted_has_listing`
+ * es un `CONSTRAINT TRIGGER DEFERRABLE INITIALLY DEFERRED`, o sea tolera el estado intermedio
+ * *dentro* de una transacción y exige el estado final al commitear. Dos sentencias sueltas desde el
+ * cliente son dos transacciones, y la primera ya no cierra.
+ *
+ * Y el fixture viejo tampoco era realista, que es el motivo de fondo: un lead `accepted` sin unidad
+ * es **media** operación, y ningún camino de producción la puede producir. `acceptToStock()` es el
+ * único escritor de `accepted` que existe —censado sobre `apps/web`: los otros dos usos de
+ * `tradeinLeads` son `select`, y la vidriera sólo inserta con el default `'new'`— y escribe status,
+ * unidad y vínculo en la MISMA transacción. La "otra pestaña" que este caso simula también habría
+ * creado la unidad.
+ */
+async function aceptarPorFuera(leadId: string, offerCents: number): Promise<string> {
+  const listingId = await insertarUnidad(BYTES_C, offerCents);
+  await admin`
+    update tradein_leads
+       set status = 'accepted', offer_usd = ${offerCents / 100}, handled_by = ${OWNER_ID},
+           created_listing_id = ${listingId}, updated_at = now()
+     where tenant_id = ${TENANT_ID} and id = ${leadId}
+  `;
+  return listingId;
 }
 
 interface FilaLead {
@@ -247,10 +296,11 @@ describe('gate (a) · aceptar crea la unidad en draft con el costo, y ata el lea
           catalog_model_id: string | null;
           created_by: string;
           published_at: Date | null;
+          acquisition_channel: string;
         }[]
       >`
         select slug, status, kind, qty, price_usd, cost_usd, condition, storage_gb, color,
-               battery_pct, catalog_model_id, created_by, published_at
+               battery_pct, catalog_model_id, created_by, published_at, acquisition_channel
         from listings where tenant_id = ${TENANT_ID} and id = ${res.listingId}
       `,
     );
@@ -270,6 +320,10 @@ describe('gate (a) · aceptar crea la unidad en draft con el costo, y ata el lea
     expect(listing.battery_pct).toBe(87);
     expect(listing.catalog_model_id).toBe(MODEL_ID);
     expect(listing.created_by).toBe(OWNER_ID);
+    // El canal se ESCRIBE. El default de la columna es `purchase`: si esta línea no estuviera,
+    // toda unidad nacida de un canje se contaría como una compra — justo el caso por el que
+    // `acquisition_channel` se pidió (`0009` §2, y §7 de `accept-to-stock.ts`).
+    expect(listing.acquisition_channel).toBe('trade_in');
 
     const lead = await leerLead(leadId);
     expect(lead.status).toBe('accepted');
@@ -333,6 +387,21 @@ describe('gate (a) · aceptar crea la unidad en draft con el costo, y ata el lea
   });
 });
 
+/**
+ * ── Este describe mide el GUARD DE CONCURRENCIA, y el motor NO lo hace redundante ─────────────
+ * Desde `drizzle/0009_*` la base sostiene `tradein_leads_accepted_has_listing`. Es tentador leer
+ * eso como "ya hay un constraint, el `ne(status, 'accepted')` sobra". **No sobra, y las dos cosas
+ * cubren mitades distintas:**
+ *
+ *   · el trigger impide **media** operación (un lead `accepted` sin unidad);
+ *   · el trigger **no** impide **dos operaciones completas**. Un segundo `acceptToStock()` sin
+ *     guard insertaría otra unidad y repuntaría `created_listing_id` a ella: la fila final queda
+ *     `accepted` **con** unidad y commitea sin chistar. Dos equipos en el stock por un canje, el
+ *     primero huérfano y con un costo que ya no se atribuye a nada.
+ *
+ * El último caso de este bloque lo mide **contra la base**, escribiendo a mano lo que el guard
+ * impide, para que nadie tenga que creerle a este comentario.
+ */
 describe('aceptar dos veces NO crea dos unidades', () => {
   it('el segundo intento falla y sigue habiendo una sola unidad', async () => {
     const leadId = await insertarLead();
@@ -350,14 +419,54 @@ describe('aceptar dos veces NO crea dos unidades', () => {
     expect(lead.created_listing_id).toBe(primero.listingId);
   });
 
-  it('un lead que otro ya aceptó por fuera tampoco entra', async () => {
+  /**
+   * El caso de arriba acepta dos veces **con la misma entrada**, así que un pisotón de `offer_usd`
+   * sería invisible. Acá la aceptación de afuera lleva otra oferta a propósito: si el intento
+   * rechazado escribiera igual, el costo del equipo cambiaría de número y se vería.
+   */
+  it('un lead ya aceptado por fuera —con su unidad— no entra ni le pisa el costo', async () => {
     const leadId = await insertarLead();
-    // Alguien lo aceptó desde otra pestaña: la fila ya está en `accepted`.
-    await admin`update tradein_leads set status = 'accepted' where id = ${leadId}`;
+    const OTRA_OFERTA = 39_500;
+    const deAfuera = await aceptarPorFuera(leadId, OTRA_OFERTA);
+    expect(await contarListings()).toBe(1);
 
     const res = fallo(await acceptToStock(ctxOwner, entrada(leadId)));
     expect(res.message).toContain('ya lo aceptaron');
-    expect(await contarListings()).toBe(0);
+
+    // Sigue habiendo **la que ya estaba**, y ninguna más.
+    expect(await contarListings()).toBe(1);
+
+    const lead = await leerLead(leadId);
+    expect(lead.created_listing_id).toBe(deAfuera);
+    // El guard no escribe nada: la oferta sigue siendo la de la aceptación que ganó, no la que
+    // traía el formulario de este intento (`OFERTA_CENTS`, 420).
+    expect(Number(lead.offer_usd)).toBe(OTRA_OFERTA / 100);
+  });
+
+  /**
+   * ── Por qué el guard NO es redundante, medido contra la base ────────────────────────────────
+   * Este caso **no llama** a `acceptToStock()`: escribe a mano exactamente lo que el guard impide
+   * —una segunda unidad completa para el mismo lead— y muestra que el motor lo deja commitear.
+   * Es la evidencia de que `tradein_leads_accepted_has_listing` cubre *media* operación y no *dos*,
+   * y por lo tanto de que borrar el `ne(status, 'accepted')` de `accept-to-stock.ts` no lo atrapa
+   * nadie. Si algún día la base sí lo impidiera, este caso se pone rojo y hay que volver a decidir.
+   */
+  it('el trigger de la base NO cubre esto: dos unidades completas para un lead commitean', async () => {
+    const leadId = await insertarLead();
+    await aceptarPorFuera(leadId, OFERTA_CENTS);
+
+    const segunda = await insertarUnidad(BYTES_D, OFERTA_CENTS);
+    await admin`
+      update tradein_leads set created_listing_id = ${segunda}
+       where tenant_id = ${TENANT_ID} and id = ${leadId}
+    `;
+
+    // Commiteó. El lead sigue `accepted` **con** unidad, así que la invariante del motor se cumple…
+    const lead = await leerLead(leadId);
+    expect(lead.status).toBe('accepted');
+    expect(lead.created_listing_id).toBe(segunda);
+    // …y aun así hay dos equipos en el stock por un solo canje. Eso es lo que evita el guard.
+    expect(await contarListings()).toBe(2);
   });
 });
 
