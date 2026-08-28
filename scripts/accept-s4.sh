@@ -194,6 +194,25 @@ else
   printf '%s' "$SINJS" | grep -q 'anchors=1' \
     && ok "sin JS hay exactamente UN anchor de wa.me (CLAUDE.md §1)" \
     || no "sin JS la cantidad de anchors de wa.me no es 1: $(printf '%s' "$SINJS" | sed 's/.*anchors=\([0-9]*\).*/\1/')"
+
+  # W5 imprimia el href entero y no aseveraba NADA sobre el texto: por ahi paso el defecto S4.1.
+  # El 2026-08-28 este mismo href decia `iPhone 14 Pro 256 Grafito 256 Grafito (usado A)` y el gate
+  # dio 37 PASS. Un gate que IMPRIME la evidencia del defecto y lo deja pasar es peor que uno que
+  # no la mira: deja el registro de que se vio. La misma asercion vive en M3b de accept-s3.sh, que
+  # es donde el string es el sujeto; aca porque este es el unico href medido de un browser real
+  # sobre un listing SIN catalog_model, que es el camino donde el defecto aparece.
+  HREF=$(printf '%s' "$SINJS" | sed -n 's/.*href=\([^ ]*\).*/\1/p')
+  TXT=$(printf '%s' "$HREF" | sed 's/^[^?]*?//; s/^text=//; s/&.*$//' | LC_ALL=C sed 's/+/ /g; s/%/\\x/g')
+  TXT=$(printf '%b' "$TXT")
+  DESC=$(printf '%s' "$TXT" | sed -n 's/^.*vi el \(.*\) (.*$/\1/p')
+  if [ -z "$DESC" ]; then
+    no "el texto del wa.me medido no tiene la forma 'vi el <equipo> (<condicion>)': $(printf '%s' "$TXT" | cut -c1-70)"
+  else
+    DUP=$(printf '%s' "$DESC" | tr ' ' '\n' | grep -v '^$' | sort | uniq -d | tr '\n' ' ')
+    [ -z "$DUP" ] \
+      && ok "el equipo se nombra una sola vez en el mensaje medido: '$DESC'" \
+      || no "S4.1 · el mensaje repite el equipo: [$DUP] en '$DESC'. Sin catalog_model, modelDisplayName cae al title y describeListing appendea storage y color de nuevo"
+  fi
 fi
 if [ -s "$BOTON" ]; then
   # El anchor lo sigue rindiendo el servidor. Si `wa-button.tsx` se volviera `"use client"`, el

@@ -368,6 +368,34 @@ if [ -s "$HTML" ] && [ -s "$GRID" ]; then
 
     waq() { case "$WA_TEXT" in *"$2"*) ok "el mensaje de WA nombra $1 ('$2')" ;;
                                *) no "el mensaje de WA NO nombra $1: falta '$2'" ;; esac; }
+    # ## El agujero que dejaron los tres `waq` de abajo, encontrado el 2026-08-28
+    # Los `waq` afirman SUBSTRINGS. El 2026-08-28, re-ejecutando accept-s4, el href medido de un
+    # browser real decia `iPhone 14 Pro 256 Grafito 256 Grafito (usado A)`: storage y color
+    # DUPLICADOS. Los tres `waq` pasaban — `256 Grafito` aparece, y `grep` no cuenta cuantas veces.
+    # El unit de dominio tambien pasaba, porque compara byte a byte con el nombre ya limpio: prueba
+    # la funcion, no el mapeo. Otra vez tres pruebas alrededor del string y ninguna encima del
+    # string ENTERO en el camino real, que es el mismo agujero que este modulo nacio para tapar.
+    #
+    # La causa esta en `_lib/listings.ts` (`modelDisplayName: row.modelDisplayName ?? row.title`):
+    # sin `catalog_model` cae al titulo libre del dueño, que ya suele traer storage y color, y
+    # `describeListing` los appendea otra vez. `catalogModelId` es nullable y `onDelete: set null`,
+    # asi que es camino de produccion. Lo arregla S4.1.
+    #
+    # La asercion no puede ser "el string es igual a X": el modelo, el storage y el color salen del
+    # seed y hardcodearlos haria mentir al gate el dia que cambien. Lo que SI es invariante es que
+    # la descripcion no repite un token: `iPhone 14 Pro 256 Grafito` tiene cinco y ninguno se
+    # repite. Es la propiedad exacta que el defecto viola, sin depender de los valores.
+    WA_DESC=$(printf '%s' "$WA_TEXT" | sed -n 's/^.*vi el \(.*\) (.*$/\1/p')
+    if [ -z "$WA_DESC" ]; then
+      no "el mensaje de WA no tiene la forma 'vi el <equipo> (<condicion>)': no puedo medir el equipo"
+    else
+      inf "equipo nombrado en el mensaje: '$WA_DESC'"
+      WA_DUP=$(printf '%s' "$WA_DESC" | tr ' ' '\n' | grep -v '^$' | sort | uniq -d | tr '\n' ' ')
+      [ -z "$WA_DUP" ] \
+        && ok "el equipo se nombra una sola vez: sin tokens repetidos en '$WA_DESC'" \
+        || no "el mensaje de WA repite el equipo: token(es) duplicado(s) [$WA_DUP] en '$WA_DESC'. Es el defecto S4.1: sin catalog_model, modelDisplayName cae al title y describeListing appendea storage y color por segunda vez"
+    fi
+
     waq "el precio en dolares" "USD 620"
     waq "la vidriera de donde vino" "demo.maat.work"
     waq "la intencion de compra" "y lo quiero."
