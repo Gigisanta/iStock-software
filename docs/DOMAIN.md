@@ -61,6 +61,87 @@ completa —quién registra qué tag, y por qué el camino de miss de la ficha e
 **Toda** transición escribe en `listing_events` (quién, cuándo, de→a, motivo).
 `canTransition(from, to, ctx)` es **exhaustiva**: transición no listada = `false`, no `true` por default.
 
+## Máquina de estados del canje (`tradein_leads`) · S8
+
+```
+new ──> contacted ──> evaluating ──> accepted   (única transición que S8 escribe)
+                                └──> rejected
+```
+
+Cinco estados, y **el enum vive en Postgres**. `apps/web/app/(app)/_lib/tradein/status.ts` deriva el
+tipo de `tradeinLeads.$inferSelect` con un **`import type`** —que TypeScript borra al compilar—, así
+que agregarle un estado a la tabla **rompe la compilación** hasta que alguien decida cómo se llama en
+castellano, y Drizzle **no entra al bundle** del componente que muestra la etiqueta. Una segunda
+lista de estados escrita en TS compilaría siempre y mentiría el día que cambie la tabla.
+
+**`accepted` es el único de los cinco con significado de negocio para el panel, y es la única
+transición que S8 escribe.** Los otros cuatro son etiquetas de seguimiento: hoy **nadie los mueve**
+—S8 no trae la pantalla de *contactado* ni la de rechazo—, así que la flecha del diagrama describe la
+intención, no un camino que el código recorra.
+
+| aspecto | cómo está resuelto |
+|---|---|
+| **quién crea el lead** | el visitante **sin login**, desde la vidriera, como rol `anon` y a través de una policy `FOR INSERT`. Es la **segunda** escritura sin autenticar del producto (la primera es el beacon de S4) y la primera que trae **PII de un tercero** — **ADR-026** |
+| **aceptar** | crea la unidad en **`draft`, siempre**, con el costo copiado de columna a columna. Nace en `draft` a propósito: aceptar un canje no publica nada, así que la función **no invalida el cache de la vidriera** — no hay nada que un visitante pueda ver distinto |
+| **doble submit** | lo para el **guard de concurrencia**, no un `if` de UI: el `update` del lead va **primero** y lleva `status <> 'accepted'` en el `where`. Medido: `accept_dos_veces_una_unidad=1` |
+| **el vínculo lead → unidad** | `tradein_leads.created_listing_id`, escrito después de crear la unidad |
+
+### Qué sostiene el motor y qué sostiene el borde  ·  cerrado por la `0009` (fila `S8.1`, 2026-08-28)
+
+Este párrafo decía tres cosas —que no quedaba registrado que una unidad entró por canje, que faltaba
+el `CHECK`, y que la policy no miraba `accepts_trade_in`— y **las tres las cerró la migración
+`packages/db/drizzle/0009_tradein_accepts_and_acquisition_channel.sql`**. Se reescribe en vez de
+tacharse porque una de las tres **entró distinta a como se pidió**, y ese "distinta" es lo que hay
+que leer:
+
+| lo que S8 dejaba en el borde | dónde vive ahora |
+|---|---|
+| **el tenant tiene el canje prendido** | **adentro** de la policy de `INSERT`, vía `ALTER POLICY` — el primero del repo. El `where` del handler **lo sigue chequeando**: dos capas, no redundancia a limpiar |
+| **de dónde salió la unidad** | `listings.acquisition_channel` (enum `purchase` / `trade_in` / `other`, default `purchase`), con backfill de lo que ya estaba. **No** es `provenance_text` —ese es el texto libre de la ficha pública—, y **no** está en el `GRANT` de columna de `anon`: nace invisible para la vidriera |
+| **un lead `accepted` tiene unidad** | un **`CONSTRAINT TRIGGER … DEFERRABLE INITIALLY DEFERRED`**, no un `CHECK` |
+
+**Una columna nueva con default no queda escrita sola, y esto costó unas horas de datos falsos.**
+`acquisition_channel` nació con `DEFAULT 'purchase'` y la 0009 hizo el **backfill** de las unidades
+que ya venían de un lead — o sea que el **pasado** quedó bien. El **futuro** no: `apps/web` no
+escribía la columna, así que cada unidad nueva nacida de un canje se guardaba como `purchase`,
+**justo el caso por el que la columna se pidió**. Lo encontró y lo arregló `app-agent` en la misma
+pasada (`acquisitionChannel: 'trade_in'` en el `insert` de `accept-to-stock.ts`, §7 de su docblock).
+Se deja escrito porque la forma se repite: **un backfill arregla el pasado y no dice nada del
+futuro**, y un default sensato es exactamente lo que hace que el bug no se note.
+
+**El `CHECK` que pedía el encargo no se puede escribir, y la próxima persona que lea "falta el CHECK"
+en un doc viejo tiene que encontrar acá por qué no es un CHECK.** Un `CHECK` en Postgres **no se
+puede diferir**: se evalúa al terminar cada sentencia. `acceptToStock()` escribe en tres pasos —
+(1) `update` del lead a `accepted`, (2) `insert` de la unidad, (3) `update` del vínculo — y el `update`
+de (1) va **primero a propósito**: **es** el guard de concurrencia (lleva `status <> 'accepted'` en el
+`where`), y moverlo quemaría un slug y un id por cada carrera perdida. Un `CHECK` habría explotado con
+`23514` en (1), que `acceptToStock()` no atrapa: **aceptar un canje habría pasado a ser un 500.** El
+encargo estaba mal y la implementación tuvo razón en desobedecerlo. Un trigger diferido corre al
+**COMMIT**, permite el estado intermedio —que dentro de una transacción no ve nadie— y exige el
+estado final igual.
+
+**Un cambio de comportamiento que sale de ahí y conviene no descubrir depurando:** ya no se puede
+borrar una unidad nacida de un canje aceptado sin resolver antes el lead (la FK es
+`ON DELETE SET NULL`, así que el borrado dejaba el lead en `accepted` sin unidad). Hoy no rompe nada
+—no existe ningún borrado de `listings` en `apps/web`—; el día que exista una pantalla de borrado va
+a tener que decidir qué pasa con el canje.
+
+### Qué significa `accepts_trade_in`  ·  ratificado por el LEAD el 2026-08-28
+
+**La bandera cierra la puerta de la vidriera, no el mostrador.**
+
+La policy de `anon` mira `accepts_trade_in`; la de `authenticated` **no**, y eso es deliberado: el
+dueño de un tenant con la bandera en `false` **puede** cargar un canje desde el panel. Lo midió
+`qa-agent` y preguntó si era defecto — no lo es. `accepts_trade_in = false` significa *"no publico el
+formulario de canje en mi vidriera"*, no *"dejo de hacer canjes"*. Canje es **compra presencial de un
+equipo usado al cliente** (glosario, arriba) y `CLAUDE.md` §1 lo llama flujo de primera clase: si la
+bandera cerrara también el panel, apagarla equivaldría a apagar un flujo de primera clase, que es otra
+cosa y ningún dueño la pidió.
+
+Lo afirma `tests/rls-cross-tenant.test.ts` §R2c-g (*"apagar el canje baja el formulario público, no el
+mostrador"*), que es el archivo que se pone rojo y nombra la decisión el día que alguien quiera
+cambiarla.
+
 ## FX
 ```
 priceArs = round(priceUsd * tenant.fxRate)
@@ -88,9 +169,24 @@ priceArs = round(priceUsd * tenant.fxRate)
 | `imei` | ✅ | ✅ (panel) | ❌ **nunca** |
 | `internal_notes`, `supplier` | ✅ | ❌ | ❌ |
 | resultado ENACOM | ✅ | ✅ (panel) | ❌ |
+| `tradein_leads.offer_usd`, `tradein_leads.internal_notes` | ✅ | ❌ — **pero lo sostiene el servidor, no la base** (ver abajo) | ❌ |
+| `tradein_leads.customer_name`, `customer_wa_phone` | ✅ | ✅ (panel: hay que llamar al cliente) | ❌ — **y es PII de un tercero**, la primera del producto (**ADR-026**) |
 
 El filtro del seller ocurre en el **select del server**. Ocultar con CSS o con un `if` en el
 componente es un fallo de seguridad, no una decisión de UI.
+
+**Sobre `tradein_leads` esa frase es todo lo que hay, y se declara en vez de taparse.** Medido por
+el LEAD contra Postgres real en S8: a nivel base un `seller` autenticado **sí puede** leer
+`offer_usd` e `internal_notes` de esa tabla — `membership_role` aparece **cero veces** en sus
+policies. Es la fila **P5** del board, sigue **abierta**, y dueño `db-agent`.
+
+Lo que **sí** está atado, y es más fuerte que un `if`: `listTradeinLeads()` devuelve una **unión
+discriminada** por `canSeeOffer`, y en la rama del `seller` la clave `offerUsdCents` **no existe en
+el objeto** — leerla en esa rama **no compila**. El **SQL** de esa rama tampoco **nombra**
+`offer_usd` ni `internal_notes`. Y el `adversary-reviewer` censó que **no hay un tercer camino de
+lectura**: `grep -rn 'tradeinLeads\|tradein_leads' apps/web` devuelve exactamente **dos** consumidores.
+Por eso el gate de S8 mide `costo_en_el_payload_del_seller=0` sobre el **objeto** y no sobre el tipo:
+un tipo que no compila no es lo mismo que un byte que no sale.
 
 ## `publicListingDTO` — allowlist explícita
 ```ts

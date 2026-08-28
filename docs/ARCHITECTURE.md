@@ -111,11 +111,30 @@ Tres espacios de URL son **globales al deploy** y el proxy los deja pasar antes 
 | `/_media/**` (y la forma `%5Fmedia`) | passthrough | la key es content-addressed (ADR-006): sin `tenant_id` adentro, **dos tenants comparten el objeto**. Reescribir a `/s/{slug}/_media/…` deja sin fotos a **todas** las vidrieras |
 | `/s/**` | 404 del proxy, sin invocar la app | es el destino interno del rewrite, no una URL pública |
 
-**`/api/**` bajo un host de tenant se reescribe a `/s/{slug}/api/…` y da 404. Eso es querido, no
-una fuga.** El panel y sus endpoints viven en el apex; `app` y `api` son labels reservados
-(`host.test.ts`), así que no hay un `api.maat.work` que sea tenant. Si alguien lo reporta como bug,
-la respuesta es esta línea: no se "arregla" agregando `/api` a los passthrough — eso haría que la
-API del apex sea alcanzable desde el dominio de cualquier tenant.
+**`/api/**` bajo un host de tenant se reescribe a `/s/{slug}/api/…`.** El panel y sus endpoints
+viven en el apex; `app` y `api` son labels reservados (`host.test.ts`), así que no hay un
+`api.maat.work` que sea tenant. **No se "arregla" agregando `/api` a los passthrough** — eso haría
+que la API del apex sea alcanzable desde el dominio de cualquier tenant.
+
+**Esta línea decía *"y da 404"*, y desde S4 eso es falso — corregido el 2026-08-28 al cerrar S8.**
+El destino del rewrite **existe** para las rutas que la vidriera tiene a propósito, y hoy son dos:
+`/s/[slug]/api/track` (el beacon de WhatsApp, S4) y `/s/[slug]/api/tradein` (el formulario de canje,
+S8). El 404 sigue siendo la respuesta para todo lo demás, y **el mecanismo no cambió**: el rewrite
+lleva el slug en el **path**, así que un endpoint de la vidriera sólo existe si alguien lo escribió
+bajo `(storefront)/s/[slug]/api/`. Lo que cambió es que ahora hay dos, las dos son escrituras **sin
+autenticar**, y las dos tienen techo de WAF declarado en `config/firewall-rules.json`. Es un dato
+que hay que tener a mano antes de leer *"la vidriera no tiene DB propia"* como *"la vidriera no
+escribe"*: escribe, en dos tablas, como `anon` y a través de una policy — ver §"La superficie de
+escritura sin autenticar".
+
+**El panel entero (`/app/**`) entra al matcher desde S8 (`ab3af3a`), y no por routing.** El proxy no
+tiene nada que reescribirle al panel; entra porque **`stripInboundTenantHeaders()` no puede ser
+opcional en el subárbol autenticado**. `/app/canjes/[id]` fue la primera ruta de `/app` con el
+segmento dinámico al final, así que `/app/canjes/basura-991.json` matchea la ruta **y** caía en la
+exclusión por sufijo del matcher: **16 URLs medidas que la app atendía y el proxy no veía**, o sea un
+`x-tenant-*` puesto por el cliente sobreviviendo hasta el panel. Es la **cuarta** instancia de la
+clase *segmento-vs-sufijo* (S1, S2, P2, S8) y por eso se arregló por **subárbol** y no con un
+lookahead por ruta: la fila que sigue abierta es la de la **clase**, `T37`.
 
 **Los file conventions de metadata sí se reescriben — cerrado el 2026-08-28 (ADR-015, commit
 `117c4f0`).** El hueco que esta sección declaraba abierto (un `icon.png` por tenant caía en la
@@ -265,6 +284,44 @@ justamente la que esta sección llama la más engañosa.
 bajar el objeto entero **rompa el build** · `experimental.taint: true` · filtro de tenant explícito
 en la query (`CLAUDE.md` §5).
 
+### La superficie de escritura **sin autenticar**  ·  dos tablas, y la segunda trae PII de un tercero
+
+`anon` escribe en **exactamente dos** tablas de negocio, y en ninguna lee. Están acá porque son el
+único lugar del producto donde un desconocido mueve bytes a Postgres, y porque la segunda cambió una
+regla de gate:
+
+| tabla | slice | qué escribe | qué lee |
+|---|---|---|---|
+| `wa_click_events` | S4 | 3 columnas de ancho fijo (`tenant_id`, `listing_id`, `source`), **sin PII** | nada |
+| `tradein_leads` | S8 | **9** columnas, incluidas `customer_name` y `customer_wa_phone` — **la primera PII de un tercero del producto** | nada |
+
+**La mitad que más importa se sostiene por una ausencia:** `anon` no lee `tradein_leads` porque
+**nadie le otorgó `SELECT`**, no porque una policy se lo prohíba. No hay policy que auditar, así que
+ningún lint de policies tiene sujeto — la afirmación la construye **V2 de `accept-s8.sh`** censando
+el árbol **entero** de migraciones (cero `GRANT SELECT`, cero policy de `SELECT … TO anon` sobre esa
+tabla) y la mide la probe con `returning_desde_anon=0`: un `insert … returning` es la forma exacta en
+que esa PII volvería **por la misma puerta por la que entró**, sin necesidad de un `select`.
+El razonamiento completo, con las alternativas descartadas, es **ADR-026**.
+
+**Lo que la base todavía NO sostiene sobre esa tabla, dicho acá porque es donde se busca:** ninguna
+policy de `tradein_leads` mira `membership_role`, así que a nivel Postgres un `seller` autenticado
+**sí puede** leer `offer_usd` —el costo— e `internal_notes`. Lo separa el **servidor**: una unión
+discriminada por `canSeeOffer` donde la rama del `seller` ni siquiera nombra esas columnas en el SQL.
+Es **P5** del board, medido y abierto.
+
+**El flag `accepts_trade_in` sí bajó al motor** (migración `0009`, fila **S8.1** cerrada el
+2026-08-28): entró **adentro** del `WITH CHECK` de la policy de `INSERT` de `anon`, vía el primer
+`ALTER POLICY` del repo. El `where` del handler lo sigue chequeando — dos capas, como el filtro de
+tenant. Y la bandera **cierra la puerta de la vidriera, no el mostrador**: la policy de
+`authenticated` no la mira, a propósito (`DOMAIN.md` §"Qué significa `accepts_trade_in`").
+
+La misma migración trajo `listings.acquisition_channel` y el
+`CONSTRAINT TRIGGER … DEFERRABLE INITIALLY DEFERRED` que ata `accepted` a *hay unidad*. **No es un
+`CHECK` y no puede serlo** — un `CHECK` no se difiere y habría roto la primera sentencia de
+`acceptToStock()`; el razonamiento está en `DOMAIN.md`. Lo censa `scripts/guard-tradein-engine.sh`
+(**LEAD**), que camina el árbol de `.sql` **commiteado** y no la base, porque el migrador de Drizzle
+compara `created_at` y no el hash (`CLAUDE.md` §3).
+
 ## Jobs
 **Vercel Cron** para expirar reservas — la disyuntiva *"o Inngest free"* la cerró S6 y está en
 **ADR-017**. **Sin worker 24/7.** Idempotente: correr el cron dos veces no rompe nada, y eso **es**
@@ -283,6 +340,8 @@ sobre el status code.
 | DB | seller | todo menos `cost_usd`/margen |
 | dueño (texto libre) | prompt del LLM | **sanitizado y delimitado** |
 | cliente | server | **nada** sin Zod |
+| visitante anónimo | DB | **sólo** las 9 columnas del `GRANT` de `tradein_leads` y las 3 de `wa_click_events`, **y en un solo sentido**: escribe, no lee (**ADR-026**) |
+| visitante anónimo | prompt del LLM | **nada**, y desde el 2026-08-28 **está afirmado por un test**: `tests/la-pii-del-visitante-no-sale-de-la-fila-del-canje.test.ts` (`qa-agent`, 16 casos) censa `packages/ai/**` y `packages/domain/**` y prohíbe por **forma** —no por nombre de columna— lo que llega a un sink adentro del perímetro del canje (fila `T43`, **cerrada**). Lo que **sigue** sin cubrir es la otra cadena, que es de contenido y no de PII: `model_text` del formulario → el dueño acepta → `listings.title` → prompt, y `title` no pasa por `sanitizeForPrompt` mientras `description` sí (**S8.2**, abierta) |
 
 ## Presupuesto de performance de la ficha pública
 | ítem | techo |
@@ -296,9 +355,18 @@ sobre el status code.
 
 ## Seguridad de la vidriera y del chatbot (R7 PASS)
 - Anti-bot vive **en el edge de Vercel** (managed rulesets + WAF rate limit), **nunca en la app**:
-  filtrar dentro de la app fragmenta el cache ISR. Presupuesto: **2 reglas**.
-  **Corregido el 2026-08-28 contra `config/firewall-rules.json` (T1): las 2 reglas son `/api/track`
-  y `/api/chat`, no "vidriera + chatbot".** La regla de vidriera —condición por `host`— se propuso y
+  filtrar dentro de la app fragmenta el cache ISR.
+  **Re-medido contra `config/firewall-rules.json` el 2026-08-28 al cerrar S8: hoy son TRES reglas.**
+  Esta viñeta decía *"Presupuesto: 2 reglas"* y ese número quedó viejo — son `/api/track`
+  (`active`, S4), `/api/tradein` (`active`, S8) y `/api/chat` (`planned`). **No rompe ningún techo:**
+  `$plan` del propio archivo declara el límite de Pro en **40 reglas**, y `guard-firewall.sh` lo hace
+  cumplir. Se corrige el número en vez de re-derivar el criterio, porque el criterio no era un cupo
+  sino el de abajo: **se defiende lo que cuesta plata.** *(De dónde salía el 2 no consta acá;
+  `CLAUDE.md` §3 lo menciona como el motivo por el que Hobby no alcanza, y esa línea es del LEAD.)*
+  Deuda conocida de **las tres**: cuentan **por IP y no por método** (fila **T38**) — bajo CGNAT
+  móvil varias personas comparten cupo y el `deny` devuelve un **403 de plataforma**, no la página
+  que la app diseñó.
+  **El aviso anterior sigue en pie:** la regla de vidriera —condición por `host`— se propuso y
   **se rechazó**: el rate limit se factura por *allowed requests*, o sea los que matchean **y
   pasan**, así que le cobraría peaje a cada pageview de la vidriera, que es exactamente lo que la
   viñeta de abajo declara scrapeable a propósito. Para abuso masivo del HTML la palanca es **Attack

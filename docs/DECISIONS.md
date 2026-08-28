@@ -939,7 +939,7 @@ FASE 5, con el modo de falla más caro que hay: no falla nada, funciona gratis.
 - El plan sigue definido **en un lugar** (el fallback por plan) y las filas de `entitlements` quedan
   para las excepciones, que es lo que significa la columna `enabled`. Sembrar una fila por feature en
   el alta convertiría cada feature nueva en una migración de datos sobre los tenants existentes.
-- **`P1` de `PRODUCT.md` sigue abierta y esta ADR no la toca:** qué pasa con **la vidriera** al vencer
+- **`Q1` de `PRODUCT.md` sigue abierta y esta ADR no la toca:** qué pasa con **la vidriera** al vencer
   el trial es otra pregunta. Esto decide qué pasa con **las features del panel**.
 - El mensaje al dueño dice **qué pasó**, no *"no autorizado"*: no hizo nada mal, se le terminó la
   prueba.
@@ -1878,6 +1878,156 @@ Cerrarlo pide FK compuesta contra `listings(tenant_id, id)`, o sea tocar `listin
 
 1. **`P4`** — la FK compuesta. Es una decisión de costo sobre `listings` y **es del LEAD**, no de esta ADR.
 2. **`P5`** — ninguna policy de `sales` mira `membership_role`, así que a nivel base un `seller` lee `cost_usd` y `margin_usd` de su tenant. Hoy lo tapa que no exista cliente Supabase de browser (**B2**). Esta ADR explica por qué el **camino de escritura** no expone el costo; **no** dice nada sobre el de lectura, y no hay que leerla como si lo hiciera.
+
+---
+
+## ADR-026 — La PII del visitante se parte en **escritura y lectura**: `anon` la escribe y no la lee, y la mitad que importa se sostiene por una **ausencia**
+
+- **Estado:** **aceptada · ratificada por el LEAD el 2026-08-28.** La redactó `docs-keeper`, la ratificó el LEAD, y entre las dos cosas pasaron horas: la separación entre **redactar** y **decidir** se conserva escrita a propósito y no se borra al aceptar. **Escribir una ADR no es decidirla.** El que la redacta pone el porqué y las citas de algo que ya se decidió; si algo no se decidió todavía lo deja como pregunta abierta y lo reporta, nunca lo cierra él. Esa es la línea que hace funcionar `CLAUDE.md` §4 — `ARCHITECTURE.md` y `DECISIONS.md` son de `docs-keeper` desde que cerró FASE 1, **y el LEAD ratifica cada ADR nueva**.
+- **Fecha:** 2026-08-28 · **Origen:** S8 (canje), migración `packages/db/drizzle/0008_storefront_tradein_lead_insert.sql` (`db-agent`) y el aflojamiento de la regla `0020` de `packages/db/scripts/rls-lint.mjs` (**LEAD**)
+- **Por qué es una ADR y no una nota operativa:** hoy vive **sólo en comentarios de código**, tiene una alternativa descartada con motivo, cambió una regla de gate que este repo trata como innegociable, y **es la primera PII de un tercero del producto** — el próximo escritor de una tabla que reciba datos de un visitante va a tomar esta misma decisión, y sin este archivo la va a tomar de cero.
+
+### El contexto: `tradein_leads` tiene dos mitades que se contradicen si una se afloja
+
+S8 abre la **segunda** escritura sin autenticar del producto. La primera —el beacon de `wa_click_events`,
+S4— escribe tres columnas de ancho fijo y **sin PII**. Ésta escribe el **nombre** y el **WhatsApp** de
+una persona que no se logueó nunca:
+
+```
+`anon` ESCRIBE nueve columnas y sólo esas nueve  ←  lo decide el GRANT de la 0008
+`anon` NO LEE ni una                             ←  lo decide la AUSENCIA de un GRANT SELECT
+```
+
+Las nueve, exactas: `tenant_id`, `customer_name`, `customer_wa_phone`, `model_text`, `storage_gb`,
+`color`, `declared_condition`, `battery_pct`, `notes`. Lo que quedó afuera está enumerado con su
+motivo en el `.sql`: `status`, `offer_usd`, `internal_notes`, `created_listing_id`, `handled_by`.
+
+### La decisión
+
+**La prohibición de PII de un tercero para `anon` deja de ser *"no aparece en ningún privilegio"* y
+pasa a ser *"no aparece en un privilegio de LECTURA"*.** Es la persona escribiendo su propio nombre
+y su propio teléfono —datos que ya tiene— y lo que no puede es leerlos de vuelta: ni los suyos ni,
+sobre todo, los de otro.
+
+### Las tres consecuencias, y cada una tapa una forma distinta de que esto se vuelva un agujero
+
+**1. La mitad que más importa del invariante se sostiene por una ausencia, y una ausencia no la ve
+ningún lint de policies.**
+No hay policy que auditar: `anon` no lee `tradein_leads` porque **nadie le otorgó `SELECT`**. Un
+lint que recorre `CREATE POLICY` no tiene sujeto. Por eso la afirmación se construyó en dos lugares
+distintos y ninguno de los dos es una policy:
+
+- **`accept-s8.sh` V2 la censa** sobre el **árbol entero de migraciones**: cero `GRANT SELECT` y
+  cero policy de `SELECT … TO anon` sobre esa tabla. Censar el árbol entero, y no la `0008`, es el
+  punto: una `0010` que otorgue el privilegio tiene que romper este gate.
+- **La probe la mide:** `returning_desde_anon=0`, o sea que un `insert … returning` **falla**. Ésa
+  es la forma exacta en que la PII del visitante volvería **por la misma puerta por la que entró**,
+  sin necesidad de un `select`.
+
+Y hay una cuarta llave que no vive en el `GRANT` ni en la policy: la regla `0026` de `rls-lint`
+exige que **ninguna** tabla de `STOREFRONT_WRITE` tenga `GRANT SELECT` a `anon`. Sin eso,
+*"prohibido de leer"* sería una promesa escrita en un archivo; con eso, es una que se chequea.
+
+**2. La regla `0020` de `rls-lint` cambió, y el alcance del aflojamiento es la mitad delicada.**
+Pasó de *prohibir esas columnas en cualquier `GRANT` a `anon`* a **prohibirlas de leer**. La
+excepción se declara con tres llaves puestas:
+
+- **es por `tabla.columna`, no por nombre de columna** — un `customer_name` que aparezca en el
+  `GRANT` de **otra** tabla sigue siendo un hallazgo, así que la doctrina de *"se chequea por
+  nombre, no por tabla"* se conserva entera para todo lo que no esté en la excepción;
+- **es sólo para INSERT** — en un `GRANT SELECT` estas dos columnas siguen prohibidas por las **dos**
+  ramas de la regla (`0020` prohibida y `0020` SENSITIVE), que es exactamente el rojo que no se
+  quería perder al aflojar;
+- **no afloja nada más** — `offer_usd` e `internal_notes` de la misma tabla siguen en
+  `NEVER_TO_ANON` **y** en `SENSITIVE_COLUMNS`. Son el costo y las notas del dueño (`CLAUDE.md`
+  §0.9), y el visitante ni los escribe ni los lee.
+
+**El arnés llegó con el aflojamiento, no después.** `rls-lint` era **el único de los cinco lints sin
+arnés de polaridad**, y `scripts/rls-lint.test.sh` (12 casos, en `ci.yml`) se escribió el mismo día
+que se aflojó la regla que audita. Es cuando hace falta: **aflojar sin arnés habría impreso
+`rls-lint OK` idéntico si la excepción se llevaba puesta también la lectura.** Los dos casos que
+cargan el peso son `GRANT SELECT (customer_name)`, que tiene que quedar rojo, y el mismo nombre de
+columna sobre otra tabla, que prueba que la excepción es por `tabla.columna`.
+
+**3. Es la primera PII de un tercero del producto.** Antes, todo lo que entraba a la base era del
+**dueño** o de su **stock**: lo tipeaba alguien logueado, sobre cosas suyas. Acá el sujeto de los
+datos no es el cliente de MaatWork ni su empleado — es una persona que abrió un link. Tres
+consecuencias que no son de esta ADR pero cuelgan de ella y quedan nombradas para que no se
+redescubran: en los ToS el reseller es **responsable** de esa base y MaatWork **encargado del
+tratamiento**; el chatbot de FASE 5 no puede tener esas columnas en su contexto; y **la segunda de
+esas dos ya está afirmada por un test** — `tests/la-pii-del-visitante-no-sale-de-la-fila-del-canje.test.ts`
+(`qa-agent`, **16 casos**), que cerró la fila **T43** el 2026-08-28. Hasta ese día lo único que había
+era la medición limpia del `adversary-reviewer`, y **medido no es testeado**: una medición dice cómo
+está el árbol hoy y no sobrevive al `console.error(body)` que alguien commitea mañana a las once para
+debuggear un 500.
+
+#### Cómo lo afirma, que es la mitad transferible
+
+**El test no busca los nombres `customer_name` / `customer_wa_phone` en los sinks: busca por forma.**
+Adentro del perímetro del canje, a un sink —`console.*`, `logEvent`, `logError`, Sentry, PostHog,
+`JSON.stringify`, `fetch`, `new *Error`, el `metadata:` de `listing_events`— sólo le puede llegar un
+literal, una constante literal declarada en el módulo, o un identificador cuya **cola** matchee
+`SAFE_ATOM`: `*Id`, `id`/`ids`, `status`, `kind`, `source`, `slug`, `code`, `event`, `count`, `ok`,
+`level`. Un identificador pelado, un spread, una llamada anidada o un template con una sustitución
+que no sea de esa lista: rojo.
+
+**La diferencia entre las dos formas de escribirlo es la fila entera.** Un test que grepea nombres de
+columna lo esquiva cualquiera que escriba `log(lead)`, `log({ ...lead })` o `JSON.stringify(lead)`, y
+ése es exactamente el caso que va a pasar: **nadie loguea un campo de PII a propósito — loguea el
+objeto**, para debuggear, sin mirar qué trae adentro. Un test que exige forma no se esquiva
+renombrando la variable, y de yapa agarra la fuga que todavía no tiene nombre. Ese es el precedente
+que le queda al próximo escritor de PII de este repo.
+
+**El precio está declarado y aceptado:** el analizador es **sintáctico**, no hay type checker. No
+sabe que `lead` es un `TradeinLead`; sabe que `lead` no es un id ni un literal. Es conservador
+**adentro** del perímetro y **ciego afuera**, y la ceguera de afuera se compensa censando
+**importaciones** — un lead sale del perímetro sólo por un `import`, y el `import` está en el fuente.
+
+**Y se vio encender.** Ocho fuentes con la fuga plantada, una por forma, más un control negativo con
+la forma **real** del `logEvent` de `accept-to-stock`, porque un analizador con falsos positivos se
+apaga y un guard apagado no protege a nadie. El LEAD además **mutó el handler real** para verlo
+encender nombrando `archivo:línea`, y revirtió byte a byte.
+
+### Alternativas descartadas
+
+| alternativa | por qué no |
+|---|---|
+| **Que el formulario escriba a través de un endpoint con `service_role`** en vez de darle `INSERT` a `anon` | Mueve el invariante de la base al servidor, que es la dirección contraria a la de todo el resto del repo (`CLAUDE.md` §2: filtro de tenant en la query **además** de RLS). Y el precedente ya existía: el beacon de S4 escribe como `anon` con policy, y esa policy la evalúa el planner en **cada** fila. Un endpoint con `service_role` es una llave maestra en el camino de una escritura anónima |
+| **Dejar `0020` como estaba y no marcar `customer_name` / `customer_wa_phone` como SENSITIVE** | Sería resolver el conflicto **borrando la mitad que protege**. Esas dos columnas tienen que seguir prohibidas de lectura para `anon`, y sacarlas de la lista las dejaría sin regla en las dos direcciones |
+| **Excepción por nombre de columna** (`customer_name` permitido en cualquier `GRANT`) | Es el aflojamiento que se ve igual de chico y no lo es: le abriría la puerta a cualquier tabla futura que use el mismo nombre. La doctrina de `rls-lint` es *chequear por nombre, no por tabla*, y la excepción es justamente el lugar donde esa doctrina tiene que invertirse |
+| **Permitir el `insert … returning` para que el formulario tenga el id del lead** | Es exactamente el vector que `returning_desde_anon` mide. El formulario no necesita el id: contesta con un `303` a `/canje/listo`, y el vínculo con la unidad lo hace el dueño desde el panel |
+
+### Verificación
+
+- `./scripts/accept-s8.sh` → **`S8: ACEPTADA`**, re-ejecutado por el LEAD el 2026-08-28. **V1** el
+  `GRANT` son las nueve columnas **por igualdad, no por inclusión** —un `grep -q offer_usd` daría
+  verde con el costo adentro— y se lee del `.sql` **commiteado**, no de la base, por la trampa del
+  `created_at` de `CLAUDE.md` §3. **V2** es el censo de la ausencia.
+- `scripts/probes/s8-canje.test.ts`: `returning_desde_anon=0` · `offer_usd_desde_anon=0` ·
+  `lead_a_tenant_ajeno=0` · `lead_sin_claim_no_entra=0` · `canario_rol_anon=1`. **Cada rechazo
+  afirma el mensaje, no sólo el código:** `42501` cubre las **dos** capas, así que un test que sólo
+  mire el código sigue verde el día que alguien abre el `GRANT` —la policy rechazaría igual— y el
+  invariante habría cambiado sin que nada se pusiera rojo.
+- `tests/rls-cross-tenant.test.ts` (`qa-agent`): **R6c** afirma las siete policies `TO anon` por
+  nombre, que las cinco superficies de lectura sean todas `SELECT`, que las dos de
+  escritura-sin-login sean ambas `INSERT`, y que **no exista nada más** — la cuarta es la que caza un
+  `FOR ALL` colándose entre las dos listas. **R7c-bis** fija que las únicas columnas sensibles
+  escribibles por `anon` son `customer_name` y `customer_wa_phone`.
+- `scripts/rls-lint.test.sh`: 12 casos de polaridad, en `ci.yml`.
+
+### Lo que esta ADR NO decide
+
+- **No decide que a nivel base un `seller` no pueda leer `offer_usd`.** Hoy **sí puede**: ninguna
+  policy de `tradein_leads` mira `membership_role`, medido por el LEAD contra Postgres real. Eso es
+  **P5**, sigue abierto, y sobre esta tabla la regla 9 de `CLAUDE.md` la sostiene el **servidor**.
+- **No decide que la policy mire `accepts_trade_in`.** _(**Cerrado el 2026-08-28 por `S8.1`**,
+  migración `0009`: el flag entró **adentro** del `WITH CHECK`, vía el primer `ALTER POLICY` del
+  repo. Cuando esta ADR se escribió lo chequeaba sólo el `where` del handler. El handler **lo sigue
+  chequeando**, y eso es defensa en profundidad, no redundancia a limpiar.)_
+- **No decide nada sobre logs ni sobre el prompt del chatbot.** _(La afirmación existe desde el
+  2026-08-28 — `tests/la-pii-del-visitante-no-sale-de-la-fila-del-canje.test.ts`, **`T43` cerrada**,
+  dueño `qa-agent`. Lo que esta ADR sigue sin decidir es la mitad de **producto**: quién responde por
+  esa base y qué se le promete a esa persona. Es `Q5` de `PRODUCT.md` y sigue **abierta**.)_
 
 ---
 
