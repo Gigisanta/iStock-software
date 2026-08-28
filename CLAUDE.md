@@ -208,6 +208,7 @@ Rutas: `/` marketing · `/demo` · `/onboarding` · `/app/*` panel · **`proxy.t
 | `docs/COST.md` | `cost-auditor` | ✅ |
 | `CLAUDE.md`, `AGENTS.md`, `.claude/**` | **LEAD** | ✅ |
 | `scripts/**`, `vercel.json`, `apps/web/scripts/*-lint.mjs` | **LEAD** | ✅ |
+| `config/**` (reglas de WAF y demás config de plataforma) | **LEAD** | ✅ |
 
 Conflicto de ownership = el LEAD reasigna. Un agente **nunca** edita fuera de su columna.
 
@@ -216,7 +217,22 @@ dos entradas del board): los **gates no tienen dueño en la tabla y por lo tanto
 `scripts/accept-*.sh`, `scripts/guard-*.sh`, `scripts/probes/**`, las reglas de lint de
 `apps/web/scripts/` y el futuro `vercel.json` (que hoy no existe) son del LEAD, por un motivo que no
 es jerárquico sino de independencia: **el gate no puede ser del mismo writer que el código que
-audita.** Por eso `scripts/probes/s2-media-measure.test.ts` vive afuera de `packages/media` aunque
+audita.** Por la misma regla, **`config/firewall-rules.json` es del LEAD** (fila nueva, FASE 4):
+las reglas de rate limit deciden qué endpoints de `app-agent` y de `storefront-agent` tienen techo,
+así que no pueden ser de ninguno de los dos.
+
+**El rate limit no entra en `vercel.json`, y `vercel.json` no existe.** El schema oficial tipa
+`routes[].mitigate.action` como enum cerrado `["challenge","deny"]` con `additionalProperties: false`,
+y `rate_limit` aparece **cero veces** (verificado contra `openapi.vercel.sh/vercel.json`, 2026-08-28,
+`docs/research/vercel-firewall-as-code.md`). Las reglas viven versionadas en `config/firewall-rules.json`
+y se aplican por CLI (`vercel firewall rules add` + `publish`), que **no es parte del build**: un
+`vercel deploy` **no** sincroniza el WAF. `scripts/guard-firewall.sh` valida el archivo contra los
+límites reales de Pro (`keys ⊆ {ip, ja4}` — `header:` es Enterprise —, `algo = fixed_window`,
+ventana 10–600 s) y, sobre todo, **censa `apps/web/app/api/**`**: toda ruta HTTP está cubierta por una
+regla o exceptuada con motivo escrito. Una ruta nueva sin decidir rompe el gate el día que se crea.
+Y una regla que condicione sólo por `host` está **prohibida**: se facturan los *allowed requests*, así
+que le cobraría peaje a cada pageview de vidriera — que es exactamente lo que `ARCHITECTURE.md` dice
+que no defendemos. Para abuso masivo del HTML la palanca es Attack Challenge Mode, que es gratis. Por eso `scripts/probes/s2-media-measure.test.ts` vive afuera de `packages/media` aunque
 mida a `packages/media`, y por eso un agente que quiere cambiar un techo pide, no edita.
 
 ### `architect` es un rol de FASE 1, y está dormido

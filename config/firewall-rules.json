@@ -1,0 +1,43 @@
+{
+  "$doc": "Reglas de rate limit del WAF de Vercel, versionadas. NO es vercel.json y no puede serlo: el schema oficial de vercel.json tipa `routes[].mitigate.action` como enum cerrado [\"challenge\",\"deny\"] con additionalProperties:false, y la palabra `rate_limit` aparece 0 veces. Verificado contra openapi.vercel.sh/vercel.json el 2026-08-28. Ver docs/research/vercel-firewall-as-code.md.",
+  "$owner": "LEAD (CLAUDE.md §4). El gate que audita esto es scripts/guard-firewall.sh, tambien del LEAD.",
+  "$apply": "NO es parte del build. Un `vercel deploy` NO sincroniza el WAF. Es un paso operativo: `vercel firewall rules add ... --yes` por regla y despues `vercel firewall publish --yes`. Procedimiento completo en docs/OPERACION.md (FASE 8).",
+  "$plan": "Vercel Pro. Restricciones que el guard hace cumplir: keys solo ip|ja4 (header: es Enterprise), algo fixed_window, window 10..600s (la doc del CLI dice 3600 pero el limite del plan manda), maximo 40 reglas.",
+
+  "$scoping": "Por que NO hay una regla `host suf .maat.work`: matchearia CADA pageview de vidriera, y el rate limit se factura por *allowed requests* (los que matchean y pasan). Seria pagar 0.80 USD/1M por proteger HTML que ARCHITECTURE.md declara scrapeable a proposito. Se defiende lo que cuesta plata: escrituras sin autenticar y el chatbot. Para un abuso masivo del HTML la palanca es Attack Challenge Mode (`vercel firewall attack-mode enable --duration 1h`), que es gratis en todos los planes, inmediato y sin publish.",
+
+  "rules": [
+    {
+      "name": "storefront-track-rl",
+      "why": "El beacon de tracking de S4b es el unico endpoint de ESCRITURA sin autenticar del producto. Con el spend cap de Supabase en ON, floodearlo no infla una factura: apaga el proyecto para TODOS los tenants. Esta regla es la que convierte un DoS de un tenant en un 429 del atacante.",
+      "route": "/api/track",
+      "condition": { "type": "path", "op": "pre", "value": "/api/track" },
+      "rateLimit": { "window": 60, "requests": 60, "keys": ["ip"], "algo": "fixed_window", "action": "deny" },
+      "status": "planned",
+      "lands_with": "S4b"
+    },
+    {
+      "name": "chatbot-rl",
+      "why": "Cada request al chat es un token pagado a Gemini/Groq. Sin limite, un solo visitante con un for-loop consume el presupuesto de LLM del mes. El contador por IP del WAF es la primera barrera; la segunda es el contador de tokens por tenant en DB, que va en ruta autenticada y NUNCA en la vidriera (ARCHITECTURE.md).",
+      "route": "/api/chat",
+      "condition": { "type": "path", "op": "pre", "value": "/api/chat" },
+      "rateLimit": { "window": 60, "requests": 12, "keys": ["ip"], "algo": "fixed_window", "action": "deny" },
+      "status": "planned",
+      "lands_with": "FASE 5"
+    }
+  ],
+
+  "allowlist": [
+    {
+      "route": "/api/health",
+      "reason": "No toca Postgres, no abre conexion, no devuelve version ni commit ni host. Floodearlo cuesta Edge Requests y nada mas, y una regla sobre el health check rompe a los uptime monitors, que es el unico consumidor legitimo. Verificado en apps/web/app/api/health/route.ts: el handler entero es un Response.json constante."
+    },
+    {
+      "route": "/api/tenants/slug-check",
+      "reason": "Exige getPanelSession() no-nulo ANTES de tocar la tabla. El abuso esta acotado por la sesion, no por la IP, asi que el bucket por IP del WAF no es la capa correcta. Verificado en apps/web/app/api/tenants/slug-check/route.ts."
+    }
+  ],
+
+  "$per_region": "Los contadores del WAF son POR REGION. El limite efectivo es N x requests, no requests. Los numeros de arriba estan elegidos sabiendo esto: 60/min de tracking y 12/min de chat siguen siendo un techo util aunque se multipliquen por las regiones desde las que llegue el trafico.",
+  "$drift": "El guard de nivel 1 (estatico, sin red) valida este archivo contra las restricciones de Pro y contra el censo de rutas. El de nivel 2 —comparar contra la config viva con `vercel firewall diff --json`— necesita token y NO esta implementado: falta verificar que scope minimo permite `publish`. Anotado en docs/research/vercel-firewall-as-code.md §UNVERIFIED."
+}
