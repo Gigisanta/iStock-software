@@ -4,7 +4,9 @@
  * Por qué importa: un seed con azar hace que el gate de aceptación ("8 iPhones + 2 accesorios +
  * 1 `reserved`") pase o falle según el humor de la corrida, y hace que un test de vidriera no
  * pueda afirmar nada sobre lo que ve. Los UUID son constantes escritas a mano; el "ahora" es una
- * constante; las keys de R2 se derivan por SHA-256 del slug (una función, no un dado).
+ * constante; las keys de R2 se derivan por SHA-256 del slug (una función, no un dado) y respetan
+ * la forma de ADR-006 (`v1/{ab}/{32hex}.webp` la pública, `originals/{tenant}/{listing}/{32hex}.webp`
+ * el master), porque un dato de demo con forma inválida es un bug esperando a que alguien lo lea.
  *
  * Modelos y colores salen de `docs/research/apple-catalog-ar.md` (R6, PASS): nombres de color tal
  * cual los escribe Apple es-LAMR, que es la forma que copia el mercado argentino, y capacidades
@@ -200,10 +202,40 @@ export function seedMediaKey(listingSlug: string, index: number, variant: string
   return `v1/${hash.slice(0, 2)}/${hash.slice(0, 32)}.webp`;
 }
 
-/** El master vive en el bucket PRIVADO `istock-originals` y su key nunca sale del server. */
-export function seedMasterKey(listingSlug: string, index: number): string {
-  const hash = createHash('sha256').update(`istock-seed-master/${listingSlug}/${String(index)}`).digest('hex');
-  return `originals/${hash.slice(0, 2)}/${hash.slice(0, 32)}.jpg`;
+/** UUID canónico en minúsculas. El master es jerárquico y los dos segmentos son UUID o no es. */
+const SEED_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/**
+ * Key del master (ADR-006): `originals/{tenant_id}/{listing_id}/{sha256_32}.webp`.
+ *
+ * El master vive en el bucket **PRIVADO** `istock-originals` y su key nunca sale del server; por
+ * eso —y sólo por eso— acá sí es jerárquica: habilita auditoría e inventario por tenant.
+ *
+ * Recibe los dos UUID **como objeto y no como dos posicionales** a propósito: dos strings con la
+ * misma forma, adyacentes, se invierten sin que nada se ponga rojo, y una key con tenant y listing
+ * cruzados sigue matcheando el regex. El nombre del campo es el único chequeo posible.
+ *
+ * Determinista igual que antes: el hash sale del slug + índice, no de un byte real, porque el seed
+ * no sube nada a R2. Lo que se arregló es la **forma**: emitía `originals/{2hex}/{32hex}.jpg`, que
+ * no matchea `isMasterObjectKey` de `packages/media` ni en segmentos ni en extensión. Nadie la leía
+ * todavía, así que el bug estaba latente y verde: el día que un job de GC filtre por esa forma,
+ * ignora en silencio todas las filas del demo.
+ */
+export function seedMasterKey(params: {
+  readonly tenantId: string;
+  readonly listingId: string;
+  readonly listingSlug: string;
+  readonly index: number;
+}): string {
+  const tenantId = params.tenantId.toLowerCase();
+  const listingId = params.listingId.toLowerCase();
+  if (!SEED_UUID_RE.test(tenantId) || !SEED_UUID_RE.test(listingId)) {
+    throw new Error('seedMasterKey: tenantId y listingId tienen que ser UUID');
+  }
+  const hash = createHash('sha256')
+    .update(`istock-seed-master/${params.listingSlug}/${String(params.index)}`)
+    .digest('hex');
+  return `originals/${tenantId}/${listingId}/${hash.slice(0, 32)}.webp`;
 }
 
 export function minutesAfter(base: Date, minutes: number): Date {

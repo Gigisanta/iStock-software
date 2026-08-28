@@ -236,7 +236,12 @@ async function main(): Promise<void> {
           listingId: item.id,
           sortOrder: i,
           alt: `${item.title} — foto ${String(i + 1)}`,
-          masterKey: seedMasterKey(item.slug, i),
+          masterKey: seedMasterKey({
+            tenantId: SEED_TENANT_ID,
+            listingId: item.id,
+            listingSlug: item.slug,
+            index: i,
+          }),
           thumbKey: seedMediaKey(item.slug, i, 'thumb'),
           cardKey: seedMediaKey(item.slug, i, 'card'),
           detailKey: seedMediaKey(item.slug, i, 'detail'),
