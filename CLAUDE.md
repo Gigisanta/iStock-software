@@ -259,6 +259,23 @@ Concreto y vigente: `rls-cross-tenant.test.ts` es de **`qa-agent`**. Su encabeza
 `db-agent` citando la mitad de arriba de esta regla; ese comentario está **derogado** y se borra en
 la mudanza (fila T3 del board). Un test de RLS que sólo mira su propio tenant sí es del paquete.
 
+**Precisión de ese desempate, LEAD, 2026-08-28 (S4).** Tal como quedó escrito arriba, el desempate
+es **demasiado ancho**: "cruza tenants → se muda" arrastraría también al test unitario con el que
+`db-agent` prueba su propia migración, y eso contradice la mitad de §4 que le da a cada paquete el
+test de su código. El defecto es de la regla, no de quien la aplicó. El criterio real no es *si el
+test cruza tenants*, es **quién es la auditoría de referencia**: la afirmación que un gate cita y
+que queda parada entre una policy aflojada y un merge. Esa es **siempre de `qa-agent` y vive en
+`tests/`**. El owner del paquete puede quedarse con casos cruzados como red de regresión propia,
+con tres condiciones: (a) la auditoría de referencia existe en `tests/` y es de `qa-agent`;
+(b) **ningún gate cita el test del paquete como evidencia** — si lo citara, el writer estaría
+firmando su propio certificado; (c) si los dos divergen, **gana el de `tests/`** y el que se
+corrige es el del paquete. Concreto y vigente: `packages/db/src/rls-anon-wa-click.test.ts` **se
+queda con `db-agent`**; la auditoría de referencia del beacon son R2b/R6c/R7 de
+`tests/rls-cross-tenant.test.ts`, de `qa-agent`. `rls-cross-tenant.test.ts` sigue siendo de
+`qa-agent`, sin cambios. La duplicación que queda es deliberada y tiene precio: dos archivos que
+tocar cuando cambia la policy. Se paga porque las dos puntas del invariante más caro del producto
+no pueden ser del mismo writer.
+
 **Excepción declarada, FASE 1:** la síntesis de `docs/ARCHITECTURE.md`, `docs/DECISIONS.md` y
 `docs/COST.md` a partir de `docs/research/**` la escribe el **LEAD**, una sola vez. Decidir el
 stack no es delegable. Cerrada la FASE 1, esos tres archivos vuelven a `docs-keeper` /
