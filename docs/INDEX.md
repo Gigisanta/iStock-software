@@ -252,9 +252,10 @@ Lo que hay que saber sin leer nada más:
   de producto que hoy cuelga de una sola capa**, hoy tapado por **B2**), más **T33** y **T34** del lado de
   los instrumentos. **Al cierre del 2026-08-28: `T33` está `done`** —`G5` de `guard-gates.sh` censa que
   toda probe de `scripts/probes/` la corra algún `accept-*.sh` **y** compile, `GUARD-GATES: PASS`
-  corrido por el LEAD, commit `5b6061e`— y **`T34` sigue `esperando gate`**: el arnés de polaridad de
-  `guard-effects.sh` está entregado (`2ccb8a1`, 10 casos) pero los dos comandos son scripts de shell y
-  **no** entran en `pnpm test`, así que el verde del árbol no los cubre. **`T35` y `T36` son nuevas y
+  corrido por el LEAD, commit `5b6061e`— y **`T34` también** (`2ccb8a1`), cerrada por la corrida del LEAD
+  del 2026-08-28 —`GUARD-EFFECTS: OK` y `POLARIDAD EFFECTS: OK — 10 casos`—. **Hizo falta que la
+  corriera él y no alcanzaba ninguna otra:** los dos comandos son scripts de shell y `pnpm test` no
+  los alcanza, así que el árbol entero en verde no decía nada sobre esa fila. **`T35` y `T36` son nuevas y
   salieron de la misma pasada**, las dos levantadas por `app-agent` sobre su propia columna: `T35` es
   la deuda escrita de `publish-listing.test.ts`, que fabrica a mano la forma del `PostgresError`
   (severidad baja: hoy la forma es fiel, pero por conocimiento y no por construcción); `T36` **no
@@ -401,11 +402,18 @@ Lo que hay que saber sin leer nada más:
   entra en `vercel.json` y no puede entrar**: el schema oficial tipa `routes[].mitigate.action` como
   enum cerrado `["challenge","deny"]` y `rate_limit` aparece **cero veces**. **`vercel.json` existe
   desde S6 y declara sólo el `crons`** (antes esta línea decía que no existía); F5 de
-  `guard-firewall.sh` sigue afirmando que no pretende declarar rate limits. Las 2 reglas viven en `config/firewall-rules.json` (**LEAD**) y se aplican por CLI, que
-  **no es parte del build**. **Declaradas y validadas ≠ aplicadas:** no hay proyecto Vercel (**B2**,
+  `guard-firewall.sh` sigue afirmando que no pretende declarar rate limits. Las reglas viven en `config/firewall-rules.json` (**LEAD**) y se aplican por CLI, que
+  **no es parte del build**. **Son 3 desde `cb4fe3f`, no 2** (`guard-firewall.sh` §F1: `3 reglas declaradas`):
+  la tercera es **`storefront-tradein-rl`** (`5` req / `600 s` por `ip`, `deny`, `planned`, `lands_with: S8`),
+  **más dura que la de `/api/track` a propósito** — el canje es la **segunda** escritura sin autenticar
+  del producto y es más cara en las dos monedas que importan: escribe **texto libre de un anónimo**
+  (`model_text`, `notes`) y es una fila que **el dueño lee en su inbox**, así que un flood no infla una
+  tabla, arruina la herramienta. **Llegó antes que su handler**, que es la conducta que el censo vino a
+  producir. **Declaradas y validadas ≠ aplicadas:** no hay proyecto Vercel (**B2**,
   **B5**). `/api/track` **ya existe** —aterrizó con **S4**, no con un "S4b" que nunca fue una fila del
-  board— y su regla pasó a `active`; `/api/chat` sigue esperando la **FASE 5**. Lo que hace fuerte al gate no es validar el JSON sino el **censo**: hoy **5** route
-  handlers, los 5 decididos, y una ruta nueva sin decidir lo rompe **el día que se crea** — pasó con
+  board— y su regla pasó a `active`; `/api/chat` sigue esperando la **FASE 5**. Lo que hace fuerte al gate no es validar el JSON sino el **censo**: hoy **6** route
+  handlers —el número era **5** y lo movió el árbol, no el gate; re-medido por `docs-keeper` el
+  2026-08-28 con `GUARD-FIREWALL: PASS`, **5 exceptuados con motivo** y **1 cubierto por regla**—, los 6 decididos, y una ruta nueva sin decidir lo rompe **el día que se crea** — pasó con
   el cron de S6, que entró a la allowlist **con motivo escrito** en vez de con una regla, porque un
   techo mal calibrado ahí apaga la expiración de reservas en silencio — y desde
   `3199a78` **el gate y su polaridad tienen step en CI** (`ci.yml:118` y `:126`), así que eso dejó de
