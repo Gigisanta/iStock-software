@@ -348,7 +348,7 @@ describe('la cota de la dieta y la factura son dos números distintos', () => {
   it('un turno que se deriva antes de llamar al proveedor no factura NADA', async () => {
     const answer = await answerChat(input({ userMessage: '¿me lo reservás?' }), deps());
     expect(answer.handoff).toBe('reserve');
-    expect(answer.billed).toEqual({ calls: 0, tokensIn: 0, tokensOut: 0 });
+    expect(answer.billed).toEqual({ calls: 0, tokensIn: 0, tokensOut: 0, primaryServedEmpty: false });
   });
 
   it('el primario caído no factura su intento; el fallback que contesta sí', async () => {
@@ -502,6 +502,152 @@ describe('el techo facturable del turno', () => {
         }),
       );
       expect(answer.billed.calls, script.name).toBeLessThanOrEqual(MAX_BILLED_CALLS_PER_TURN);
+    }
+  });
+});
+
+/**
+ * ## `billed.primaryServedEmpty` · lo que `calls` solo no puede decir
+ *
+ * Con el techo en {@link MAX_BILLED_CALLS_PER_TURN} = 3, `calls = 3` es inequívocamente degradado
+ * y `calls = 1` es inequívocamente sano. **`calls = 2` es dos cosas distintas**: el camino feliz
+ * con tool (dos rondas, el primario contestó bien las dos veces) y el primario que cobró un 200
+ * vacío y lo cubrió el fallback en una sola ronda. Una es lo normal; la otra es el modo de falla
+ * que duplica la factura sin dejar excepción en Sentry.
+ *
+ * El consumidor de esto —el log de `/api/chat`— **todavía no existe** (`app-agent`, FASE 5), así
+ * que si el dato no está en el DTO ahora, el emisor se escribe contra un `calls` que no alcanza.
+ *
+ * **La aserción central de esta sección son los dos tests `calls = 2` puestos uno al lado del
+ * otro**: mismo `calls`, distinto booleano. Si algún día el campo se puede derivar de `calls`,
+ * estos dos tests son los que lo van a desmentir.
+ *
+ * ## Las mutaciones que esta sección tiene que agarrar
+ *
+ * | mutación | quién enciende |
+ * |---|---|
+ * | el campo pegado en `false` | «primario vacío sin tool» y el peor caso |
+ * | el campo pegado en `true` | el camino feliz, el primario que tira y el turno que no facturó |
+ * | prenderlo también cuando el primario **tira** | los dos tests de la excepción |
+ * | `\|\|` → asignación en `addBilled` | el peor caso: la ronda 2 informa `false` porque saltea |
+ */
+describe('la degradación facturada se reporta, y `calls` sola no la distingue', () => {
+  it('camino feliz sin tool: una llamada y NADA degradado', async () => {
+    const answer = await answerChat(input(), deps());
+    expect(answer.billed.calls).toBe(1);
+    expect(answer.billed.primaryServedEmpty).toBe(false);
+  });
+
+  it('`calls = 2` SANO: dos rondas de tool con el primario contestando bien las dos veces', async () => {
+    const primary = createStubProvider({
+      id: 'primary',
+      script: [{ text: '', toolCalls: [{ name: 'get_open_listing', args: {} }] }, 'Es un 14 Pro de 256 en USD 620.'],
+    });
+    const answer = await answerChat(input(), deps({ primary }));
+    expect(answer.provider).toBe('primary');
+    expect(answer.billed.calls).toBe(2);
+    // Este es el turno que NO hay que alarmar: usar las tools es el uso correcto del producto.
+    expect(answer.billed.primaryServedEmpty).toBe(false);
+  });
+
+  it('`calls = 2` DEGRADADO: el primario cobró un 200 vacío y contestó el fallback, sin tool', async () => {
+    const primary = createStubProvider({ id: 'primary', script: [''] });
+    const answer = await answerChat(input(), deps({ primary }));
+    expect(answer.provider).toBe('fallback');
+    // Mismo `calls` que el test de arriba, y es el otro turno: el que sí hay que alarmar.
+    expect(answer.billed.calls).toBe(2);
+    expect(answer.billed.primaryServedEmpty).toBe(true);
+  });
+
+  it('un primario que TIRA no es degradación facturada: la excepción no se factura', async () => {
+    const answer = await answerChat(input(), deps({ primary: createDownProvider('gemini') }));
+    expect(answer.provider).toBe('fallback');
+    // No hubo llamada de más que alarmar: el request murió antes de que nadie lo procesara.
+    expect(answer.billed.calls).toBe(1);
+    expect(answer.billed.primaryServedEmpty).toBe(false);
+  });
+
+  it('el primario que tira llega a `calls = 2` SIN degradación: es la distinción, no un detalle', async () => {
+    // Sin este caso, «el primario que tira» y «el camino sano» se distinguirían por `calls`, y el
+    // booleano parecería derivable. Acá los tres turnos de `calls = 2` conviven: dos sanos —tool
+    // limpio y primario que tiró— y uno degradado. Sólo el booleano los separa.
+    const primary = createStubProvider({
+      id: 'primary',
+      script: [new Error('503'), 'Es un 14 Pro de 256 GB en USD 620.'],
+    });
+    const fallback = createStubProvider({
+      id: 'fallback',
+      script: [{ text: '', toolCalls: [{ name: 'get_open_listing', args: {} }] }],
+    });
+    const answer = await answerChat(input(), deps({ primary, fallback }));
+    expect(primary.calls).toHaveLength(2);
+    expect(answer.billed.calls).toBe(2);
+    expect(answer.billed.primaryServedEmpty).toBe(false);
+  });
+
+  it('el peor caso (`calls = 3`) reporta degradación aunque la ronda que saltea informe que no', async () => {
+    // El `||` de `addBilled`, como aserción: la ronda 1 ve el vacío, la ronda 2 ni intenta al
+    // primario y devuelve `false`. Pisando en vez de acumular, el turno MÁS caro del sistema
+    // saldría reportado como sano.
+    const primary = createStubProvider({ id: 'primary', script: [''] });
+    const fallback = createStubProvider({
+      id: 'fallback',
+      script: [
+        ...Array.from(
+          { length: MAX_TOOL_ROUNDS },
+          (): StubTurn => ({ text: '', toolCalls: [{ name: 'get_open_listing', args: {} }] }),
+        ),
+        'Es un 14 Pro de 256 GB en USD 620.',
+      ],
+    });
+    const answer = await answerChat(input(), deps({ primary, fallback }));
+    expect(primary.calls).toHaveLength(1);
+    expect(answer.billed.calls).toBe(MAX_BILLED_CALLS_PER_TURN);
+    expect(answer.billed.primaryServedEmpty).toBe(true);
+  });
+
+  it('un turno que se deriva sin llamar a nadie no está degradado: no hubo llamada vacía', async () => {
+    const answer = await answerChat(input({ userMessage: '¿me lo reservás?' }), deps());
+    expect(answer.billed.calls).toBe(0);
+    expect(answer.billed.primaryServedEmpty).toBe(false);
+  });
+
+  it('la degradación no sobrevive al turno: el mensaje siguiente vuelve a nacer limpio', async () => {
+    const primary = createStubProvider({ id: 'primary', script: ['', 'La batería está al 89%.'] });
+    const first = await answerChat(input(), deps({ primary }));
+    expect(first.billed.primaryServedEmpty).toBe(true);
+    const second = await answerChat(input(), deps({ primary }));
+    expect(second.billed.primaryServedEmpty).toBe(false);
+  });
+
+  it('el campo nunca se contradice con `calls`: degradado implica al menos dos llamadas facturadas', async () => {
+    // Barrido de invariante, no de valores. Un `primaryServedEmpty: true` con `calls < 2` sería
+    // incoherente por construcción: la llamada vacía del primario y la del que lo cubrió son dos.
+    //
+    // El barrido incluye a propósito «los dos vacíos», que es un turno donde `generateWithFallback`
+    // TIRA y `billed` queda en cero pese a que los dos proveedores atendieron —una subfacturación
+    // preexistente, ajena a este campo y NO decidida acá—. La forma del test sobrevive a cualquier
+    // resolución de eso: mientras el par sea coherente, no hay nada que arreglar de este lado.
+    const scripts: readonly { readonly name: string; readonly primary: readonly StubTurn[]; readonly fallback: readonly StubTurn[] }[] = [
+      { name: 'todo bien', primary: ['La batería está al 89%.'], fallback: ['x'] },
+      { name: 'tool + primario sano', primary: [{ text: '', toolCalls: [{ name: 'get_open_listing', args: {} }] }, 'USD 620.'], fallback: ['x'] },
+      { name: 'primario vacío, sin tool', primary: [''], fallback: ['La batería está al 89%.'] },
+      { name: 'primario vacío + tool', primary: [''], fallback: [{ text: '', toolCalls: [{ name: 'get_open_listing', args: {} }] }, 'USD 620.'] },
+      { name: 'los dos vacíos', primary: [''], fallback: [''] },
+      { name: 'primario tira + tool', primary: [new Error('503')], fallback: [{ text: '', toolCalls: [{ name: 'get_open_listing', args: {} }] }, 'USD 620.'] },
+      { name: 'tool + segunda ronda vacía', primary: [{ text: '', toolCalls: [{ name: 'get_open_listing', args: {} }] }, ''], fallback: ['USD 620.'] },
+    ];
+    for (const script of scripts) {
+      const answer = await answerChat(
+        input(),
+        deps({
+          primary: createStubProvider({ id: 'primary', script: script.primary }),
+          fallback: createStubProvider({ id: 'fallback', script: script.fallback }),
+        }),
+      );
+      if (answer.billed.primaryServedEmpty) {
+        expect(answer.billed.calls, script.name).toBeGreaterThanOrEqual(2);
+      }
     }
   });
 });

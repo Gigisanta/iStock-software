@@ -172,10 +172,14 @@ export interface ChatAnswer {
    * resolvió sin llamar a nadie y **cuesta cero**, que es la defensa más barata del sistema.
    *
    * `calls` está acotado por {@link MAX_BILLED_CALLS_PER_TURN} y es el campo que el log
-   * estructurado de `/api/chat` tiene que emitir: `calls >= 3` es un turno que pagó una llamada
-   * degradada (alguien contestó vacío), y `calls > MAX_BILLED_CALLS_PER_TURN` es imposible por
-   * construcción, o sea un bug de control de flujo. Esa ruta todavía no existe y el campo la
+   * estructurado de `/api/chat` tiene que emitir: `calls > MAX_BILLED_CALLS_PER_TURN` es imposible
+   * por construcción, o sea un bug de control de flujo. Esa ruta todavía no existe y el campo la
    * espera armado.
+   *
+   * **`calls` solo NO dice si el turno se degradó**, y por eso está
+   * {@link BilledUsage.primaryServedEmpty}: `calls = 2` es tanto el camino feliz con tool como un
+   * primario que contestó vacío. La condición de alarma se arma con el booleano, no con un umbral
+   * sobre `calls`.
    */
   readonly billed: BilledUsage;
 }
@@ -185,10 +189,59 @@ export interface BilledUsage {
   readonly calls: number;
   readonly tokensIn: number;
   readonly tokensOut: number;
+  /**
+   * El primario **atendió** una llamada de este turno y devolvió vacío, así que el fallback tuvo
+   * que cubrirlo. Es la llamada de más que el turno pagó sin recibir nada a cambio.
+   *
+   * ## Por qué el campo existe: `calls = 2` es ambiguo y `calls` solo no lo desambigua
+   *
+   * Con el salteo del primario vacío ({@link generateWithFallback}) el techo del turno es
+   * {@link MAX_BILLED_CALLS_PER_TURN} = 3, y de los tres valores posibles sólo uno se lee solo:
+   *
+   * | `calls` | qué pasó |
+   * |---|---|
+   * | 1 | una ronda, un proveedor contestó. Sano. |
+   * | 2 | **dos historias distintas** (abajo) |
+   * | 3 | primario vacío **y** ronda de tool. Inequívocamente degradado. |
+   *
+   * Las dos historias detrás del `2`:
+   * - **camino feliz con tool**: dos rondas, el primario contestó bien las dos veces. Es lo normal
+   *   y alarmarlo sería alarmar el uso correcto de las tools.
+   * - **primario vacío en una sola ronda**: el primario cobró un 200 vacío y contestó el fallback.
+   *   Es degradación silenciosa —sin excepción en Sentry, sin respuesta visiblemente peor— y es
+   *   justo la que hay que ver, porque bajo carga le pasa a muchos turnos a la vez.
+   *
+   * Un consumidor que sólo mira `calls` no puede separarlas, y el consumidor **todavía no existe**
+   * (`/api/chat`, `app-agent`, FASE 5): si el dato no sale ahora, el emisor se escribe contra un
+   * número que no alcanza. Con este campo la pregunta es `billed.primaryServedEmpty`, no un umbral
+   * sobre `calls`.
+   *
+   * ## Por qué se llama así y no `degraded`
+   *
+   * Dos motivos, y el segundo es el que decidió el nombre:
+   *
+   * 1. **`degradado` ya significa otra cosa en esta interfaz pública.** {@link ChatAnswer.trimmed}
+   *    reporta la degradación de la **dieta** —lo que el recorte tuvo que tirar— y su docblock dice
+   *    explícitamente que esa degradación *no aparece en la factura*. Un `degraded: boolean` acá
+   *    sería la segunda «degradación» del mismo objeto, con otro sujeto y otra consecuencia.
+   * 2. **El nombre carga el invariante que es fácil de romper.** Un primario que **tira** no es
+   *    degradación facturada: la excepción no se factura, no hay llamada de más, no hay nada que
+   *    alarmar. Con `degraded` un `true` ahí se lee plausible y pasa un review; con
+   *    `primaryServedEmpty` un `true` para un primario que tiró **se contradice a sí mismo** —no
+   *    sirvió nada y no contestó vacío—, así que el bug es legible sin leer la implementación.
+   *
+   * El campo nombra el **hecho observado**, no su interpretación: «degradado» se deriva de acá, y
+   * al revés no se puede sin saber la causa. Y hace que `calls` se pueda descomponer: es una
+   * llamada por ronda corrida, más una si este campo está en `true`.
+   *
+   * `false` es la respuesta correcta cuando no se llamó a nadie (`calls: 0`): no hubo llamada, así
+   * que no hubo llamada vacía.
+   */
+  readonly primaryServedEmpty: boolean;
 }
 
 /** Un turno que no llamó a ningún proveedor. */
-const NOTHING_BILLED: BilledUsage = { calls: 0, tokensIn: 0, tokensOut: 0 };
+const NOTHING_BILLED: BilledUsage = { calls: 0, tokensIn: 0, tokensOut: 0, primaryServedEmpty: false };
 
 function answerFromHandoff(
   listing: PublicListingDTO,
@@ -368,11 +421,16 @@ export async function answerChat(input: ChatInput, deps: ChatDeps): Promise<Chat
   // porque son dos preguntas: uno responde "¿entró?", el otro "¿cuánto se procesó?".
   let promptTokens = context.budget.tokensIn;
   let billed: BilledUsage = NOTHING_BILLED;
-  const addBilled = (servedCalls: number, servedTokensOut: number): void => {
+  // Toma la ronda entera y no tres escalares sueltos: `primaryServedEmpty` viaja PEGADO a las
+  // llamadas que lo causaron, así que no puede quedar desfasado de la ronda que se está sumando.
+  const addBilled = (round: RoundOutcome): void => {
     billed = {
-      calls: billed.calls + servedCalls,
-      tokensIn: billed.tokensIn + context.budget.tokensIn * servedCalls,
-      tokensOut: billed.tokensOut + servedTokensOut,
+      calls: billed.calls + round.servedCalls,
+      tokensIn: billed.tokensIn + context.budget.tokensIn * round.servedCalls,
+      tokensOut: billed.tokensOut + round.servedTokensOut,
+      // `||` y no asignación: con el salteo, la ronda 2 informa `false` porque al primario ni se lo
+      // intentó. Pisar acumularía la respuesta equivocada — el turno igual pagó la vacía.
+      primaryServedEmpty: billed.primaryServedEmpty || round.primaryServedEmpty,
     };
   };
   let provider: 'primary' | 'fallback' = 'primary';
@@ -386,7 +444,7 @@ export async function answerChat(input: ChatInput, deps: ChatDeps): Promise<Chat
     result = first.result;
     provider = first.provider;
     primaryDegraded = first.primaryServedEmpty;
-    addBilled(first.servedCalls, first.servedTokensOut);
+    addBilled(first);
   } catch {
     // El prompt SÍ se armó acá, así que su recorte se reporta aunque no se haya facturado nada: la
     // degradación describe lo que la dieta tuvo que tirar, no lo que salió en la factura.
@@ -466,7 +524,7 @@ export async function answerChat(input: ChatInput, deps: ChatDeps): Promise<Chat
       // El `||` no es defensivo de más: con `MAX_TOOL_ROUNDS > 1` la degradación tiene que
       // arrastrarse a la ronda siguiente, no reevaluarse desde cero en cada vuelta.
       primaryDegraded = primaryDegraded || next.primaryServedEmpty;
-      addBilled(next.servedCalls, next.servedTokensOut);
+      addBilled(next);
     } catch {
       return answerFromHandoff(input.listing, 'provider_down', {
         provider: 'none',

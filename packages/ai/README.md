@@ -205,6 +205,25 @@ literal, el día que el número suba, sube en un diff que alguien firma.
 el log de `/api/chat` alarme contra la constante en vez de contra un `2` mágico. **Ese log todavía
 no existe** — la ruta es de `app-agent` y llega con FASE 5 (`T51`).
 
+### `billed.primaryServedEmpty`: el salteo hizo ambiguo a `calls`
+
+Con el techo en 3, `calls = 3` es inequívocamente un turno degradado y `calls = 1` es inequívocamente
+sano. **`calls = 2` es dos turnos distintos**: el camino feliz con tool —dos rondas, el primario
+contestó bien las dos veces— y el primario que cobró un `200` vacío y lo cubrió el fallback en una
+sola ronda. Uno es el uso correcto del producto y el otro es el modo de falla que duplica la factura
+sin dejar excepción en Sentry. `calls` sola no los separa, y el consumidor todavía no existe: si el
+dato no salía ahora, el emisor se iba a escribir contra un número que no alcanza.
+
+`billed.primaryServedEmpty` nombra el **hecho observado** —el primario atendió y devolvió vacío—, no
+su interpretación. No se llama `degraded` por dos motivos: «degradación» ya significa otra cosa en
+esta misma interfaz (`ChatAnswer.trimmed`, la de la dieta, que explícitamente *no* aparece en la
+factura), y sobre todo porque el nombre carga el invariante frágil: **un primario que TIRA no es
+degradación facturada**, y un `primaryServedEmpty: true` para una llamada que tiró se contradice
+solo, mientras que un `degraded: true` ahí se lee plausible y pasa un review.
+
+**Qué umbral de alarma usa el log no lo decide este paquete** (`T51`, LEAD + `app-agent`). Lo que el
+paquete garantiza es que el dato para decidirlo está en el DTO.
+
 ## Las tres tools
 
 `get_open_listing()` · `search_listings(query)` (máx 5, campos mínimos) · `handoff_whatsapp(reason)`.
