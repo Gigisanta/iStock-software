@@ -161,6 +161,16 @@ jobs:
         if: always()
         run: ./scripts/guard-firewall.test.sh
 
+      # T27: los dos resolvers de entitlements dicen lo mismo, y el copy del panel no manda a
+      # comprar el plan a quien ya lo paga. Va en este job y no en el de Postgres porque no toca
+      # base: el certificado es `scripts/probes/t27-un-motivo-una-voz.test.ts`, que mockea
+      # `withTenantDb` una sola vez para alimentar a LOS DOS resolvers con la misma fila.
+      # Entra a CI el mismo dia que nace, y a proposito: los comentarios de arriba cuentan CUATRO
+      # gates que se escribieron, quedaron afuera, y estuvieron rojos sin que nadie se enterara.
+      - name: aceptacion de T27 (un motivo, una voz)
+        if: always()
+        run: ./scripts/accept-t27.sh
+
       - name: phantom-file guard (artefacto inexistente o vacio = la tarea no paso)
         if: always()
         run: ./scripts/guard-artifacts.sh --harness
