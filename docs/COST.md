@@ -6,6 +6,10 @@ _Fecha: 2026-08-28. Insumos: R1 (wildcard/ISR), R2 (R2/imágenes), R3 (LLM), R7 
 `docs/research/vercel-firewall-as-code.md` (T1), `docs/research/vercel-cron-limits.md` (S6)._
 _Re-medido el 2026-08-27 después de **ADR-011** (el slug inexistente dejó de ser 404) y **ADR-012**
 (los dos polos del cache). Lo que cambió está en §2.1; lo que **no** cambió también, y dice por qué._
+_**Re-auditado el 2026-08-28 contra HEAD `6952393`** (§2.6): entra `packages/ai` —que no existía
+cuando se escribió §2.5— y sale el hallazgo del barrido, que `b9a8e05` cerró. Lo que este documento
+afirmaba del cron entre `68c0bd6` y hoy quedó **obsoleto en menos de una semana**, y se deja escrito
+con esa etiqueta en vez de borrarse._
 
 ## Objetivo duro
 > **Base ≤ USD 0,50 · Negocio ≤ USD 1,50** por tenant activo, hasta 100 tenants, donde el 1,50 es
@@ -54,6 +58,25 @@ La frase de FASE 0 *«el `base` está ~15× abajo»* era optimista y ya no aplic
 **El chatbot se come el 70–77% del presupuesto de infra del plan Negocio.** No está mal — está
 dentro —, pero deja de ser ruido: cualquier cosa que afloje la dieta de contexto o el soft cap sale
 directamente de ese margen.
+
+> **Corregido el 2026-08-28 con la eval de `packages/ai` (§2.6).** El «70–77%» salía de calcular el
+> chat con la dieta **en el techo**. Con el consumo del corpus medido, el chat es
+> **USD 0,096/mes** contra un techo estructural de **USD 0,230**, o sea el **79%** del marginal
+> Negocio esperado (0,122) y el **90%** del de techo (0,257). **Sigue siendo la línea más grande del
+> plan Negocio por lejos** — la frase de arriba subestimaba la proporción, no la sobrestimaba. Lo
+> que cambia es el valor absoluto:
+>
+> | plan | esperado `[CALC-STUB]` | techo `[ESTRUCTURAL]` | contra el objetivo |
+> |---|---|---|---|
+> | **Base** | USD 0,025 – 0,026 | igual (no tiene chat) | 0,50 → **19×** |
+> | **Negocio** | **USD 0,122** (0,026 no-chat + 0,096 chat) | **USD 0,257** | 1,50 → **12,3× / 5,8×** |
+> | **Negocio, hoy en producción** | **USD 0,026** | — | nada invoca `@istock/ai` (§2.6.4) |
+>
+> **Y el hallazgo de la re-auditoría no es el número: es que el número no tiene techo enforced.**
+> El soft cap de 40 msgs/día que multiplica todo el renglón de chat es una **función pura sin
+> contador** — la constante existe, la decisión existe y está testeada, y el valor que lee no lo
+> produce nadie. Sin él, lo único que acota la factura el día que aterrice `/api/chat` es una regla
+> de WAF que permite 17.280 msgs/día por IP: **USD 41 – 99/mes contra un plan de USD 35** (§2.6.6).
 
 **La columna S6 sube, y hay que leer de qué está hecha la suba, porque son dos cosas distintas:**
 
@@ -998,6 +1021,12 @@ de ésas, el barrido **deja de avanzar y ningún tenant vence una reserva**. El 
 devolviendo `200 OK` con `failed: 200`. Es una falla de disponibilidad silenciosa, no de costo, y
 por eso entra en §5 como métrica: **`failed > 0` sostenido entre corridas**.
 
+> **Histórico. `b9a8e05` cerró este párrafo entero:** con `sweep_attempts` en el `order by` y un
+> techo de 5 en el `where`, una fila envenenada cuesta **5** transacciones una sola vez, no 8.640
+> por mes, y deja de encabezar la cola; y el route devuelve **500**, no `200 OK`. La métrica de §5
+> se actualizó en consecuencia. Se deja escrito porque la aritmética vieja es la que explica por
+> qué el arreglo era necesario.
+
 #### 4. La invalidación: es **por unidad en el nombre y por vidriera entera en el radio**
 
 Esta es la respuesta a la pregunta que importa, y no es la que el commit message anticipa.
@@ -1194,6 +1223,24 @@ dirección contraria» de §2.2.3.
 
 ### 2.5 Cerrado en la re-auditoría del 2026-08-28 (HEAD `68c0bd6`) — el barrido que se atraganta
 
+> ## ⚠️ §2.5.2 a §2.5.5 son HISTORIA desde `b9a8e05`. El hallazgo está ARREGLADO en el código.
+>
+> Esta sección se escribió contra HEAD `68c0bd6`. **Se commiteó en `4f95937`, y para entonces
+> `b9a8e05` ya había aterrizado R1–R4 completos**: la columna `sweep_attempts`, el
+> `order by sweep_attempts asc, expires_at asc`, el techo `MAX_SWEEP_ATTEMPTS = 5`, el `+1` en su
+> propia transacción, el censo de abandonadas y el **500** del route. Las aserciones A–E viven en
+> `scripts/probes/s6-sweep-head-of-line.test.ts` y las corre **V10 de `accept-s6.sh`** contra
+> Postgres real, con cuatro mutaciones de polaridad ejecutadas por el LEAD.
+>
+> **Eso invalida el número nuestro, no el del tenant.** Los USD 0,0015/mes por unidad trabada
+> salían de 8.640 reintentos/mes: hoy son **5 reintentos, una sola vez**, y el costo nuestro cae a
+> ~USD 1e-6 no recurrente. Los **USD 15 – 22/mes del tenant siguen en pie sin cambios**, porque la
+> unidad sigue trabada en `reserved` hasta que una persona apriete «Liberar equipo» — lo que se
+> arregló es que ahora **grita** en vez de callarse. La aritmética corregida está en §2.5.3.
+>
+> Se deja escrito en vez de borrado por la misma regla que el resto del documento: un doc de costo
+> que borra sus errores deja de ser auditable. Pero **el estado es §2.6**, no esto.
+
 Dos cosas en esta sección. La primera es una **corrección a mi favor que igual va escrita**: el
 renglón más grande de §2.4 ya no existe, la palanca se accionó y el radio está **medido**. La
 segunda es el hallazgo de §2.4.3 que quedó como métrica y nunca se cerró: lo cierro acá, con la
@@ -1291,7 +1338,8 @@ Las tres primeras son **deterministas**: fallan igual en la corrida 1 y en la 8.
 
 #### 3. Cuánto cuesta, en plata y en producto
 
-**En plata nuestra: nada, y ése es exactamente el problema.**
+**En plata nuestra: nada, y ése es exactamente el problema.** *(Aritmética de `68c0bd6`. Corregida
+para HEAD abajo — el arreglo cambió el multiplicador de 8.640 a 5.)*
 
 ```
 corridas            : */5 → 288/día → 8.640/mes                             (§2.4.1, sin cambio)
@@ -1306,17 +1354,49 @@ se trabaran **330 unidades a la vez** para gastar lo que gasta el chat de **un**
 Un gate de dinero no puede detectar esto, y por eso este renglón no se defiende con el objetivo de
 §Objetivo: se defiende con la métrica de §5.
 
+**Corregido contra HEAD `6952393` — el multiplicador dejó de ser 8.640 y pasó a ser 5.**
+`MAX_SWEEP_ATTEMPTS = 5` está en el `where` del `select`, así que pasado el tope **la fila deja de
+entrar al lote**. Ya no hay reintento recurrente:
+
+```
+por fila envenenada : 5 intentos, UNA sola vez en la vida de la fila   (era 8.640/mes)
+CPU extra por fila  : 5 × [EST] 5 ms = 25 ms = 6,9e-6 CPU-h × 0,128 =  USD 0,0000009  no recurrente
+líneas `expire.failed` : 5 por fila, una sola vez                       (eran 8.640/mes)
+censo de abandonadas: query INCONDICIONAL, corre igual con la base sana → ya está en el piso fijo,
+                      una unidad trabada NO agrega trabajo de DB después del quinto intento
+línea de log residual: +1 por corrida mientras `abandoned > 0` (el `swept` que una corrida vacía no
+                      emitiría, y el `degraded` del route en vez del `done`) = 8.640/mes /base
+```
+
+**El costo nuestro por unidad trabada cae de USD 0,0015/mes recurrentes a ~USD 1e-6 una sola vez.**
+Queda una línea de log por corrida mientras haya una unidad abandonada, y eso **es la feature**: es
+el ruido que hace que alguien mire. **Los USD 15 – 22/mes del tenant no cambian** — el arreglo no
+libera la unidad, la deja de reintentar y avisa. Sigue haciendo falta que una persona apriete
+«Liberar equipo».
+
 **En producto, que es donde sí cuesta.** Una unidad trabada es una unidad que existe, que el dueño
 tiene en la mano, y que su único canal de venta muestra como no comprable:
 
-- **Vidriera** (`(storefront)/_lib/status.ts:58-64`): badge `Reservado`, y el CTA se degrada de
-  *«Lo quiero — escribir por WhatsApp»* a *«Preguntar por WhatsApp si se libera»*. El copy dice
-  literalmente *«si la reserva se cae, avisamos»* — una promesa que esta unidad **no va a cumplir
-  nunca**, repetida a cada visitante.
-- **Panel** (`_lib/reservations/presentation.ts:60`): con la reserva vencida el countdown dice
-  **«venció, se libera en unos minutos»**. Para siempre. Es la peor mitad del hallazgo y no estaba
-  escrita en ningún lado: **la UI le dice al dueño que no haga nada**, exactamente en el caso en el
-  que lo único que arregla el problema es que él apriete «Soltar».
+- **Vidriera** (`(storefront)/_lib/status.ts`, caso `'reserved'`) — **este renglón decía otra cosa
+  hasta `7c1cc49` y el cambio baja el costo, así que se reescribe.** Decía que el copy prometía
+  *«si la reserva se cae, avisamos»* y que el CTA se degradaba a *«Preguntar por WhatsApp si se
+  libera»*. **Las dos cosas se fueron.** Hoy el detalle dice que otra persona lo reservó, que una
+  reserva a veces se cae, que **no hay lista de espera** y que si lo querés igual se lo digas al
+  vendedor **ahora**; y el CTA es *«Lo quiero igual — escribir por WhatsApp»*, el mismo verbo que
+  `available` con un «igual» adelante. La regla que dejó el commit es más ancha que el caso:
+  *ningún texto de la vidriera compromete una acción futura nuestra*. Efecto sobre este hallazgo:
+  una unidad trabada **dejó de ser una promesa incumplida repetida una vez por pageview** y pasó a
+  ser un pedido de conversación. Sigue sin poder señarse; ya no gasta la reputación del reseller en
+  su propio dominio cada vez que alguien abre la ficha.
+- **Panel** (`_lib/reservations/presentation.ts`) — **también reescrito, por R4 en `b9a8e05`.**
+  Decía **«venció, se libera en unos minutos»** mirando sólo el reloj, o sea para siempre, que era
+  la peor mitad del hallazgo: la UI le decía al dueño que no hiciera nada exactamente en el caso en
+  que lo único que arregla el problema es que él apriete el botón. Hoy hay **dos** textos y los
+  separa `SWEEP_GRACE_MINUTES = 15` (tres corridas del cron): dentro de la ventana sigue diciendo
+  que se libera solo —y es verdad—, y pasada la ventana **nombra el botón** «Liberar equipo», que
+  está en la misma fila y es reversible. No lee `sweep_attempts` y no hace falta: pasado el tiempo
+  en que el cron debió haber barrido, apretar el botón es la respuesta correcta en los dos
+  escenarios.
 - **Base** (`reservations_one_active_per_listing`, índice único parcial sobre `status='active'`):
   mientras esa fila viva, **no se puede crear otra reserva para esa unidad**. El comprador real que
   aparece no puede ser señado.
@@ -1482,11 +1562,21 @@ NO-CHAT (vidriera + panel + media + WAF + cron amortizado), por tenant/mes
                                         Base        USD 0,025 – 0,026     contra 0,50  →  19×
                                         Negocio     USD 0,026 – 0,027     contra 0,50  →  18×
 
-CHAT (sólo Negocio)
-    1.200 msgs/mes × USD 0,000144 – 0,000192        USD 0,17 – 0,23       contra 1,00  →  4,3 – 5,9×
+CHAT (sólo Negocio) — REEMPLAZADO por §2.6. El renglón viejo era la tarifa en el TECHO de la dieta:
+    [viejo] 1.200 msgs × USD 0,000144 – 0,000192    USD 0,17 – 0,23       contra 1,00  →  4,3 – 5,9×
+    esperado [CALC-STUB] 1.200 × 0,00008032         USD 0,096             contra 1,00  →   10,4×
+    techo  [ESTRUCTURAL] 1.200 × 0,000192           USD 0,230             contra 1,00  →    4,3×
+    HOY EN PRODUCCIÓN                               USD 0,00   — nada invoca `@istock/ai` (§2.6.4)
 
-TOTAL Negocio                                       USD 0,196 – 0,257     contra 1,50  →  5,8 – 7,6×
+TOTAL Negocio  esperado  0,026 + 0,096            = USD 0,122             contra 1,50  →   12,3×
+               techo     0,027 + 0,230            = USD 0,257             contra 1,50  →    5,8×
 ```
+
+**El renglón viejo no estaba mal: estaba en el techo.** `0,000192` es exactamente la cota superior
+por construcción que §2.6.3 vuelve a derivar de las dos aserciones del código. Lo que aporta la eval
+no es un techo más bajo —el techo no se movió— sino un **esperado**, que es la mitad. Por eso el
+`TOTAL Negocio` conserva `0,257` como cota y agrega `0,122` como valor esperado, en vez de
+reemplazar uno por otro.
 
 **Base cae de USD 0,088 a USD 0,025 – 0,026, y no porque se haya agregado nada barato: porque el
 radio de invalidación pasó de 61 a 2 y con él ISR Writes de 0,071 a 0,0085.** Es el 62% del
@@ -1517,42 +1607,385 @@ DELTA_POR_TENANT_MES:  Base    USD 0,025 – 0,026   (era 0,088; el radio de inv
                        Negocio USD 0,196 – 0,257   (no-chat 0,026 + chat 0,17 – 0,23)
    no-chat  0,0018+0,0013+0,0016+0,0035+0,0056+0,0085+0,00002+0,0024 = 0,0247  (+0,0003–0,0013 de cron)
    chat     1.200 msgs × USD 0,000144 – 0,000192                     = 0,17 – 0,23
+   [2026-08-28] el renglón de chat era la TARIFA EN EL TECHO. Con la eval de §2.6 el esperado es
+   0,096 y el techo sigue siendo 0,230 → Negocio esperado USD 0,122 / techo USD 0,257.
 
 SUPUESTOS: 3.000 pv/mes/tenant · 50% grilla / 50% fichas · 60 listings publicados · 4 fotos/listing
            · 25 reservas/mes/tenant, 18 terminan en venta · 40 msgs/día de chat (soft cap) · 100 tenants
 
-VECTOR_MAS_RIESGOSO: el cron — y no por lo que cuesta (USD 0,0015/mes por unidad trabada) sino por
-           lo que **no** cuesta: es el único vector del producto cuya falla total es indistinguible
-           de su éxito total desde afuera (`200 OK` con `failed: 200`), y cuyo precio lo paga
-           íntegro el tenant (USD 15 – 22/mes por unidad, ≈ el abono del plan Base) mientras nuestra
-           factura no se mueve. Un objetivo expresado en dólares nuestros no lo puede detectar.
+VECTOR_MAS_RIESGOSO: [OBSOLETO — ver §2.6.8 para el vigente] el cron — y no por lo que cuesta
+           (USD 0,0015/mes por unidad trabada) sino por lo que **no** cuesta: es el único vector del
+           producto cuya falla total es indistinguible de su éxito total desde afuera (`200 OK` con
+           `failed: 200`), y cuyo precio lo paga íntegro el tenant (USD 15 – 22/mes por unidad,
+           ≈ el abono del plan Base) mientras nuestra factura no se mueve.
+           → `b9a8e05` cerró esto: el route devuelve **500** con `stuck`/`unrecorded`/`abandoned`,
+             así que la falla ya NO se parece al éxito. **El vector más riesgoso pasó a ser el soft
+             cap del chat sin contador (§2.6.8)**, que tiene la misma forma —un techo que se cree
+             puesto y no lo está— pero esta vez la factura sí es nuestra.
 
-METRICA_A_VIGILAR: **corridas consecutivas de `cron.expire_reservations.done` con `scanned > 0`
-           y `expired + released == 0`.** Alarma en **≥ 2** (10 minutos). Dos corridas seguidas
-           donde el barrido vio trabajo y no aterrizó nada no es una carrera perdida: es
-           envenenamiento. Es la única métrica del documento que avisa **antes** de que un tenant
-           llame preguntando por qué su equipo sigue reservado — y hoy no la emite nadie, porque
-           el barrido no distingue una corrida vacía de una corrida que falló entera.
+METRICA_A_VIGILAR: [OBSOLETA — ver §5 y §2.6.8] **corridas consecutivas de
+           `cron.expire_reservations.done` con `scanned > 0` y `expired + released == 0`.**
+           Alarma en ≥ 2 (10 minutos). Cerraba con «hoy no la emite nadie».
+           → Ya la emite alguien y mejor: `stuck` y `unrecorded` de
+             `cron.expire_reservations.degraded` dicen lo mismo **en una sola corrida**, porque
+             `sweep_attempts` permite distinguir la primera falla de la segunda. La métrica vigente
+             del documento es **mensajes de chat por tenant por día**, que hoy no existe.
 ```
 
 **Este PASS no cierra el hallazgo: lo cierra R1–R4 con las aserciones A–E.** El hallazgo no rompe
 el objetivo de dinero y nunca lo iba a romper — la plata es USD 0,0015 por unidad trabada. Bloquear
 un merge por eso sería teatro. Lo que se pide es una **fila en el board con dueño**: `db-agent` la
-columna, `app-agent` la query, el status y el copy del panel, el LEAD la probe. Y queda como
+columna, `app-agent` la query, el status y el copy del panel, el LEAD la probe.
+
+> **CERRADO, y antes de que este párrafo se escribiera.** `b9a8e05` implementó R1–R4 completos y
+> `2ad4fd7` aterrizó A–E como `scripts/probes/s6-sweep-head-of-line.test.ts`, que corre **V10 de
+> `accept-s6.sh`** contra Postgres real — con cuatro mutaciones de polaridad ejecutadas por el LEAD
+> (`order by expires_at` a secas → cae A; sin techo en el `where` → cae B; `degraded = false` → cae
+> F; el `+1` que no avanza → cae A), cuatro rojos **distintos**, o sea ninguna aserción colgada de
+> otra. Es exactamente lo que §2.5.5 pidió: se **cuenta**, no se grepea. Nada que hacer.
+
+Y queda como
 **gate de la próxima slice que toque `_lib/reservations/**` o el route del cron**: si esa slice
 pasa por encima de A–E, es **FAIL de costo**, con la misma vara que S1 le dejó el coalescing a S2 y
 que §2.4.7 le dejó la palanca del radio a S6.2 — palanca que, dicho sea de paso, **se accionó y se
 midió**, que es la razón por la que este documento puede hoy afirmar 4,6% donde afirmaba 39,4%.
 
 
-## 3. Techo de LLM a 50 tenants `negocio`
+### 2.6 Auditado el 2026-08-28 (HEAD `6952393`) — `packages/ai`, y el techo que lo sostiene
+
+`packages/ai` **existe desde `d42fac9`, o sea desde después de todo lo que este documento decía
+sobre el chatbot.** Hasta hoy el renglón de chat era una tarifa multiplicada por los techos de la
+dieta; ahora hay un corpus, un runner y un número. Esta sección lo verifica, lo compara contra el
+objetivo y contesta la pregunta que el número solo no contesta.
+
+**Antes que nada, el asterisco que vale por toda la sección: B4 está abierto.** No hay credenciales
+de Gemini ni de Groq, así que la eval corre con el driver `stub` y **nadie facturó un token todavía**.
+Lo que sigue es **calculado, no facturado**: aritmética buena sobre consumo simulado. Un número
+medido contra un stub es una estimación con buena aritmética, y se marca `[CALC-STUB]` para que no
+se lea como `[MEDIDO]`. Lo que **sí** es estructural —y no depende del stub— está marcado aparte.
+
+#### 1. Verificación del precio: el hardcode coincide con el research, entrada por entrada
+
+Era el primer lugar donde esto podía estar podrido, porque una tabla de precios en el código es un
+número que envejece en silencio. Contrastado `packages/ai/src/pricing.ts` contra
+`docs/research/llm-pricing.md` `[R3]`:
+
+| modelo | `pricing.ts` (in / out por 1M) | `llm-pricing.md` | ¿coincide? |
+|---|---|---|---|
+| `gemini-2.5-flash-lite` | 0.10 / 0.40 | 0.10 / 0.40 (§13, §39, §114) | ✅ |
+| `gemini-3.1-flash-lite` | 0.25 / 1.50 | 0.25 / 1.50 (§16, §40, §115) | ✅ |
+| `gemini-3.5-flash-lite` | 0.30 / 2.50 | 0.30 / 2.50 (§16, §41, §116) | ✅ |
+| `openai/gpt-oss-20b` | 0.075 / 0.30 | 0.075 / 0.30 (§21, §152, §190) | ✅ |
+| `openai/gpt-oss-120b` | 0.15 / 0.60 | 0.15 / 0.60 (§153) | ✅ |
+
+**Cinco de cinco.** No hay discrepancia y por lo tanto no hay hallazgo acá — se deja la tabla
+escrita igual, porque la próxima vez la pregunta se contesta comparando dos columnas y no leyendo
+dos archivos. Dos propiedades del módulo que además están bien y son de costo, no de estilo:
+
+- **`priceFor()` devuelve `null` para un ID desconocido**, y `costPerThousandMessages()` propaga el
+  `null` en vez de asumir cero. *«Ausencia de medición no es cero»* está en el código, no en un
+  comentario. Un ID nuevo por env var —que es como se eligen los modelos acá (`CLAUDE.md` §3)—
+  produce «sin tarifa conocida» y no un reporte de costo falsamente barato.
+- **La tabla traduce, no elige.** No contradice la regla de que el ID va por env.
+
+#### 2. La aritmética, reproducida sin copiar el número
+
 ```
+$ pnpm --filter @istock/ai eval          # HEAD 6952393, driver stub, sin red
+```
+
+El runner imprime percentiles pero **cobra por el promedio**, así que el promedio se extrajo del
+reporte y la cuenta se rehizo a mano contra `PRICE_PER_MTOK`:
+
+```
+turnos del corpus            : 174        (87 casos × 2 formas de conversación)
+turnos que llegan al modelo  : 130        → tasa facturable 130/174 = 0,747126
+tokens IN  promedio (de los 130)  : 995   (p50 1017 · p95 1082 · max 1087 · techo 1200)
+tokens OUT promedio (de los 130)  :  20   (p50 21 · p95 35 · max 36 · techo 180)
+
+USD / 1000 mensajes FACTURADOS
+    995 tok × USD 0.10/1M × 1000  = 0,0995
+     20 tok × USD 0.40/1M × 1000  = 0,0080
+                                    ──────
+                                    0,1075      ✅ coincide con el runner
+
+USD / 1000 mensajes DE VIDRIERA (el denominador correcto: incluye los que no llegan al modelo)
+    0,1075 × 0,747126            = 0,08032      ✅ coincide con el runner
+```
+
+**Los dos números del reporte son correctos y el reparto entre ellos también.** Verifiqué la trampa
+que habría inflado el descuento: `runEval()` filtra `billed` **antes** de calcular el promedio de
+tokens (`harness.ts`), así que los 44 turnos derivados no entran al promedio como ceros. Si
+entraran, el descuento del 25,3% se aplicaría **dos veces** y el número saldría ~25% más barato de
+lo real. No pasa.
+
+**Discrepancia menor con lo que reportó `ai-agent`:** dice **USD 0,094/mes** por tenant al soft cap.
+La cuenta exacta es `1.200 × 0,08032/1000 = ` **USD 0,0964/mes**. Es 2,5% arriba, no cambia ninguna
+conclusión, y lo anoto sólo porque el objetivo de este documento es que los números se puedan
+rehacer: **0,0964 es el que se usa acá.**
+
+#### 3. El techo que NO depende del stub — y es lo mejor que tiene esta slice
+
+`avgOut = 20` lo produjo el stub, no Gemini. Es el término más débil de todo lo anterior: un modelo
+real es perfectamente capaz de contestar con 150 tokens donde el stub contestó con 20. Así que el
+número que importa no es el promedio simulado sino **la cota superior por construcción**, que sale
+de dos aserciones del código y de ninguna medición:
+
+- **IN ≤ 1200**: `assertWithinBudget()` **tira** `AI_BUDGET_EXCEEDED` si el prompt armado se pasa, y
+  `chat.ts` no tiene un solo camino al proveedor que la saltee. No se recorta en el proveedor: se
+  recorta acá o no se manda.
+- **OUT ≤ 180**: `env.maxOutputTokens` viaja en el `LlmRequest` (`chat.ts:133`) y `env.ts` lo valida
+  con `tokenCeiling(MAX_OUTPUT_TOKENS)` — **la env puede bajarlo, nunca subirlo.**
+- Y `countTokens()` es un estimador **deliberadamente conservador** (3 chars/token contra los 3,5–4,5
+  de un BPE real), con la dirección del error fijada como invariante en `tokens.test.ts`. Sobrecontar
+  es la falla segura: si nuestro contador dice 1200, el tokenizador real dice menos.
+
+```
+peor mensaje posible, con la dieta enforced y la tarifa del primario:
+    1200 tok IN  × USD 0.10/1M  = 0,000120
+     180 tok OUT × USD 0.40/1M  = 0,000072
+                                  ────────
+                                  0,000192  USD / mensaje facturado          [ESTRUCTURAL]
+```
+
+**Ningún mensaje de este chatbot puede costar más de USD 0,000192 mientras esas dos aserciones
+sigan en el código, con o sin credenciales.** Ése es el número contra el que conviene planificar, y
+es exactamente el `0,000192` que este documento ya venía usando de tarifa en §2.5.6 — o sea que el
+modelo viejo estaba **en el techo**, no equivocado. La eval no baja el techo: baja el **esperado**.
+
+```
+por tenant Negocio al soft cap (1.200 msgs/mes)
+    esperado  [CALC-STUB] : 1.200 × 0,00008032  =  USD 0,0964 /mes
+    techo   [ESTRUCTURAL] : 1.200 × 0,000192    =  USD 0,2304 /mes
+```
+
+**Con el fallback la cuenta baja 25%** (`openai/gpt-oss-20b`, 0.075/0.30): USD 0,0602 esperado,
+USD 0,144 de techo. El fallback es más barato que el primario, que es la dirección correcta para
+un fallback y no siempre pasa.
+
+#### 4. El supuesto que decide todo: **cuántos mensajes tiene un tenant Negocio por mes**
+
+`0,0803/1000` no se compara contra nada hasta acá. El multiplicador es el soft cap, y el soft cap
+merece una auditoría propia porque **es lo único que separa este renglón de ser ilimitado**.
+
+**De dónde sale el 40/día:** de `docs/CHATBOT.md` §74 y de
+`SOFT_CAP_MESSAGES_PER_TENANT_PER_DAY = 40` en `packages/ai/src/entitlement.ts`. **No encontré
+ninguna medición atrás del 40.** No hay tenant real, no hay tráfico de chat, no hay una nota que
+diga de dónde salió. Es un `[EST]` razonable —60 listings, 3.000 pv/mes, un chat por cada ~2,5
+pageviews sería absurdamente alto— pero es un `[EST]`, y este documento lo venía usando como si
+fuera un dato. Queda marcado como lo que es.
+
+**¿Está implementado?** **No. Y ésta es la conclusión de la sección.**
+
+| pieza | estado en HEAD `6952393` | evidencia |
+|---|---|---|
+| la constante `40` | ✅ existe | `entitlement.ts:29` |
+| la **decisión** `softCapReached(count)` | ✅ existe, pura y testeada | `entitlement.ts:88`, `entitlement.test.ts` |
+| el **gate** en el orquestador | ✅ existe | `chat.ts:178` — paso 2 de 8, antes de armar el prompt |
+| el **contador** que produce `count` | ❌ **NO EXISTE** | `messagesToday` es un **parámetro de entrada** de `ChatInput` (`chat.ts:72`). Sólo lo escriben los tests |
+| la **tabla** donde vivirían los mensajes de hoy | ❌ **NO EXISTE** | `grep -rn 'chat_message\|chat_usage\|messages_today' packages/db` → **0 resultados** |
+| la **ruta** `/api/chat` | ❌ **NO EXISTE** | `find apps/web/app -path '*chat*'` → **0 resultados** |
+| **algún consumidor** de `@istock/ai` | ❌ **NINGUNO** | `grep -rn '@istock/ai' apps packages` → sólo self-referencias del propio paquete |
+| la regla de WAF `chatbot-rl` | 🟡 `status: "planned"`, `lands_with: "FASE 5"` | `config/firewall-rules.json`; `guard-firewall.sh` PASS |
+
+**El paquete no está cableado a nada.** Eso tiene dos lecturas y las dos son verdad:
+
+1. **El costo de chat en producción hoy es exactamente USD 0,00**, porque no hay forma de invocarlo.
+   El renglón de chat de §2.5.6 es **prospectivo**, no corriente. Bien marcado, no es deuda.
+2. **El soft cap es una decisión sin contador.** `softCapReached()` es una función pura que lee un
+   número que hoy nadie produce. El día que aterrice `/api/chat`, si `messagesToday` llega como `0`
+   fijo —que es el default más fácil de escribir y el que ya usan los tests— **el cap no existe y
+   nada falla**. No hay tipo, ni test, ni gate que distinga «el contador dice 0» de «no hay
+   contador». Es el mismo patrón que este documento ya castigó dos veces: el gate vacuamente verde.
+
+**Y el contador no es trivial de escribir, que es la razón por la que hay que decirlo ahora.**
+Necesita estado por tenant y por día, escrito en el camino de **la vidriera**, que es anónima. Pero
+`CLAUDE.md` §2 prohíbe *«rate limiting con contador en Postgres sobre la vidriera»*, y el propio
+`entitlement.ts` dice que el contador *«va en ruta autenticada, nunca en la vidriera»* — lo cual,
+para un endpoint que por definición llama un visitante anónimo, **no describe ninguna ruta que
+exista**. La tensión es real y no la resuelvo yo: es una decisión de arquitectura con dueño
+(`LEAD` / ADR), y las opciones obvias (una fila por tenant/día con `on conflict do update`, que es
+**una** escritura por mensaje de chat y no por pageview; o un contador fuera de Postgres) tienen
+precios distintos que hay que poner por escrito antes de elegir. **Lo que no es una opción es que
+`/api/chat` aterrice sin contador**, y eso está en §6 como fallo automático.
+
+#### 5. Cuánto del presupuesto se come el chat, y a partir de qué volumen se lo come entero
+
+Objetivo: **Negocio ≤ USD 1,50**, con la forma que §Objetivo ya fijó — **0,50 para todo lo que no
+es chat, 1,00 para el chat**. No-chat medido: **USD 0,026 – 0,027** (§2.5.6).
+
+```
+consumo del presupuesto de chat (USD 1,00), por volumen, con el esperado [CALC-STUB] 0,00008032/msg
+   40 msgs/día  (soft cap) → 1.200/mes  →  USD 0,096   →   9,6% del presupuesto de chat
+  100 msgs/día             → 3.000/mes  →  USD 0,241   →    24%
+  400 msgs/día             → 12.000/mes →  USD 0,964   →    96%   ← el escenario que se preguntó
+  415 msgs/día             → 12.450/mes →  USD 1,000   →   100%   ← se lo come ENTERO
+  612 msgs/día             → 18.352/mes →  USD 1,474   →   se come el 1,50 completo (0,026 no-chat)
+
+el mismo cuadro con el TECHO estructural 0,000192/msg — el que hay que usar para planificar:
+  174 msgs/día             → 5.208/mes  →  USD 1,000   →   100% del presupuesto de chat
+  256 msgs/día             → 7.672/mes  →  USD 1,473   →   se come el 1,50 completo
+```
+
+**Respuestas concretas a las tres preguntas:**
+
+- **Al soft cap, el chat se come el 9,6% de su presupuesto** (`[CALC-STUB]`) o el **23%** en el
+  techo estructural. Sobre el objetivo total de 1,50 es el **6,4%** / **15%**.
+- **A 400 msgs/día** —10× el cap— el chat cuesta **USD 0,96/mes** y el tenant Negocio total queda en
+  **USD 0,99**, todavía bajo 1,50. **Con tokens en el techo serían USD 2,30 y sería FAIL.** O sea:
+  a 10× el cap el veredicto depende enteramente de un promedio que hoy produce un stub. Es el punto
+  exacto donde B4 deja de ser una nota al pie.
+- **El chat se come el presupuesto entero entre 174 y 415 msgs/tenant/día**, según dónde caiga el
+  OUT real. **Ese rango es 4,4× a 10,4× el soft cap** — o sea que el cap, *si existiera el contador*,
+  tiene entre 4 y 10× de margen. No es holgado. Es suficiente y no más.
+
+#### 6. La pregunta que nadie hizo: ¿hay un volumen realista al que Negocio pierda plata?
+
+Se puede contestar, y con número. Precio de lista **USD 35/mes**; neto de la comisión de Mercado
+Pago (~USD 1,03/pagador/mes `[UNVERIFIED]`, B3) ≈ **USD 33,97**.
+
+```
+punto de equilibrio del chat contra el precio del plan
+   esperado [CALC-STUB] : 35 / 0,00008032  = 435.757 msgs/mes = 14.525 msgs/día
+   techo [ESTRUCTURAL]  : 35 / 0,000192    = 182.292 msgs/mes =  6.076 msgs/día
+```
+
+**Por demanda orgánica, no.** 14.525 mensajes por día en la vidriera de un reseller con 60 equipos
+son diez mensajes por minuto, las 24 horas, todos los días del mes. Ese tenant no existe; y si
+existiera, el problema sería feliz. **Con demanda real el plan Negocio no pierde plata a ningún
+volumen**, y la pregunta de costo del chat está resuelta.
+
+**Por abuso, sí, y el número es incómodo.** El único techo que va a existir el día que `/api/chat`
+aterrice —porque el soft cap no tiene contador (§2.6.4)— es la regla `chatbot-rl`:
+**12 requests / 60 s, por IP**. Y `firewall-rules.json` `$per_region` dice la parte que lo empeora:
+**los contadores del WAF son por región**, así que el límite efectivo es N × el límite.
+
+```
+una sola IP, una sola región, sostenida dentro de lo que la regla PERMITE
+   12/min × 1.440 min = 17.280 msgs/día × 30 = 518.400 msgs/mes
+
+   esperado, con la tasa de derivación del corpus (0,00008032) : USD  41,64 /mes
+   esperado, si todos llegan al modelo       (0,0001075)       : USD  55,73 /mes
+   techo estructural                         (0,000192)        : USD  99,53 /mes
+```
+
+> **Las tres cifras superan los USD 35 que cobra el plan.** Un solo cliente abusivo —o un solo
+> `for` loop— dentro del techo que la regla de WAF autoriza convierte al tenant Negocio en pérdida,
+> entre **1,2× y 2,9×** el precio de lista. Y por región se multiplica.
+
+**Esto no es un fallo de la regla de WAF: es la prueba de que la regla de WAF no es el techo de la
+factura y nunca lo fue.** 12/min/IP existe para que un visitante no dispare un bucle; el que acota
+el **gasto del tenant** es el soft cap, que es por tenant y por día, y que hoy es una función pura
+sin contador. Entre el punto de equilibrio (14.525/día) y lo que el WAF deja pasar (17.280/día/IP)
+**no hay nada más que esa función.**
+
+**Y hay una asimetría que agrava:** el que paga no es el que abusa. El abusivo es un visitante
+anónimo de la vidriera de un reseller; el que aparece en la factura somos nosotros, y el que se
+queda sin chat cuando reaccionemos es el reseller. No hay ningún mecanismo por el cual el costo
+vuelva al que lo generó, y no debería haberlo — cobrarle el overage al reseller por un ataque que
+sufrió es peor producto que comerse los USD 41.
+
+#### 7. Lo que `packages/ai` hace bien y baja el costo, para que no se optimice al revés
+
+No todo es hallazgo. Cuatro decisiones del paquete que son de costo y están del lado correcto:
+
+- **El 25,3% de los turnos no llega al proveedor y cuesta cero.** El paso 3 de `chat.ts` deriva por
+  intención (reservar, pagar, iCloud, identificador, envío, canje) **antes** de armar el prompt. Un
+  jailbreak que nunca llega al modelo cuesta cero, y además hace los evals deterministas.
+- **Un solo round de tools** (`MAX_TOOL_ROUNDS = 1`). Un loop abierto es un loop de costo: cada
+  vuelta paga el prompt entero de nuevo, y R3 §1 ya dijo que el context caching no aplica a esta
+  dieta. Ésta es la decisión que evita el modo de falla clásico del costo de agentes.
+- **`assertChatEntitled` falla cerrado**, y el paquete dejó de tener opinión sobre planes: exige un
+  veredicto de quien tiene la fila del tenant. La versión anterior (`chatEnabled(plan)`) devolvía
+  `true` para `trial` **incondicionalmente y sin recibir la fecha**, o sea que un trial vencido hacía
+  dos meses conservaba la feature más cara del producto. Eso era un agujero de costo con forma de
+  bug de tipos, y está cerrado.
+- **La eval corre sin red y sin credenciales**, así que es un gate que puede correr en CI **hoy**,
+  con B4 abierto. Un gate de costo que necesita credenciales de producción es un gate que no corre.
+
+#### 8. Veredicto de la slice `packages/ai`
+
+```
+COST_VERDICT: PASS  (condicionado: el PASS es del paquete, no de la feature)
+
+DELTA_POR_TENANT_MES:  hoy en producción            USD 0,00       (no hay consumidor: nada lo invoca)
+                       Negocio al soft cap, esperado USD 0,0964    [CALC-STUB]  1.200 × 0,00008032
+                       Negocio al soft cap, techo    USD 0,2304    [ESTRUCTURAL] 1.200 × 0,000192
+   0,00008032 /msg = (995 tok × 0,10/1M + 20 tok × 0,40/1M) × (130/174)
+
+SUPUESTOS: 40 msgs/tenant/día [EST, SIN MEDICIÓN — es el supuesto más flojo de la sección] · 30 días
+           · gemini-2.5-flash-lite primario · tasa de derivación 130/174 medida sobre 174 casos de
+           corpus, no sobre tráfico real · driver `stub`: OUT=20 lo produjo el stub, no un modelo
+
+VECTOR_MAS_RIESGOSO: el soft cap de 40 msgs/tenant/día — **porque es una decisión sin contador.**
+           La constante existe, la función pura existe y está testeada, el gate está en el paso 2 de
+           `chat.ts`, y el número que lee **no lo produce nadie**: no hay tabla, no hay ruta, no hay
+           consumidor. Es el único vector del producto con costo marginal por uso, y lo único que lo
+           acota el día que aterrice `/api/chat` va a ser una regla de WAF de 12/min/IP que permite
+           17.280 msgs/día — arriba del punto de equilibrio del plan (14.525/día). El riesgo no es
+           que el chat sea caro: es que su único techo real es una función que hoy recibe `0` de
+           parte de los tests y de nadie más.
+
+METRICA_A_VIGILAR: **mensajes de chat por tenant por día.** Alarma en **> 40** (el cap) y FAIL de
+           costo en **> 174** (donde el chat se come su presupuesto entero en el peor caso de
+           tokens). Es la única métrica que se mueve **antes** que la factura, y hoy **no existe** —
+           construirla ES la recomendación, porque la métrica y el contador del cap son el mismo
+           objeto. Segunda, para el día que haya credenciales: **tokens OUT reales p95 por turno**,
+           alarma en **> 60** (3× el promedio del stub), que es lo que convierte este `[CALC-STUB]`
+           en `[MEDIDO]`.
+```
+
+**Recomendación, con dueño, sin implementarla** (`packages/ai` es de `ai-agent`, `apps/web/app/api`
+de `app-agent`, `packages/db` de `db-agent`, los gates del LEAD):
+
+| # | qué | dueño | por qué es de costo |
+|---|---|---|---|
+| **C1** | `/api/chat` **no aterriza sin contador de mensajes por tenant/día**. La decisión de dónde vive (fila `chat_usage(tenant_id, day)` con `on conflict do update` — **una** escritura por mensaje de chat, **no** por pageview — o contador fuera de Postgres) necesita ADR: `CLAUDE.md` §2 prohíbe el contador en Postgres **sobre la vidriera** y el chat vive ahí | **LEAD** (ADR) + `db-agent` | es el único techo del único vector con costo por uso |
+| **C2** | `messagesToday` no puede ser un `number` que el llamador inventa. Que el tipo obligue a que el número **venga de algún lado** (un `TenantUsage` que sólo se pueda construir leyendo) | `ai-agent` | hoy `0` fijo compila, pasa los tests y apaga el cap sin que nada falle |
+| **C3** | pasar `chatbot-rl` de `planned` a `active` **en el mismo commit** que la ruta, y bajar `12/min` si C1 se demora: sin contador, esa regla es el techo de la factura y hoy autoriza 17.280 msgs/día/IP/región | **LEAD** | §2.6.6: una IP dentro de la regla cuesta USD 41 – 99 contra un plan de USD 35 |
+| **C4** | instrumentar `usage` real del proveedor (`cached` / `thought` incluidos) el día que B4 cierre, y **no** confiar en `countTokens()` para facturar — sirve para el techo, no para la contabilidad | `ai-agent` | convierte todo `[CALC-STUB]` de acá en `[MEDIDO]` |
+| **C5** | anotar de dónde sale el **40**. Si es un `[EST]`, que lo diga `docs/CHATBOT.md` | `docs-keeper` | este documento lo venía usando como dato |
+
+**Comandos re-ejecutables de esta sección:**
+```bash
+pnpm --filter @istock/ai eval                    # 174/174 · 130 facturables · IN p95 1082 · OUT p95 35
+grep -rn '@istock/ai' apps packages --include='*.ts' --include='*.tsx' | grep -v node_modules
+find apps/web/app -path '*chat*' -not -path '*/node_modules/*'
+grep -rn 'chat_message\|chat_usage\|messages_today' packages/db
+bash scripts/guard-firewall.sh                   # chatbot-rl sigue `planned`, censo de rutas PASS
+```
+Los cuatro del medio tienen que devolver **vacío** (salvo self-referencias del propio paquete)
+mientras el chat no esté cableado. El día que alguno deje de estar vacío, C1–C3 son bloqueantes.
+
+
+## 3. Techo de LLM a 50 tenants `negocio`
+
+**Actualizado el 2026-08-28 con la eval de §2.6.** El bloque original calculaba con la dieta **en el
+techo** (1.200 in / 180 out para todos los turnos); eso sigue siendo la cota correcta y se conserva,
+pero ahora hay un esperado al lado.
+
+```
+[TECHO ESTRUCTURAL — la dieta llena, todos los turnos facturados]
 50 tenants × 40 msgs/día × 30 días = 60.000 msgs/mes
 60.000 × 1.200 tokens in  =  72,0M tokens in
 60.000 ×   180 tokens out =  10,8M tokens out
 ```
 **USD 8.64 – 11.52/mes** con `gemini-2.5-flash-lite` (R3). Es **decenas de USD, no cientos**: el
 techo de FASE 0 se cumple.
+
+```
+[ESPERADO — CALC-STUB, con el consumo del corpus de 174 casos (§2.6.2)]
+60.000 msgs de vidriera × USD 0,00008032  =  USD 4,82 /mes  con los 50 tenants EN el soft cap
+   de esos, 44.828 llegan al modelo (74,7%) : 44,6M tokens in · 0,90M tokens out
+   los otros 15.172 se derivan antes         : USD 0,00
+```
+**USD 4,82/mes para los 50 tenants juntos** — o sea **USD 0,096 por tenant**, 2,4× abajo del techo.
+Y el número que hay que retener no es ninguno de los dos sino la distancia entre ellos: **la
+diferencia entera es el promedio de tokens OUT, que hoy lo produce un stub.** Con B4 abierto, el
+número prudente para presupuestar sigue siendo el techo.
+
+**Hoy el gasto real es USD 0,00**: no hay credenciales (B4) y, más definitivo todavía, no hay
+consumidor — nada importa `@istock/ai` (§2.6.4).
 
 Por tenant Negocio (USD 35 de precio de lista): **0.5–0.7% del ingreso** al soft cap lleno.
 
@@ -1597,8 +2030,8 @@ ser gratis. Deployar en pico de tráfico es un evento de costo.
 |---|---|---|
 | DB | **% de hits de vidriera que llegan a Postgres** | **> 5%** — **hoy en 4,6% `[EST]` (§2.5.1)**, después de que la palanca de §2.4.5 se accionara en `f504d69`. Sigue sin ser la métrica que avisa: es la consecuencia |
 | **DB (la que avisa antes)** | **radio de purga de una mutación de unidad = páginas que registran el tag emitido** | **> 2** (grilla + ficha propia). **Hoy vale 2 y está MEDIDO**, no leído: V9 de `accept-s6.sh` lo cuenta desde `MEDIDO s6 radio` con `esperado=2`. Es la única alarma de este documento que ya tiene gate ejecutable |
-| **cron (la que avisa antes)** | **corridas CONSECUTIVAS de `cron.expire_reservations.done` con `scanned > 0` y `expired + released == 0`** | **≥ 2** (10 minutos). Dos corridas seguidas que vieron trabajo y no aterrizaron nada no son una carrera perdida: son envenenamiento (§2.5). **Hoy no la emite nadie** — el barrido devuelve `200 OK` con `failed: 200` y desde afuera es idéntico a una corrida perfecta |
-| cron | `failed` de `cron.expire_reservations.done` | **> 0 sostenido sobre la MISMA fila** — una fila que falla siempre conserva su lugar en el `order by expires_at asc` y se reintenta 8.640 veces/mes; la unidad queda `reserved` para siempre, la vidriera promete «si la reserva se cae, avisamos» y el panel dice «se libera en unos minutos». Cuesta USD 0,0015/mes nuestros y USD 15 – 22/mes del tenant (§2.5.3) |
+| **cron (la que avisa antes)** | **`stuck` y `unrecorded` de `cron.expire_reservations.degraded`** | **> 0, cualquiera de los dos.** **Corregida contra `b9a8e05`: la versión anterior de esta fila pedía contar corridas consecutivas de `…done` con `scanned > 0` y `expired + released == 0`, y cerraba con «hoy no la emite nadie».** Ya la emite alguien, y mejor que lo que yo había pedido: el predicado cross-run que yo modelaba con dos corridas ahora es **una sola** lectura, porque `stuck` significa «falló una fila que ya venía fallando» (`sweep_attempts >= 1` **antes** de este intento) y eso sólo se puede saber con la columna que antes no existía. `unrecorded` es el caso peor y va en rojo desde la primera: falló la fila **y** falló el `+1`, o sea que el head-of-line vuelve entero y sin síntoma. Los dos son distintos de `failed` a propósito — el dueño cancelando desde el mostrador la misma reserva que el barrido está venciendo produce un `40P01` legítimo, y un cron que se pinta de rojo por eso enseña a ignorar el rojo |
+| **cron** | **`abandoned` de `cron.expire_reservations.degraded`** | **> 0** — **esta fila reemplaza a la anterior, que quedó obsoleta con `b9a8e05`.** Decía «`failed > 0` sostenido sobre la MISMA fila», porque una fila rota conservaba su lugar en el `order by expires_at asc` y se reintentaba 8.640 veces/mes mientras la vidriera prometía «si la reserva se cae, avisamos» y el panel decía «se libera en unos minutos». **Nada de eso sigue siendo cierto**: el orden arranca por `sweep_attempts`, el techo son 5 intentos, el copy de las dos pantallas se reescribió (§2.5.3) y el route devuelve **500**. Lo que hay que mirar ahora no es el reintento —ya no existe— sino el **residuo**: cada unidad contada en `abandoned` está trabada en `reserved` hasta que una persona apriete «Liberar equipo». Cuesta ~USD 0 nuestros y **USD 15 – 22/mes del tenant**, y a diferencia de `stuck`/`unrecorded` **sigue en rojo en las corridas siguientes**, que es lo que se quiere: no es un incidente que pasó, es un estado en el que está la base |
 | **cron** | duración y Active CPU de una corrida vacía | **> 2 s de wall time** — hoy es horquilla `[EST]` de 4,8× y es el único término del piso de S6 que no está medido (§2.4.1) |
 | cache | `x-vercel-cache: HIT` ratio en vidriera | cualquier caída sostenida |
 | cache | `set-cookie` en respuesta de `(storefront)` | **cualquiera** — apaga el CDN entero |
@@ -1607,7 +2040,9 @@ ser gratis. Deployar en pico de tráfico es un evento de costo.
 | imágenes | bytes de la variante que el browser **elige** (no la que el gate mide) | que `sizes` falte y la grilla baje `detail` (128.570 B) donde el modelo dice `card` (50.692 B) — §2.2.7 |
 | imágenes | `MEDIA_DRIVER` y `NEXT_PUBLIC_MEDIA_BASE_URL` del deploy de producción | **cualquier valor que no sea `r2` / `https://img.maat.work`** — es la única forma de que un byte de foto salga por Vercel (§2.2.2) |
 | storage | GB por tenant | huérfanos de listings borrados — hoy **crecen sin techo**: `collectOrphanObjects` existe y **no tiene caller** |
-| LLM | **tokens reales/turno por tenant** | > 1200 in o > 180 out, o modelo frontier en el log |
+| **LLM (la que avisa antes)** | **mensajes de chat por tenant por día** | **> 40** (el soft cap) y **FAIL de costo > 174** (donde el chat se come su presupuesto de 1,00 entero en el peor caso de tokens, §2.6.5). **Hoy NO EXISTE**, y no por olvido: es el mismo objeto que el contador del soft cap, que tampoco existe (§2.6.4). Construir la métrica **es** implementar el cap |
+| LLM | **tokens reales/turno por tenant** | > 1200 in o > 180 out, o modelo frontier en el log. El techo está **enforced** (`assertWithinBudget` tira; `env.ts` deja bajar `LLM_MAX_OUTPUT_TOKENS`, nunca subirlo), así que esta métrica no vigila el techo: vigila que el `usage` real del proveedor coincida con nuestro estimador. Alarma práctica el día que cierre B4: **OUT p95 > 60** (3× el promedio del stub) |
+| **LLM** | **`null` de `priceFor(modelId)` en el reporte de costo** | **cualquiera** — significa que `LLM_PRIMARY_MODEL` cambió a un ID que `pricing.ts` no conoce y el costo dejó de estar contabilizado. El módulo hace lo correcto (devuelve `null`, no cero), pero un `null` que nadie mira es un cero con otro nombre |
 | proxy | CPU-ms del proxy por pageview | **> 2 ms**, o cualquier llamada de red |
 | edge | Edge Requests/mes | acercarse a 10M (≈ 80 tenants) |
 | **WAF** | **allowed requests ÷ pageviews de vidriera** | **> 1,5** — una regla se corrió al camino de render o a `/_media`. Valor de diseño: **0,05**, y desde S4 es `[MEDIDO]` que el beacon dispara en el click (`filas_al_cargar=0`), no en el render. Hasta 1,05 es **reserva presupuestada**, no diseño aceptado: sostenido cerca de 1 se investiga. Es un ratio y no un monto porque el monto avisaría tarde: sigue siendo despreciable durante todo el tiempo en que el error es barato de arreglar (§2.3) |
@@ -1638,20 +2073,53 @@ vector de DB. **Arreglado en `f504d69` y medido: radio 2** (§2.5.1). La regla q
 automático permanente: **la slice que vuelva a subir el radio arriba de 2 es FAIL de costo**, y no
 se discute leyendo el diff — se mide con V9 de `accept-s6.sh`, que lo **cuenta**. ·
 **agregado el 2026-08-28: un job periódico que devuelva `200 OK` en una corrida donde vio trabajo y
-no aterrizó nada** — hoy el barrido de reservas lo hace (`{ ok: true, scanned: 200, failed: 200 }`)
-y desde el dashboard de Vercel Cron es indistinguible de una corrida perfecta. La falla total de un
-job no puede parecerse a su éxito total: **el precio no lo pagamos nosotros (USD 0,0015/mes por
-unidad trabada), lo paga el tenant (USD 15 – 22/mes, ≈ el abono del plan Base) y termina en churn**
-(§2.5.3). Recomendación con dueño y aserciones contables en §2.5.4 y §2.5.5. ·
+no aterrizó nada** — el barrido de reservas lo hacía (`{ ok: true, scanned: 200, failed: 200 }`), y
+desde el dashboard de Vercel Cron era indistinguible de una corrida perfecta. **Ya no: `b9a8e05`
+devuelve 500 con `stuck`/`unrecorded`/`abandoned`.** La regla queda como fallo automático
+permanente para el próximo job que se escriba. La falla total de un
+job no puede parecerse a su éxito total: **el precio no lo pagamos nosotros, lo paga el tenant
+(USD 15 – 22/mes por unidad trabada, ≈ el abono del plan Base) y termina en churn** (§2.5.3). ·
 **y su hermano: una fila que falla y conserva su lugar en la cola de un barrido ordenado** — sin
 contador de intentos, el `order by` la pone primera para siempre y el trabajo del resto de los
 tenants queda detrás de ella.
+*(Los dos están **cerrados en el código** desde `b9a8e05` —`sweep_attempts`, techo de 5, censo de
+abandonadas y `500`— y **gateados** por V10 de `accept-s6.sh` contra Postgres real. Quedan como
+fallo automático permanente: la slice que los reabra es FAIL de costo. El «USD 0,0015/mes» que esta
+línea decía era del modelo viejo de 8.640 reintentos y está corregido en §2.5.3.)* ·
+
+**Agregados el 2026-08-28 con `packages/ai` (§2.6):**
+**`/api/chat` desplegado sin contador de mensajes por tenant/día** — el soft cap de 40 es hoy una
+función pura (`softCapReached`) que lee un `messagesToday` que **nadie produce**; sin contador el
+único techo es la regla de WAF de 12/min/IP, que permite 17.280 msgs/día/IP/región y cuesta
+**USD 41 – 99/mes contra un plan de USD 35** (§2.6.6). Un `messagesToday: 0` fijo compila, pasa los
+tests y apaga el cap sin que nada falle: por eso es fallo automático y no una recomendación ·
+**`chatbot-rl` en `planned` con la ruta `/api/chat` ya aterrizada** — la regla y el handler van en
+el mismo commit, o hay una ventana sin techo de ninguna clase ·
+**un ID de modelo en `LLM_PRIMARY_MODEL` que `pricing.ts` no conoce**, desplegado a producción: el
+reporte de costo devuelve `null` (bien) y nadie lo mira (mal), o sea que el vector más caro del
+producto deja de estar contabilizado sin que se caiga nada ·
+**aflojar la dieta**: subir `MAX_INPUT_TOKENS`/`MAX_OUTPUT_TOKENS` de `budget.ts`, o sacar el
+`assertWithinBudget` del camino al proveedor. Son las **dos únicas** aserciones que sostienen la
+cota superior de USD 0,000192 por mensaje, y esa cota es lo único de §2.6 que no depende del stub ·
+**más de un round de tools** (`MAX_TOOL_ROUNDS > 1`): cada vuelta paga el prompt entero de nuevo y
+el context caching no aplica a esta dieta (R3 §1)
 
 **BotID Deep Analysis (USD 1/1000 llamadas): NO activar preventivamente.** A 10.000 conversaciones/mes
 son USD 10/mes — **el 53% del precio de lista de un plan Base**. (Precio, no margen: el margen
 unitario del Base no está calculado en ningún artefacto — ver §7.)
 
 ## 7. `[UNVERIFIED]` — lo que este documento NO sabe
+- **B4: el costo del chatbot está CALCULADO, NO FACTURADO.** No hay credenciales de Gemini ni de
+  Groq, así que `pnpm --filter @istock/ai eval` corre con el driver `stub` y **nadie facturó un
+  token todavía**. Los USD 0,0803/1000 mensajes de §2.6 son aritmética correcta sobre consumo
+  simulado: el `avgIn = 995` sale del armado real del prompt y es sólido, pero el **`avgOut = 20`
+  lo produjo el stub** y es el término que sostiene toda la diferencia entre el esperado (0,096) y
+  el techo (0,230). Hasta que B4 cierre, **el número prudente para presupuestar es el techo.**
+  Lo que **no** depende del stub, y por eso se puede afirmar hoy: la cota de USD 0,000192 por
+  mensaje, que sale de `assertWithinBudget` (IN ≤ 1200, tira) y de `env.ts` (OUT ≤ 180, la env sólo
+  puede bajarlo). Cierra con C4 de §2.6.8: instrumentar el `usage` real del proveedor.
+- **El soft cap de 40 msgs/tenant/día no tiene medición atrás.** Es el multiplicador de todo el
+  renglón de chat y es un `[EST]` sin fuente (§2.6.4). Se cierra con el primer tenant Negocio real.
 - **Precio de Supabase Pro.** `supabase.com/pricing` renderiza los precios por JS; el HTML servido no
   los trae (verificado hoy: HTTP 200, 380.979 bytes, sin el monto). **USD 25 es memoria, no fuente.**
   Es la línea más grande del piso fijo. Se confirma en 1 minuto al crear el proyecto → **B2**.
@@ -1831,6 +2299,34 @@ no de código, y se cierra con el gate: ninguna slice de producto lo va a cerrar
 **Y el marco, para que nadie optimice lo que no importa:** el delta entero de S6 es USD 0.015. La
 comisión de Mercado Pago es ~USD 1.03 por pagador/mes `[UNVERIFIED]` — **69× S6 completo**.
 
+**`packages/ai` auditado (2026-08-28, HEAD `6952393`): PASS condicionado, delta USD 0,00 hoy /
+USD 0,096 – 0,230 por tenant Negocio al soft cap** — ver §2.6. Cuatro resultados:
+
+1. **El precio hardcodeado coincide con el research en las cinco entradas**, y la aritmética del
+   runner se rehizo a mano y da: `(995 × 0,10/1M + 20 × 0,40/1M) × 1000 = 0,1075` facturados,
+   `× 130/174 = 0,08032` de vidriera. El descuento por derivación **no se aplica dos veces** (el
+   promedio de tokens se calcula sobre los 130 facturables, no sobre los 174). Sin hallazgo acá.
+2. **El costo es calculado, no facturado** (B4): el `avgOut = 20` lo produjo el driver `stub`. Lo
+   que **sí** es estructural es la cota de **USD 0,000192 por mensaje**, que sale de dos aserciones
+   del código y no de ninguna medición. Presupuestar por el techo hasta que B4 cierre.
+3. **El hallazgo es el soft cap sin contador.** `messagesToday` es un parámetro que hoy sólo
+   escriben los tests: no hay tabla, no hay ruta `/api/chat` y **nada importa `@istock/ai`**. El
+   día que se cablee, un `0` fijo apaga el cap sin que nada falle. C1–C5 en §2.6.8, con dueño.
+4. **Sí hay un volumen al que Negocio pierde plata, y no es orgánico.** Break-even a 14.525
+   msgs/día; la regla `chatbot-rl` permite 17.280/día por IP y por región. Una sola IP dentro de lo
+   permitido cuesta **USD 41,64 – 99,53/mes** contra un plan de **USD 35**. Ningún comprador real
+   llega ahí; un `for` loop llega en una tarde.
+
+**El hallazgo del barrido (§2.5) está CERRADO, y la lección es de proceso, no de costo.** `b9a8e05`
+implementó R1–R4 completos y `2ad4fd7` agregó las aserciones A–E como
+`scripts/probes/s6-sweep-head-of-line.test.ts`, gateadas por V10 de `accept-s6.sh` contra Postgres
+real. **Lo incómodo es el timing:** §2.5 se commiteó en `4f95937` afirmando que el hallazgo «sigue
+vivo», y para entonces el arreglo ya estaba en `main` — el documento auditó `68c0bd6` y se guardó
+contra `4f95937` sin volver a mirar. El costo de eso fue una recomendación pedida dos veces y una
+métrica de §5 que decía «hoy no la emite nadie» sobre algo que ya se emitía. **Regla que adopto:
+la línea de HEAD del encabezado se re-verifica contra `git log` en el momento del commit, no en el
+momento de la medición.**
+
 **Re-auditoría del 2026-08-28 contra HEAD `68c0bd6`: PASS. Base USD 0.025 – 0.026 · Negocio
 USD 0.196 – 0.257** — ver §2.5. Dos resultados:
 
@@ -1841,16 +2337,24 @@ USD 0.196 – 0.257** — ver §2.5. Dos resultados:
    del marginal Base**. El punto 1 de la entrada de S6, acá arriba, es historia: se deja escrito.
    De paso, una corrección de aritmética mía: §2.4.5 decía «0,071 → 0,018» y de su propia fórmula
    sale **0,0085**.
-2. **El hallazgo de §2.4.3 sigue vivo y queda cuantificado y con recomendación.** `398fff7` no tocó
-   `expire-reservations.ts` (`git log` termina en `83bc673`). Una fila que falla siempre conserva su
-   lugar en el `order by expires_at asc` —no hay columna de intentos en `reservations`— y el route
-   devuelve **`200 OK` con `failed: 200`**, así que **la falla total del barrido es indistinguible
-   de su éxito total**. En plata nuestra son **USD 0,0015/mes por unidad trabada**; para el tenant
-   son **USD 15 – 22/mes por unidad** (≈ el abono del plan Base) mientras la vidriera le promete al
-   comprador «si la reserva se cae, avisamos» y el panel le dice al dueño «se libera en unos
-   minutos», las dos cosas para siempre. **La recomendación (R1–R4, con dueño) está en §2.5.4 y las
-   aserciones contables (A–E) en §2.5.5.** No se implementa acá: `apps/web/app/(app)/**` es de
-   `app-agent` y la columna de `reservations` es de `db-agent`.
+2. ~~**El hallazgo de §2.4.3 sigue vivo y queda cuantificado y con recomendación.**~~ **CERRADO en
+   `b9a8e05`, y este punto quedó desactualizado el mismo día en que se commiteó.** Lo que decía:
+   que una fila que falla conserva su lugar en el `order by expires_at asc` —sin columna de
+   intentos— y que el route devuelve `200 OK` con `failed: 200`, así que la falla total del barrido
+   era indistinguible de su éxito total; que en plata nuestra eran USD 0,0015/mes por unidad
+   trabada; y que la vidriera le prometía al comprador «si la reserva se cae, avisamos» mientras el
+   panel le decía al dueño «se libera en unos minutos», las dos cosas para siempre.
+
+   **Estado real contra HEAD `6952393`, verificado leyendo el fuente y no el commit message:**
+   R1–R4 aterrizaron completos (`sweep_attempts` con su `GRANT`, `order by sweep_attempts asc,
+   expires_at asc`, techo de 5 con el `+1` en transacción propia, censo de abandonadas y **500**),
+   las aserciones A–E son `scripts/probes/s6-sweep-head-of-line.test.ts` y las corre **V10 de
+   `accept-s6.sh`** contra Postgres real. Las **dos** frases de copy que este punto citaba como
+   agravante ya no se dicen: la vidriera no promete aviso (`7c1cc49`) y el panel nombra el botón
+   pasados 15 minutos (`b9a8e05`). **El número nuestro muere; el del tenant sobrevive**: USD 15 – 22
+   por unidad trabada por mes siguen intactos, porque el arreglo no libera la unidad — deja de
+   reintentarla y **grita**. Aritmética corregida en §2.5.3; el vector riesgoso pasó a ser otro y
+   está en §2.6.
 3. **Lo que se agregó esta semana no suma ningún vector** (§2.5.6): `1fc0e59` saca un modo de falla
    que se pagaba por request (un throw adentro de un render cacheado cuelga el stream), `c43bfaf`
    sólo puede bajar bytes y su `reportMediaIncident` corre **dentro** del `'use cache'` —o sea por
