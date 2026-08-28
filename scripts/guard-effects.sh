@@ -43,8 +43,16 @@ cd "$(dirname "$0")/.."
 # shellcheck source=scripts/_lib.sh
 . scripts/_lib.sh
 
-FUENTE='packages/domain/src/listing-status.ts'
-DESTINO='apps/web/app'
+# ── La escotilla de fixture (`T32`, LEAD 2026-08-28) ─────────────────────────────────────────
+# Las dos rutas salen de una variable de entorno para que `scripts/guard-effects.test.sh` pueda
+# apuntar el gate a un arbol de mentira y verlo ENCENDER. Antes estaban clavadas y por eso este
+# gate no se habia visto nunca fallar: la unica forma de probarlo era romper el dominio de verdad,
+# o sea nunca. Es la misma escotilla que `DOC_TABLES_ROOT` en `guard-doc-tables.sh`, y existe por
+# el mismo motivo que ese arnes: un gate que no se vio encender no es evidencia de nada.
+#
+# No la puede usar nadie mas: en CI las variables no estan seteadas y el gate audita el arbol real.
+FUENTE="${EFFECTS_FUENTE:-packages/domain/src/listing-status.ts}"
+DESTINO="${EFFECTS_DESTINO:-apps/web/app}"
 
 # `motivo_de <efecto>` — la lista de exenciones, versionada y con el motivo al lado.
 #
