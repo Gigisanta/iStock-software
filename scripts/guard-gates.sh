@@ -302,7 +302,53 @@ sec "G4 · todo gate del repo corre en CI (o dice por escrito por que no)"
 # escribe `ci-exento: <motivo>` en sus primeras 40 lineas, con 30+ caracteres de motivo. La
 # alternativa a una exencion escrita no es "sin exencion": es la exencion invisible, que es
 # exactamente lo que estas cuatro veces fueron.
-SALIDA4=$(python3 - <<'PY4'
+#
+# ── Y la SEXTA instancia fue de este gate, LEAD 2026-08-28 ────────────────────────────────────
+# La quinta la agarro este censo el minuto en que nacio `accept-s7.sh`, que es para lo que se
+# escribio. La sexta la agarro un humano, otra vez, y era de aca: **`ci.yml` no parseaba**. Lo
+# rompio `c2aa5d2` con un `- name: polaridad de ai-lint (A010: la evidencia...)` sin comillas —
+# un escalar sin citar con `: ` adentro es una entrada de mapping para YAML— y estuvo asi dos
+# commits. GitHub no corre 42 de 43 pasos ante un yml invalido: **no corre NINGUNO**, y ni
+# siquiera reporta rojo en los checks del PR, porque no hay workflow que reportar. O sea que es
+# peor que las cuatro anteriores, donde al menos el resto del workflow corria.
+#
+# Y este gate decia PASS. Miraba el archivo como TEXTO, asi que la pregunta que contestaba era
+# "¿esta escrito el nombre?" y no "¿se va a ejecutar?". Es exactamente el defecto que este repo
+# persigue —verde por el motivo equivocado— en el gate que lo persigue.
+#
+# De ahi las dos mitades de abajo, y la segunda tapa un hueco que hoy esta LATENTE y no vivo (lo
+# medi: hoy ningun gate depende de el). Un `grep` de texto tambien cuenta como "corre en CI" un
+# nombre que aparece **en un comentario**, y este mismo archivo tiene comentarios que nombran a
+# `guard-routes`, `guard-grants`, `accept-fase2` y `accept-fase3` justo para contar que se
+# habian quedado afuera. Borrar el `run:` y dejar la historia escrita arriba habria dejado el
+# censo verde. El censo mira ahora **solo los `run:` de los steps parseados**.
+# `node` + `js-yaml` (devDependency EXPLICITA desde hoy: era transitiva de eslint, o sea que este
+# gate dependia de que otro paquete no cambiara sus deps). Si el parser no esta, esto es FAIL y no
+# skip: "ausencia de medicion es FAIL, nunca PASS".
+CI_YML=".github/workflows/ci.yml"
+[ -n "${GATES_ROOT:-}" ] && CI_YML="$GATES_ROOT/.github/workflows/ci.yml"
+CI_RUNS=$(CI_YML="$CI_YML" node -e '
+  const yaml = require("js-yaml"), fs = require("fs");
+  const p = process.env.CI_YML;
+  if (!fs.existsSync(p)) { console.error("no existe " + p); process.exit(2); }
+  let doc;
+  try { doc = yaml.load(fs.readFileSync(p, "utf8")); }
+  catch (e) { console.error("YAML INVALIDO en " + p + " linea " + ((e.mark && e.mark.line + 1) || "?") + ": " + (e.reason || e.message)); process.exit(3); }
+  if (!doc || !doc.jobs) { console.error(p + " parsea pero no declara `jobs`"); process.exit(4); }
+  const runs = [];
+  for (const j of Object.keys(doc.jobs)) for (const st of (doc.jobs[j].steps || [])) if (st.run) runs.push(st.run);
+  if (runs.length === 0) { console.error(p + " no tiene un solo step con `run:`"); process.exit(5); }
+  process.stdout.write(runs.join("\n"));
+' 2>&1)
+if [ $? -ne 0 ]; then
+  no "ci.yml no se puede ejecutar, asi que ningun gate corre: $CI_RUNS"
+  CI_RUNS=''
+  CENSO4_VIVO=0
+else
+  CENSO4_VIVO=1
+fi
+
+SALIDA4=$(CI_RUNS="$CI_RUNS" python3 - <<'PY4'
 import os, re, sys
 
 RAIZ = os.environ.get('GATES_ROOT', '.')
@@ -313,7 +359,11 @@ if not os.path.isfile(CI):
     print("FAIL\tno existe %s: no se puede afirmar que ningun gate corra en CI." % CI)
     print("CENSADOS\t0"); sys.exit(0)
 
-ci = open(CI, encoding='utf-8', errors='replace').read()
+# `ci` NO es el archivo: son los `run:` de los steps que el YAML parseado declara, concatenados.
+# La diferencia es la que separa "el nombre esta escrito" de "el comando se ejecuta". Ver el
+# docblock de arriba: los comentarios de `ci.yml` nombran cuatro gates justamente para contar que
+# NO corrian, asi que un censo textual los daba por corriendo.
+ci = os.environ.get('CI_RUNS', '')
 
 # Los gates del repo: `scripts/accept-*.sh` y `scripts/guard-*.sh`, mas sus arneses `*.test.sh`.
 # `_lib.sh` NO entra: es libreria, no se ejecuta (y su propio arnes `_lib.test.sh` si entra).

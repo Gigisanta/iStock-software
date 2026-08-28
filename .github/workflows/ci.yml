@@ -163,7 +163,7 @@ jobs:
       # exige el ID **y el numero de linea**: un fixture que trae la forma legal en una linea y la
       # prohibida en la de abajo prueba de una sola vez que el archivo se escaneo y que la linea
       # legal se aprobo. Un SILENT solo no distingue "la regla lo miro" de "la regla nunca lo vio".
-      - name: polaridad de ai-lint (A010: la evidencia de medicion no se forja)
+      - name: 'polaridad de ai-lint (A010: la evidencia de medicion no se forja)'
         if: always()
         run: ./scripts/ai-lint.test.sh
 
@@ -297,6 +297,19 @@ jobs:
       - name: aceptacion de S6 (reserva -> vidriera -> cron, medido de una corrida)
         if: always()
         run: ./scripts/accept-s6.sh
+
+      # S7 escribe la fila de `sales` DENTRO de la transaccion que mueve el listing, asi que su
+      # aceptacion no se puede afirmar sin Postgres: va en este job y no en el de arriba. Su V6 lee
+      # `MEDIDO s7 venta` de la probe del LEAD y compara ocho campos contra literales escritos en el
+      # shell — otro archivo, otro lenguaje (ADR-023).
+      #
+      # Este paso lo escribi ANTES de que el gate estuviera verde, y no por prolijidad: `G4` de
+      # `guard-gates.sh` se puso rojo el minuto en que `accept-s7.sh` existio, que es la quinta vez
+      # que este repo ve la clase "gate escrito, gate afuera de CI" y la PRIMERA que la encuentra un
+      # gate en vez de un humano. Las cuatro anteriores estan contadas en los comentarios de arriba.
+      - name: aceptacion de S7 (venta manual, medido contra Postgres real)
+        if: always()
+        run: ./scripts/accept-s7.sh
 
       # `test-results/`, no `playwright-report/`: el config no tiene reporter `html`, tiene
       # `list` + el censo de specs. Lo unico que queda en disco tras una falla son los traces de

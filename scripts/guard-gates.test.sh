@@ -159,6 +159,29 @@ rm -f "$T/.github/workflows/ci.yml"
 caso "ATRAPA el arbol sin ci.yml: no se puede afirmar que ningun gate corra" FAIL
 printf 'jobs:\n  x:\n    steps:\n      - run: ./scripts/guard-baseline.sh\n' > "$T/.github/workflows/ci.yml"
 
+# ── Las dos formas de "esta escrito pero no se ejecuta", LEAD 2026-08-28 ──────────────────────
+#
+# La primera fue REAL y estuvo viva dos commits: `c2aa5d2` metio un `- name:` sin comillas con
+# `: ` adentro y `ci.yml` dejo de parsear. Ante un yml invalido GitHub no corre 42 de 43 pasos:
+# no corre NINGUNO, y no reporta rojo porque no hay workflow que reportar. G4 decia PASS porque
+# leia el archivo como texto. El fixture usa el MISMO disparador que la rompio de verdad.
+printf 'jobs:\n  x:\n    steps:\n      - name: polaridad (A010: sin comillas)\n        run: ./scripts/guard-baseline.sh\n' > "$T/.github/workflows/ci.yml"
+caso "ATRAPA el ci.yml que no parsea: GitHub no corre NINGUN step" FAIL
+
+# Y la de al lado: el mismo yml, con el nombre citado. Sin este caso el de arriba no probaria que
+# el gate mira el PARSEO — probaria que se pone rojo ante cualquier cosa que diga `A010`.
+printf 'jobs:\n  x:\n    steps:\n      - name: %s\n        run: ./scripts/guard-baseline.sh\n' "'polaridad (A010: con comillas)'" > "$T/.github/workflows/ci.yml"
+caso "el mismo nombre, citado: parsea y el gate se calla" PASS
+
+# La segunda estaba LATENTE, no viva, y por eso vale un fixture: un censo textual cuenta como
+# "corre en CI" un nombre que solo aparece en un COMENTARIO. `ci.yml` tiene comentarios que
+# nombran a guard-routes, guard-grants, accept-fase2 y accept-fase3 precisamente para contar que
+# se habian quedado afuera del workflow. Borrar el `run:` y dejar la historia arriba habria
+# dejado el censo verde sobre el mismo defecto que la historia narra.
+printf 'jobs:\n  x:\n    steps:\n      # ./scripts/guard-baseline.sh quedo afuera a proposito\n      - run: echo nada\n' > "$T/.github/workflows/ci.yml"
+caso "ATRAPA el gate nombrado SOLO en un comentario del workflow" FAIL
+printf 'jobs:\n  x:\n    steps:\n      - run: ./scripts/guard-baseline.sh\n' > "$T/.github/workflows/ci.yml"
+
 if [ "$tfail" = "0" ]; then printf '\n\033[1;32mguard-gates.sh: OK (se vio encender y se vio callar)\033[0m\n'
 else printf '\n\033[1;31mguard-gates.sh: ROTO\033[0m\n'; fi
 exit "$tfail"

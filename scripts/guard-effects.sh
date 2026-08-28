@@ -54,8 +54,12 @@ motivo_de() {
   case "$1" in
     writesListingEvent)
       echo "Es constante \`true\` y el dominio lo dice ahi mismo: toda transicion escribe en \`listing_events\`. Todos los caminos de escritura insertan el evento incondicionalmente, asi que leer un booleano que nunca es falso seria ceremonia. Se declara igual porque el dia que deje de ser siempre \`true\` esta exencion es lo que se rompe." ;;
-    createsSale)
-      echo "La venta manual todavia no existe: no hay slice que mueva una unidad a \`sold\` desde el panel, asi que no hay donde ejecutarlo. La exencion vence con esa slice, y la tercera polaridad de este gate la hace vencer sola: apenas aparezca un consumidor, tener el motivo escrito pasa a ser FAIL." ;;
+    # `createsSale` TENIA una exencion aca y se la saque en S7, LEAD 2026-08-28. Su texto decia
+    # "la exencion vence con esa slice ... apenas aparezca un consumidor, tener el motivo escrito
+    # pasa a ser FAIL", y es exactamente lo que paso: `transitionUnit()` lo consume en
+    # `publish-listing.ts:451` y este gate se puso rojo sin que nadie se acordara de venir. Queda
+    # anotado y no borrado en silencio porque es la unica exencion del repo que se vio expirar
+    # sola, que era el punto de escribirla con fecha de vencimiento adentro.
     createsReservation)
       echo "Hoy \`reserveUnit\` inserta la reserva por su cuenta despues de que \`checkTransition\` aprueba, o sea que la regla esta escrita dos veces: una en la tabla del dominio y otra en el camino de escritura. No es un bug —las dos dicen lo mismo— pero es la misma forma exacta que produjo el fallo de S6, y por eso queda anotada en vez de tapada: se consolida cuando \`transitionUnit\` consuma la tabla entera en lugar de re-derivar efecto por efecto." ;;
     *) echo "" ;;
@@ -79,7 +83,15 @@ fi
 
 sec 'E2 · cada efecto declarado tiene quien lo ejecute, o un motivo escrito'
 for e in $EFECTOS; do
-  USOS=$(_buscar "\\b$e\\b" "$DESTINO" | grep -vE '\.test\.[tj]sx?:' || true)
+  # `grep -vE ':[0-9]+:[[:space:]]*(\*|//|/\*)'` — una mencion en un DOCBLOCK no es un consumidor.
+  # Medido en S7 por el LEAD: de las 8 referencias a `createsSale` en `apps/web/app`, **7 eran
+  # lineas de comentario** y una sola era codigo (`publish-listing.ts:451`). El veredicto de ese
+  # dia salio bien igual —con un consumidor real alcanza para que la exencion este podrida— pero
+  # el conteo estaba inflado 8x, y en la direccion peligrosa: un efecto DOCUMENTADO y no
+  # ejecutado habria contado como ejecutado, que es literalmente el bug de S6 con prosa encima.
+  # Es la misma clase que `G4` de `guard-gates.sh` tenia con `ci.yml` y se cerro el mismo dia:
+  # un gate que lee texto contesta "¿esta escrito?" cuando la pregunta es "¿se ejecuta?".
+  USOS=$(_buscar "\\b$e\\b" "$DESTINO" | grep -vE '\.test\.[tj]sx?:' | grep -vE ':[0-9]+:[[:space:]]*(\*|//|/\*)' || true)
   N=$(printf '%s' "$USOS" | grep -c '[^[:space:]]' || true)
   MOTIVO=$(motivo_de "$e")
 

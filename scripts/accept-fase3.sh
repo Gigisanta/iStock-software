@@ -89,10 +89,17 @@ chk "hay navegacion inferior (mobile-first, CLAUDE.md 0.11)" \
 none "margen y notas internas no se muestran en ninguna pantalla del panel" \
      "\b(margin|internal_?[Nn]otes)\b" \
      "apps/web/app/(app)/app/(panel)" --include='*.tsx'
+# El mismo principio que la regla de `httpMetadata` de mas abajo, y llego tarde: **el comentario que
+# explica por que NO hay input de costo no es un input de costo.** El 2026-08-28 esta regla marco
+# `stock/_ui/sell-form.tsx`, cuyos tres unicos hits son el docblock que dice, textual, que un input
+# de costo ahi seria un input de margen porque Postgres deriva `margin_usd`. Marcar eso le ensena al
+# equipo que la forma de pasar el gate es borrar el parrafo que evita el bug, que es exactamente al
+# reves de lo que el gate quiere.
 chk "el costo no llega a un componente cliente del panel (salvo el alta, donde lo tipea el dueno)" \
     "! grep -rl \"^'use client'\" 'apps/web/app/(app)/app/(panel)' --include='*.tsx' \
-       | xargs -r grep -lE '\b(cost_?[Uu]sd|costUsd)\b' \
-       | grep -v 'stock/nuevo/' | grep -q ."
+       | grep -v 'stock/nuevo/' \
+       | xargs -r grep -nE '\b(cost_?[Uu]sd|costUsd)\b' \
+       | grep -vE ':[0-9]+:[[:space:]]*(\*|//|/\*)' | grep -q ."
 chk "toda lectura de cost_usd de la base condiciona por el rol owner (no filtra: no pide)" \
     "! grep -rlE 'listings\.costUsd' 'apps/web/app/(app)' --include='*.ts' \
        | grep -v '\.test\.' \
