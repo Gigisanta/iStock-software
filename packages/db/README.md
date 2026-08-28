@@ -73,6 +73,11 @@ El claim va en `app_metadata`, nunca en `user_metadata`: el usuario puede escrib
 - `src/rls.test.ts` abre **dos sesiones con claims distintos** y prueba que el tenant B no lee, no
   escribe, no actualiza y no borra lo del tenant A. No hay mocks: es `set local role authenticated`
   + `request.jwt.claims` real.
+- `src/rls-anon-storefront.test.ts` hace lo mismo con el rol `anon` **real** y el claim de slug: qué
+  lee la vidriera, qué columnas revientan con `42501`, y qué no puede escribir.
+- `src/rls-anon-wa-click.test.ts` prueba la **polaridad** de la única escritura sin autenticar del
+  producto (abajo): el insert legítimo pasa, el de otro tenant y el que apunta a un listing ajeno
+  los rechaza la policy, y un `select` de `anon` sobre esa tabla no devuelve nada.
 
 ## Plata
 
@@ -91,7 +96,19 @@ en la app, así no se puede desincronizar.
   el rol puede tocar la tabla, la policy decide qué filas ve, y `BYPASSRLS` sólo saltea lo segundo.
   Un `service_role` sin `GRANT` recibe `42501 permission denied` y no lee una fila: por eso 0001
   le otorga DML tabla por tabla a `service_role`, igual que a `authenticated`. Lo verifica R8 en
-  `src/rls-cross-tenant.test.ts` contra Postgres real.
+  `tests/rls-cross-tenant.test.ts` contra Postgres real, que **no es de este paquete**: es de
+  `qa-agent`. El que escribe las policies no puede ser también el dueño del test que las audita
+  (CLAUDE.md §4), así que el archivo se mudó fuera de `packages/db/src/` en T3.
+- **La única escritura sin autenticar del producto** es el click del botón de WhatsApp
+  (`wa_click_events`, migración `0004`). El LEAD decidió en S4 que se hace con un `INSERT` de
+  `anon` acotado y **no** con una ruta de `service_role`: `service_role` tiene `BYPASSRLS`, así que
+  con esa forma la garantía de que la fila cae en el tenant correcto viviría entera en el handler y
+  la base dejaría de ser la última línea de defensa justo en el endpoint al que le puede pegar
+  cualquiera. `anon` gana `INSERT` de **tres columnas** (`tenant_id`, `listing_id`, `source`) sobre
+  **una** tabla; `id` y `created_at` salen de sus defaults para que no se puedan forjar. Cero
+  `SELECT`/`UPDATE`/`DELETE`: el visitante escribe su click y no lee ninguno, ni el propio — así que
+  un `insert ... returning` desde la vidriera recibe `42501` y eso es correcto. La regla `0026` del
+  lint impide que la excepción se copie a una segunda tabla o gane una cuarta columna.
 - **Tablas nuevas y `anon`**: un `REVOKE ... ON ALL TABLES` sólo alcanza a las tablas que existen
   en ese momento. Un proyecto Supabase real trae `ALTER DEFAULT PRIVILEGES` que le dan privilegios
   a `anon`/`authenticated` sobre **toda tabla futura** de `public`. La sección 2.a de 0001 los

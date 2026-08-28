@@ -157,10 +157,32 @@ type AnyClaims = Claims | StorefrontClaims;
 
 type PgRole = 'authenticated' | 'anon' | 'service_role';
 
+/**
+ * El rechazo de Postgres, entero. **El código solo no alcanza y desde S4 menos que nunca.**
+ *
+ * `42501` (`insufficient_privilege`) tapa dos fallas que significan cosas opuestas:
+ *
+ * | mensaje | qué pasó | qué significa si aparece donde no va |
+ * |---|---|---|
+ * | `permission denied for table …` | faltó el `GRANT` | la capa de privilegio cerró la puerta |
+ * | `new row violates row-level security policy …` | el `GRANT` estaba y **la policy** rechazó la fila | la capa de RLS cerró la puerta |
+ *
+ * `GRANT` y RLS son **dos capas y se evalúan las dos** (`CLAUDE.md` §2). Un test que sólo mira el
+ * código no puede distinguir "la policy funciona" de "todavía no otorgamos nada", y esa confusión
+ * es exactamente cómo un invariante de aislamiento se vuelve verde por vacío: el día que alguien
+ * agregue el `GRANT` que faltaba, el test sigue en verde y nadie evaluó nunca la policy.
+ */
+interface PgError {
+  readonly code: string;
+  readonly message: string;
+}
+
 interface Session {
   readonly rows: <T>(text: string) => Promise<T[]>;
   readonly affected: (text: string) => Promise<number>;
   readonly errorCode: (text: string) => Promise<string>;
+  /** El rechazo con su mensaje. Ver {@link PgError}: la diferencia ES el invariante. */
+  readonly error: (text: string) => Promise<PgError>;
   readonly close: () => Promise<void>;
 }
 
@@ -177,17 +199,23 @@ function openSession(claims: AnyClaims, role: PgRole = 'authenticated'): Session
     })) as unknown as { rows: T[]; count: number };
   }
 
+  async function rejected(text: string): Promise<PgError> {
+    try {
+      await run<never>(text);
+    } catch (caught) {
+      const failure = caught as { code?: string; message?: string };
+      return { code: failure.code ?? 'UNKNOWN_ERROR', message: failure.message ?? '' };
+    }
+    // Que la query pase limpia NO es un `expect` fallado: es que el test no probó lo que dice
+    // probar. Se tira acá para que el fallo diga eso y no "se esperaba 42501 y llegó undefined".
+    throw new Error(`se esperaba que Postgres rechazara la query y pasó limpia: ${text}`);
+  }
+
   return {
     rows: async <T>(text: string): Promise<T[]> => (await run<T>(text)).rows,
     affected: async (text: string): Promise<number> => (await run<never>(text)).count,
-    errorCode: async (text: string): Promise<string> => {
-      try {
-        await run<never>(text);
-      } catch (error) {
-        return (error as { code?: string }).code ?? 'UNKNOWN_ERROR';
-      }
-      throw new Error(`se esperaba que Postgres rechazara la query y pasó limpia: ${text}`);
-    },
+    errorCode: async (text: string): Promise<string> => (await rejected(text)).code,
+    error: rejected,
     close: async (): Promise<void> => {
       await sql.end({ timeout: 5 });
     },
@@ -264,6 +292,16 @@ function policiesGrantedToPublicRole(schema: string): string {
     order by 1`;
 }
 
+/**
+ * `true`, `(true)`, ` ( TRUE ) ` — el mismo criterio textual que {@link policiesUsingTrue}, pero
+ * aplicable a un predicado ya leído. Existe porque R6c mira el predicado que corresponde al
+ * comando de cada policy (`using` para las de lectura, `with check` para la de INSERT) y necesita
+ * el mismo juicio sobre cualquiera de los dos.
+ */
+function esPredicadoTrue(predicado: string): boolean {
+  return /^\(*\s*true\s*\)*$/iu.test(predicado.trim());
+}
+
 /** R6c · toda policy que nombre a `anon`, con su comando y su predicado, para auditarla entera. */
 function policiesForAnon(schema: string): string {
   return `
@@ -313,6 +351,32 @@ function anonWritePrivileges(schema: string): string {
         where a.attrelid = c.oid and a.attnum > 0 and not a.attisdropped
           and has_column_privilege('anon', c.oid, a.attnum, p)
       )
+    ) w(p)
+    where n.nspname = '${schema}' and c.relkind = 'r'
+    order by 1`;
+}
+
+/**
+ * R7b-bis · las columnas, una por una, sobre las que `anon` puede ESCRIBIR.
+ *
+ * {@link anonWritePrivileges} contesta *"¿hay escritura de columna en esta tabla?"* y con eso
+ * alcanzaba mientras la respuesta correcta era "en ninguna". Desde `drizzle/0004` la respuesta es
+ * "en una", y ahí ese detector deja de ser suficiente: una columna de más en el mismo `GRANT`
+ * —`id`, `created_at`, o la que se agregue el año que viene— no cambia su salida ni un carácter.
+ *
+ * Éste enumera. Es la diferencia entre "el beacon escribe" y "el beacon escribe exactamente
+ * `tenant_id`, `listing_id` y `source`", que es lo que hace que `id` y `created_at` salgan de sus
+ * defaults y **no se puedan forjar**.
+ */
+function anonWritableColumns(schema: string): string {
+  return `
+    select c.relname || '.' || a.attname || ':' || w.p as t
+    from pg_class c
+    join pg_namespace n on n.oid = c.relnamespace
+    join pg_attribute a on a.attrelid = c.oid and a.attnum > 0 and not a.attisdropped
+    cross join lateral (
+      select p from unnest(array['INSERT','UPDATE','REFERENCES']) as p
+      where has_column_privilege('anon', c.oid, a.attnum, p)
     ) w(p)
     where n.nspname = '${schema}' and c.relkind = 'r'
     order by 1`;
@@ -707,6 +771,140 @@ describe('R2 · un reseller no puede ESCRIBIR filas en el tenant de otro', () =>
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════════════════
+/**
+ * R2b · la única escritura SIN AUTENTICAR del producto tampoco cruza de tenant.
+ *
+ * R1–R4 prueban el aislamiento entre dos *resellers logueados*. Desde S4 hay un tercer escritor y
+ * no tiene sesión: el visitante de la vidriera, que al tocar el botón de WhatsApp deja una fila en
+ * `wa_click_events` como rol `anon`. Es el único `INSERT` del sistema donde del otro lado del cable
+ * no hay nadie identificado, así que el tenant **no puede venir del body**: sale del claim que el
+ * proxy derivó del host, y la policy es lo único que lo ata.
+ *
+ * R6c y R7 miran la FORMA de ese permiso —qué policies existen, qué columnas se otorgaron—. Este
+ * bloque mira el COMPORTAMIENTO, que es otra cosa: una policy puede estar escrita, enumerada y
+ * nombrada, y aun así dejar pasar la fila. Se corre contra Postgres de verdad con dos claims
+ * distintos porque un mock de RLS es un test inútil.
+ *
+ * ── Por qué acá se afirma el MENSAJE y no sólo el `42501` ────────────────────────────────────
+ * `42501` tapa dos rechazos que significan cosas **opuestas** (ver {@link PgError}):
+ * `permission denied for table` es "faltó el GRANT" y `new row violates row-level security policy`
+ * es "el GRANT estaba y la policy hizo su trabajo". Si acá se aceptara cualquiera de los dos, el
+ * test daría verde tanto con la policy funcionando como con la migración `0004` sin aplicar —
+ * o sea, daría verde midiendo nada. Esa distinción **es** el invariante, no un detalle del assert.
+ */
+describe('R2b · el visitante anónimo escribe su click y no puede anotarlo en la cuenta de otro', () => {
+  afterAll(async () => {
+    await admin.unsafe(`delete from wa_click_events where tenant_id in ('${TENANT_A}', '${TENANT_B}')`);
+  });
+
+  it('CONTROL POSITIVO · la vidriera de A SÍ puede registrar el click de su propia ficha', async () => {
+    // Sin esto, los cuatro rechazos de abajo serían verdes por vacío: una tabla a la que `anon` no
+    // puede escribir NADA los cumple todos, y también rompe el beacon en producción.
+    const visitante = openStorefront(SLUG_A);
+    try {
+      const filas = await visitante.affected(
+        `insert into wa_click_events (tenant_id, listing_id, source)
+         values ((select public.storefront_tenant_id()), '${LISTING_A}', 'storefront_detail')`,
+      );
+      expect(filas, 'el beacon del click no puede escribir: la vidriera de A está muda').toBe(1);
+    } finally {
+      await visitante.close();
+    }
+  });
+
+  it('la vidriera de B no puede anotar un click en la cuenta de A: lo frena el WITH CHECK', async () => {
+    const visitante = openStorefront(SLUG_B);
+    try {
+      const error = await visitante.error(
+        `insert into wa_click_events (tenant_id, listing_id, source)
+         values ('${TENANT_A}', null, 'storefront_detail')`,
+      );
+      expect(error.code).toBe('42501');
+      expect(
+        error.message,
+        'el rechazo no vino de la policy: quien frenó la fila fue otra cosa',
+      ).toContain('violates row-level security policy');
+      expect(
+        error.message,
+        'esto es "faltó el GRANT", no "la policy rechazó la fila": el aislamiento sigue sin probarse',
+      ).not.toContain('permission denied');
+    } finally {
+      await visitante.close();
+    }
+  });
+
+  it('B tampoco puede nombrar la ficha de A desde su propio tenant: la policy ata las dos puntas', async () => {
+    // El `tenant_id` acá es el legítimo de B, así que la mitad fácil del `with check` pasa. Lo que
+    // frena la fila es el `exists` sobre `listings`: contar clicks del equipo de otro sería medir
+    // el interés que genera el stock ajeno, que es inteligencia comercial, no un contador roto.
+    const visitante = openStorefront(SLUG_B);
+    try {
+      const error = await visitante.error(
+        `insert into wa_click_events (tenant_id, listing_id, source)
+         values ((select public.storefront_tenant_id()), '${LISTING_A}', 'storefront_detail')`,
+      );
+      expect(error.code).toBe('42501');
+      expect(error.message).toContain('violates row-level security policy');
+    } finally {
+      await visitante.close();
+    }
+  });
+
+  it('los dos rechazos no fueron un error de tipo disfrazado: en la cuenta de A quedó UNA sola fila', async () => {
+    const rows = await adminRows<{ n: string }>(
+      `select count(*)::text as n from wa_click_events where tenant_id = '${TENANT_A}'`,
+    );
+    expect(rows[0]?.n, 'la del control positivo y ninguna más').toBe('1');
+  });
+
+  it('el visitante no puede forjar el `id` ni antedatar el `created_at` de su propio click', async () => {
+    // Acá el mensaje tiene que ser el OTRO: estas dos columnas no están en el `GRANT`, así que el
+    // rechazo llega de la capa de privilegio y ni siquiera se evalúa la policy. Es la diferencia
+    // entre `GRANT INSERT (cols)` y `GRANT INSERT`, y es la que hace que el timestamp sea de la
+    // base y no del cliente.
+    const visitante = openStorefront(SLUG_A);
+    try {
+      for (const forjada of [
+        `insert into wa_click_events (id, tenant_id, source)
+         values ('${INTRUDER_ROW}', (select public.storefront_tenant_id()), 'storefront_detail')`,
+        `insert into wa_click_events (tenant_id, created_at, source)
+         values ((select public.storefront_tenant_id()), now() - interval '30 days', 'storefront_detail')`,
+      ]) {
+        const error = await visitante.error(forjada);
+        expect(error.code).toBe('42501');
+        expect(
+          error.message,
+          'el rechazo vino de la policy, no del GRANT: la columna está otorgada y no debería',
+        ).toContain('permission denied');
+      }
+    } finally {
+      await visitante.close();
+    }
+  });
+
+  it('el visitante escribe su click y no lee ninguno, ni siquiera los de su propia vidriera', async () => {
+    // `wa_click_events` es telemetría del dueño, no contenido de la vidriera. Un `select` acá
+    // convertiría el contador en un ranking público de qué se está por vender.
+    const visitante = openStorefront(SLUG_A);
+    try {
+      for (const lectura of [
+        `select count(*) from wa_click_events`,
+        // Valor válido del enum a propósito: con uno inválido Postgres se cae antes con `22P02`
+        // y el test mediría el parser, no el privilegio.
+        `update wa_click_events set source = 'storefront_detail'`,
+        `delete from wa_click_events`,
+      ]) {
+        const error = await visitante.error(lectura);
+        expect(error.code).toBe('42501');
+        expect(error.message).toContain('permission denied');
+      }
+    } finally {
+      await visitante.close();
+    }
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════
 describe('R3 · un reseller no puede MODIFICAR el stock de otro', () => {
   it('B bajándole el precio a la unidad de A afecta 0 filas', async () => {
     expect(await b.affected(`update listings set price_usd = 1.00 where id = '${LISTING_A}'`)).toBe(0);
@@ -860,9 +1058,22 @@ describe('R6 · ninguna policy es `using (true)`: RLS decorativa es peor que no 
   // R6c · el invariante propio de `anon`, que es MÁS estricto que el general de R6b y no menos:
   // las policies del rol nominado están enumeradas por nombre. Una policy `TO anon` nueva se pone
   // roja hasta que alguien la agregue acá a mano, que es exactamente la fricción que se busca.
-  describe('R6c · las policies `TO anon` son las 5 de la vidriera, sólo SELECT y acotadas por el claim', () => {
-    /** Las de `drizzle/0002_storefront_anon_grants.sql` §5. Ni una más. */
-    const ESPERADAS = [
+  //
+  // ── S4 movió la lista, no el invariante ──────────────────────────────────────────────────
+  // Hasta S4 esto afirmaba "`anon` no escribe, nunca". Con `drizzle/0004_storefront_wa_click_
+  // insert.sql`, `anon` gana UNA escritura: el beacon del click de WhatsApp, que es la única
+  // escritura sin autenticar de todo el producto. La reacción cómoda sería relajar la aserción a
+  // "casi todas son de lectura", y eso sería el final de R6c: pasaría de custodiar un invariante a
+  // describir el estado actual, y la SEGUNDA escritura sin autenticar entraría sin despertar a
+  // nadie. El riesgo entero del cambio es ése.
+  //
+  // Así que la lista se endurece en vez de aflojarse. Pasa de 5 nombres a 6 nombres **y** fija el
+  // comando de cada uno. Una escritura más, o esta misma convertida en `FOR ALL`, o un UPDATE para
+  // `anon`, rompen el test igual que antes. La diferencia entre "5" y "6" no es de cantidad: es
+  // que el número lo escribió alguien.
+  describe('R6c · las policies `TO anon` son 6: las 5 de lectura de la vidriera y el beacon del click', () => {
+    /** Las de `drizzle/0002_storefront_anon_grants.sql` §5. Todas de lectura. */
+    const LECTURA = [
       'fx_settings.fx_settings_storefront_anon_select',
       'listing_photos.listing_photos_storefront_anon_select',
       'listings.listings_storefront_anon_select',
@@ -870,32 +1081,68 @@ describe('R6 · ninguna policy es `using (true)`: RLS decorativa es peor que no 
       'tenants.tenants_storefront_anon_select',
     ];
 
+    /** La de `drizzle/0004_storefront_wa_click_insert.sql`. **Una**, de INSERT, y ni una más. */
+    const ESCRITURA = ['wa_click_events.wa_click_events_storefront_insert'];
+
+    /** `policiesForAnon` ordena por `tabla.policy`, y `wa_click_events` va después de `tenants`. */
+    const ESPERADAS = [...LECTURA, ...ESCRITURA];
+
     it('el detector de policies `TO anon` encuentra la trampa plantada, con su comando', async () => {
       const rows = await adminRows<{ t: string; cmd: string }>(policiesForAnon(CONTROL_SCHEMA));
       expect(rows.map((r) => `${r.t}:${r.cmd}`)).toEqual(['leaky_anon_policy.leaky_anon_write:ALL']);
     });
 
-    it('en public son EXACTAMENTE las 5 de la vidriera', async () => {
+    it('en public son EXACTAMENTE esas 6, por nombre: una policy `TO anon` nueva rompe el test', async () => {
       const rows = await adminRows<{ t: string }>(policiesForAnon('public'));
       expect(rows.map((r) => r.t)).toEqual(ESPERADAS);
     });
 
-    it('ninguna es de escritura: `anon` no tiene INSERT/UPDATE/DELETE ni por policy', async () => {
-      const rows = await adminRows<{ t: string; cmd: string; with_check: string }>(policiesForAnon('public'));
-      for (const row of rows) {
-        expect(row.cmd, `${row.t} no es FOR SELECT`).toBe('SELECT');
-        expect(row.with_check, `${row.t} tiene WITH CHECK: eso es una policy de escritura`).toBe('');
-      }
+    it('el comando de cada una está fijado: 5 de SELECT y UNA sola de INSERT, la del beacon', async () => {
+      // Fijar el par (nombre, comando) es lo que tapa los tres cambios silenciosos que importan:
+      // que una de lectura se ensanche a `FOR ALL`, que aparezca un UPDATE o un DELETE para el
+      // visitante, y que la de escritura deje de ser sólo de INSERT. Ninguno de los tres cambia la
+      // cantidad de policies, así que contar seis no los ve.
+      const rows = await adminRows<{ t: string; cmd: string }>(policiesForAnon('public'));
+      expect(rows.map((r) => `${r.t}:${r.cmd}`)).toEqual([
+        ...LECTURA.map((t) => `${t}:SELECT`),
+        ...ESCRITURA.map((t) => `${t}:INSERT`),
+      ]);
     });
 
-    it('ninguna es `using (true)` y todas acotan por el claim de la vidriera', async () => {
-      // Una policy `TO anon` que no mira `storefront_slug()`/`storefront_tenant_id()` es una
-      // policy que le muestra a cualquier visitante el stock de todos los tenants.
-      const rows = await adminRows<{ t: string; qual: string }>(policiesForAnon('public'));
-      expect(rows.length).toBe(ESPERADAS.length);
+    it('las policies de lectura no tienen WITH CHECK: ahí un WITH CHECK sería escritura encubierta', async () => {
+      const rows = await adminRows<{ t: string; cmd: string; with_check: string }>(
+        policiesForAnon('public'),
+      );
+      const conCheck = rows.filter((r) => r.cmd === 'SELECT' && r.with_check.trim() !== '');
+      expect(conCheck.map((r) => r.t)).toEqual([]);
+    });
+
+    it('ninguna policy de `anon` es decorativa: las 6 acotan por el claim del host', async () => {
+      // ── Dónde vive el predicado depende del comando, y la diferencia NO es cosmética ──
+      // Una policy de INSERT tiene `qual` **NULL por construcción**: no hay filas previas que
+      // filtrar, y todo su predicado está en el `with check`. Leer `qual` para las seis reventaría
+      // con un TypeError sobre null; saltear la fila nula —que es la tentación— dejaría a la única
+      // escritura sin autenticar del producto **sin auditar y con el test en verde**. Una policy de
+      // INSERT con `with check` nulo o `true` es exactamente el agujero que este bloque existe
+      // para encontrar, así que se le exige el predicado igual que a las de lectura, en su lugar.
+      const rows = await adminRows<{ t: string; cmd: string; qual: string; with_check: string }>(
+        policiesForAnon('public'),
+      );
+      expect(rows.length, 'cambió la cantidad de policies `TO anon`').toBe(ESPERADAS.length);
       for (const row of rows) {
-        expect(row.qual.trim(), `${row.t} es RLS decorativa`).not.toBe('true');
-        expect(row.qual, `${row.t} no acota por el claim del host`).toMatch(/storefront_(slug|tenant_id)/);
+        const donde = row.cmd === 'INSERT' ? 'with check' : 'using';
+        const predicado = (row.cmd === 'INSERT' ? row.with_check : row.qual).trim();
+        expect(
+          predicado,
+          `${row.t} no tiene predicado en su \`${donde}\`: deja pasar cualquier fila`,
+        ).not.toBe('');
+        expect(
+          esPredicadoTrue(predicado),
+          `${row.t} es RLS decorativa: \`${donde} (true)\``,
+        ).toBe(false);
+        expect(predicado, `${row.t} no acota por el claim del host`).toMatch(
+          /storefront_(slug|tenant_id)/,
+        );
       }
     });
   });
@@ -963,9 +1210,59 @@ describe('R7 · el privilegio de `anon` es la allowlist de columnas públicas y 
     ]);
   });
 
-  it('`anon` no tiene ningún privilegio de escritura en public, ni de tabla ni de columna', async () => {
+  /**
+   * ── La escritura de `anon`, escrita como lista literal ────────────────────────────────────
+   * Antes de S4 esto era `[]` y era fácil de defender. Desde `drizzle/0004` hay exactamente UNA
+   * entrada, y la lista literal es lo único que separa "el beacon escribe" de "`anon` escribe".
+   * Una segunda escritura sin autenticar —de la tabla que sea, del comando que sea— agrega una
+   * entrada y rompe el test. Es el punto entero de mantenerlo así de duro.
+   */
+  const ESCRITURA_DE_ANON = ['wa_click_events:column:INSERT'];
+
+  /**
+   * Y las columnas, una por una. `anonWritePrivileges` contesta *"¿hay escritura de columna en esta
+   * tabla?"*, así que una columna de más en el MISMO `GRANT` no le cambia la salida ni un carácter.
+   * Estas tres son las que el handler manda; `id` y `created_at` salen de sus defaults **porque no
+   * están acá**, y por eso el visitante no puede forjar el uno ni antedatar el otro.
+   */
+  const COLUMNAS_ESCRIBIBLES = [
+    'wa_click_events.listing_id:INSERT',
+    'wa_click_events.source:INSERT',
+    'wa_click_events.tenant_id:INSERT',
+  ];
+
+  it('la ÚNICA escritura de `anon` en public es el INSERT de columna del beacon del click', async () => {
     const rows = await adminRows<{ t: string }>(anonWritePrivileges('public'));
+    expect(
+      rows.map((r) => r.t),
+      'apareció una escritura sin autenticar que no es la del beacon de S4',
+    ).toEqual(ESCRITURA_DE_ANON);
+  });
+
+  it('esa escritura NO es de tabla: `has_table_privilege` sobre wa_click_events sigue en false', async () => {
+    // `GRANT INSERT (cols)` y `GRANT INSERT` se leen casi igual en un `.sql` y no son lo mismo: el
+    // de tabla alcanza a toda columna **presente y futura**, incluidas `id` y `created_at`. Por eso
+    // el privilegio de columna no confiere el de tabla, y por eso este cero es el que separa los
+    // dos mundos. Corolario para quien lea esto buscando por qué su chequeo da false: preguntar por
+    // `has_table_privilege('anon','wa_click_events','INSERT')` no ve el GRANT del beacon.
+    const rows = await adminRows<{ t: string }>(`
+      select c.relname as t
+      from pg_class c
+      join pg_namespace n on n.oid = c.relnamespace
+      where n.nspname = 'public' and c.relkind = 'r'
+        and has_table_privilege('anon', c.oid, 'INSERT')
+      order by 1`);
     expect(rows.map((r) => r.t)).toEqual([]);
+  });
+
+  it('el detector de columnas escribibles encuentra la trampa plantada', async () => {
+    const rows = await adminRows<{ t: string }>(anonWritableColumns(CONTROL_SCHEMA));
+    expect(rows.map((r) => r.t)).toEqual(['leaky_grant_write.status:INSERT']);
+  });
+
+  it('las columnas que `anon` puede escribir son esas tres: `id` y `created_at` no se pueden forjar', async () => {
+    const rows = await adminRows<{ t: string }>(anonWritableColumns('public'));
+    expect(rows.map((r) => r.t)).toEqual(COLUMNAS_ESCRIBIBLES);
   });
 
   it('el detector de columnas SENSITIVE encuentra la trampa plantada', async () => {

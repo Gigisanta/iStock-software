@@ -8,7 +8,7 @@
   "rules": [
     {
       "name": "storefront-track-rl",
-      "why": "El beacon de tracking de S4b es el unico endpoint de ESCRITURA sin autenticar del producto. Con el spend cap de Supabase en ON, floodearlo no infla una factura: apaga el proyecto para TODOS los tenants. Esta regla es la que convierte un DoS de un tenant en un 429 del atacante.",
+      "why": "El beacon de tracking de S4 es el unico endpoint de ESCRITURA sin autenticar del producto. Con el spend cap de Supabase en ON, floodearlo no infla una factura: apaga el proyecto para TODOS los tenants. Esta regla es la que convierte un DoS de un tenant en un 429 del atacante.",
       "route": "/api/track",
       "condition": {
         "type": "path",
@@ -24,8 +24,9 @@
         "algo": "fixed_window",
         "action": "deny"
       },
-      "status": "planned",
-      "lands_with": "S4b",
+      "status": "active",
+      "landed_in": "S4",
+      "$status": "Paso de planned a active el 2026-08-28, cuando aterrizo el handler. active NO significa \"ya esta publicada en Vercel\": significa que este archivo declara que DEBE estarlo, y que guard-firewall audita su covers contra el arbol real. La brecha entre este archivo y la config viva es el riesgo residual conocido de T1 y se cierra con el gate de nivel 2 (`vercel firewall diff --json`), que todavia no existe. Mientras no exista, el apply es manual y esta en $apply.",
       "covers": [
         "/s/[slug]/api/track"
       ],

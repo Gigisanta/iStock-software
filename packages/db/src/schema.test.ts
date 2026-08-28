@@ -81,8 +81,8 @@ describe('forma de las policies (ADR-005 · los seis lints ERROR de Supabase)', 
 
   it('toda policy nombra un rol explícito — nunca `TO public`, que incluye a anon sin decirlo', async () => {
     // `TO public` es el default de Postgres y es el que se escribe solo cuando alguien se olvida
-    // del `TO`. Los dos roles legítimos son `authenticated` (panel) y `anon` (vidriera pública,
-    // sólo SELECT, ver `drizzle/0002_storefront_anon_grants.sql`).
+    // del `TO`. Los dos roles legítimos son `authenticated` (panel) y `anon` (vidriera pública:
+    // sólo SELECT salvo el click de WhatsApp, ver `drizzle/0002_*` y `drizzle/0004_*`).
     const r = await rows<{ p: string }>(`
       select tablename || '.' || policyname as p from pg_policies
       where schemaname = 'public'
@@ -95,13 +95,27 @@ describe('forma de las policies (ADR-005 · los seis lints ERROR de Supabase)', 
     expect(aPublic.map((x) => x.p)).toEqual([]);
   });
 
-  it('las policies `TO anon` son de SELECT y de ninguna otra cosa', async () => {
-    // Un visitante no escribe. No hay policy de insert/update/delete para `anon`, ni restringida:
-    // el lead de canje y el click de WhatsApp entran por el server, con el rol del server.
+  it('las policies `TO anon` son de SELECT, salvo la ÚNICA escritura sin autenticar del producto', async () => {
+    // Hasta S3 esto era `[]` y el comentario decía que el click de WhatsApp iba a entrar "por el
+    // server, con el rol del server". El LEAD lo decidió al revés en S4: con `service_role` (que
+    // tiene BYPASSRLS) la garantía de que la fila cae en el tenant correcto vive entera en el
+    // handler, y la base deja de ser la última línea de defensa justo en el único endpoint al que
+    // le puede pegar cualquiera sin login. Con `anon` + policy, el `WITH CHECK` lo evalúa el
+    // planner en cada insert.
+    // La lista es EXACTA: una segunda policy de escritura para `anon` rompe este test, que es lo
+    // que se busca. El lead de canje sigue sin ser una excepción y entra por el server.
     const r = await rows<{ p: string; cmd: string }>(`
       select tablename || '.' || policyname as p, cmd from pg_policies
-      where schemaname = 'public' and 'anon' = any(roles) and cmd <> 'SELECT'`);
-    expect(r.map((x) => `${x.p}:${x.cmd}`)).toEqual([]);
+      where schemaname = 'public' and 'anon' = any(roles) and cmd <> 'SELECT' order by 1`);
+    expect(r.map((x) => `${x.p}:${x.cmd}`)).toEqual([
+      'wa_click_events.wa_click_events_storefront_insert:INSERT',
+    ]);
+
+    // Y de UPDATE/DELETE no hay ninguna, ni restringida: un visitante no corrige ni borra.
+    const escrituraGrave = await rows<{ p: string }>(`
+      select tablename || '.' || policyname as p from pg_policies
+      where schemaname = 'public' and 'anon' = any(roles) and cmd in ('UPDATE', 'DELETE', 'ALL')`);
+    expect(escrituraGrave.map((x) => x.p)).toEqual([]);
   });
 
   it('`auth.jwt()` siempre va envuelto en subquery (se evalúa 1 vez, no 1 vez por fila)', async () => {
@@ -274,13 +288,23 @@ describe('columnas SENSIBLES — marcadas en la base, no sólo en el TypeScript'
     expect(r.map((x) => x.col)).toEqual([]);
   });
 
-  it('todo privilegio de anon es SELECT y es de columna, nunca de tabla', async () => {
+  it('todo privilegio de anon es de COLUMNA, nunca de tabla, y el de escritura es uno solo', async () => {
+    // El privilegio de escritura de `anon` (S4) es una allowlist cerrada de 3 columnas sobre 1
+    // tabla. `id` y `created_at` NO están: salen de sus defaults justamente para que un visitante
+    // no pueda elegir el id de su evento ni antedatar un click.
     const noSelect = await rows<{ p: string }>(`
       select table_name || '.' || column_name || ':' || privilege_type as p
       from information_schema.column_privileges
-      where table_schema = 'public' and grantee = 'anon' and privilege_type <> 'SELECT'`);
-    expect(noSelect.map((x) => x.p)).toEqual([]);
+      where table_schema = 'public' and grantee = 'anon' and privilege_type <> 'SELECT'
+      order by 1`);
+    expect(noSelect.map((x) => x.p)).toEqual([
+      'wa_click_events.listing_id:INSERT',
+      'wa_click_events.source:INSERT',
+      'wa_click_events.tenant_id:INSERT',
+    ]);
 
+    // Que siga siendo de COLUMNA no es un detalle: un privilegio de TABLA haría andar el
+    // `select *` y, del lado de la escritura, dejaría insertar `id` y `created_at`.
     const deTabla = await rows<{ t: string }>(`
       select c.relname as t from pg_class c
       join pg_namespace n on n.oid = c.relnamespace
@@ -288,6 +312,13 @@ describe('columnas SENSIBLES — marcadas en la base, no sólo en el TypeScript'
         and has_table_privilege('anon', c.oid, 'SELECT, INSERT, UPDATE, DELETE')
       order by 1`);
     expect(deTabla.map((x) => x.t)).toEqual([]);
+
+    // La tabla que `anon` escribe no la lee: cero columnas de SELECT sobre ella.
+    const leeLoQueEscribe = await rows<{ c: string }>(`
+      select column_name as c from information_schema.column_privileges
+      where table_schema = 'public' and grantee = 'anon'
+        and table_name = 'wa_click_events' and privilege_type = 'SELECT'`);
+    expect(leeLoQueEscribe.map((x) => x.c)).toEqual([]);
   });
 });
 

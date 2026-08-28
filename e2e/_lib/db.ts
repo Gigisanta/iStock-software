@@ -419,6 +419,60 @@ export async function seedListingPhoto(
   `;
 }
 
+/**
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *  S4 · `wa_click_events`, leído desde afuera de la app. Owner: `qa-agent`.
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * Es la **única escritura sin autenticar del producto**, así que el spec que la audita no puede
+ * preguntarle a la app cuántas filas escribió: tiene que contarlas en Postgres. Dos motivos, y
+ * ninguno es de gusto:
+ *
+ * 1. **Un contador expuesto por el código bajo test lo mantiene el mismo writer que la
+ *    optimización que audita** (mismo argumento que `_lib/pg-spy.ts`, `CLAUDE.md` §4). `qa-agent`
+ *    no edita `apps/web/**`.
+ * 2. La afirmación más cara de S4 es **negativa** —*"cargar la ficha no escribe NADA"*— y una
+ *    afirmación negativa sobre filas sólo se puede sostener contando filas. Un 204 del handler no
+ *    dice si hubo `insert`; un `insert` rechazado por RLS tampoco cambia el status.
+ *
+ * La conexión de los e2e es la de dueño de la base (`DATABASE_URL` real, sin pasar por el espía),
+ * así que **ve todas las filas de todos los tenants**: es exactamente lo que hace falta para poder
+ * afirmar que un POST cruzado no escribió en NINGUNO de los dos, y no sólo que no escribió en el
+ * que el atacante nombró.
+ *
+ * **No se lee ni se devuelve una sola columna que pueda tener PII**, porque la tabla no tiene
+ * ninguna y este helper no la va a inventar: `id`, `tenant_id`, `listing_id`, `source`.
+ */
+export interface WaClickEventRow {
+  readonly id: string;
+  readonly tenantId: string;
+  /** `null` cuando el click salió del footer y no de una ficha. */
+  readonly listingId: string | null;
+  readonly source: string;
+}
+
+export async function waClickEventRows(tenantId: string): Promise<readonly WaClickEventRow[]> {
+  const q = sql();
+  return q<WaClickEventRow[]>`
+    select id, tenant_id as "tenantId", listing_id as "listingId", source
+      from public.wa_click_events
+     where tenant_id = ${tenantId}::uuid
+     order by created_at
+  `;
+}
+
+/** Cuántos clicks tiene registrados un tenant. El número que va a la línea `MEDIDO s4 click`. */
+export async function countWaClickEvents(tenantId: string): Promise<number> {
+  return (await waClickEventRows(tenantId)).length;
+}
+
+/** Borra los clicks de un tenant. Lo llama el `afterAll` del spec de S4, no la limpieza general. */
+export async function deleteWaClickEvents(tenantId: string): Promise<void> {
+  if (KEEP_FIXTURES) return;
+  const q = sql();
+  await q`delete from public.wa_click_events where tenant_id = ${tenantId}::uuid`;
+}
+
 /** `public.users` cuelga de `auth.users` con `on delete cascade`: se borra la raíz. */
 export async function deleteUserByEmail(email: string): Promise<void> {
   if (KEEP_FIXTURES) return;

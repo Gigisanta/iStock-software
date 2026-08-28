@@ -101,10 +101,34 @@ describe('el DTO es el único camino de datos hasta el JSX', () => {
 });
 
 describe('la descripción del dueño es input no confiable', () => {
+  /**
+   * **UNA excepción, por nombre de archivo, y con su propio guard.** `_components/wa-beacon.tsx`
+   * emite un `<script>` en línea, y `dangerouslySetInnerHTML` es la única forma soportada de
+   * hacerlo: React escapa los hijos de texto de un `<script>` (`"` → `&quot;`) y rompería el JS.
+   *
+   * La forma de la excepción es la que el LEAD ya fijó para el error boundary en W001/W001b de
+   * `scripts/web-lint.mjs`: se exime **por nombre**, nunca por un marcador que se pueda escribir en
+   * cualquier lado, y se paga con un segundo test que verifica que la exención no es una puerta.
+   * Ese test es `beacon.test.ts`, y exige que lo inyectado sea una constante de módulo **sin una
+   * sola interpolación** y que el componente no reciba props ni importe nada. Sin ese archivo, esta
+   * línea sería el agujero por el que la descripción del dueño vuelve a ser HTML.
+   *
+   * Lo que esta regla protege no cambió: **ningún dato** —del dueño o del visitante— se convierte
+   * en markup. La excepción es una cadena escrita a mano que no puede recibir ninguno.
+   */
+  const INYECCION_EXENTA = '_components/wa-beacon.tsx';
+
   it('en ningún lado de la vidriera se inyecta HTML crudo', () => {
-    for (const file of FILES) {
+    for (const file of FILES.filter((f) => f.rel !== INYECCION_EXENTA)) {
       expect(code(file.src), file.rel).not.toMatch(/dangerouslySetInnerHTML/u);
     }
+  });
+
+  it('la exención existe: si el beacon desaparece, la excepción se borra con él', () => {
+    // Una exención que sobrevive al archivo que la justificaba es una puerta abierta esperando a
+    // que alguien la use. Si `wa-beacon.tsx` deja de existir, este test se pone rojo y obliga a
+    // sacar la exención de arriba en vez de dejarla heredada.
+    expect(FILES.map((f) => f.rel)).toContain(INYECCION_EXENTA);
   });
 });
 

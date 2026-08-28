@@ -33,6 +33,20 @@ const STOREFRONT_TABLES = new Set([
   'tenants', 'listings', 'listing_photos', 'locations', 'fx_settings', 'catalog_models',
 ]);
 /**
+ * La vidriera anónima **escribe** en exactamente una tabla, y con exactamente estas columnas
+ * (S4, `drizzle/0004_storefront_wa_click_insert.sql`). Es la única escritura sin autenticar del
+ * producto y por eso está tipeada acá como una allowlist cerrada en vez de como un permiso:
+ * agregar una tabla o una columna a este objeto es un cambio de superficie de ataque y se lee
+ * como tal en el diff. `id` y `created_at` NO están, y no pueden estar: salen de sus defaults
+ * justamente para que no se puedan forjar (regla 0026).
+ */
+const STOREFRONT_WRITE = {
+  wa_click_events: ['tenant_id', 'listing_id', 'source'],
+};
+const STOREFRONT_WRITE_TABLES = new Set(Object.keys(STOREFRONT_WRITE));
+/** Columnas que jamás pueden entrar en un privilegio de escritura de `anon` (regla 0026). */
+const NEVER_WRITABLE_BY_ANON = new Set(['id', 'created_at', 'updated_at']);
+/**
  * Columnas que no pueden aparecer en un GRANT a `anon` **jamás**, ni por descuido ni por
  * "total, es sólo un dato más". Se chequea por nombre, no por tabla: si mañana aparece un
  * `cost_usd` en otra tabla, sigue prohibido (regla 0020b).
@@ -114,11 +128,27 @@ for (const [, name, table, body] of policies) {
     fail('0008', `${id} no nombra un rol: TO authenticated (panel) o TO anon (vidriera)`);
   }
   if (toAnon) {
-    // La vidriera anónima LEE. No escribe, no escribió nunca y no va a escribir: un lead o un
-    // click de WhatsApp entran por una Server Function con el rol del server.
-    if (!/\bFOR\s+SELECT\b/i.test(body)) fail('0023', `${id} es TO anon y no es FOR SELECT`);
-    if (!STOREFRONT_TABLES.has(table)) {
-      fail('0023', `${id}: ${table} no es una tabla del read model público de la vidriera`);
+    // La vidriera anónima LEE, y escribe en UNA tabla y nada más: el click de WhatsApp (S4).
+    // Hasta S3 esta regla exigía `FOR SELECT` a secas, porque el lead y el click iban a entrar
+    // "por una Server Function con el rol del server". El LEAD lo decidió al revés en S4: con
+    // `service_role` el aislamiento queda en manos del handler y la base deja de ser la última
+    // línea de defensa en el único endpoint sin autenticar del producto. La regla no se ablandó
+    // — se volvió más específica: la escritura de `anon` está permitida SÓLO donde dice
+    // `STOREFRONT_WRITE`, sólo como INSERT, y con la 0026 encima.
+    const esSelect = /\bFOR\s+SELECT\b/i.test(body);
+    const esInsert = /\bFOR\s+INSERT\b/i.test(body);
+    if (esSelect) {
+      if (!STOREFRONT_TABLES.has(table)) {
+        fail('0023', `${id}: ${table} no es una tabla del read model público de la vidriera`);
+      }
+    } else if (esInsert) {
+      if (!STOREFRONT_WRITE_TABLES.has(table)) {
+        fail('0026', `${id}: anon no escribe en ${table}. La única escritura sin autenticar es ${[...STOREFRONT_WRITE_TABLES].join(', ')}`);
+      }
+    } else {
+      // UPDATE y DELETE para `anon` no existen y no van a existir: un visitante no corrige ni
+      // borra. `FOR ALL` cae acá también, y ese es el punto.
+      fail('0023', `${id} es TO anon y no es FOR SELECT ni FOR INSERT`);
     }
     // Sin claim de slug la policy tiene que dar falso. Una policy `TO anon` que no lo mira es
     // una policy que publica el stock de todos los tenants a la vez.
@@ -191,10 +221,11 @@ for (const [table, column] of SENSITIVE_COLUMNS) {
 // `42501` y leía cero filas, mientras en dev "andaba" porque la conexión local es SUPERUSER y se
 // saltea RLS y GRANTs por igual. Lo que se exige ahora es la forma:
 //   · GRANT de **columna**, nunca de tabla (para que `select *` y `select imei` den 42501);
-//   · sólo SELECT;
-//   · sólo sobre las 6 tablas del read model público;
-//   · jamás una columna sensible.
-// Se lee `sqlNoComments`: la prosa de 0001/0002 explica GRANTs que no se ejecutan.
+//   · sólo SELECT sobre las 6 tablas del read model público, jamás una columna sensible;
+//   · más, desde S4, **un solo** INSERT de columna sobre `wa_click_events` (regla 0026): el
+//     click de WhatsApp, que es la única escritura sin autenticar del producto. Ese privilegio
+//     está tipeado columna por columna en `STOREFRONT_WRITE` y no acepta ni una más.
+// Se lee `sqlNoComments`: la prosa de 0001/0002/0004 explica GRANTs que no se ejecutan.
 for (const [, head, roles] of sqlNoComments.matchAll(/\bGRANT\b([^;]*?)\bTO\b([^;]*)/gi)) {
   if (!/\banon\b/i.test(roles)) continue;
   const stmt = `GRANT${head}TO${roles}`.replace(/\s+/g, ' ').trim();
@@ -210,28 +241,68 @@ for (const [, head, roles] of sqlNoComments.matchAll(/\bGRANT\b([^;]*?)\bTO\b([^
     continue;
   }
 
-  const columnGrant = /^GRANT\s+SELECT\s*\(([^)]*)\)\s*ON\s+TABLE\s+"?(\w+)"?$/i.exec(
+  const columnGrant = /^GRANT\s+(SELECT|INSERT)\s*\(([^)]*)\)\s*ON\s+TABLE\s+"?(\w+)"?$/i.exec(
     `GRANT${head}`.replace(/\s+/g, ' ').trim(),
   );
   if (columnGrant === null) {
     // Acá caen `GRANT SELECT ON TABLE listings TO anon` (privilegio de TABLA: haría andar el
-    // `select *`) y cualquier INSERT/UPDATE/DELETE.
-    fail('0020', `GRANT a anon que no es SELECT de COLUMNA sobre una tabla → ${short}`);
+    // `select *`) y cualquier UPDATE/DELETE/TRUNCATE/REFERENCES/TRIGGER, sea de columna o no.
+    fail('0020', `GRANT a anon que no es SELECT ni INSERT de COLUMNA sobre una tabla → ${short}`);
     continue;
   }
-  const [, columnList, table] = columnGrant;
-  if (!STOREFRONT_TABLES.has(table)) {
+  const [, privilegio, columnList, table] = columnGrant;
+  const esEscritura = privilegio.toUpperCase() === 'INSERT';
+  const columnas = columnList.split(',').map((raw) => raw.trim().replace(/"/g, '')).filter((c) => c.length > 0);
+
+  if (esEscritura) {
+    // ── 0026 · la única escritura sin autenticar del producto ──────────────────────────────
+    const permitidas = STOREFRONT_WRITE[table];
+    if (permitidas === undefined) {
+      fail('0026', `anon no escribe en ${table}: la única escritura sin autenticar es sobre ${[...STOREFRONT_WRITE_TABLES].join(', ')} → ${short}`);
+    } else {
+      // Igualdad EXACTA, no inclusión. Una columna de menos rompe el handler y se ve en el test;
+      // una columna de más es superficie de ataque nueva y no se ve en ningún lado.
+      const esperadas = [...permitidas].sort().join(',');
+      const reales = [...columnas].sort().join(',');
+      if (esperadas !== reales) {
+        fail('0026', `el privilegio de escritura de anon sobre ${table} es (${reales}) y se esperaba exactamente (${esperadas})`);
+      }
+    }
+    for (const column of columnas) {
+      // `id` y `created_at` salen de sus defaults justamente para que no se puedan forjar: un
+      // visitante no elige el id de su evento ni antedata un click.
+      if (NEVER_WRITABLE_BY_ANON.has(column)) {
+        fail('0026', `${table}.${column} no puede estar en un privilegio de escritura de anon: sale de su default para que no se pueda forjar`);
+      }
+    }
+  } else if (!STOREFRONT_TABLES.has(table)) {
     fail('0020', `anon no lee ${table}: no es parte del read model público de la vidriera`);
   }
-  for (const raw of columnList.split(',')) {
-    const column = raw.trim().replace(/"/g, '');
-    if (column.length === 0) continue;
+
+  for (const column of columnas) {
     if (NEVER_TO_ANON.has(column)) {
       fail('0020', `columna prohibida en un GRANT a anon: ${table}.${column}`);
     }
     if (SENSITIVE_COLUMNS.some(([t, c]) => t === table && c === column)) {
       fail('0020', `columna SENSITIVE en un GRANT a anon: ${table}.${column}`);
     }
+  }
+}
+
+// La tabla que `anon` escribe tiene que tener su policy de INSERT `TO anon`, y **no** puede tener
+// privilegio de lectura: el visitante escribe su click y no lee ninguno, ni el propio. Las dos
+// mitades se chequean acá porque por separado ninguna alcanza — un privilegio sin policy escribe
+// en cualquier tenant, y una policy sin privilegio no escribe nada (42501) y nadie se entera
+// hasta que se prende el tráfico.
+for (const table of STOREFRONT_WRITE_TABLES) {
+  const tieneGrant = new RegExp(`GRANT\\s+INSERT\\s*\\([^)]*\\)\\s*ON\\s+TABLE\\s+"?${table}"?\\s+TO\\s+anon`, 'i')
+    .test(sqlNoComments);
+  if (!tieneGrant) fail('0026', `${table} tiene policy de escritura para anon y ningún privilegio de INSERT: el insert daría 42501`);
+  const policyInsert = new RegExp(`CREATE POLICY[^;]*ON\\s+"?${table}"?[^;]*FOR\\s+INSERT[^;]*TO\\s+"?anon"?`, 'is')
+    .test(sqlNoComments);
+  if (!policyInsert) fail('0026', `${table} tiene privilegio de INSERT para anon y ninguna policy TO anon: escritura sin límite de tenant`);
+  if (new RegExp(`GRANT\\s+SELECT[^;]*ON\\s+TABLE\\s+"?${table}"?\\s+TO\\s+anon`, 'i').test(sqlNoComments)) {
+    fail('0026', `${table}: anon recibe lectura sobre la tabla que escribe. El visitante registra su click y no lee ninguno`);
   }
 }
 

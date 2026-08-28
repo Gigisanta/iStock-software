@@ -104,8 +104,11 @@ export function selfTenantPolicies(table: string) {
 //      `select *`, un `select imei` o un `select cost_usd` no "filtran de más": **no compilan
 //      en Postgres**, dan `42501`. Es la única defensa que sigue en pie el día que
 //      `publicListingDTO` tenga un bug. `CLAUDE.md` §2 y §5.
-//   2. **Policies `TO anon`, sólo `SELECT`** (esto). Deciden QUÉ FILAS. Cero policies de
-//      insert/update/delete para `anon`: no existen, ni restringidas.
+//   2. **Policies `TO anon`** (esto). Deciden QUÉ FILAS. Son de `SELECT` salvo **una**, que el
+//      LEAD ratificó en S4: el `INSERT` de `wa_click_events` (el click de WhatsApp). Cero
+//      policies de `UPDATE` y de `DELETE` para `anon`: no existen, ni restringidas. El detalle
+//      de por qué esa excepción es una policy y no un endpoint con `service_role` está al pie
+//      de este archivo, arriba de `storefrontAnonInsertPolicy`.
 //
 // ## El claim de la vidriera
 // `anon` no tiene `tenant_id` en el JWT (no hay usuario). Lo que sí conoce el server ANTES de
@@ -149,9 +152,8 @@ export function storefrontTenantId(): SQL {
 export const PUBLIC_STATUS_SQL = sql`status in ('available', 'reserved', 'sold')`;
 
 /**
- * Una policy de **sólo lectura** para el rol `anon`. No hay variante de escritura y no la va a
- * haber: si algún día la vidriera necesita escribir (un lead, un click de WhatsApp), eso entra
- * por una Server Function con el rol del server, no por el rol del visitante.
+ * Una policy de **sólo lectura** para el rol `anon`. Es la forma por default de la vidriera: el
+ * visitante lee, y todo lo que lee está acotado por el claim del slug.
  */
 export function storefrontAnonSelectPolicy(table: string, using: SQL) {
   return pgPolicy(`${table}_storefront_anon_select`, {
@@ -159,5 +161,47 @@ export function storefrontAnonSelectPolicy(table: string, using: SQL) {
     for: 'select',
     to: anonRole,
     using,
+  });
+}
+
+// ── La única excepción: el click de WhatsApp (S4) ──────────────────────────────────────────────
+//
+// Hasta S3 este módulo decía, textual, que no había variante de escritura para `anon` y que un
+// click de WhatsApp entraría "por una Server Function con el rol del server". **El LEAD lo
+// revisó en S4 y decidió lo contrario**, y el motivo no es de comodidad sino de dónde queda la
+// última línea de defensa:
+//
+//   · Con `service_role`, la garantía de que la fila cae en el tenant correcto vive **entera** en
+//     el handler. Un bug ahí escribe en la cuenta de otro y la base no se entera: `service_role`
+//     tiene `BYPASSRLS`, así que no hay segunda capa. La afirmación "sin RLS no hay merge"
+//     (CLAUDE.md §7) se vuelve decorativa justo en el único endpoint sin autenticar del producto.
+//   · Con `anon` + policy, el `WITH CHECK` lo evalúa el planner en cada `insert`. Si el handler
+//     tiene un bug, o si mañana alguien le pasa un `tenant_id` desde el body, Postgres devuelve
+//     `42501` y la fila no existe. El handler deja de ser el que garantiza el aislamiento y pasa
+//     a ser sólo el que lo pide.
+//
+// Lo que NO cambia, y es lo que mantiene la excepción acotada a un agujero de alfiler:
+//   · `anon` gana **INSERT de tres columnas** (`tenant_id`, `listing_id`, `source`) sobre **una**
+//     tabla. `id` y `created_at` quedan fuera del GRANT: salen de sus defaults y no se forjan.
+//   · **Cero** SELECT/UPDATE/DELETE, ni GRANT ni policy. El visitante escribe su click y no lee
+//     ninguno — ni el propio. Un `insert ... returning` desde la vidriera da `42501`, y está bien:
+//     el beacon no necesita saber qué escribió.
+//   · El `tenant_id` sale del claim del slug, igual que en las policies de lectura. Nunca del body.
+//
+// Ver `drizzle/0004_storefront_wa_click_insert.sql`, `src/rls-anon-wa-click.test.ts` (polaridad
+// contra Postgres real) y la regla 0026 de `scripts/rls-lint.mjs`, que es la que impide que esta
+// excepción se copie a una segunda tabla sin que nadie lo note.
+
+/**
+ * La policy de **escritura** de la vidriera. Sólo `INSERT`, sólo `TO anon`, y con `WITH CHECK`
+ * obligatorio (sin él, un visitante escribe filas en el tenant de otro: es el mismo agujero que
+ * documenta `tenantPolicies`).
+ */
+export function storefrontAnonInsertPolicy(table: string, withCheck: SQL) {
+  return pgPolicy(`${table}_storefront_insert`, {
+    as: 'permissive',
+    for: 'insert',
+    to: anonRole,
+    withCheck,
   });
 }

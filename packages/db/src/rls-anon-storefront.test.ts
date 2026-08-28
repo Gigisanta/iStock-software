@@ -277,7 +277,14 @@ describe('c · las filas que no son públicas devuelven 0 filas, no un error', (
 });
 
 // ══════════════════════════════════════════════════════════════════════════════════════════════
-describe('d · la vidriera no escribe. Nunca.', () => {
+describe('d · la vidriera no escribe, salvo el click de WhatsApp (S4)', () => {
+  // Este bloque decía "no escribe. Nunca." y era verdad hasta S3. El LEAD abrió **una** excepción
+  // en S4 —el INSERT de `wa_click_events`, la única escritura sin autenticar del producto— y ese
+  // caso salió de esta lista porque ahora tiene que PASAR. Su polaridad completa (legítimo pasa /
+  // tenant ajeno rechazado / listing ajeno rechazado / no lee nada) vive en
+  // `src/rls-anon-wa-click.test.ts`, para que la excepción esté probada en un archivo entero y no
+  // como una línea suelta acá. Todo lo demás sigue siendo `42501`, y esta lista es lo que impide
+  // que la excepción se ensanche sin que nadie lo note.
   const escrituras: readonly (readonly [string, string])[] = [
     [
       'insert listing',
@@ -293,7 +300,13 @@ describe('d · la vidriera no escribe. Nunca.', () => {
     ['delete foto', `delete from listing_photos where tenant_id = '${TENANT_A}'`],
     ['update fx', `update fx_settings set ars_per_usd = 1.00 where tenant_id = '${TENANT_A}'`],
     ['insert lead de canje', `insert into tradein_leads (tenant_id, customer_name, customer_wa_phone, model_text) values ('${TENANT_A}', 'x', '5492990000000', 'iPhone 12')`],
-    ['insert click de WhatsApp', `insert into wa_click_events (tenant_id, listing_id, source) values ('${TENANT_A}', '${LISTING_A_PUBLIC}', 'storefront_card')`],
+    ['insert evento de bitácora', `insert into listing_events (tenant_id, listing_id, kind) values ('${TENANT_A}', '${LISTING_A_PUBLIC}', 'created')`],
+    ['insert reserva', `insert into reservations (tenant_id, listing_id, expires_at) values ('${TENANT_A}', '${LISTING_A_PUBLIC}', now() + interval '60 minutes')`],
+    // La excepción de S4 es de INSERT y de tres columnas: leer, corregir o borrar clicks sigue
+    // fuera de alcance, y se afirma acá porque es donde alguien la ensancharía "de paso".
+    ['leer clicks de WhatsApp', `select source from wa_click_events where tenant_id = '${TENANT_A}'`],
+    ['update click de WhatsApp', `update wa_click_events set source = 'demo' where tenant_id = '${TENANT_A}'`],
+    ['delete click de WhatsApp', `delete from wa_click_events where tenant_id = '${TENANT_A}'`],
   ];
 
   it.each(escrituras)('%s → 42501', async (_caso, statement) => {
@@ -367,7 +380,7 @@ describe('f · la forma del privilegio, leída de la base (no del archivo de mig
     expect(r.map((x) => x.t)).toEqual([]);
   });
 
-  it('tampoco INSERT/UPDATE/DELETE en ninguna tabla ni en ninguna columna', async () => {
+  it('tampoco INSERT/UPDATE/DELETE de TABLA en ninguna de las 19', async () => {
     const tablas = await adminRows<{ t: string }>(`
       select c.relname as t from pg_class c
       join pg_namespace n on n.oid = c.relnamespace
@@ -375,13 +388,22 @@ describe('f · la forma del privilegio, leída de la base (no del archivo de mig
         and has_table_privilege('anon', c.oid, 'INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER')
       order by 1`);
     expect(tablas.map((x) => x.t)).toEqual([]);
+  });
 
+  it('el único privilegio de escritura de anon son 3 columnas de wa_click_events (S4)', async () => {
+    // Esto valía `[]` hasta S3. Sigue siendo una allowlist EXACTA y no una excepción abierta: si
+    // aparece una cuarta columna, o una segunda tabla, este test la dice por nombre. `id` y
+    // `created_at` no están y no pueden estar — salen de sus defaults para que no se forjen.
     const columnas = await adminRows<{ p: string }>(`
       select table_name || '.' || column_name || ':' || privilege_type as p
       from information_schema.column_privileges
       where table_schema = 'public' and grantee = 'anon' and privilege_type <> 'SELECT'
       order by 1`);
-    expect(columnas.map((x) => x.p)).toEqual([]);
+    expect(columnas.map((x) => x.p)).toEqual([
+      'wa_click_events.listing_id:INSERT',
+      'wa_click_events.source:INSERT',
+      'wa_click_events.tenant_id:INSERT',
+    ]);
   });
 
   it('el GRANT de columna es EXACTAMENTE la allowlist del read model público', async () => {
@@ -411,14 +433,26 @@ describe('f · la forma del privilegio, leída de la base (no del archivo de mig
     expect(r.map((x) => x.col)).toEqual([]);
   });
 
-  it('las policies `TO anon` son SÓLO de SELECT y ninguna es `using (true)`', async () => {
-    const r = await adminRows<{ p: string; cmd: string; qual: string | null }>(`
-      select tablename || '.' || policyname as p, cmd, qual
+  it('las policies `TO anon` son 5 de SELECT + la única de INSERT, y ninguna es decorativa', async () => {
+    // La lista es exhaustiva a propósito: se compara el conjunto entero, no "todas cumplen X".
+    // Una policy `TO anon` nueva rompe este test aunque esté bien escrita, y eso es lo que se
+    // busca — la superficie sin autenticar se agranda por decisión, no por descuido.
+    const r = await adminRows<{ p: string; cmd: string; qual: string | null; wc: string | null }>(`
+      select tablename || '.' || policyname as p, cmd, qual, with_check as wc
       from pg_policies where schemaname = 'public' and 'anon' = any(roles) order by 1`);
-    expect(r.length).toBe(5);
+    expect(r.map((x) => `${x.p}:${x.cmd}`)).toEqual([
+      'fx_settings.fx_settings_storefront_anon_select:SELECT',
+      'listing_photos.listing_photos_storefront_anon_select:SELECT',
+      'listings.listings_storefront_anon_select:SELECT',
+      'locations.locations_storefront_anon_select:SELECT',
+      'tenants.tenants_storefront_anon_select:SELECT',
+      'wa_click_events.wa_click_events_storefront_insert:INSERT',
+    ]);
     for (const row of r) {
-      expect(row.cmd, `${row.p} no es SELECT`).toBe('SELECT');
-      expect(row.qual ?? 'true', `${row.p} es RLS decorativa`).not.toBe('true');
+      // El predicado que corresponda según la operación, y ninguno puede ser `true`.
+      const predicado = row.cmd === 'INSERT' ? row.wc : row.qual;
+      expect(predicado ?? 'true', `${row.p} es RLS decorativa`).not.toBe('true');
+      expect(predicado ?? '', `${row.p} no mira el claim del slug`).toContain('storefront_');
     }
   });
 

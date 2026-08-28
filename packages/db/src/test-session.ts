@@ -57,6 +57,18 @@ export interface Session {
   affected: (text: string) => Promise<number>;
   /** Corre esperando error; devuelve el `code` de Postgres. Falla si NO hubo error. */
   expectError: (text: string) => Promise<string>;
+  /**
+   * Igual que `expectError` pero devuelve además el mensaje. Hace falta porque **`42501` tapa dos
+   * cosas distintas** y confundirlas deja un test verde que no prueba lo que dice:
+   *
+   *   · `permission denied for table X`                      → faltó el GRANT (capa 1)
+   *   · `new row violates row-level security policy for X`   → el GRANT estaba y la **policy**
+   *                                                            rechazó la fila (capa 2)
+   *
+   * Un test que sólo compara el código no distingue "la policy me frenó el insert cruzado" de
+   * "nunca tuve privilegio para insertar nada", y esa diferencia **es** el invariante de S4.
+   */
+  expectFailure: (text: string) => Promise<{ code: string; message: string }>;
   close: () => Promise<void>;
 }
 
@@ -73,18 +85,21 @@ export function openSession(claims: SessionClaims, role: PgRole = 'authenticated
     }) as unknown as Promise<{ rows: T[]; count: number }>;
   }
 
+  async function expectFailure(text: string): Promise<{ code: string; message: string }> {
+    try {
+      await run<unknown>(text);
+    } catch (error) {
+      const { code, message } = error as { code?: string; message?: string };
+      return { code: code ?? 'UNKNOWN', message: message ?? '' };
+    }
+    throw new Error(`se esperaba un error de Postgres y la query pasó: ${text}`);
+  }
+
   return {
     query: async <T = Record<string, unknown>>(text: string): Promise<T[]> => (await run<T>(text)).rows,
     affected: async (text: string): Promise<number> => (await run<unknown>(text)).count,
-    expectError: async (text: string): Promise<string> => {
-      try {
-        await run<unknown>(text);
-      } catch (error) {
-        const code = (error as { code?: string }).code;
-        return code ?? 'UNKNOWN';
-      }
-      throw new Error(`se esperaba un error de Postgres y la query pasó: ${text}`);
-    },
+    expectError: async (text: string): Promise<string> => (await expectFailure(text)).code,
+    expectFailure,
     close: async () => { await sql.end({ timeout: 5 }); },
   };
 }
