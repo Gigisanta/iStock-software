@@ -3,6 +3,7 @@ import { randomUUID, randomFillSync } from 'node:crypto';
 import { sanitizeDescription } from '@istock/domain';
 import { uploadListingPhoto, type UploadedListingPhoto } from '@istock/media';
 import { listingEvents, listingPhotos, listings } from '@istock/db';
+import { uniqueViolationConstraint } from '../db/pg-error';
 import { withTenantDb, type TenantContext } from '../db/session';
 import { logError, logEvent } from '../log';
 import { buildListingSlug } from './listing-slug';
@@ -60,12 +61,23 @@ export interface CreateUnitFailure {
   readonly message: string;
 }
 
+/**
+ * ¿Es un `23505`, y —si se pide— de **esta** constraint?
+ *
+ * Delegaba en una lectura propia de `error.code` hasta el 2026-08-28, y por eso no delegaba en
+ * nada: Drizzle envuelve el error del driver y `code` arriba es `undefined`, así que las tres
+ * ramas de abajo eran código muerto y una colisión de slug o un IMEI repetido salían como 500.
+ * La cadena la camina `uniqueViolationConstraint` (`_lib/db/pg-error.ts`), que es el único lugar
+ * del panel donde se lee un error de Postgres y el único que tiene un test contra Postgres real.
+ * Tercera copia de ese discriminador, y la que su propio docblock avisaba que se iba a olvidar.
+ *
+ * `'unnamed'` —un `23505` sin nombre— **no** matchea contra una constraint pedida: falla cerrado,
+ * igual que antes. Sin `constraint`, cualquier `23505` cuenta; es la rama genérica de más abajo.
+ */
 function isUniqueViolation(error: unknown, constraint?: string): boolean {
-  if (typeof error !== 'object' || error === null) return false;
-  const pg = error as { code?: string; constraint_name?: string; constraint?: string };
-  if (pg.code !== '23505') return false;
-  if (constraint === undefined) return true;
-  return pg.constraint_name === constraint || pg.constraint === constraint;
+  const name = uniqueViolationConstraint(error);
+  if (name === null) return false;
+  return constraint === undefined || name === constraint;
 }
 
 function newSlug(title: string): string {

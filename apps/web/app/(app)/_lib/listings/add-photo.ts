@@ -3,6 +3,7 @@ import { and, eq, sql } from 'drizzle-orm';
 import { isPublicStatus } from '@istock/domain';
 import { uploadListingPhoto, type UploadedListingPhoto } from '@istock/media';
 import { listingPhotos, listings } from '@istock/db';
+import { uniqueViolationConstraint } from '../db/pg-error';
 import { withTenantDb, type TenantContext } from '../db/session';
 import { logError, logEvent } from '../log';
 import { invalidateListing, invalidateStorefrontUnit } from '../tenants/storefront-cache';
@@ -94,12 +95,21 @@ type InsertOutcome =
   | { readonly kind: 'full' }
   | { readonly kind: 'gone' };
 
+/**
+ * ¿Dos cargas de foto se pisaron el `sort_order`?
+ *
+ * Leía `error.code` del objeto de arriba hasta el 2026-08-28, o sea que devolvía `false` siempre:
+ * Drizzle envuelve el error del driver y el `PostgresError` viaja en `.cause`. El resultado era que
+ * el retry de más abajo —la razón entera por la que hay un bucle de tres intentos— no se disparaba
+ * nunca y la segunda foto simultánea salía como 500 en vez de reintentar. Cuarta copia del mismo
+ * discriminador; ahora la cadena la camina `uniqueViolationConstraint` (`_lib/db/pg-error.ts`).
+ *
+ * `'unnamed'` cuenta como colisión, igual que antes contaba `constraint_name === undefined`: acá
+ * reintentar de más cuesta un `insert`, y no reintentar cuesta una foto perdida.
+ */
 function isSortOrderCollision(error: unknown): boolean {
-  if (typeof error !== 'object' || error === null) return false;
-  const pg = error as { code?: string; constraint_name?: string; constraint?: string };
-  if (pg.code !== '23505') return false;
-  const name = pg.constraint_name ?? pg.constraint;
-  return name === undefined || name === 'listing_photos_listing_sort_key';
+  const name = uniqueViolationConstraint(error);
+  return name === 'unnamed' || name === 'listing_photos_listing_sort_key';
 }
 
 /** Código del error, nunca el mensaje: Postgres cita la fila que violó la constraint. */
@@ -234,8 +244,20 @@ export async function addUnitPhoto(
 
       return { ok: true, photoCount };
     } catch (error) {
-      if (isSortOrderCollision(error) && attempt < ATTEMPTS - 1) continue;
-      throw error;
+      /**
+       * `break`, no `throw`, cuando se agotaron los intentos. Decía
+       * `if (isSortOrderCollision(error) && attempt < ATTEMPTS - 1) continue; throw error;`, y con
+       * eso la tercera colisión salía por el `throw`: el bucle **nunca** terminaba por agotamiento,
+       * así que el `logError('…sort_order_exhausted')` y el mensaje de abajo eran inalcanzables. La
+       * misma clase que el defecto que destapó esta revisión —rama escrita, rama muerta— y salió a
+       * la luz recién cuando el bucle tuvo su primer test (`add-photo.test.ts`, S7).
+       *
+       * Lo que cambia para quien está cargando fotos: tres cruces seguidos dejan de ser un 500 y
+       * pasan a ser la frase que ya estaba escrita, con la línea de log que ya estaba escrita.
+       * Un `23505` de OTRA constraint sigue subiendo intacto: eso no es una carrera.
+       */
+      if (!isSortOrderCollision(error)) throw error;
+      if (attempt === ATTEMPTS - 1) break;
     }
   }
 

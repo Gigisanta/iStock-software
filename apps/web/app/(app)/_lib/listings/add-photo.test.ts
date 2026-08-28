@@ -1,3 +1,4 @@
+import { DrizzleQueryError } from 'drizzle-orm/errors';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
@@ -63,6 +64,16 @@ const db = {
   total: 0,
   maxSortOrder: -1,
   inserts: [] as { sortOrder: number; masterKey: string }[],
+  /**
+   * Cola de errores para el `insert`: se consume uno por intento. Existe para poder ejercer el
+   * bucle de tres intentos de `add-photo.ts`, que hasta el 2026-08-28 **no tenía un solo test** —
+   * y por eso nadie vio que `isSortOrderCollision()` leía `code` del objeto de arriba y devolvía
+   * `false` siempre, o sea que el retry no se disparaba nunca y la segunda carga simultánea salía
+   * como 500 en vez de reintentar. Una cola y no un valor fijo: "falla una vez y a la segunda
+   * entra" es justo lo que el bucle promete, y un error permanente no lo distingue de "no
+   * reintenta".
+   */
+  insertErrors: [] as unknown[],
   updatedListing: 0,
   /** Orden de las operaciones, para verificar que el lock va antes del `count`. */
   calls: [] as string[],
@@ -97,6 +108,7 @@ const tx = {
       values: (row: { sortOrder: number; masterKey: string }) =>
         thenable(() => {
           db.calls.push('insert');
+          if (db.insertErrors.length > 0) throw db.insertErrors.shift();
           db.inserts.push({ sortOrder: row.sortOrder, masterKey: row.masterKey });
           return [];
         }),
@@ -155,6 +167,7 @@ beforeEach(() => {
   db.total = 0;
   db.maxSortOrder = -1;
   db.inserts = [];
+  db.insertErrors = [];
   db.updatedListing = 0;
   db.calls = [];
   uploadListingPhoto.mockResolvedValue(uploaded);
@@ -350,5 +363,84 @@ describe('addUnitPhoto · el upload falla', () => {
       listingId: 'listing-1',
     });
     expect(JSON.stringify(logError.mock.calls)).not.toContain('boom');
+  });
+});
+
+/**
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *  El bucle de tres intentos, que existía sin un solo test que lo mirara
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * `MIN_PHOTOS_TO_PUBLISH` son 3 y suben **una por request**, así que el dueño manda las tres casi
+ * a la vez desde el celular: dos transacciones leen el mismo `max(sort_order)+1` y la segunda
+ * rebota con `23505` de `listing_photos_listing_sort_key`. Reintentar recalcula el orden y la foto
+ * entra. Eso es la razón entera del bucle.
+ *
+ * Los errores van **envueltos en el `DrizzleQueryError` real**, que es como llegan: el `insert` es
+ * de Drizzle, y Drizzle 0.45.2 no propaga lo que tira `postgres-js` — lo envuelve y deja el
+ * `PostgresError` en `.cause`. Con el error plano estos tests pasarían aunque el discriminador
+ * estuviera roto, que es exactamente cómo el defecto sobrevivió en los otros cinco archivos.
+ */
+describe('addUnitPhoto · dos cargas simultáneas se pisan el sort_order', () => {
+  const colision = (constraint: string): Error =>
+    new DrizzleQueryError(
+      'insert into "listing_photos" ...',
+      [],
+      Object.assign(new Error('duplicate key value violates unique constraint'), {
+        code: '23505',
+        constraint_name: constraint,
+      }),
+    );
+
+  it('la colisión se reintenta y la foto entra en el segundo intento', async () => {
+    givenUnit(1);
+    db.total = 1;
+    db.maxSortOrder = 0;
+    db.insertErrors = [colision('listing_photos_listing_sort_key')];
+
+    const result = await add();
+
+    expect(result).toEqual({ ok: true, photoCount: 2 });
+    expect(db.calls.filter((c) => c === 'insert')).toHaveLength(2);
+    expect(db.inserts).toHaveLength(1);
+  });
+
+  /**
+   * Se afirma **identidad**: con el error envuelto, el `message` de arriba es el `Failed query: …`
+   * de Drizzle. "Sube sin traducir" es el mismo objeto, no un substring.
+   */
+  it('un 23505 de OTRA constraint no se reintenta: sube tal cual', async () => {
+    givenUnit(1);
+    db.total = 1;
+    db.maxSortOrder = 0;
+    const error = colision('listing_photos_alguna_otra');
+    db.insertErrors = [error];
+
+    await expect(add()).rejects.toBe(error);
+    expect(db.calls.filter((c) => c === 'insert')).toHaveLength(1);
+  });
+
+  /**
+   * El techo del bucle. Tres colisiones seguidas no son una carrera: es que algo más pasa. No se
+   * reintenta para siempre y la persona recibe una frase, no un 500.
+   */
+  it('tres colisiones seguidas se rinden con mensaje y quedan logueadas', async () => {
+    givenUnit(1);
+    db.total = 1;
+    db.maxSortOrder = 0;
+    db.insertErrors = [
+      colision('listing_photos_listing_sort_key'),
+      colision('listing_photos_listing_sort_key'),
+      colision('listing_photos_listing_sort_key'),
+    ];
+
+    const result = await add();
+
+    expect(result).toEqual({ ok: false, message: 'Se cruzaron dos cargas de foto. Probá de nuevo.' });
+    expect(db.calls.filter((c) => c === 'insert')).toHaveLength(3);
+    expect(logError).toHaveBeenCalledWith('listing.photo.sort_order_exhausted', '23505', {
+      tenantId: 'tenant-1',
+      listingId: 'listing-1',
+    });
   });
 });
