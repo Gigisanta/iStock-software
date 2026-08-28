@@ -36,6 +36,13 @@
       "when": 1787904830751,
       "tag": "0004_storefront_wa_click_insert",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1787908868028,
+      "tag": "0005_memberships_single_owner_per_user",
+      "breakpoints": true
     }
   ]
 }
