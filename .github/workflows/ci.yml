@@ -75,10 +75,29 @@ jobs:
       - name: tests (incluye RLS cruzado contra Postgres real)
         run: pnpm -r test
 
-      # El gate que la constitucion pide y que ningun linter da gratis: si esto encuentra algo,
-      # es una fuga a la vidriera, no un warning de estilo.
+      # Los gates que la constitucion pide y que ningun linter da gratis: si estos encuentran
+      # algo, es una fuga a la vidriera, no un warning de estilo.
+      #
+      # Los cuatro corren SIEMPRE y por separado, no encadenados con `&&`: encadenarlos hace que
+      # el primer rojo tape a los otros tres y que el reporte de CI diga una sola cosa cuando
+      # pasaron cuatro. `if: always()` cuesta segundos y compra el diagnostico completo.
       - name: gate de datos sensibles
         run: ./scripts/guard-leaks.sh
+
+      # Agregados por el LEAD el 2026-08-28. guard-grants existia desde el mismo dia pero SOLO
+      # corria dentro de accept-s1.sh, que no esta en CI: o sea que la unica auditoria de los
+      # GRANT del repo no se ejecutaba en ningun push. Un gate que no corre es un archivo.
+      - name: gate de GRANT por sentencia (CLAUDE.md §2)
+        if: always()
+        run: ./scripts/guard-grants.sh
+
+      - name: gate de R2 (master privado, key no derivable, cero delete por key)
+        if: always()
+        run: ./scripts/guard-r2.sh
+
+      - name: phantom-file guard (artefacto inexistente o vacio = la tarea no paso)
+        if: always()
+        run: ./scripts/guard-artifacts.sh --harness
 
   e2e:
     name: e2e

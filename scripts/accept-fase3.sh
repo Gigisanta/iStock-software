@@ -155,6 +155,16 @@ grep -qiE '[1-9][0-9]* skipped' /tmp/f3-test.log 2>/dev/null \
   && { no "hay tests skipeados: los drivers mock existen, no hay excusa"; grep -iE 'skipped' /tmp/f3-test.log | sed 's/^/        /' | head -3; } \
   || ok "cero tests skipeados"
 if ./scripts/guard-leaks.sh >/tmp/f3-guard.log 2>&1; then ok "guard-leaks"; else no "guard-leaks"; grep -A3 LEAK /tmp/f3-guard.log | sed 's/^/        /' | head -20; fi
+for g in guard-grants guard-r2 guard-artifacts; do
+  EXTRA=""; [ "$g" = guard-artifacts ] && EXTRA="--harness"
+  if [ ! -x "scripts/$g.sh" ]; then
+    no "falta scripts/$g.sh — ausencia de medicion = FAIL, nunca PASS"
+  elif ./scripts/$g.sh ${EXTRA:-} >/tmp/f3-$g.log 2>&1; then
+    ok "$g"
+  else
+    no "$g"; grep -E 'GRANT|R2|FAIL|vacio' /tmp/f3-$g.log | sed 's/^/        /' | head -12
+  fi
+done
 
 # `next build` es el unico momento en que se valida cacheComponents + 'use cache' de verdad.
 # Un 'use cache' mal puesto no lo ve ni typecheck ni vitest: lo ve el build, o produccion.
