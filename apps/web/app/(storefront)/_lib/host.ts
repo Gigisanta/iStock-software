@@ -321,3 +321,85 @@ export function isInfrastructurePath(pathname: string): boolean {
 export function isStorefrontInternalPath(pathname: string): boolean {
   return pathname === STOREFRONT_PATH_PREFIX || pathname.startsWith(`${STOREFRONT_PATH_PREFIX}/`);
 }
+
+/**
+ * El primer segmento de la URL pública de las fotos. **Global al deploy, no de ningún tenant.**
+ *
+ * Es el prefijo que trae por default `NEXT_PUBLIC_MEDIA_BASE_URL` (ver `packages/media/src/env.ts`)
+ * y la URL que sirve la ruta `apps/web/app/(app)/%5Fmedia/[...key]/route.ts` mientras B1 siga
+ * abierto; en producción la misma key la sirve el CDN de Cloudflare desde otro host.
+ *
+ * **Sí, el string está escrito dos veces en el repo, y es a propósito.** La alternativa era
+ * importar `@istock/media` desde acá, o sea meter el cliente de R2 y el parseo de env en el bundle
+ * del proxy — que corre en el 100% de los pageviews, antes del cache, con presupuesto de `< 2 ms` y
+ * cero I/O (ADR-007, ley 1). Un literal de nueve caracteres es más barato que eso. Si el prefijo
+ * cambia, lo que lo detecta es {@link isGlobalMediaPath} quedándose sin cubrir la ruta, y eso lo
+ * afirma `tests/proxy-matcher-no-deja-la-vidriera-sin-vigilar.test.ts`, que enumera el árbol de
+ * `apps/web/app` en cada `pnpm test`.
+ */
+export const MEDIA_PATH_PREFIX = '/_media';
+
+/**
+ * `%5F` es la forma percent-encodeada del `_` inicial, y **hay que contemplarla acá adentro.**
+ *
+ * En el App Router una carpeta que empieza con `_` es privada y no rutea, así que el directorio en
+ * disco se llama `%5Fmedia` (`project-structure.md`: *"You can create URL segments that start with
+ * an underscore by prefixing the folder name with `%5F`"*). Del lado de la **definición** de la
+ * ruta, Next normaliza ese `%5F` a `_` (`server/normalizers/underscore-normalizer.ts`:
+ * *"UnderscoreNormalizer replaces all instances of %5F with _"*), así que la ruta se llama
+ * `/_media/[...key]` y la URL pública es `/_media/…`.
+ *
+ * Del lado del **request** ese normalizador no se aplica: verificado por grep sobre
+ * `next@16.3.3`, sus únicos consumidores son los normalizadores de *page* y de *bundle path*. O
+ * sea que hoy, muy probablemente, `/%5Fmedia/x.webp` no matchea la ruta y termina en un 404. Pero
+ * "probablemente" no es el estándar de este archivo, por tres motivos:
+ *
+ * 1. **404 igual es la app.** Un `not-found` del App Router es una invocación de función que
+ *    renderiza. La regla que se está sosteniendo no es "que la foto salga": es *"delete inbound
+ *    `x-tenant-*` on **every path** through the proxy"*. Si el path llega a la app, el proxy tiene
+ *    que haberlo visto — sirva una foto o sirva un 404.
+ * 2. **La equivalencia `%5F` ↔ `_` es una convención viva de Next, no un detalle de implementación
+ *    congelado.** El normalizador existe justamente porque Next trata las dos formas como la misma
+ *    cosa en el lado que le tocó normalizar. Apostar a que nunca la aplique del otro lado —o a que
+ *    la capa de routing de Vercel no decodifique antes— es apostar a la versión que tenemos hoy.
+ * 3. **Cubrirla cuesta cero.** Ningún cliente real escribe `%5F`: no hay tráfico que pagar. El
+ *    error opuesto —dejarla afuera y equivocarse— es exactamente el agujero que este cambio cierra.
+ *
+ * Los dígitos hex de un escape son case-insensitive (RFC 3986 §2.1), así que `%5f` y `%5F` son el
+ * mismo octeto y acá valen los dos. Se normaliza **sólo el escape** y no el resto del path: la ruta
+ * es `_media` en minúscula y el matcheo de rutas de Next es case-sensitive, así que `/%5FMEDIA/x`
+ * no es la ruta de media y no tiene por qué pasar por esta puerta.
+ */
+const ENCODED_LEADING_UNDERSCORE = /^\/%5f/iu;
+
+/**
+ * `/_media/**` (y su forma `%5F`): **se pasa derecho, nunca se reescribe por host.**
+ *
+ * ═══════════════════════════════════════════════════════════════════════════════════════════════
+ *  Por qué no alcanzaba con que el `matcher` lo cubriera. Defecto encontrado por guard en S2.
+ * ═══════════════════════════════════════════════════════════════════════════════════════════════
+ * Las fotos salen en `.webp`, y `.webp` era uno de los 16 sufijos que el `matcher` excluye para no
+ * cobrar una invocación por asset de `public/`. El router de Next matchea por **segmento** y el
+ * matcher excluía por **sufijo**: misma discrepancia que dejaba entrar `/s/algo.json` en S1. Sobre
+ * todo el camino de media, `proxy()` no corría — y con él tampoco `stripInboundTenantHeaders()`,
+ * así que un `x-tenant-*` mandado por el cliente sobrevivía hasta la app (`CLAUDE.md` §2:
+ * escalación de tenant).
+ *
+ * Ahora el prefijo está cubierto por el `matcher`, pero cubrir sin esta guarda **rompería todas las
+ * fotos de todas las vidrieras**: sobre `acme.maat.work`, `/_media/…` caería en la rama
+ * `storefront` y se reescribiría a `/s/acme/_media/…`, que no es ruta de nada. Y la reescritura
+ * sería incorrecta incluso si existiera: la key es **content-addressed** (ADR-006), o sea un hash
+ * del byte de salida, sin `tenant_id` y sin `listing_id` adentro. Dos tenants que suban la misma
+ * foto comparten el objeto: por definición ese byte no pertenece a la vidriera de ningún slug.
+ * Meterle un slug al path sería inventar una pertenencia que el esquema no tiene — y de paso
+ * multiplicaría por tenant las entradas de cache de un objeto inmutable y compartido.
+ *
+ * Que no se reescriba **no** afloja nada: quién puede leer esa key lo decide la ruta (bucket
+ * hardcodeado a `media` + `isPublicVariantKey`), no el proxy. Acá sólo se decide el ruteo, y el
+ * ruteo correcto para una URL global es no tocarla. Sanear headers sí se sanea, como en todos los
+ * caminos.
+ */
+export function isGlobalMediaPath(pathname: string): boolean {
+  const path = pathname.replace(ENCODED_LEADING_UNDERSCORE, '/_');
+  return path === MEDIA_PATH_PREFIX || path.startsWith(`${MEDIA_PATH_PREFIX}/`);
+}

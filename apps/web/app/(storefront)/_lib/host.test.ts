@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { SLUG_PATTERN } from '@istock/domain';
 import {
+  MEDIA_PATH_PREFIX,
   PRERENDER_SEED_SLUG,
   RESERVED_SUBDOMAINS,
   SLUG_RE,
+  isGlobalMediaPath,
   isInfrastructurePath,
   isReservedSubdomain,
   isSlugShaped,
@@ -159,6 +161,56 @@ describe('isInfrastructurePath', () => {
     expect(isInfrastructurePath('/_next/static/chunks/main.js')).toBe(true);
     expect(isInfrastructurePath('/p/iphone-14')).toBe(false);
     expect(isInfrastructurePath('/')).toBe(false);
+  });
+});
+
+describe('isGlobalMediaPath · la foto es global, no es de la vidriera de nadie', () => {
+  // El defecto que originó estos tests: las fotos salen en `.webp` y `webp` es uno de los 16
+  // sufijos que el `matcher` del proxy excluye, así que sobre TODO el camino de media `proxy()` no
+  // corría — ni la resolución de host ni, sobre todo, `stripInboundTenantHeaders()`. La cobertura
+  // por prefijo la afirma `tests/proxy-matcher-no-deja-la-vidriera-sin-vigilar.test.ts`; lo que se
+  // afirma acá es la otra mitad: que estando cubierto, el proxy NO lo reescriba.
+
+  it('cubre el prefijo entero, no una extensión: la ruta es `[...key]` y la elige quien pide', () => {
+    expect(isGlobalMediaPath(`${MEDIA_PATH_PREFIX}/v1/ab/0123456789abcdef.webp`)).toBe(true);
+    // El día que el pipeline emita AVIF (CLAUDE.md §3) esto ya está cubierto. Razonar por sufijo
+    // es exactamente el bug que se está arreglando.
+    expect(isGlobalMediaPath(`${MEDIA_PATH_PREFIX}/v1/ab/0123456789abcdef.avif`)).toBe(true);
+    expect(isGlobalMediaPath(MEDIA_PATH_PREFIX)).toBe(true);
+  });
+
+  it('acepta la forma percent-encodeada, en las dos cajas del hex (RFC 3986 §2.1)', () => {
+    // El directorio en disco es `%5Fmedia` porque `_media` sería una carpeta privada de Next. La
+    // URL pública es `/_media/…`, pero un cliente puede escribir el escape a mano y, si alguna capa
+    // lo decodifica antes de rutear, ese request llega a la app. Llegue como foto o como 404, tiene
+    // que haber pasado por el saneo de headers.
+    expect(isGlobalMediaPath('/%5Fmedia/v1/ab/0123456789abcdef.webp')).toBe(true);
+    expect(isGlobalMediaPath('/%5fmedia/v1/ab/0123456789abcdef.webp')).toBe(true);
+  });
+
+  it('no se come vecinos: sólo el primer segmento exacto', () => {
+    expect(isGlobalMediaPath('/_mediaotro/x.webp')).toBe(false);
+    expect(isGlobalMediaPath('/algo/_media/x.webp')).toBe(false);
+    expect(isGlobalMediaPath('/')).toBe(false);
+    expect(isGlobalMediaPath('/s/nortecel')).toBe(false);
+    // Sólo se normaliza el escape, no el resto del path: el matcheo de rutas de Next es
+    // case-sensitive y la ruta es `_media` en minúscula.
+    expect(isGlobalMediaPath('/%5FMEDIA/x.webp')).toBe(false);
+  });
+
+  it('es disjunto de `/s/**` y de `/_next/**`: ninguna guarda le pisa el camino a la otra', () => {
+    for (const path of [`${MEDIA_PATH_PREFIX}/v1/ab/0123456789abcdef.webp`, '/%5Fmedia/x.webp']) {
+      expect(isStorefrontInternalPath(path)).toBe(false);
+      expect(isInfrastructurePath(path)).toBe(false);
+    }
+  });
+
+  it('storefrontPathFor demuestra por qué NO puede reescribirse por host', () => {
+    // Esto es lo que haría el proxy sin la guarda, sobre `nortecel.maat.work`. La key es
+    // content-addressed (ADR-006): no hay ruta en ese path y el objeto no es de ningún tenant.
+    expect(storefrontPathFor('nortecel', `${MEDIA_PATH_PREFIX}/v1/ab/0123456789abcdef.webp`)).toBe(
+      '/s/nortecel/_media/v1/ab/0123456789abcdef.webp',
+    );
   });
 });
 

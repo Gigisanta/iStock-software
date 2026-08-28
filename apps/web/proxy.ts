@@ -37,6 +37,7 @@
 
 import { NextResponse, type NextRequest } from 'next/server';
 import {
+  isGlobalMediaPath,
   isInfrastructurePath,
   isStorefrontInternalPath,
   resolveHost,
@@ -127,6 +128,16 @@ export function proxy(request: NextRequest): NextResponse {
   // adentro y no sólo en el `matcher`.
   if (isInfrastructurePath(pathname)) return passthrough(sanitized);
 
+  // `/_media/**` es el otro espacio de URLs **global al deploy**: la key es content-addressed, o
+  // sea un hash del byte, sin `tenant_id` ni `listing_id` adentro (ADR-006). Dos tenants que suban
+  // la misma foto comparten el objeto, así que esa URL no es de la vidriera de ningún slug:
+  // reescribirla a `/s/{slug}/_media/…` la mandaría a una ruta que no existe y dejaría **todas** las
+  // fotos de **todas** las vidrieras rotas. Pasa derecho — pero pasa por acá, que es el punto: hasta
+  // S2 este camino quedaba afuera del `matcher` (las fotos son `.webp`, uno de los 16 sufijos
+  // excluidos) y `stripInboundTenantHeaders()` no corría sobre él. El argumento largo, incluido por
+  // qué se contempla la forma `%5F`, está en `isGlobalMediaPath`.
+  if (isGlobalMediaPath(pathname)) return passthrough(sanitized);
+
   // `/s/**` es NUESTRO espacio interno: el destino del rewrite, no una URL pública. Se corta acá
   // arriba, antes de resolver el host y sin importar cuál sea, por dos motivos:
   //
@@ -177,7 +188,9 @@ export function proxy(request: NextRequest): NextResponse {
  * Lo que queda excluido acá se sirve desde el apex: `robots.txt` y `sitemap.xml` por tenant son de
  * S3, no de esta slice.
  *
- * ## Las dos primeras entradas son el fix del HIGH del adversary de S1. No son decorativas.
+ * ## Las entradas de prefijo son fixes de agujeros medidos. No son decorativas.
+ *
+ * ### `/s` y `/s/:path*` — HIGH del adversary de S1.
  * La exclusión por extensión de la tercera entrada es un match de SUFIJO, no de directorio: no
  * distingue `/logo.png` (un archivo real de `public/`) de `/s/algo.json` (**una ruta de la app**,
  * porque `/s/[slug]` matchea con `slug = "algo.json"`). El resultado era que sobre `/s/**` el proxy
@@ -188,6 +201,38 @@ export function proxy(request: NextRequest): NextResponse {
  * combinan con OR (doc de `proxy.md`: *"For multiple paths: Use an array"*), así que estas dos
  * entradas ganan sobre cualquier exclusión de la tercera. Van las dos porque `:path*` es *cero o
  * más* segmentos y no quiero que el caso `/s` pelado dependa de esa lectura.
+ *
+ * ### `/_media/:path*` y `/%5Fmedia/:path*` — el mismo agujero, encontrado en S2 por el guard
+ * `tests/proxy-matcher-no-deja-la-vidriera-sin-vigilar.test.ts` (16 casos rojos, uno por sufijo).
+ * `apps/web/app/(app)/%5Fmedia/[...key]/route.ts` sirve las fotos, las fotos son `.webp`, y `webp`
+ * es uno de los 16 sufijos de la exclusión: el proxy **no corría nunca** sobre el camino de media, y
+ * con él tampoco `stripInboundTenantHeaders()` — un `x-tenant-*` del cliente sobrevivía hasta la
+ * app. Es la misma clase de bug que `/s/algo.json`, no un caso nuevo: el router matchea por
+ * **segmento** y la exclusión mira el **sufijo**.
+ *
+ * Tres decisiones deliberadas en cómo está escrita esta cobertura:
+ *
+ * 1. **Se cubre el prefijo entero, no `.webp`.** Cubrir la extensión de hoy sería volver a razonar
+ *    por sufijo — el error original — y quedaría roto solo el día que el pipeline emita `.avif`
+ *    (que `CLAUDE.md` §3 ya nombra) o `.jpg` de fallback. La ruta es un `[...key]`: quien pide la
+ *    URL elige el último segmento, así que la extensión no es una propiedad de la ruta.
+ * 2. **Va la forma `%5F` además de `/_media`.** El directorio en disco es `%5Fmedia` porque
+ *    `_media` sería *private folder*; la URL pública es `/_media/…` y es contra la URL que se
+ *    escribe un matcher. La percent-encodeada se cubre igual, y el porqué —con la evidencia de
+ *    `next@16.3.3` de que el normalizador de `%5F` corre del lado de la definición y no del
+ *    request— está entero en `isGlobalMediaPath`. Resumen: si esa forma llega a la app, aunque sea
+ *    para dar 404, tiene que haber pasado por el saneo de headers; y cubrirla no cuesta tráfico
+ *    real porque ningún cliente escribe `%5F` a mano.
+ * 3. **Cubrir sin la guarda del cuerpo rompía las fotos de todas las vidrieras.** Sobre
+ *    `acme.maat.work`, `/_media/…` caía en la rama `storefront` y se reescribía a
+ *    `/s/acme/_media/…`. Por eso el cambio son dos mitades y ninguna sirve sola: entrada en el
+ *    `matcher` + `isGlobalMediaPath()` → `passthrough` arriba de la resolución de host.
+ *
+ * Estas dos entradas **no** amplían el gasto sobre assets estáticos: `/_media/**` no es un archivo
+ * de `public/` ni de `_next/static`, es una ruta de la app que siempre se sirvió con una invocación.
+ * Lo único que cambia es que ahora esa invocación está precedida por el proxy — un `if` de dos
+ * comparaciones de string, sin red y sin allocations. Y es transitorio: con `MEDIA_DRIVER=r2` las
+ * fotos las sirve el CDN de Cloudflare desde otro host, que ni siquiera pasa por Vercel.
  *
  * **Por qué NO se toca la exclusión por extensión** (que era la otra salida posible): existe para
  * que `public/` se sirva sin invocar el proxy, y `public/` cuelga de la RAÍZ (`/logo.png`,
@@ -206,6 +251,12 @@ export function proxy(request: NextRequest): NextResponse {
  * 4. Control negativo del fix: `/s/x.json`, `/s/x.txt`, `/s/x.css`, `/s/x.xml`, `/s/x.woff2` → los
  *    cinco `404`, en milisegundos, con `content-type: text/plain` (es la respuesta del proxy) y sin
  *    `__next_error__` en el body. Es lo que ya chequea `scripts/accept-s1.sh` A8.
+ * 5. Control del fix de S2, el que importa porque la regresión sería silenciosa: la MISMA key de
+ *    variante pedida con `Host: 127.0.0.1.nip.io` (apex) y con `Host: demo.127.0.0.1.nip.io`
+ *    (tenant) tiene que devolver `200` y los mismos bytes en los dos casos. Si alguna vez alguien
+ *    saca la guarda de `isGlobalMediaPath` del cuerpo, el segundo pasa a `404` y las fotos
+ *    desaparecen sólo en los subdominios de tenant — o sea, en el único lugar donde alguien las
+ *    mira. `scripts/accept-s2.sh` hoy sólo pega contra el apex.
  *
  * **No se declara `runtime`**: en Proxy esa opción tira error (v16.0.0). El runtime es Node.js.
  */
@@ -213,6 +264,8 @@ export const config = {
   matcher: [
     '/s',
     '/s/:path*',
+    '/_media/:path*',
+    '/%5Fmedia/:path*',
     '/((?!_next/static|_next/image|favicon\\.ico|robots\\.txt|sitemap\\.xml|.*\\.(?:svg|png|jpg|jpeg|gif|webp|avif|ico|css|js|txt|xml|json|woff|woff2|ttf)$).*)',
   ],
 };
