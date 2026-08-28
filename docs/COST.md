@@ -3,7 +3,7 @@
 _Owner: `cost-auditor`. **Escrito por el LEAD en FASE 1** (excepción declarada en `CLAUDE.md` §4).
 Números con fuente salvo los marcados `[EST]` / `[UNVERIFIED]`, que **no** son evidencia._
 _Fecha: 2026-08-28. Insumos: R1 (wildcard/ISR), R2 (R2/imágenes), R3 (LLM), R7 (amenazas),
-`docs/research/vercel-firewall-as-code.md` (T1)._
+`docs/research/vercel-firewall-as-code.md` (T1), `docs/research/vercel-cron-limits.md` (S6)._
 _Re-medido el 2026-08-27 después de **ADR-011** (el slug inexistente dejó de ser 404) y **ADR-012**
 (los dos polos del cache). Lo que cambió está en §2.1; lo que **no** cambió también, y dice por qué._
 
@@ -16,11 +16,12 @@ El **piso fijo** se cuenta **aparte** del marginal. No mezclar.
 
 **Se cumple, y con margen — pero no por donde parecía en FASE 0.**
 
-| | FASE 0 `[EST]` | FASE 1 (con fuente) | FASE 4 (S1 + S2 **medidas**) | T1 (WAF **acotado**) |
-|---|---|---|---|---|
-| Marginal plan **Base** | ~USD 0.03 | USD 0.07 | USD 0.09 | **USD 0.03** |
-| Marginal plan **Negocio** | 0.03 + `[R3]` | USD 0.24 – 0.30 | USD 0.25 – 0.31 | **USD 0.20 – 0.26** |
-| Headroom del Negocio contra el objetivo | «~15× abajo» | ~1.7× | ~1.6× | **~1.9 – 2.5×** |
+| | FASE 0 `[EST]` | FASE 1 (con fuente) | FASE 4 (S1 + S2 **medidas**) | T1 (WAF **acotado**) | **S6 (reservas + cron)** |
+|---|---|---|---|---|---|
+| Marginal plan **Base** | ~USD 0.03 | USD 0.07 | USD 0.09 | USD 0.03 | **USD 0.088** |
+| Marginal plan **Negocio** | 0.03 + `[R3]` | USD 0.24 – 0.30 | USD 0.25 – 0.31 | USD 0.20 – 0.26 | **USD 0.259 – 0.319** |
+| Headroom del Negocio contra el objetivo | «~15× abajo» | ~1.7× | ~1.6× | ~1.9 – 2.5× | **~1.6 – 1.9×** |
+| **% de hits de vidriera que llegan a Postgres** `[EST]` | — | — | «1,3 %» (**mal modelado**) | — | **39,4 %** (alarma: 5 %) |
 
 **La columna T1 no baja porque el código se haya puesto más rápido: baja porque una regla de WAF
 dejó de apuntar a la vidriera.** El renglón de WAF pasó de USD 0.06 a **USD 0.002 – 0.003**, o sea
@@ -37,6 +38,26 @@ La frase de FASE 0 *«el `base` está ~15× abajo»* era optimista y ya no aplic
 dentro —, pero deja de ser ruido: cualquier cosa que afloje la dieta de contexto o el soft cap sale
 directamente de ese margen.
 
+**La columna S6 sube, y hay que leer de qué está hecha la suba, porque son dos cosas distintas:**
+
+```
+Base:  0.030  →  0.074   corrección de modelo mía, ANTERIOR a S6 (ISR Writes mal contados)
+       0.074  →  0.088   delta real de S6
+```
+**S6 aporta USD 0.015/tenant/mes. Los otros USD 0.044 son una deuda de este documento que S6 hizo
+visible.** Cobrárselos a la slice sería mentir sobre quién los generó.
+
+**Y ninguna línea de S6 es el cron.** El cron `*/5` es **piso fijo, no marginal** —una corrida barre
+todos los tenants— y cuesta USD 0.028 – 0.133/mes en total, el 0,3% del piso. El delta marginal es
+casi todo **ISR Writes por invalidación ancha**. Ver §2.4.
+
+**Y la corrección que S6 destapó, que es más grande que S6:** la fila de arriba dice 39,4% donde
+§2.2.5 decía 1,3%, y **el que estaba mal es el 1,3%** — se calculó como `invalidaciones / pageviews`,
+fórmula que sólo vale si una purga alcanza una página. `invalidateStorefrontUnit()` emite
+`storefront:{slug}`, que la **ficha también registra**, así que **una reserva purga las 61 páginas
+del tenant, no 1**. Sin S6 el número ya era 32,1%. La palanca son dos ediciones de una línea cada
+una (§2.4.5) y baja a **4,7%**; es gate de la próxima slice de vidriera.
+
 **Y el hallazgo que importa más que todo lo anterior:** con los números de R4, la **comisión de
 Mercado Pago (~USD 1.03/mes por cliente pagador `[UNVERIFIED]`) cuesta 3–4× toda la infraestructura
 marginal junta.** Estamos optimizando el vector equivocado si miramos sólo infra. Ese número está
@@ -49,6 +70,7 @@ marginal junta.** Estamos optimizando el vector equivocado si miramos sólo infr
 | Supabase | Pro | ~25 | **`[UNVERIFIED]`** — ver §7 |
 | Cloudflare R2 | uso | **0.00 – 0.09** | verificado (R2). Free tier: 10 GB-mes + 1M Class A + 10M Class B |
 | Sentry + PostHog | free | 0 | |
+| Vercel Cron `*/5` (expirar reservas) | uso | **0.028 – 0.133** `[EST]` | **S6, §2.4.1.** Invocaciones verificadas (USD 0.0052); Active CPU + memoria son horquilla sin medir. **Es piso, no marginal:** una corrida barre todos los tenants |
 | **Total** | | **~45** | |
 
 **El piso domina hasta bien entrado el crecimiento.** Diluido: **USD 2.25/tenant a 20 tenants ·
@@ -62,7 +84,10 @@ es sólo la razón por la que el objetivo está escrito sobre el marginal y no s
 60 listings · 4 fotos/listing · 3 variantes · 3.000 pageviews/mes `[EST]` ·
 ~120.000 requests/mes/tenant `[EST, R1]` · plan Negocio con el soft cap de **40 msgs/día = 1.200/mes**
 (`CLAUDE.md` §3) · **requests que matchean una regla de WAF: ≤ 4.200/mes/tenant** `[EST]` (§2.3 —
-no confundir con los 120.000: sólo dos rutas están bajo regla, y el HTML de la vidriera no).
+no confundir con los 120.000: sólo dos rutas están bajo regla, y el HTML de la vidriera no) ·
+**desde S6: ~25 reservas/mes/tenant `[EST]`, de las cuales ~18 terminan en venta y ~7 vencen o se
+cancelan** · **reparto de pageviews 50% grilla / 50% fichas `[EST]`** — este último no existía como
+supuesto y sin él el vector de Postgres no se puede calcular (§2.4.4).
 
 | vector | cálculo | USD/mes | fuente |
 |---|---|---|---|
@@ -72,16 +97,20 @@ no confundir con los 120.000: sólo dos rutas están bajo regla, y el HTML de la
 | R2 egress | **0 por diseño** | **0** | R2: egress Free |
 | **Upload: Active CPU de `sharp`** | 72 fotos/mes × 1,35 s × USD 0.128/CPU-h | **0.0035** `[UNVERIFIED el precio]` | **§2.2, CPU medido** |
 | Upload: memoria + invocaciones + transferencia a R2 | ver §2.2 | **0.0056** `[EST]` | §2.2 |
-| **ISR Writes** | ~200 mutaciones/mes × 15 write units | **0.012** | R1: USD 4.00/1M units de 8 KB (iad1) |
+| **ISR Writes** — pre-S6 | 962 renders fríos/mes × 15 write units | **0.058** | **§2.4.4.** La línea vieja decía «~200 mutaciones × 15 = 0.012» y contaba **una** página por invalidación; son 61 |
+| **ISR Writes** — delta S6 | +221 renders fríos × 15 write units | **0.0133** | **§2.4.4** |
 | ISR Reads | sólo en CDN miss | ~0 | R1: USD 0.40/1M |
+| **Server Actions reservar/cancelar** | 32/mes × USD 0.60/1M | **0.00002** | §2.4.7 |
+| **Cron `*/5` amortizado a 100 tenants** | (0.028 – 0.133) ÷ 100 | **0.0003 – 0.0013** | **§2.4.2 — es piso (§1), va acá sólo para que se vea que es ruido** |
 | Edge Requests | 10M incluidos ≈ 80 tenants; después USD 2.00/1M | **~0.04** | R1 (iad1) |
 | **WAF Rate Limiting** — Base | ≤3.000 allowed req/mes × USD 0.80/1M | **0.0024** | **§2.3, T1** |
 | **WAF Rate Limiting** — Negocio | ≤4.200 allowed req/mes × USD 0.80/1M | **0.0034** | **§2.3, T1** |
-| Postgres | 95% de hits cacheados | ~0 | ADR-007 |
+| Postgres | **60,6% de hits cacheados, no 95%** (§2.4.4) | ~0 en USD, **8× la alarma** en el vector | **§2.4.4** — el objetivo de ADR-007 **no se cumple** y la palanca está en §2.4.5 |
 | LLM plan **Base** | **widget ausente** | **0** | `CLAUDE.md` §3 |
 | LLM plan **Negocio** | 1.200 msgs × USD 0.000144–0.000192 | **0.17 – 0.23** | R3 |
-| **Marginal Base** | | **~USD 0.03** | |
-| **Marginal Negocio** | | **USD 0.20 – 0.26** | |
+| **Marginal Base — modelo corregido, sin S6** | | **USD 0.074** | §2.4.4 |
+| **Marginal Base — con S6** | | **USD 0.088** | §2.4.7 |
+| **Marginal Negocio — con S6** | | **USD 0.259 – 0.319** | §2.4.7 |
 
 La línea vieja de R2 decía **«~140 MB → ~0.001»** y estaba baja **4,7×**, no por el storage
 (120 MB medidos contra 140 supuestos: acertó) sino porque **contaba Class A y Class B como si
@@ -461,6 +490,15 @@ invalidaciones/mes = publicaciones + ventas + despublicaciones ≈ 18 + 18 + 4 =
 **No se implementa coalescing por sesión.** Costaría estado compartido entre Server Actions para
 ahorrar medio milésimo de dólar y bajar 1,3% a 0,9%. Sería costo tonto en la dirección contraria.
 
+> **⚠ CORREGIDO EN S6 (2026-08-28). El 1,3% de este bloque está mal por 25×; el número real es
+> 32,1%.** La fórmula `invalidaciones / pageviews` supone que una purga alcanza **una** página, y
+> `invalidateStorefrontUnit()` emite `storefront:{slug}`, que **la ficha también registra**: purga
+> las 61 páginas del tenant. Hay que contar por página, `I/(λ+I)`, y las fichas —25 visitas/mes cada
+> una— caen frías casi siempre. **La aritmética de §2.2.5 se deja tal cual escrita a propósito**, para
+> que se vea de dónde salió el error. La cuenta correcta y la palanca están en **§2.4.4 y §2.4.5**.
+> La conclusión de este bloque sobre el coalescing por sesión **sigue en pie**: el problema nunca
+> fue el número de invalidaciones, es el radio de cada una.
+
 #### 6. Lo que S2 **no** midió, y con qué comando se mediría
 
 Un costo no medido escrito como si estuviera medido es peor que un hueco declarado. Estos son
@@ -831,6 +869,287 @@ error sea barato de arreglar, así que un umbral en USD avisaría tarde. El mont
 → *Usage* → **Rate Limit Requests**) sirve de confirmación, con alarma secundaria en
 **> USD 0.01/tenant/mes** (3× el peor caso modelado).
 
+### 2.4 Auditada en S6 — reservas, cron de expiración e invalidación (2026-08-28)
+
+Commits `cbbfa2f` + `10d31b6`. Lo que tiene costo: el cron `*/5` de `vercel.json`, el barrido con
+`EXPIRE_BATCH_SIZE = 200`, las Server Actions de reservar/cancelar, y **una llamada a
+`invalidateStorefrontUnit()` por cada entrada y salida del estado público**.
+
+**El titular, y es incómodo: el renglón caro de S6 no es el cron, es la invalidación — y el modelo
+de invalidación que este documento venía usando desde §2.2.5 estaba mal por 25×.** El error es
+mío y es anterior a S6; S6 lo empeora 23% y, sobre todo, lo vuelve imposible de seguir ignorando,
+porque es la primera mutación cuya frecuencia la maneja **la venta** y no la carga de stock.
+
+#### 1. El cron: el número del LEAD está bien, y es el 4–19% del costo del cron
+
+```
+*/5 * * * *  →  12/h × 24 h × 30 d = 8.640 invocaciones/mes
+8.640 × USD 0,60 / 1.000.000        = USD 0,005184  →  USD 0,0052/mes
+8.640 / 10.000.000 Edge Requests     = 0,0864 % del allotment de Pro
+```
+Las dos cifras se **verifican** contra `docs/research/vercel-cron-limits.md` (2026-08-28), que hace
+la misma aritmética y cita `vercel.com/docs/limits` y `vercel.com/docs/functions/usage-and-pricing`:
+Function Invocations Pro = **USD 0,60/1M sin allotment incluido**, Edge Requests incluidos = **10M**.
+Nada que corregir.
+
+**Pero la invocación no es lo único que se factura por corrida.** Fluid compute cobra además
+**Active CPU** (USD 0,128/CPU-h, `iad1`) y **Provisioned Memory** (USD 0,0106/GB-h, `iad1`), y una
+corrida vacía —que es el caso normal— igual paga arranque, conexión a Postgres y una query indexada.
+Ni el wall time ni el CPU están medidos, así que va como **horquilla declarada, no como número**:
+
+```
+wall time por corrida  [EST] 0,3 – 1,0 s   ·  CPU por corrida [EST] 0,05 – 0,25 s
+memoria provisionada   [EST] 1 – 2 GB      (no está configurada; se asume el default)
+
+Provisioned Memory : 8.640 × [0,3–1,0] s = [0,72 – 2,40] GB-h·(1–2 GB) → USD 0,0076 – 0,051
+Active CPU         : 8.640 × [0,05–0,25] s = [0,12 – 0,60] CPU-h       → USD 0,0154 – 0,077
+Invocaciones                                                            → USD 0,0052
+                                                                   TOTAL USD 0,028 – 0,133 /mes
+```
+
+O sea: **la invocación es entre el 4% y el 19% de lo que cuesta el cron.** El número del LEAD es
+correcto y es la punta chica del renglón. La horquilla es de 4,8× y no se cierra sin un deploy: el
+término dominante es el **cold start de Vercel**, que no se puede medir en local. Se cierra con
+`vercel crons run` contra producción y el gráfico de duración/CPU de la función.
+
+**Y aun en su techo, es ruido: USD 0,133/mes es el 0,3% del piso fijo de USD 45.** Bajar el cron a
+`*/15` ahorraría USD 0,02–0,09/mes a cambio de triplicar la deriva de una reserva de 30 minutos.
+Es costo tonto en la dirección contraria y queda escrito acá para que nadie lo proponga de nuevo.
+
+#### 2. ¿Escala con tenants? **No. Es piso fijo, y hay que contabilizarlo como tal.**
+
+Una invocación barre **todos** los tenants. El schedule no depende de cuántos haya, y la query de
+barrido tampoco: `reservations_active_expiry_idx` es un índice **parcial sobre `status='active'`**,
+así que su costo es O(reservas activas vencidas), no O(tenants) ni O(filas de la tabla). Un tenant
+número 101 no agrega ni una corrida ni una fila al índice si no tiene reservas vencidas.
+
+Lo que sí crece con tenants es el **trabajo adentro** de la corrida: una transacción (2 `UPDATE`
+guardados + 1 `INSERT` en `listing_events`) y una purga de tags por unidad liberada.
+
+```
+Amortizado, con la horquilla de arriba:
+   20 tenants  →  USD 0,0014 – 0,0067 / tenant / mes
+  100 tenants  →  USD 0,0003 – 0,0013 / tenant / mes
+```
+**Va a §1 (piso fijo), no a §2 (marginal).** Meterlo en el marginal sería el mismo error de
+atribución que T1 corrigió con los 100k requests del WAF.
+
+**¿A cuántos tenants empieza a importar?** Con `[EST]` 10 expiraciones/mes/tenant que llegan al
+cron (ver §2.4.4), a 100 tenants son 1.000/mes = **33/día = 0,12 por corrida**. El wall time
+adicional de 0,12 transacciones por corrida está por debajo de la resolución de este modelo.
+El cron empieza a costar plata de verdad cuando el trabajo por corrida deja de ser despreciable
+frente al arranque, o sea alrededor de **~50 expiraciones por corrida = ~14.000 expiraciones/día**,
+que a este perfil de uso son **~42.000 tenants**. No es un límite que vayamos a tocar.
+
+#### 3. `EXPIRE_BATCH_SIZE = 200`: no es problema de costo ni de producto. El problema es otro.
+
+Saturar el batch requiere 200 reservas vencidas en una ventana de 5 minutos.
+
+```
+capacidad del barrido : 200 × 288 corridas/día = 57.600 expiraciones/día
+demanda a 100 tenants : ~33 expiraciones/día          →  1.745× de margen
+```
+Y no puede llegar por ráfaga orgánica: las reservas se crean a lo largo del horario comercial y
+vencen 30–120 min después, así que **heredan la dispersión de su creación**. El único camino real al
+techo es un **backlog** (cron caído, deploy largo, base caída). Un día entero sin barrer a 100
+tenants acumula 33 filas: se drenan en **una** corrida. Para que la primera pasada no alcance hace
+falta el cron caído ~6 días seguidos, o ~4.000 tenants con un día de caída. Y aun ahí el `order by
+expires_at asc` garantiza que se atienden primero las más viejas, que es el orden correcto.
+
+Respuesta directa a la pregunta: **de ninguno de los dos.** El techo es un guard correcto y su
+costo es una latencia extra de 5 minutos en un escenario que este producto no alcanza.
+
+**Lo que sí hay que vigilar del batch, y no es el tamaño: `failed`.** Una fila que falla siempre
+—no una carrera perdida, un error permanente— queda `active` con `expires_at` en el pasado y, por
+el `order by expires_at asc`, es **la primera de la próxima corrida, para siempre**. Cuesta 8.640
+transacciones desperdiciadas por mes por fila envenenada (plata: nada) y, si alguna vez hubiera 200
+de ésas, el barrido **deja de avanzar y ningún tenant vence una reserva**. El cron seguiría
+devolviendo `200 OK` con `failed: 200`. Es una falla de disponibilidad silenciosa, no de costo, y
+por eso entra en §5 como métrica: **`failed > 0` sostenido entre corridas**.
+
+#### 4. La invalidación: es **por unidad en el nombre y por vidriera entera en el radio**
+
+Esta es la respuesta a la pregunta que importa, y no es la que el commit message anticipa.
+
+`invalidateStorefrontUnit()` emite **tres** tags
+(`(app)/_lib/tenants/storefront-cache.ts`):
+
+```
+storefront:{slug}   ·   tenant-config:{slug}   ·   listing:{uuid}
+```
+
+Y la **ficha** registra **esos mismos tres** (`(storefront)/_lib/listings.ts:424` y `:468`); la
+grilla registra los dos primeros (`:330`). Un tag de Vercel es un **OR**: la entrada muere si se
+purga **cualquiera** de los suyos.
+
+> **Con 60 equipos, una reserva purga 61 páginas cacheadas, no 1.** Con 200, purga 201.
+
+No es un bug escondido: `storefront-cache.ts` lo dice en su propio docblock (*«El de la unidad es
+hoy redundante con `storefront:{slug}` —la ficha lleva los dos y muere con cualquiera—»*) y deja
+declarado el contrato para arreglarlo. Es una **palanca diseñada y no accionada**. Lo que sí es un
+defecto es que el docblock de `expire-reservations.ts` justifica la llamada diciendo que purgar la
+vidriera entera *«regeneraría 200 fichas por una»* — que es exactamente lo que hace.
+
+**El modelo de §2.2.5 estaba mal, y el error es de este documento.** Ahí se escribió
+`40 invalidaciones / 3.000 pageviews = 1,3%`, fórmula que **sólo vale si la purga alcanza una
+página y esa página tiene tráfico alto**. Con purga ancha hay que contar por página. Para una
+página con λ visitas/mes contra `I` purgas anchas/mes, la fracción de sus visitas que cae en frío
+es ≈ `I / (λ + I)` (probabilidad de que haya caído una purga entre dos visitas consecutivas;
+aproximación de renovación, los dos procesos ~Poisson).
+
+```
+misses/mes = Σ_páginas  λ_p × I / (λ_p + I)
+```
+
+Supuestos de §2 (3.000 pv/mes, 60 listings) + reparto `[EST]` 50% grilla / 50% fichas:
+grilla λ = 1.500/mes · cada ficha λ = 1.500/60 = **25/mes**. Ese 25 es el que rompe todo: una ficha
+se ve **menos de una vez por día**, así que casi cualquier ritmo de purga la agarra fría.
+
+```
+ANTES de S6   I = 18 publicaciones + 18 ventas + 4 despublicaciones = 40/mes
+  grilla : 1.500 × 40/1.540               =    39 misses
+  fichas :    60 × (25 × 40/65)  = 60×15,4 =   923 misses
+                                            ─────────────
+                                              962 / 3.000  =  32,1 %     (alarma: 5 %)
+
+CON S6        +25 reservas + 7 expiraciones/cancelaciones   [EST]  →  I = 72/mes  (+80 %)
+  grilla : 1.500 × 72/1.572               =    69 misses
+  fichas :    60 × (25 × 72/97)  = 60×18,6 = 1.114 misses
+                                            ─────────────
+                                            1.183 / 3.000  =  39,4 %
+```
+(Las 18 ventas ya estaban contadas; la reserva que termina en venta no suma dos veces.)
+
+**El 1,3% publicado en §2.2.5 estaba bajo 25×. S6 mueve 32,1% → 39,4%: aporta 7,3 puntos, el 23%
+del empeoramiento total, y no es el que creó el agujero.**
+
+**En plata esto no es nada, y hay que decirlo con la misma fuerza:**
+```
+ISR Writes : 1.183 renders fríos × 15 write units × USD 4,00/1M = USD 0,071/tenant/mes
+             delta contra los 962 pre-S6 : 221 renders          = USD 0,0133/tenant/mes
+Invocaciones de esos renders : 221 × USD 0,60/1M                = USD 0,00013
+Postgres   : 1.183 × ~5 queries = ~5.900 queries/mes/tenant = 0,0023 q/s
+             a 100 tenants: ~590k/mes ≈ 0,23 q/s — Supabase Pro no se entera
+```
+
+**Entonces: la plata dice PASS y el invariante dice FAIL.** `CLAUDE.md` §3 fija *«95% de los hits no
+tocan Postgres»* y §5 de este documento pone la alarma en 5%. 39,4% no es «Postgres en cada hit»
+—el cache existe y funciona— pero es **8× la alarma**, y el motivo es que la invalidación es ancha,
+que es literalmente el caso «mal invalidada» de la lista de fallos automáticos.
+
+#### 5. La palanca: dos ediciones, dos owners, cero infraestructura nueva
+
+Van **juntas o no sirve ninguna**, y ésa es la parte fácil de arruinar:
+
+1. **`storefront-agent`** — `getStorefrontListing()` deja de registrar `storefrontTag(slug)`.
+   La ficha se queda con `tenant-config:{slug}` + `listing:{uuid}`. Es el contrato que
+   `storefront-cache.ts` ya dejó escrito.
+2. **`app-agent`** — `invalidateStorefrontUnit()` deja de emitir `tenantConfigTag(slug)`.
+   Una reserva **no** cambia el TC, ni los puntos de retiro, ni los medios de pago, ni el teléfono.
+   Sin esta segunda edición, la purga vuelve a matar todas las fichas por la puerta de atrás y la
+   primera no sirve para nada.
+
+La grilla **se queda** con `storefront:{slug}`: su orden (`STATUS_ORDER`) y su `publishedCount`
+dependen de verdad del estado de cada unidad, así que una reserva sí la cambia. Radio después:
+**grilla + la ficha de esa unidad = 2 páginas.**
+
+```
+DESPUÉS de la palanca,  I = 72/mes
+  grilla         : 1.500 × 72/1.572     =  69 misses
+  ficha propia   : ≤ 1 por purga        = ≤ 72 misses   (techo; muchas purgas no llegan a verse)
+  otras 59 fichas:                      =   0
+                                          ─────────────
+                                          ≤ 141 / 3.000  =  4,7 %   ← bajo la alarma de 5 %
+```
+**8,4× mejor, y no cuesta un centavo de infraestructura.** El ahorro en plata es de USD 0,053/mes
+(0,071 → 0,018) y **no es el motivo**: el motivo es el invariante y la latencia del primer visitante.
+
+**Chequeo obligatorio antes de accionarla**, y es de página, no de módulo: si la ficha alguna vez
+muestra algo de **otra** unidad («otros equipos de este vendedor», un contador de stock), sacarle
+`storefront:{slug}` le sirve datos viejos de sus hermanas. Hoy `getStorefrontListing()` devuelve un
+único `PublicListingDTO` y nada más, así que la respuesta es no — pero eso es una propiedad del
+render, y lo confirma `storefront-agent` mirando la página, no yo mirando la query.
+
+#### 6. Lo que S6 **no** midió, y con qué se cierra
+
+| qué falta | ancho del hueco | cómo se cierra |
+|---|---|---|
+| wall time y CPU de una corrida vacía del cron | **4,8×** (USD 0,028 – 0,133/mes de piso) | `vercel crons run` en producción + gráfico de duración/CPU. No es medible en local: domina el cold start |
+| el 39,4% es `[EST]`, no `[MEDIDO]` | el número entero | `e2e/_lib/s6-measure.ts` **ya calienta una ficha hasta `x-nextjs-cache: HIT`**. Extenderlo para reservar **otra** unidad y volver a pedir la primera convierte esto en medición en pocas líneas. Es el gate más barato que le queda pendiente a este documento |
+| reparto 50/50 grilla/fichas y 25 reservas/mes/tenant | mueve el 39,4% linealmente | primera vidriera real con tráfico |
+| Active CPU de las Server Actions de reservar/cancelar | despreciable por forma (2 `UPDATE`, sin imagen, sin LLM) | nunca se corrió; mismo hueco que `/api/track` en §7 |
+
+#### 7. Delta de S6 y veredicto
+
+```
+Piso fijo (§1)  — cron */5, una corrida para todos los tenants
+    invocaciones                                    USD 0,0052
+    Provisioned Memory + Active CPU  [EST]          USD 0,023 – 0,128
+                                                    ─────────────────
+                                                    USD 0,028 – 0,133 /mes  (0,3 % del piso de 45)
+
+Marginal por tenant (§2)
+    ISR Writes por las +32 invalidaciones anchas     USD 0,0133
+    invocaciones de esos renders fríos               USD 0,00013
+    Server Actions reservar/cancelar (32/mes)        USD 0,00002
+    filas nuevas (reservations ~25 + events ~10)     ~0   (ruido contra 8 GB)
+    cron amortizado a 100 tenants                    USD 0,0003 – 0,0013
+                                                    ─────────────────
+                                    DELTA S6         USD 0,015 /tenant/mes
+```
+
+**Y la restatement del modelo, que es más grande que S6 y no es de S6.** Corregir ISR Writes de
+«200 mutaciones × 15 units» (radio 1) a «962 renders fríos × 15 units» (radio 61) mueve el renglón
+de **USD 0,012 a USD 0,058**, y eso es **anterior** a esta slice:
+
+```
+Base, pre-S6, modelo VIEJO   : 0,0018+0,0013+0,0016+0,0035+0,0056+0,0120+0,0024 = USD 0,030
+Base, pre-S6, modelo CORREGIDO: mismos renglones con ISR Writes = 0,0577         = USD 0,074
+Base, con S6                 : 0,074 + 0,0133 + 0,00002 + 0,0008                 = USD 0,088
+Negocio, con S6              : 0,088 − 0,0024 (WAF Base) + 0,0034 (WAF Negocio)
+                                     + 0,17 – 0,23 (LLM, R3)              = USD 0,259 – 0,319
+```
+(Con las 8 write units que midió §2.2.5 en vez del techo de 15 que usa §2, el renglón de ISR sería
+0,031 y el Base 0,047. Se usa 15 por conservador, igual que el resto del documento.)
+
+| | antes de S6, modelo viejo | antes de S6, **corregido** | **con S6** | objetivo | headroom |
+|---|---|---|---|---|---|
+| Marginal **Base** | USD 0,030 | USD 0,074 | **USD 0,088** | 0,50 | 5,7× |
+| Marginal **Negocio** | USD 0,20 – 0,26 | USD 0,245 – 0,305 | **USD 0,259 – 0,319** | 0,50 | **1,6 – 1,9×** (era 1,9 – 2,5×) |
+| % de hits de vidriera a Postgres | «1,3 %» | 32,1 % `[EST]` | **39,4 %** `[EST]` | **5 %** | **−8×** |
+
+**Ninguna meta de dinero se rompe. La que se rompe es la del vector de DB, y la palanca de §2.4.5
+la devuelve a 4,7% — o sea, adentro.**
+
+> **Nota sobre el objetivo del plan Negocio.** El LEAD encargó esta auditoría contra
+> «Base ≤ 0,50 y Negocio ≤ 1,50». **`CLAUDE.md` y el §Objetivo de este documento dicen 0,50 para
+> todo**, sin distinguir plan. La tabla de arriba usa **0,50** porque aflojar un objetivo es una
+> decisión, no un cálculo, y no la puede tomar el auditor de costo en el cuerpo de una medición.
+> Contra 1,50 el Negocio quedaría a 5,5–7×. Queda como **acotación abierta para ratificación**.
+
+**COST_VERDICT: PASS, con gate nombrado para la próxima slice de vidriera.**
+
+El dinero pasa con margen en los dos planes. La alarma de «> 5% de hits a Postgres» **está
+excedida, y lo estaba antes de S6 por un error de modelo de este documento**: cobrarle a S6 el
+merge por una deuda que heredó sería teatro. Lo que sí se le imputa a S6 son los 7,3 puntos que
+agrega y el hecho de haber traído la primera mutación cuya frecuencia **crece con las ventas del
+tenant** — o sea, la que empeora justo cuando el producto funciona.
+
+**Gate para la próxima slice que toque `(storefront)` o `storefront-cache.ts`:** las dos ediciones
+de §2.4.5, juntas, más la medición de §2.4.6. **Una slice de vidriera que pase por encima de este
+gate es FAIL de costo**, igual que S1 le dejó el gate de coalescing a S2.
+
+#### 8. El orden de magnitud que relativiza toda esta sección
+
+Todo el delta marginal de S6 es **USD 0,015/tenant/mes**. La comisión de Mercado Pago es
+**~USD 1,03 por pagador por mes** `[UNVERIFIED]` (§7, B3): **69× el delta entero de S6** y **~23× el
+marginal Base completo con S6 adentro**.
+
+La palanca de §2.4.5 vale la pena **por el invariante y por la latencia del primer visitante**, no
+por los USD 0,053/mes que ahorra. Y el que lea esta sección y salga queriendo mover el cron a
+`*/15` para ahorrar USD 0,09/mes la leyó al revés: eso es exactamente el «costo tonto en la
+dirección contraria» de §2.2.3.
+
 ## 3. Techo de LLM a 50 tenants `negocio`
 ```
 50 tenants × 40 msgs/día × 30 días = 60.000 msgs/mes
@@ -881,7 +1200,10 @@ ser gratis. Deployar en pico de tráfico es un evento de costo.
 ## 5. La métrica a vigilar (una por vector)
 | vector | métrica | alarma |
 |---|---|---|
-| DB | **% de hits de vidriera que llegan a Postgres** | **> 5%** |
+| DB | **% de hits de vidriera que llegan a Postgres** | **> 5%** — **hoy en 39,4% `[EST]`, ver §2.4.4.** No es la métrica que avisa: es la que ya se disparó |
+| **DB (la que avisa antes)** | **radio de purga de una mutación de unidad = páginas que registran el tag emitido** | **> 2** (grilla + ficha propia). Es la única de este documento que se puede leer del **código** en vez de esperar tráfico: si `getStorefrontListing` registra `storefront:{slug}`, el radio ya es `1 + N_listings` y el % de arriba es consecuencia aritmética |
+| **cron** | **`failed` de `cron.expire_reservations.done` entre corridas** | **> 0 sostenido** — una fila que falla siempre es la primera del `order by expires_at asc` **para siempre**; 200 de ésas paran el barrido de todos los tenants con `200 OK` (§2.4.3) |
+| **cron** | duración y Active CPU de una corrida vacía | **> 2 s de wall time** — hoy es horquilla `[EST]` de 4,8× y es el único término del piso de S6 que no está medido (§2.4.1) |
 | cache | `x-vercel-cache: HIT` ratio en vidriera | cualquier caída sostenida |
 | cache | `set-cookie` en respuesta de `(storefront)` | **cualquiera** — apaga el CDN entero |
 | imágenes | ratio Class A / fotos procesadas | **> 5** (anomalía, no capacidad; el valor de diseño es **4**, en el tipo: `classAOps`) |
@@ -913,7 +1235,13 @@ round-trip a R2 en el upload — §2.2.3: costo tonto en la dirección contraria
 `path pre /s`, o cualquier catch-all — porque los allowed requests se facturan y eso le cobra peaje
 a cada pageview: cuadruplica el marginal del plan Base (§2.3) ·
 **Managed Rulesets / OWASP CRS prendido sin ADR ratificado** (§2.3: 6,4× el marginal Base, y el
-daño no aparece en ningún diff).
+daño no aparece en ningún diff) ·
+**agregado en S6: una mutación de UNA unidad que emita un tag registrado por las fichas de las
+OTRAS unidades** — hoy `invalidateStorefrontUnit()` emite `storefront:{slug}` **y**
+`tenant-config:{slug}`, que la ficha registra, así que una reserva purga las 61 páginas del tenant
+en vez de 2. Es el caso «cache mal invalidada» de `CLAUDE.md`, cuesta 8× la alarma del vector de DB
+y la palanca son dos líneas (§2.4.5). **La próxima slice que toque `(storefront)` o
+`storefront-cache.ts` sin accionarla es FAIL de costo.**
 
 **BotID Deep Analysis (USD 1/1000 llamadas): NO activar preventivamente.** A 10.000 conversaciones/mes
 son USD 10/mes — **el 53% del precio de lista de un plan Base**. (Precio, no margen: el margen
@@ -947,12 +1275,16 @@ unitario del Base no está calculado en ningún artefacto — ver §7.)
 - **Si Vercel cobra el techo de 8 KB de ISR Write por archivo o por entrada.** Cambia la entrada
   del tenant de 5 a 8 units (60%). No mueve el número de §2, que usa 15 como techo, pero sí
   mueve cualquier cuenta futura que use el valor medido.
-- **Precio de fluid compute de Vercel Pro: Active CPU (USD/CPU-h), memoria provisionada
-  (USD/GB-h) e invocaciones (USD/1M).** Los tres se usan en §2.2.4 y **ninguno sale de una research
-  del repo**: `docs/research/wildcard-isr.md` tiene ISR, Edge Requests y Transfer, pero no compute.
-  Los valores escritos (0.128 / 0.0106 / 0.60) son **memoria, no fuente** — el mismo defecto que el
-  precio de Supabase, y se cierra igual de rápido: una lectura de `vercel.com/docs/pricing`.
-  Sostienen el renglón más grande de S2.
+- ~~**Precio de fluid compute de Vercel Pro: Active CPU, memoria provisionada e invocaciones.**~~
+  **CERRADO en S6 (2026-08-28), y no por una slice de costo.** `docs/research/vercel-cron-limits.md`
+  cita los tres contra `vercel.com/docs/functions/usage-and-pricing` (`last_updated: 2026-06-16`,
+  consultado 2026-08-28) y `vercel.com/docs/limits`: **Active CPU `iad1` USD 0.128/CPU-h ·
+  Provisioned Memory `iad1` USD 0.0106/GB-h · Function Invocations Pro USD 0.60/1M, sin allotment
+  incluido**. Coinciden **exactamente** con los valores que este documento venía usando de memoria
+  desde §2.2.4, así que el renglón más grande de S2 (Active CPU de `sharp`, USD 0.0035) deja de ser
+  `[UNVERIFIED el precio]`. **Lo que sigue sin medirse no es el precio sino la cantidad**: cuántos
+  segundos de wall time y de CPU consume una corrida vacía del cron (§2.4.1, horquilla de 4,8×) y
+  cuánta memoria tiene provisionada la función (no está configurada; se asume el default).
 - **Si Vercel factura la transferencia de la función a R2, y bajo qué línea** (Fast Data Transfer,
   Fast Origin Transfer, o nada). El renglón de §2.2.4 va a su **techo** (USD 0.15/GB = 0.0054) hasta
   que haya una factura real. Si no se cobra, el delta de S2 baja de 0.013 a 0.008.
@@ -999,6 +1331,21 @@ unitario del Base no está calculado en ningún artefacto — ver §7.)
   implementado** — falta saber qué scope de token permite `publish`. **Entre el archivo que audité y
   la factura no hay verificación automática**: todo §2.3 vale mientras nadie publique una condición
   distinta de la del repo. Es el riesgo residual de T1 y es de configuración, no de código.
+- **Agregado en S6 — el 39,4% del vector de DB es `[EST]`, no `[MEDIDO]`.** Sale de un modelo de
+  renovación (`I/(λ+I)` por página) sobre dos supuestos míos: el reparto **50% grilla / 50% fichas**
+  de los 3.000 pageviews y las **~25 reservas/mes/tenant**. El **radio de purga sí es un hecho leído
+  del código** (`listings.ts:330/424/468` contra `storefront-cache.ts`), y es el que manda: con radio
+  61 el porcentaje es alto para cualquier reparto razonable, porque una ficha de 25 visitas/mes se ve
+  menos de una vez por día. **El modelo se puede volver medición barato** y esa es la deuda concreta:
+  `e2e/_lib/s6-measure.ts` ya calienta una ficha hasta `x-nextjs-cache: HIT`; falta reservar **otra**
+  unidad y volver a pedir la primera.
+- **Agregado en S6 — wall time, CPU y memoria de una corrida del cron.** Cero corridas. Es toda la
+  horquilla de USD 0.028 – 0.133/mes del piso (§2.4.1) y **no es medible en local**: el término
+  dominante es el cold start de Vercel. Se cierra con `vercel crons run` en producción.
+- **Agregado en S6 — el objetivo del plan Negocio.** El encargo de esta auditoría habla de
+  «Base ≤ 0.50 y Negocio ≤ 1.50»; `CLAUDE.md` y el §Objetivo de este documento dicen **0.50 para
+  todo**. Toda la §2.4 mide contra 0.50. **Aflojar un objetivo es una decisión del LEAD, no un
+  cálculo del auditor**, y hasta que esté en `CLAUDE.md` no está.
 - **Región de funciones.** `iad1` es 1.6× más barato que `gru1` en ISR y ~7× en Fast Origin Transfer
   (USD 0.06 vs 0.41/GB), pero está más lejos si Supabase queda en `sa-east-1`. Falta la medición de
   latencia real contra el Alto Valle → **ADR-010 abierta**. Todos los números de §2 asumen `iad1`.
@@ -1052,7 +1399,30 @@ debe estar publicada, no que lo esté — hoy no lo está (B2/B5). El gate de ni
 hay ninguna verificación automática. Es el **riesgo residual conocido de T1**, es de configuración y
 no de código, y se cierra con el gate: ninguna slice de producto lo va a cerrar por su cuenta.
 
-**Abierto:** precio de Supabase (B2) · **precio de fluid compute de Vercel (§7)** · comisión de MP
-(B3, ADR-008) · región (ADR-010) · **Class B real y bytes del master (B1)** ·
-**bytes por pageview de vidriera con fotos (S3)** · todos los supuestos de tráfico, hasta la
-primera vidriera real.
+**S6 auditada (2026-08-28): PASS, delta USD 0.015/tenant/mes + USD 0.028 – 0.133/mes de piso fijo**
+— ver §2.4. Tres resultados, en orden de importancia decreciente:
+
+1. **La invalidación es por unidad en el nombre y por vidriera entera en el radio.**
+   `invalidateStorefrontUnit()` emite `storefront:{slug}` + `tenant-config:{slug}` + `listing:{uuid}`,
+   y **la ficha registra los tres** — un tag es un OR, así que **una reserva purga las 61 páginas de
+   un tenant de 60 equipos, no 1**. Con eso, el modelo de §2.2.5 (`invalidaciones / pageviews = 1,3%`)
+   estaba **bajo 25×**: el número real pre-S6 era 32,1% y con S6 es 39,4%, contra una alarma de 5%.
+   **El error es de este documento y es anterior a S6.** La palanca son dos ediciones de una línea
+   (§2.4.5), baja a 4,7%, no cuesta infraestructura, y es **gate de la próxima slice de vidriera**.
+2. **El cron es piso fijo, no marginal, y la invocación es su renglón chico.** Los USD 0.0052/mes de
+   invocaciones están **verificados** y son el **4–19%** de lo que cuesta el cron: Active CPU +
+   Provisioned Memory por corrida suman USD 0.023 – 0.128 `[EST]`. Aun en el techo es el 0,3% del
+   piso. `EXPIRE_BATCH_SIZE = 200` tiene **1.745× de margen** a 100 tenants y no es problema de costo
+   ni de producto; lo que sí hay que vigilar del barrido es `failed`, por head-of-line (§2.4.3).
+3. **S6 cerró, de rebote, el `[UNVERIFIED]` de fluid compute** que sostenía el renglón más grande de
+   S2. Los tres precios (0.128 / 0.0106 / 0.60) ahora tienen fuente en el repo y **coinciden** con lo
+   que se venía usando de memoria.
+
+**Y el marco, para que nadie optimice lo que no importa:** el delta entero de S6 es USD 0.015. La
+comisión de Mercado Pago es ~USD 1.03 por pagador/mes `[UNVERIFIED]` — **69× S6 completo**.
+
+**Abierto:** precio de Supabase (B2) · comisión de MP (B3, ADR-008) · región (ADR-010) ·
+**Class B real y bytes del master (B1)** · **bytes por pageview de vidriera con fotos (S3)** ·
+**medir el 39,4% en vez de modelarlo, y medir una corrida del cron (S6, §7)** · todos los supuestos
+de tráfico, hasta la primera vidriera real.
+**Cerrado en S6:** precio de fluid compute de Vercel (§7).
