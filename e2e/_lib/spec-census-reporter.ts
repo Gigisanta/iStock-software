@@ -30,6 +30,41 @@
  * En los dos casos la corrida termina en `failed`, aunque cada test que llegó a correr haya
  * pasado.
  *
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *  El censo por test decía una mentira medible (2026-08-27, gate de S2)
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ * La versión anterior daba por ejecutado a todo test con `results.length > 0`:
+ *
+ * ```ts
+ * return test.results.length > 0 || test.expectedStatus === 'skipped';
+ * ```
+ *
+ * Un test que Playwright saltea por `mode: 'serial'` después de un fallo previo **tiene** un
+ * resultado (uno con `status: 'skipped'` y cero aserciones evaluadas), así que entraba como
+ * ejecutado. Medido en la misma corrida: Playwright imprimió `8 did not run` y esta línea imprimió
+ * `63/63 tests ejecutados`, y el gate del LEAD leyó `PASS: ningun test quedo en 'did not run'`.
+ *
+ * No abría un agujero de verde-con-tests-faltantes —el salteo serial sólo ocurre con la corrida ya
+ * roja— pero **una línea de guard que afirma algo falso es peor que no tenerla**: entrena a leerla
+ * mal, y el día que sí importe nadie la va a mirar dos veces.
+ *
+ * ## Las tres cosas que ahora se cuentan por separado
+ * | bucket | qué es | ¿rompe la corrida? |
+ * |---|---|---|
+ * | **ejecutados** | corrieron sus aserciones (pasaron, fallaron o resultaron flaky) | no por sí solo |
+ * | **salteados por un fallo previo** | `did not run`: el `beforeAll` reventó, el modo serial los tapó, el worker se cayó, o la corrida se interrumpió | **sí** |
+ * | **skip declarado** | alguien decidió no correrlos (declarado o en runtime) | no |
+ *
+ * La clasificación **no se inventa acá**: es la misma que usa Playwright para imprimir su propio
+ * `N did not run` (`node_modules/playwright/lib/runner/index.js`, `generateSummary()`). Se copia a
+ * propósito, para que el censo y el resumen no puedan contradecirse: si dos números que miran lo
+ * mismo salen distintos en la misma salida, el que lee elige el que le conviene.
+ *
+ * El denominador de "ejecutados" **excluye los skip declarados**: la igualdad `N/N` tiene que
+ * significar "todo lo que tenía que correr, corrió", y un skip a propósito no es una regla que se
+ * dejó de evaluar por accidente — es una que alguien decidió no evaluar, y se lo cuenta aparte
+ * para que la decisión se vea.
+ *
  * ## Relación con `scripts/accept-s1.sh` A6
  * A6 hace el mismo conteo **desde afuera**, contando los specs nombrados en la salida de
  * Playwright contra `ls e2e/*.spec.ts`. No se duplica por gusto: A6 sólo lo ve quien corra el
@@ -75,12 +110,40 @@ function isListOnly(): boolean {
 }
 
 /**
- * Un test "rindió cuentas" si dejó al menos un resultado (pasó, falló o se salteó en runtime) o si
- * está declarado como skip. Lo que **no** cuenta es `results.length === 0` sin skip declarado:
- * ése es el test que nadie corrió y del que nadie se enteró.
+ * En qué bucket cae un test. Ver la tabla del encabezado.
+ *
+ * `did-not-run` es el único que rompe la corrida, y es el que la versión anterior confundía con
+ * `ran`: **tener un resultado no es haber corrido**. Playwright le fabrica un `TestResult` con
+ * `status: 'skipped'` al test que saltea por un fallo previo, así que `results.length > 0` da
+ * `true` para un test que no evaluó una sola aserción.
  */
-function accountedFor(test: TestCase): boolean {
-  return test.results.length > 0 || test.expectedStatus === 'skipped';
+type Bucket = 'ran' | 'did-not-run' | 'declared-skip';
+
+/**
+ * Misma lógica que `generateSummary()` de `playwright/lib/runner/index.js`, que es la que decide
+ * el `N did not run` del resumen. Se replica en vez de aproximarse: el censo tiene que contar lo
+ * mismo que el reporter oficial o los dos números de la misma salida se contradicen.
+ *
+ * `interrupted` (Ctrl-C, `--max-failures`) cae en `did-not-run`: sus aserciones tampoco se
+ * evaluaron. Se distingue en el detalle, no en el conteo, porque el arreglo es el mismo — volver a
+ * correr entero.
+ */
+function bucketOf(test: TestCase): Bucket {
+  if (test.outcome() !== 'skipped') return 'ran';
+  if (test.results.some((result) => result.status === 'interrupted')) return 'did-not-run';
+  if (test.results.length === 0 || test.expectedStatus !== 'skipped') return 'did-not-run';
+  return 'declared-skip';
+}
+
+/** Por qué este test no corrió, dicho en el idioma del que va a tener que arreglarlo. */
+function whyNotRun(test: TestCase): string {
+  if (test.results.some((result) => result.status === 'interrupted')) {
+    return 'la corrida se interrumpió (Ctrl-C o --max-failures)';
+  }
+  if (test.results.length === 0) {
+    return 'nunca se le asignó un worker (el archivo se cortó antes, o la suite murió)';
+  }
+  return 'salteado por un fallo previo (`mode: serial` o `beforeAll` en rojo): cero aserciones evaluadas';
 }
 
 export default class SpecCensusReporter implements Reporter {
@@ -100,17 +163,28 @@ export default class SpecCensusReporter implements Reporter {
     const onDisk = specFilesOnDisk(this.root);
     const tests = this.suite?.allTests() ?? [];
 
+    const ran = tests.filter((test) => bucketOf(test) === 'ran');
+    const neverRan = tests.filter((test) => bucketOf(test) === 'did-not-run');
+    const declaredSkip = tests.filter((test) => bucketOf(test) === 'declared-skip');
+    /** Todo lo que tenía que correr: los que corrieron más los que se quedaron sin correr. */
+    const owed = ran.length + neverRan.length;
+
     const discovered = new Set(tests.map((test) => test.location.file));
-    const executed = new Set(tests.filter(accountedFor).map((test) => test.location.file));
+    // Un archivo rinde cuentas si algo suyo corrió o si alguien decidió no correrlo. Un archivo
+    // cuyos tests están TODOS en `did not run` no rinde cuentas: es el archivo que se cortó.
+    const executed = new Set(
+      [...ran, ...declaredSkip].map((test) => test.location.file),
+    );
 
     const missing = onDisk.filter((file) => !executed.has(file));
-    const neverRan = tests.filter((test) => !accountedFor(test));
     const rel = (file: string): string => relative(this.root, file);
 
     process.stdout.write(
       `\ncenso de specs: ${String(executed.size)}/${String(onDisk.length)} archivos ejecutados ` +
         `(${String(discovered.size)} descubiertos) · ` +
-        `${String(tests.length - neverRan.length)}/${String(tests.length)} tests ejecutados\n`,
+        `${String(ran.length)}/${String(owed)} tests ejecutados · ` +
+        `${String(neverRan.length)} salteados por un fallo previo · ` +
+        `${String(declaredSkip.length)} skip declarado\n`,
     );
 
     if (missing.length === 0 && neverRan.length === 0) return undefined;
@@ -119,7 +193,7 @@ export default class SpecCensusReporter implements Reporter {
       process.stdout.write(
         `  E2E_ALLOW_PARTIAL=1 · censo desactivado. Archivos sin ejecutar: ` +
           `${missing.length === 0 ? '(ninguno)' : missing.map(rel).join(', ')} · ` +
-          `tests sin ejecutar: ${String(neverRan.length)}\n`,
+          `tests salteados por un fallo previo: ${String(neverRan.length)}\n`,
       );
       return undefined;
     }
@@ -138,11 +212,27 @@ export default class SpecCensusReporter implements Reporter {
 
     if (neverRan.length > 0) {
       process.stdout.write(
-        '    Tests sin resultado (típicamente: el `beforeAll` del archivo reventó y el resto\n' +
-          '    quedó en "did not run" — la regla de negocio no se evaluó nunca):\n',
+        '    Tests que NO corrieron ("did not run" en el resumen de Playwright). Tienen un\n' +
+          '    resultado con status "skipped", pero no evaluaron una sola aserción: la regla de\n' +
+          '    negocio que cada uno afirma quedó sin probar en esta corrida.\n',
       );
       for (const test of neverRan) {
-        process.stdout.write(`      - ${rel(test.location.file)}:${String(test.location.line)} › ${test.title}\n`);
+        process.stdout.write(
+          `      - ${rel(test.location.file)}:${String(test.location.line)} › ${test.title}\n` +
+            `        ${whyNotRun(test)}\n`,
+        );
+      }
+    }
+
+    if (declaredSkip.length > 0) {
+      process.stdout.write(
+        `    (${String(declaredSkip.length)} con skip declarado, que no rompen el censo: se los\n` +
+          '    lista para que la decisión de no correrlos se vea.)\n',
+      );
+      for (const test of declaredSkip) {
+        process.stdout.write(
+          `      - ${rel(test.location.file)}:${String(test.location.line)} › ${test.title}\n`,
+        );
       }
     }
 

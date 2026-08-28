@@ -8,7 +8,7 @@
  * `insert`.
  */
 
-import { expect, type Page } from '@playwright/test';
+import { expect, type Locator, type Page } from '@playwright/test';
 import { APEX_URL } from './env';
 
 export async function signIn(page: Page, email: string): Promise<void> {
@@ -48,4 +48,420 @@ export async function createBusiness(page: Page, business: NewBusiness): Promise
 
   // `createTenantAction` redirige a `/app` sólo si el alta salió bien.
   await page.waitForURL(/\/app(\/)?$/u, { timeout: 30_000 });
+}
+
+// ══════════════════════════════════════════════════════════════════════════════════════════════
+//  S2 · cargar un equipo son DOS pantallas, y no por gusto de UX
+// ══════════════════════════════════════════════════════════════════════════════════════════════
+//
+// El POST del alta cae en el catch-all del `matcher` de `proxy.ts`, así que lo procesa el Routing
+// Middleware de Vercel, cuyo request body está capado en **4 MB** y no varía por plan (verificado
+// por el LEAD contra la doc oficial el 2026-08-27, `docs/research/vercel-request-body-limit.md`).
+// Tres fotos de celular son ~9 MB y no entran en ningún submit.
+//
+// De ahí el flujo que estos helpers recorren, que es el que hace el dueño:
+//
+// ```
+//   /app/stock/nuevo          datos + catálogo + UNA foto   → redirect
+//   /app/stock/{id}/fotos     una foto por request, hasta 3 → habilita publicar
+// ```
+//
+// Los helpers navegan **como navega una persona** —labels, selects, `<input type="file">`, botón—
+// y nunca llaman a la Server Action a mano. Si un helper hiciera un `insert`, S2 probaría que
+// Postgres funciona en vez de probar que el camino del panel llega al pipeline de `packages/media`
+// sin degradar la imagen.
+//
+// Los `data-testid` de acá abajo son **el contrato que fijó el LEAD**, palabra por palabra.
+// `qa-agent` no los cambia unilateralmente: si están mal, se reporta.
+
+/** Ruta del alta. */
+export const NEW_UNIT_PATH = '/app/stock/nuevo';
+/** Ruta de la lista. */
+export const STOCK_PATH = '/app/stock';
+/** Ruta de las fotos de un equipo. Nueva en la ronda 2. */
+export function photosPath(listingId: string): string {
+  return `/app/stock/${listingId}/fotos`;
+}
+
+/** `/app/stock` y no `/app/stock/nuevo`: sin el ancla, el `waitForURL` se cumple solo. */
+export const STOCK_URL_RE = /\/app\/stock\/?(?:\?[^#]*)?(?:#.*)?$/u;
+
+/** `/app/stock/{uuid}/fotos`, con el id capturado. */
+export const PHOTOS_URL_RE =
+  /\/app\/stock\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/fotos\/?(?:[?#].*)?$/u;
+
+export interface PhotoUpload {
+  readonly name: string;
+  readonly mimeType: string;
+  readonly buffer: Buffer;
+}
+
+export interface NewUnit {
+  readonly title: string;
+  /** Enum de `listing_condition`. La ficha lo traduce; acá va el valor de dominio. */
+  readonly condition: string;
+  readonly storageGb: number;
+  readonly color: string;
+  readonly priceUsd: number;
+  readonly batteryPct: number;
+  /** 15 dígitos. SENSITIVE: el spec afirma que no sale en la lista. */
+  readonly imei: string;
+  /** SENSITIVE: `CLAUDE.md` §0.9. */
+  readonly costUsd: number;
+  /**
+   * Texto que tiene que aparecer en la opción del catálogo global. Opcional: si no matchea
+   * ninguna (o no se pasa), se elige la primera opción real. Lo que **no** se hace es inventar un
+   * `catalogModelId`: `catalog_models` es una tabla global sembrada por `pnpm db:seed`, y un UUID
+   * inventado sería un `POST` armado a mano, no el camino del dueño.
+   */
+  readonly catalogModelHint?: string;
+  /** UNA. El techo de 4 MB del middleware no deja más. */
+  readonly photo: PhotoUpload;
+}
+
+export interface CatalogOption {
+  readonly value: string;
+  readonly label: string;
+}
+
+export interface CreatedUnit {
+  readonly listingId: string;
+  readonly catalogModel: CatalogOption;
+}
+
+/**
+ * Llena un campo por `name` sin suponer con qué elemento lo resolvió `app-agent`.
+ *
+ * El contrato fija el **`name`**, no el tag: `condition` es un enum y lo natural es un `<select>`,
+ * pero podría ser un grupo de radios o un combobox. Un test que exige `<select>` estaría probando
+ * una decisión de UI que el contrato no tomó, y el rojo diría "no es un select" en vez de "no se
+ * puede cargar una unidad". Se adapta al elemento y se rompe sólo si el campo no existe.
+ */
+export async function setField(page: Page, name: string, value: string): Promise<void> {
+  const field = page.locator(`[name="${name}"]`).first();
+  await expect(
+    field,
+    `el alta no tiene el campo name="${name}" que fija el contrato de S2`,
+  ).toBeAttached({ timeout: 15_000 });
+
+  const tag = (await field.evaluate((el) => el.tagName)).toLowerCase();
+  if (tag === 'select') {
+    await field.selectOption(value);
+    return;
+  }
+  const type = ((await field.getAttribute('type')) ?? 'text').toLowerCase();
+  if (type === 'radio' || type === 'checkbox') {
+    await page.locator(`[name="${name}"][value="${value}"]`).first().check();
+    return;
+  }
+  await field.fill(value);
+}
+
+/**
+ * Las opciones **reales** del `<select name="catalogModelId">`, sin el placeholder vacío.
+ *
+ * Se leen con la API de locators y no con un `evaluateAll` sobre `HTMLOptionElement`: el tsconfig
+ * de los e2e declara `types: ["node"]` y no trae la lib del DOM a propósito. Un test que necesita
+ * tipos del navegador para leer un `<option>` está mirando el DOM más de cerca de lo que hace
+ * falta.
+ */
+export async function catalogOptions(page: Page): Promise<readonly CatalogOption[]> {
+  const select = page.getByTestId('select-catalog-model');
+  await expect(
+    select,
+    `${NEW_UNIT_PATH} no expone data-testid="select-catalog-model" (contrato de la ronda 2). ` +
+      '`checkPublishable` deniega `missing_catalog_model` para todo kind="unit": sin este campo ' +
+      'no hay unidad publicable.',
+  ).toBeVisible({ timeout: 20_000 });
+
+  const options = select.locator('option');
+  // `.count()` no reintenta. Si la ruta todavía está transmitiendo, un `<select>` recién flusheado
+  // se lee con cero `<option>` y el conteo de abajo compara la nada contra el catálogo real. Se
+  // espera por la condición —que haya al menos una— antes de congelar la lectura.
+  await expect(
+    options,
+    `el <select name="catalogModelId"> de ${NEW_UNIT_PATH} nunca llegó a tener una sola ` +
+      '<option>: o la pantalla no terminó de servirse, o `catalog_models` está vacía (la siembra ' +
+      '`pnpm --filter @istock/db seed`)',
+  ).not.toHaveCount(0, { timeout: 20_000 });
+
+  const total = await options.count();
+  const out: CatalogOption[] = [];
+  for (let index = 0; index < total; index += 1) {
+    const option = options.nth(index);
+    const value = (await option.getAttribute('value')) ?? '';
+    if (value === '') continue; // el placeholder "Elegí un modelo…"
+    out.push({ value, label: ((await option.textContent()) ?? '').trim() });
+  }
+  return out;
+}
+
+/**
+ * Elige un modelo del catálogo global y devuelve cuál quedó elegido.
+ *
+ * El fallo por catálogo vacío tiene mensaje propio porque es el fallo que más tiempo hace perder:
+ * `catalog_models` no lleva `tenant_id` y no la crea el alta, la siembra `pnpm db:seed`. Sin ese
+ * seed la pantalla se ve bien, el `<select>` existe y no hay nada para elegir.
+ */
+export async function chooseCatalogModel(page: Page, hint?: string): Promise<CatalogOption> {
+  const options = await catalogOptions(page);
+  if (options.length === 0) {
+    throw new Error(
+      'el <select name="catalogModelId"> no tiene ninguna opción real: `catalog_models` es una ' +
+        'tabla GLOBAL (sin tenant_id) que siembra `pnpm --filter @istock/db seed`. Sembrala antes ' +
+        'de correr los e2e o el alta de una unidad no se puede completar nunca.',
+    );
+  }
+
+  const wanted =
+    hint === undefined
+      ? undefined
+      : options.find((option) => option.label.toLowerCase().includes(hint.toLowerCase()));
+  const chosen = wanted ?? options[0];
+  if (chosen === undefined) throw new Error('catálogo vacío después de filtrar: imposible');
+
+  await page.getByTestId('select-catalog-model').selectOption(chosen.value);
+  return chosen;
+}
+
+/** El `<input type="file">` del alta, ya verificado como presente. */
+function altaPhotoInput(page: Page) {
+  return page.getByTestId('input-foto');
+}
+
+/** Texto visible de un contenedor de error, o `null` si no hay ninguno en pantalla. */
+export async function errorTextIn(page: Page, testId: string): Promise<string | null> {
+  const box = page.getByTestId(testId);
+  if ((await box.count()) === 0) return null;
+  const text = ((await box.first().textContent()) ?? '').trim();
+  return text === '' ? null : text;
+}
+
+/**
+ * Ruta A: carga el equipo con **una** foto y termina en `/app/stock/{id}/fotos`.
+ *
+ * Devuelve el id que quedó en la URL. Ese id es el que el contrato promete y el que después usa
+ * la ruta B; leerlo de la URL en vez de buscarlo en la base es a propósito: si el redirect llevara
+ * al equipo equivocado, un `select` por tenant no lo notaría y este helper sí.
+ */
+export async function createUnitDraft(page: Page, unit: NewUnit): Promise<CreatedUnit> {
+  await page.goto(`${APEX_URL}${NEW_UNIT_PATH}`);
+
+  const form = page.getByTestId('form-nueva-unidad');
+  await expect(
+    form,
+    `${NEW_UNIT_PATH} no expone data-testid="form-nueva-unidad" (contrato de S2)`,
+  ).toBeVisible({ timeout: 20_000 });
+
+  await setField(page, 'title', unit.title);
+  await setField(page, 'condition', unit.condition);
+  await setField(page, 'storageGb', String(unit.storageGb));
+  await setField(page, 'color', unit.color);
+  await setField(page, 'priceUsd', String(unit.priceUsd));
+  await setField(page, 'batteryPct', String(unit.batteryPct));
+  await setField(page, 'imei', unit.imei);
+  await setField(page, 'costUsd', String(unit.costUsd));
+
+  const catalogModel = await chooseCatalogModel(page, unit.catalogModelHint);
+
+  const photo = altaPhotoInput(page);
+  await expect(
+    photo,
+    'el alta no tiene data-testid="input-foto": sin él no hay nada que medir en S2',
+  ).toBeAttached({ timeout: 15_000 });
+  await photo.setInputFiles(unit.photo);
+
+  await page.getByTestId('submit-nueva-unidad').click();
+
+  // El resize de 12 MP + 4 encodes WebP corren server-side dentro de este request (~0.5 s de CPU),
+  // más el round-trip del form. 90 s es holgado y sigue siendo un techo: si el alta tarda más que
+  // esto, el dueño ya cerró la pestaña.
+  try {
+    await page.waitForURL(PHOTOS_URL_RE, { timeout: 90_000 });
+  } catch {
+    // Un `waitForURL` vencido dice "timeout" y nada más. Lo que hace falta saber es qué contestó
+    // el alta, y eso está en la pantalla.
+    const shown = await errorTextIn(page, 'error-alta');
+    throw new Error(
+      `el alta no redirigió a /app/stock/{id}/fotos (contrato de la ronda 2).\n` +
+        `  url actual: ${page.url()}\n` +
+        `  error-alta: ${shown ?? '(no hay data-testid="error-alta" en pantalla)'}`,
+    );
+  }
+
+  const listingId = PHOTOS_URL_RE.exec(page.url())?.[1];
+  if (listingId === undefined) {
+    throw new Error(`la URL ${page.url()} no trae el id del listing`);
+  }
+
+  // La URL cambió; la pantalla puede no haber llegado todavía. Un helper que promete "el dueño
+  // quedó parado en la pantalla de fotos" y vuelve con la barra de direcciones puesta y el
+  // `<main>` vacío está mintiendo, y el que paga la mentira es el test que llama después.
+  //
+  // Se espera el **contenedor** y a propósito NO una `foto-cargada`: si esperara una foto, el test
+  // que afirma que el alta dejó exactamente una quedaría probado por el helper (o sea, por nadie),
+  // y un alta que redirige sin haber guardado la foto se vería como un timeout del helper en vez
+  // de como el rojo que es. El contrato de pantalla lo espera el helper; la cantidad la afirma el
+  // test.
+  await expect(
+    photosScreen(page),
+    `el alta redirigió a ${page.url()} pero la pantalla nunca sirvió ` +
+      'data-testid="fotos-de-la-unidad": la ruta contesta la URL antes de resolver el equipo',
+  ).toBeVisible({ timeout: 30_000 });
+
+  return { listingId, catalogModel };
+}
+
+// ── Ruta B · `/app/stock/{id}/fotos` ─────────────────────────────────────────────────────────
+
+/**
+ * El contenedor de la pantalla de fotos: es **el contrato de que la pantalla se sirvió**, no una
+ * decoración. Mientras no esté, no hay nada que contar adentro.
+ */
+export function photosScreen(page: Page): Locator {
+  return page.getByTestId('fotos-de-la-unidad');
+}
+
+/**
+ * Las fotos que muestra la pantalla del equipo, como **locator**. Éste es el camino de toda
+ * aserción de cantidad: `await expect(loadedPhotos(page), mensaje).toHaveCount(n)`.
+ *
+ * ## Por qué un locator y no un número
+ * `Locator.count()` es una lectura **congelada**: pregunta cuántos nodos hay *en este instante* y
+ * no reintenta. Con una ruta que transmite —PPR, un Suspense, o simplemente un server lento— la
+ * URL puede cambiar antes de que exista un solo `foto-cargada` en el DOM, y entonces el conteo da
+ * 0 y el rojo dice "la pantalla no muestra la foto" cuando la verdad es "todavía no terminó de
+ * servirse". Las dos cosas se arreglan distinto y el mensaje mandaba a arreglar la equivocada.
+ *
+ * `toHaveCount` reintenta hasta el timeout, así que la aserción afirma lo mismo pero **deja de
+ * depender de que la ruta resuelva rápido**. Eso importa incluso cuando la ruta bloquea: el día
+ * que algo vuelva a transmitir, este test tiene que seguir diciendo la verdad sin que nadie lo
+ * toque.
+ */
+export function loadedPhotos(page: Page): Locator {
+  return page.getByTestId('foto-cargada');
+}
+
+/**
+ * Cuántas fotos muestra la pantalla **en este instante**. Es una lectura congelada: sirve para
+ * armar mensajes de error y para diagnosticar, y **nunca** es el camino de una aserción — para eso
+ * está `loadedPhotos()` con `toHaveCount`. Ver el docblock de arriba.
+ */
+export async function loadedPhotoCount(page: Page): Promise<number> {
+  return loadedPhotos(page).count();
+}
+
+/**
+ * Texto del aviso de fotos faltantes, o `null` si el nodo no está (o sea: ya no faltan).
+ *
+ * Le da al aviso la misma chance de aparecer que le da `toHaveCount` a una foto: `errorTextIn` es
+ * una lectura congelada, y el aviso es un nodo distinto de la grilla de fotos —puede llegar en
+ * otro chunk. Sin esta espera, un aviso que tarda se reporta como "no hay ningún faltan-fotos en
+ * pantalla", que es el rojo equivocado. La espera se traga el vencimiento a propósito: el que
+ * decide si tenía que estar es la aserción del test, con su mensaje, y no este helper.
+ *
+ * Cuando el aviso **no** tiene que estar (3 de 3 fotos), el test no llama acá: afirma
+ * `toHaveCount(0)` sobre el testid, que es la aserción correcta para una ausencia.
+ */
+export async function missingPhotosText(page: Page): Promise<string | null> {
+  await page
+    .getByTestId('faltan-fotos')
+    .waitFor({ state: 'visible', timeout: 15_000 })
+    .catch(() => undefined);
+  return errorTextIn(page, 'faltan-fotos');
+}
+
+/** Navega a la pantalla de fotos y devuelve la respuesta (para poder leer el status). */
+export async function gotoPhotos(page: Page, listingId: string) {
+  return page.goto(`${APEX_URL}${photosPath(listingId)}`);
+}
+
+/**
+ * Sube **una** foto más en la ruta B y espera a que la pantalla muestre `expectedTotal` fotos.
+ *
+ * Se espera por la condición —el total en pantalla— y nunca por reloj. Y se falla con el texto de
+ * `error-foto` adentro del mensaje: sin eso, un rechazo del server se reporta como "timeout
+ * esperando 2 fotos", que es la clase de rojo que manda a alguien a leer el trace en vez de leer
+ * el error.
+ *
+ * ## Por qué el total viene de afuera y no de un `before` que el helper cuenta solo
+ * Contar antes de subir es la misma lectura congelada que rompió este spec, sólo que escondida: si
+ * la pantalla todavía no terminó de renderizar, el `before` sale 0, el helper espera 1 y da por
+ * buena una foto que en realidad es la del alta. El que llama sabe cuántas fotos tiene que haber
+ * —es la regla que está probando— así que lo dice, y la espera pasa a ser una condición absoluta
+ * que no depende de en qué momento se leyó el DOM.
+ */
+export async function addPhoto(
+  page: Page,
+  upload: PhotoUpload,
+  expectedTotal: number,
+): Promise<void> {
+  const { count, error } = await tryAddPhoto(page, upload, expectedTotal);
+  if (count === expectedTotal) return;
+  throw new Error(
+    `subir una foto más en ${page.url()} no dejó ${String(expectedTotal)} fotos en pantalla: ` +
+      `hay ${String(count)}.\n  error-foto: ${error ?? '(no hay data-testid="error-foto" en pantalla)'}`,
+  );
+}
+
+/**
+ * Igual que `addPhoto`, pero **no supone que salga bien**: es el helper de los tests que prueban
+ * el rechazo. Devuelve el estado en el que quedó la pantalla.
+ *
+ * `acceptedTotal` es cuántas fotos tendría que mostrar la pantalla **si el server acepta ésta**.
+ * Es dato del que llama por el mismo motivo que en `addPhoto`: un baseline contado acá adentro se
+ * lee cuando se lee, y con una ruta que transmite eso es una moneda al aire.
+ *
+ * `Promise.any` en vez de `race`: sirve la primera de las dos condiciones que se cumpla —el total
+ * esperado, o un error visible— y si no se cumple ninguna en 90 s, el que grita es el `expect` del
+ * test que llamó, con su propio mensaje.
+ *
+ * El `count` que vuelve es una lectura congelada **de reporte**: se toma recién después de que una
+ * de las dos condiciones se cumplió (o venció), y los tests afirman la cantidad con
+ * `expect(loadedPhotos(page)).toHaveCount(...)`, que reintenta.
+ */
+export async function tryAddPhoto(
+  page: Page,
+  upload: PhotoUpload,
+  acceptedTotal: number,
+): Promise<{ readonly count: number; readonly error: string | null }> {
+  await expect(
+    photosScreen(page),
+    `${page.url()} no expone data-testid="fotos-de-la-unidad" (contrato de la ronda 2)`,
+  ).toBeVisible({ timeout: 20_000 });
+
+  const input = page.getByTestId('input-agregar-foto');
+  await expect(
+    input,
+    'la pantalla de fotos no tiene data-testid="input-agregar-foto"',
+  ).toBeAttached({ timeout: 15_000 });
+  await input.setInputFiles(upload);
+  await page.getByTestId('submit-agregar-foto').click();
+
+  await Promise.any([
+    expect(loadedPhotos(page)).toHaveCount(acceptedTotal, { timeout: 90_000 }),
+    page.getByTestId('error-foto').waitFor({ state: 'visible', timeout: 90_000 }),
+  ]).catch(() => undefined);
+
+  return { count: await loadedPhotoCount(page), error: await errorTextIn(page, 'error-foto') };
+}
+
+/**
+ * El camino completo del dueño: alta con la primera foto y después una por request hasta llegar a
+ * las tres que `MIN_PHOTOS_TO_PUBLISH` exige.
+ */
+export async function createUnitWithPhotos(
+  page: Page,
+  unit: NewUnit,
+  extraPhotos: readonly PhotoUpload[],
+): Promise<CreatedUnit> {
+  const created = await createUnitDraft(page, unit);
+  // El alta ya dejó una: la siguiente tiene que dejar dos, y así. El total es absoluto a propósito
+  // (ver `addPhoto`).
+  let total = 1;
+  for (const upload of extraPhotos) {
+    total += 1;
+    await addPhoto(page, upload, total);
+  }
+  return created;
 }

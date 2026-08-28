@@ -1,5 +1,29 @@
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { defineConfig, devices } from '@playwright/test';
 import { APEX_URL, E2E_PORT } from './_lib/env';
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+
+/**
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *  Media en los e2e (S2): driver local en disco + base pública apuntando al server bajo prueba.
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * `NEXT_PUBLIC_MEDIA_BASE_URL` **tiene que estar acá y no en el default del paquete**. El default
+ * de `packages/media/src/env.ts` es `http://localhost:3000/_media`, o sea otro puerto y otro host
+ * que el que levanta este config: el `<img src>` de la miniatura apuntaría a un server que no
+ * existe y el gate de bytes fallaría por un motivo que no tiene nada que ver con el pipeline.
+ *
+ * Es `NEXT_PUBLIC_*`, así que se **inlinea en el build**: por eso va en el `env` del `webServer`,
+ * que es el que corre el `next build`, y no en el entorno del test.
+ *
+ * `MEDIA_LOCAL_ROOT` absoluto, y no el default `<cwd>/.media-local`, porque el `cwd` del `next
+ * start` es un detalle de cómo pnpm invoca el binario. Con la raíz fijada, el objeto que escribe
+ * el upload y el que lee `/_media/[...key]` son el mismo por construcción y no por casualidad.
+ * `.media-local/` ya está en el `.gitignore` de la raíz.
+ */
+const MEDIA_LOCAL_ROOT = resolve(HERE, '.media-local');
 
 /**
  * Playwright de iStock. Owner: `qa-agent`.
@@ -91,6 +115,8 @@ export default defineConfig({
       AUTH_DRIVER: 'local',
       AUTH_LOCAL_SECRET: process.env['AUTH_LOCAL_SECRET'] ?? 'e2e-local-secret-32-chars-minimum',
       MEDIA_DRIVER: 'local',
+      MEDIA_LOCAL_ROOT,
+      NEXT_PUBLIC_MEDIA_BASE_URL: `${APEX_URL}/_media`,
       BILLING_DRIVER: 'mock',
       NEXT_PUBLIC_ROOT_DOMAIN: APEX_URL.replace('http://', ''),
       NEXT_PUBLIC_APP_URL: APEX_URL,
