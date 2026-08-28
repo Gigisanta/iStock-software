@@ -134,14 +134,46 @@ if pnpm test >/tmp/f3-test.log 2>&1; then ok "pnpm test"; else no "pnpm test"; t
 
 # Ausencia de medicion = FAIL, nunca PASS: si el log no trae ni un resumen de vitest, las dos
 # reglas de abajo no midieron nada y no pueden dar verde.
-PAQ_CON_TEST=5   # domain, media, db, tests, apps/web. Si cambia, se cambia ACA y en el mismo commit.
-RESUM=$(grep -cE 'Tests +[0-9]+ passed' /tmp/f3-test.log 2>/dev/null || echo 0)
+# El numero de paquetes NO se clava: se censa el arbol. La version anterior decia
+# `PAQ_CON_TEST=5   # domain, media, db, tests, apps/web` con la nota "si cambia, se cambia ACA y
+# en el mismo commit" — y despues nacio `packages/ai`, que tiene 19 archivos de test, y nadie
+# subio el numero. El 2026-08-28 eso produjo el peor verde posible: con `apps/web` en rojo, el log
+# traia 5 resumenes (domain, media, ai, db, tests), 5 >= 5, y la regla que dice "ausencia de
+# medicion = FAIL" dio PASS **por coincidencia aritmetica**, justo sobre el unico paquete del repo
+# que tiene skips. Lo encontro `app-agent` leyendo el log, no el gate.
+#
+# El censo sale del FILESYSTEM y la cuenta del LOG DE VITEST: dos fuentes distintas. Derivar las
+# dos del mismo lado seria el defecto que este repo ya se comio tres veces este mes (el control de
+# G6 con su copia del predicado; el censo que mide cero y sale verde; `plans.test.ts` comparando
+# el catalogo consigo mismo). Aca no se puede: para que la comparacion mienta hay que borrar los
+# tests del disco Y el resumen del log a la vez.
+PAQ_CON_TEST=$(
+  for d in tests apps/* packages/*; do
+    [ -d "$d" ] || continue
+    [ -n "$(find "$d" -name node_modules -prune -o \( -name '*.test.ts' -o -name '*.test.tsx' \) -print 2>/dev/null | head -1)" ] && echo "$d"
+  done | wc -l | tr -d ' ')
+[ -z "$PAQ_CON_TEST" ] && PAQ_CON_TEST=0
+if [ "$PAQ_CON_TEST" -eq 0 ]; then
+  no "cero directorios con archivos *.test.ts en el arbol: o el censo se rompio o no hay tests. Las dos cosas son FAIL"
+fi
+# `RESUM` cuenta resumenes de vitest, VERDES O ROJOS. El regex viejo era `Tests +[0-9]+ passed`, y
+# vitest imprime `Tests  1 failed | 569 passed | 4 skipped (574)` cuando algo falla: el `1 failed`
+# se mete entre `Tests` y `[0-9]+ passed` y la linea deja de matchear. O sea que las tres cuentas
+# derivadas de aca —paquetes, total y skips— **solo sabian contar cuando todo estaba verde**, que
+# es exactamente cuando no hacen falta.
+#   · el keyword despues del numero (`passed|failed|skipped`) es lo que separa el resumen del
+#     banner `⎯⎯ Failed Tests 1 ⎯⎯`, que tambien dice "Tests" y un numero.
+#   · la `T` mayuscula es lo que separa el resumen de la linea por archivo
+#     (`archivo.test.ts (13 tests | 4 skipped)`), que repite el mismo skip. Sumar las dos da el
+#     doble: me paso en la primera version de la regla de skips, dijo 8 con 4 reales.
+RESUMEN_RE='Tests +[0-9]+ (passed|failed|skipped)'
+RESUM=$(grep -cE "$RESUMEN_RE" /tmp/f3-test.log 2>/dev/null || echo 0)
 if [ "$RESUM" -lt "$PAQ_CON_TEST" ]; then
-  no "solo $RESUM de $PAQ_CON_TEST paquetes reportaron un resumen de vitest: alguno no midio nada"
+  no "solo $RESUM de $PAQ_CON_TEST paquetes con tests reportaron un resumen de vitest: alguno no midio nada"
   grep -E 'test\$|Scope:' /tmp/f3-test.log | sed 's/^/        /' | head -8
 else
   ok "los $PAQ_CON_TEST paquetes con tests reportaron resumen"
-  TOT=$(grep -oE 'Tests +[0-9]+ passed' /tmp/f3-test.log | grep -oE '[0-9]+' | paste -sd+ - | bc)
+  TOT=$(grep -E "$RESUMEN_RE" /tmp/f3-test.log | grep -oE '[0-9]+ passed' | grep -oE '^[0-9]+' | paste -sd+ - | bc)
   ok "tests corridos en total: ${TOT:-0}"
   # ── Skips ──────────────────────────────────────────────────────────────────────────────────
   # Esta regla decia "cero tests skipeados: los drivers mock existen, no hay excusa" y RECHAZABA
@@ -163,10 +195,8 @@ else
   # estos cuatro tienen que correr y este numero tiene que bajar a 0. No hay gate para eso; hay
   # una fila de board.
   SKIPS_AUTORIZADOS=4
-  # Solo la linea de RESUMEN (`Tests  N passed | M skipped`), no la de cada archivo
-  # (`archivo.test.ts (13 tests | 4 skipped)`): vitest imprime el mismo skip en las dos y sumar
-  # ambas da el doble. Me paso en la primera corrida de esta regla: dijo 8 con 4 skips reales.
-  VISTOS=$(grep -oE 'Tests +[0-9]+ passed \| [0-9]+ skipped' /tmp/f3-test.log 2>/dev/null \
+  # Solo las lineas de RESUMEN (ver `RESUMEN_RE` arriba), nunca las de cada archivo.
+  VISTOS=$(grep -E "$RESUMEN_RE" /tmp/f3-test.log 2>/dev/null \
              | grep -oE '[0-9]+ skipped' | grep -oE '^[0-9]+' | paste -sd+ - | bc)
   VISTOS=${VISTOS:-0}
   DECL=$(grep -rn 'it\.skip\|describe\.skip\|test\.skip' apps/web packages tests \
