@@ -3,7 +3,11 @@
 # No cree al subagente: esto es lo que decide si D1/D2/D3/D4 pasan.
 set -uo pipefail
 DB="${ISTOCK_DB:-istock_dev}"
-URL="postgresql://$(whoami)@localhost:5432/${DB}"
+# `DATABASE_URL` gana si ya viene del entorno. En la maquina del dev no esta y se arma con
+# `whoami`, que es el dueno de la base que crea `scripts/pg-local.sh`; en CI si esta, y ahi
+# `whoami` es `runner`, que no es un rol de Postgres — armarla a mano haria fallar el seed de D4
+# por una razon que no tiene nada que ver con lo que este gate mide.
+URL="${DATABASE_URL:-postgresql://$(whoami)@localhost:5432/${DB}}"
 fail=0
 ok()   { printf '  \033[32mPASS\033[0m  %s\n' "$1"; }
 bad()  { printf '  \033[31mFAIL\033[0m  %s\n' "$1"; fail=1; }
@@ -59,8 +63,30 @@ TRUEPOL=$(psql -d "$DB" -tAc "select tablename||'.'||policyname from pg_policies
 # ADR-005: auth.jwt() SIEMPRE en subquery, y TO authenticated siempre.
 NOSUB=$(psql -d "$DB" -tAc "select tablename||'.'||policyname from pg_policies where schemaname='public' and (qual like '%auth.jwt%' or with_check like '%auth.jwt%') and coalesce(qual,'')||coalesce(with_check,'') not like '%( SELECT%'" 2>/dev/null | tr '\n' ' ')
 [ -z "$(echo "$NOSUB" | tr -d ' ')" ] && ok "ADR-005: auth.jwt() siempre en subquery" || bad "auth.jwt() sin subquery en: $NOSUB"
-NOROLE=$(psql -d "$DB" -tAc "select tablename||'.'||policyname from pg_policies where schemaname='public' and not ('authenticated' = any(roles))" 2>/dev/null | tr '\n' ' ')
-[ -z "$(echo "$NOROLE" | tr -d ' ')" ] && ok "ADR-005: toda policy TO authenticated" || bad "policy sin TO authenticated: $NOROLE"
+# Reescrita por el LEAD el 2026-08-28. La version anterior era `not ('authenticated' = any(roles))`
+# y venia **roja desde que S1 agrego las policies de la vidriera**, sin que nadie lo viera: este
+# gate tampoco esta en CI (mismo agujero que `guard-routes.sh`). Las cinco policies que marcaba
+# —`tenants`, `locations`, `fx_settings`, `listing_photos`, `listings`, todas
+# `*_storefront_anon_select`— son `TO anon` **a proposito**: la vidriera la mira un visitante
+# anonimo. Exigirles `authenticated` no arregla nada y entrena a leer el rojo como ruido, que es
+# la unica forma de romper un gate sin tocarlo.
+#
+# Lo que la regla queria decir, y ahora dice: **ninguna policy sin `TO`**. Una policy sin `TO`
+# tiene `roles = {public}` y aplica a TODOS los roles, `anon` incluido — o sea que una policy de
+# panel escrita sin `TO` es una fuga a la vidriera con cara de policy correcta. Ese era el bug
+# real, y `{public}` es su firma exacta.
+#
+# Y una segunda, que la version vieja no podia expresar: **toda policy de `anon` es de SELECT**.
+# Un `INSERT`/`UPDATE`/`DELETE` para `anon` es un visitante escribiendo en la base del dueno.
+TOPUBLIC=$(psql -d "$DB" -tAc "select tablename||'.'||policyname from pg_policies where schemaname='public' and 'public' = any(roles)" 2>/dev/null | tr '\n' ' ')
+[ -z "$(echo "$TOPUBLIC" | tr -d ' ')" ] && ok "ADR-005: ninguna policy sin TO (roles={public} aplica a anon tambien)" \
+  || bad "policy sin TO, aplica a TODOS los roles: $TOPUBLIC"
+ANONWRITE=$(psql -d "$DB" -tAc "select tablename||'.'||policyname||' ('||cmd||')' from pg_policies where schemaname='public' and 'anon' = any(roles) and cmd <> 'SELECT'" 2>/dev/null | tr '\n' ' ')
+[ -z "$(echo "$ANONWRITE" | tr -d ' ')" ] && ok "ADR-005: toda policy de anon es SELECT (el visitante no escribe)" \
+  || bad "policy de ESCRITURA para anon: $ANONWRITE"
+OTHERROLE=$(psql -d "$DB" -tAc "select tablename||'.'||policyname||' -> '||roles::text from pg_policies where schemaname='public' and not ('authenticated' = any(roles) or 'anon' = any(roles))" 2>/dev/null | tr '\n' ' ')
+[ -z "$(echo "$OTHERROLE" | tr -d ' ')" ] && ok "ADR-005: toda policy es de authenticated o de anon, de nadie mas" \
+  || bad "policy con un rol inesperado: $OTHERROLE"
 # indice en tenant_id: sin esto RLS escanea la tabla entera en cada query
 NOIDX=$(psql -d "$DB" -tAc "select c.relname from pg_class c join pg_namespace n on n.oid=c.relnamespace join pg_attribute a on a.attrelid=c.oid and a.attname='tenant_id' where n.nspname='public' and c.relkind='r' and not exists (select 1 from pg_index i where i.indrelid=c.oid and a.attnum = any(i.indkey)) order by 1" 2>/dev/null | tr '\n' ' ')
 [ -z "$(echo "$NOIDX" | tr -d ' ')" ] && ok "ADR-005: tenant_id indexado en toda tabla" || bad "tenant_id sin indice en: $NOIDX"

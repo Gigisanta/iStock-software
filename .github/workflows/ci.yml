@@ -101,6 +101,14 @@ jobs:
         if: always()
         run: ./scripts/guard-r2.sh
 
+      # Tercer caso de la misma familia en un dia (guard-routes, guard-grants, y ahora este): un
+      # gate que no esta en CI se pone rojo y nadie se entera. `accept-fase2.sh` estaba rojo desde
+      # que S1 agrego las policies de la vidriera. Corre aca porque el job ya tiene Postgres
+      # migrado y seedeado, que es todo lo que necesita — no necesita build.
+      - name: aceptacion de FASE 2 (schema, RLS, policies, seed)
+        if: always()
+        run: ./scripts/accept-fase2.sh
+
       - name: phantom-file guard (artefacto inexistente o vacio = la tarea no paso)
         if: always()
         run: ./scripts/guard-artifacts.sh --harness
