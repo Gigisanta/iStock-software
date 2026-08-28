@@ -24,10 +24,18 @@ import { parseAiEnv, type AiEnv } from '../env';
 import { countTokens } from '../tokens';
 import { costPerThousandMessages } from '../pricing';
 import { createDownProvider, createStubProvider } from '../provider';
+import { usageMeasured } from '../entitlement';
 import type { CatalogChunk } from '../chunks';
 import type { ChatTurn } from '../turns';
 import { injectedListingFixture, listingFixture, reservedListingFixture } from '../fixtures/listing';
 import { EVAL_CASES, REAL_QUESTION_COUNT, type EvalCase } from './cases.eval';
+
+/**
+ * Contador stubbeado. Acá no hay tenant ni base: la eval mide dieta y comportamiento, no cupo.
+ * El parte se construye igual, y a propósito — si mañana la firma vuelve a admitir un `number`
+ * suelto, esta línea deja de compilar y la eval se entera antes que la factura.
+ */
+const USAGE_FIXTURE = usageMeasured(0);
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ENV_EXAMPLE = join(HERE, '..', '..', '.env.example');
@@ -149,7 +157,7 @@ export async function runCase(kase: EvalCase, env: AiEnv, shape = SHAPES[0]!): P
       chunks: CHUNKS,
       turns: shape.turns,
       userMessage: kase.question,
-      messagesToday: 0,
+      usage: USAGE_FIXTURE,
     },
     { env, primary, fallback },
   );
@@ -294,7 +302,7 @@ export async function runFallbackDrill(env: AiEnv = evalEnv()): Promise<readonly
       chunks: CHUNKS,
       turns: [],
       userMessage: question,
-      messagesToday: 0,
+      usage: USAGE_FIXTURE,
     },
     {
       env,
@@ -312,7 +320,7 @@ export async function runFallbackDrill(env: AiEnv = evalEnv()): Promise<readonly
       chunks: CHUNKS,
       turns: [],
       userMessage: question,
-      messagesToday: 0,
+      usage: USAGE_FIXTURE,
     },
     { env, primary: createDownProvider('gemini'), fallback: createDownProvider('groq') },
   );

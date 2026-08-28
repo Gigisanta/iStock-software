@@ -141,12 +141,17 @@ export {
 } from './tools';
 
 export {
-  RATE_LIMIT_PER_IP,
   SOFT_CAP_MESSAGES_PER_TENANT_PER_DAY,
   assertChatEntitled,
   chatEntitlementSchema,
+  requireMeasuredUsage,
   softCapReached,
+  usageMeasured,
+  usageUnmeasured,
   type ChatEntitlement,
+  type MeasuredUsage,
+  type TenantUsageToday,
+  type UnmeasuredUsage,
 } from './entitlement';
 
 export {

@@ -7,9 +7,23 @@
  *
  * El número que imprime al final es el que va a `docs/CHATBOT.md`. Lo escribe `docs-keeper`, no este
  * paquete: `docs/**` tiene otro dueño (`CLAUDE.md` §4).
+ *
+ * ## Además de imprimir, EMITE
+ * Con la eval en verde, reescribe el bloque de costo medido de `README.md` entre marcadores. Ese
+ * bloque estaba transcripto a mano y envejeció: el gate ahora es `pnpm eval && git diff
+ * --exit-code`, sin ningún lint que tenga que volver a correr la eval para leer seis números.
+ *
+ * Escribe **sólo en verde**: los números de una eval en rojo no significan nada, y el `exit 1`
+ * corta el `&&` antes del diff.
  */
 
+import { readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { runEval, runFallbackDrill, evalEnv, type CaseOutcome } from './harness';
+import { renderCostSection, replaceCostSection } from './report-md';
+
+const README = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'README.md');
 
 function money(value: number | null): string {
   return value === null ? 'sin tarifa conocida' : `USD ${value.toFixed(4)}`;
@@ -54,6 +68,13 @@ async function main(): Promise<void> {
     process.exitCode = 1;
     return;
   }
+  const readme = readFileSync(README, 'utf8');
+  const updated = replaceCostSection(readme, renderCostSection(report, env));
+  if (updated !== readme) {
+    writeFileSync(README, updated);
+    out.write('\nREADME.md · bloque de costo medido actualizado.\n');
+  }
+
   out.write('\nEVAL VERDE.\n');
 }
 

@@ -5,11 +5,13 @@
 
 import { describe, expect, it } from 'vitest';
 import {
-  RATE_LIMIT_PER_IP,
   SOFT_CAP_MESSAGES_PER_TENANT_PER_DAY,
   assertChatEntitled,
   chatEntitlementSchema,
+  requireMeasuredUsage,
   softCapReached,
+  usageMeasured,
+  usageUnmeasured,
 } from './entitlement';
 import { isAiError } from './errors';
 
@@ -119,10 +121,66 @@ describe('softCapReached', () => {
   });
 });
 
-describe('rate limit', () => {
-  it('es 8 por IP cada 10 minutos, y la ventana entra en los límites de Vercel Pro', () => {
-    expect(RATE_LIMIT_PER_IP.max).toBe(8);
-    expect(RATE_LIMIT_PER_IP.windowMinutes).toBe(10);
-    expect(RATE_LIMIT_PER_IP.windowMinutes * 60).toBeLessThanOrEqual(600);
+/**
+ * El parte del contador. Lo que se prueba acá no es aritmética: es que **el estado "no hay
+ * contador" tenga representación**. Cuando no la tenía, se codificaba como `0` — el valor que
+ * apaga el cap — y ningún gate podía verlo.
+ */
+describe('parte del contador diario', () => {
+  it('un parte medido lleva el número y se lee', () => {
+    expect(requireMeasuredUsage(usageMeasured(39))).toBe(39);
+    expect(requireMeasuredUsage(usageMeasured(0))).toBe(0);
+  });
+
+  it('un parte sin contador no es cero: tira, y con el motivo adentro', () => {
+    const usage = usageUnmeasured('el contador por tenant/día todavía no existe');
+    expect(() => requireMeasuredUsage(usage)).toThrowError(/todavía no existe/u);
+    try {
+      requireMeasuredUsage(usage);
+    } catch (error) {
+      expect(isAiError(error) && error.code).toBe('AI_USAGE_UNMEASURED');
+    }
+  });
+
+  it('falla cerrado ante ausencia: no hay parte y no hay chat', () => {
+    for (const absent of [undefined, null]) {
+      expect(() => requireMeasuredUsage(absent)).toThrowError(/sin contador/u);
+    }
+  });
+
+  it('rechaza un conteo que no es un entero >= 0: un contador roto no es un contador', () => {
+    for (const bad of [-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(() => usageMeasured(bad)).toThrowError(/entero/u);
+    }
+  });
+
+  it('declarar que no hay contador exige un motivo escrito, no una cadena cualquiera', () => {
+    expect(() => usageUnmeasured('')).toThrowError(/motivo/u);
+    expect(() => usageUnmeasured('todavía no')).toThrowError(/motivo/u);
+    expect(usageUnmeasured('  el contador vive en el ADR C1  ').reason).toBe('el contador vive en el ADR C1');
+  });
+
+  /**
+   * Dónde está cada mitad de la defensa, escrito para que nadie se confunda de capa.
+   *
+   * El **tipo** es el que mata el `0` que iba a escribir el primer cableado de `/api/chat` para
+   * poder compilar: la marca es un `unique symbol` no exportado, así que afuera no hay literal
+   * posible (lo prueba `chat.test.ts` y lo prueba `tsc`, que es donde se prueba un tipo).
+   *
+   * El **runtime** cubre el borde JS —un route handler que pasa cualquier cosa— y ahí sí un objeto
+   * con la forma exacta pasa. Eso no es un agujero tapable: quien escribe `as MeasuredUsage` o
+   * arma el literal a mano no se olvidó de nada, está mintiendo, y eso se ve en el diff. Lo que la
+   * marca evita es la **omisión**, que es el modo de falla que ocurre por apuro.
+   */
+  it('el runtime cubre el borde JS; lo que bloquea el literal es el tipo', () => {
+    expect(() => requireMeasuredUsage(0 as never)).toThrowError(/sin contador/u);
+    expect(() => requireMeasuredUsage(40 as never)).toThrowError(/sin contador/u);
+    expect(() => requireMeasuredUsage({ messagesToday: 0 } as never)).toThrowError(/sin contador/u);
+    expect(() => requireMeasuredUsage({ kind: 'measured', messagesToday: '0' } as never)).toThrowError(
+      /sin contador/u,
+    );
+    // Una falsificación con la forma exacta pasa el runtime. Sólo se puede escribir con un `as`.
+    expect(requireMeasuredUsage({ kind: 'measured', messagesToday: 7 } as never)).toBe(7);
   });
 });
+

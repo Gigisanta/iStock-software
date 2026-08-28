@@ -9,6 +9,10 @@
 import { describe, expect, it } from 'vitest';
 import { EVAL_CASES, REAL_QUESTION_COUNT } from './cases.eval';
 import { evalEnv, runCase, runEval, runFallbackDrill } from './harness';
+import { COST_BLOCK_END, COST_BLOCK_START, renderCostSection, replaceCostSection } from './report-md';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { MAX_INPUT_TOKENS, MAX_OUTPUT_TOKENS } from '../budget';
 
 const env = evalEnv();
@@ -82,5 +86,52 @@ describe('la env de la eval', () => {
     expect(env.primaryModel.length).toBeGreaterThan(0);
     expect(env.fallbackModel.length).toBeGreaterThan(0);
     expect(env.primaryModel).not.toBe(env.fallbackModel);
+  });
+});
+
+
+/**
+ * El bloque de costo del README lo **emite** la eval; no se transcribe. Antes se copiaba a mano y
+ * envejeció en silencio (`124/168`, `USD 0.079`), y de ahí salió un costo mal reportado. El gate de
+ * verdad es `pnpm eval && git diff --exit-code`; esto es el mismo invariante en 200 ms, para que el
+ * defecto se vea en `pnpm test` y no recién en CI.
+ */
+describe('el bloque de costo del README se genera', () => {
+  const README = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'README.md');
+
+  it('el README tiene los marcadores y su contenido es exactamente el que emite la eval', async () => {
+    const env = evalEnv();
+    const readme = readFileSync(README, 'utf8');
+    expect(readme).toContain(COST_BLOCK_START);
+    expect(readme).toContain(COST_BLOCK_END);
+    expect(replaceCostSection(readme, renderCostSection(await runEval(env), env))).toBe(readme);
+  });
+
+  it('emite los números derivados, no sólo la salida cruda: por mensaje y por tenant al tope', async () => {
+    const env = evalEnv();
+    const report = await runEval(env);
+    const section = renderCostSection(report, env);
+    const blended = report.costPerThousandBlended;
+    expect(blended).not.toBeNull();
+    // El costo por mensaje es el mezclado dividido 1000, y el mensual es ése × 40 × 30.
+    expect(section).toContain((blended! / 1000).toFixed(8).replace('.', ','));
+    expect(section).toContain(((blended! / 1000) * 40 * 30).toFixed(4).replace('.', ','));
+  });
+
+  it('es determinista: dos renders del mismo reporte son idénticos byte a byte', async () => {
+    const env = evalEnv();
+    const report = await runEval(env);
+    expect(renderCostSection(report, env)).toBe(renderCostSection(report, env));
+  });
+
+  it('sin marcadores tira, en vez de dejar el README transcripto a mano', () => {
+    expect(() => replaceCostSection('# README sin marcadores\n', 'x')).toThrowError(/marcadores/u);
+  });
+
+  it('reemplaza sólo lo de adentro y no toca el texto escrito a mano alrededor', () => {
+    const doc = `antes\n${COST_BLOCK_START}\nviejo\n${COST_BLOCK_END}\ndespués`;
+    const out = replaceCostSection(doc, `${COST_BLOCK_START}\nnuevo\n${COST_BLOCK_END}`);
+    expect(out).toBe(`antes\n${COST_BLOCK_START}\nnuevo\n${COST_BLOCK_END}\ndespués`);
+    expect(out).not.toContain('viejo');
   });
 });

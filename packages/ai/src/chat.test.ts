@@ -16,7 +16,7 @@ import { answerChat, chatRequestSchema, type ChatDeps, type ChatInput } from './
 import { parseAiEnv } from './env';
 import { isAiError } from './errors';
 import { createDownProvider, createStubProvider } from './provider';
-import { SOFT_CAP_MESSAGES_PER_TENANT_PER_DAY } from './entitlement';
+import { SOFT_CAP_MESSAGES_PER_TENANT_PER_DAY, usageMeasured, usageUnmeasured } from './entitlement';
 import { MAX_INPUT_TOKENS } from './budget';
 import { listingFixture, reservedListingFixture } from './fixtures/listing';
 import type { SearchHit } from './tools';
@@ -32,7 +32,7 @@ function input(overrides: Partial<ChatInput> = {}): ChatInput {
     chunks: [{ catalogModelId: 'cm_14pro', text: 'El iPhone 14 Pro estrena la Isla Dinámica.' }],
     turns: [],
     userMessage: '¿Qué batería tiene?',
-    messagesToday: 0,
+    usage: usageMeasured(0),
     ...overrides,
   };
 }
@@ -289,7 +289,7 @@ describe('límites de negocio', () => {
   it('pasado el soft cap sólo queda el botón de WhatsApp', async () => {
     const primary = createStubProvider({ id: 'primary', script: ['no debería llamarse'] });
     const answer = await answerChat(
-      input({ messagesToday: SOFT_CAP_MESSAGES_PER_TENANT_PER_DAY }),
+      input({ usage: usageMeasured(SOFT_CAP_MESSAGES_PER_TENANT_PER_DAY) }),
       deps({ primary }),
     );
     expect(answer.handoff).toBe('soft_cap');
@@ -298,8 +298,57 @@ describe('límites de negocio', () => {
   });
 
   it('justo debajo del cap todavía contesta', async () => {
-    const answer = await answerChat(input({ messagesToday: SOFT_CAP_MESSAGES_PER_TENANT_PER_DAY - 1 }), deps());
+    const answer = await answerChat(input({ usage: usageMeasured(SOFT_CAP_MESSAGES_PER_TENANT_PER_DAY - 1) }), deps());
     expect(answer.handoff).toBeNull();
+  });
+});
+
+/**
+ * El cap tenía constante, predicado y gate — y no tenía contador. `messagesToday` era un `number`
+ * que sólo escribían los tests, así que el primer cableado real de `/api/chat` iba a poner un `0`
+ * para poder compilar y eso iba a **apagar el techo de la factura sin poner nada en rojo**: compila,
+ * pasan los tests, pasa la eval. Estos casos son el ruido que antes no existía.
+ */
+describe('el cap no se puede apagar en silencio', () => {
+  it('sin contador no hay chat: tira AI_USAGE_UNMEASURED y no llama al proveedor', async () => {
+    const primary = createStubProvider({ id: 'primary', script: ['no debería llamarse'] });
+    const usage = usageUnmeasured('el contador por tenant/día todavía no existe (ADR C1 abierto)');
+    await expect(answerChat(input({ usage }), deps({ primary }))).rejects.toMatchObject({
+      code: 'AI_USAGE_UNMEASURED',
+    });
+    expect(primary.calls).toHaveLength(0);
+  });
+
+  it('el motivo del cableado sin contador viaja en el error: sin eso, Sentry no dice nada', async () => {
+    const usage = usageUnmeasured('todavía no hay tabla de uso diario por tenant');
+    const error = await answerChat(input({ usage }), deps()).catch((caught: unknown) => caught);
+    expect(isAiError(error) && error.message).toContain('todavía no hay tabla de uso diario');
+  });
+
+  it('falla cerrado ante un parte ausente o falsificado por fuera de los constructores', async () => {
+    const fakes: readonly unknown[] = [
+      undefined,
+      null,
+      0,
+      40,
+      { kind: 'measured' },
+      { kind: 'measured', messagesToday: '0' },
+      { messagesToday: 0 },
+      { kind: 'unmeasured', reason: 'no hay contador todavía' },
+    ];
+    for (const fake of fakes) {
+      const bad = { ...input(), usage: fake } as unknown as ChatInput;
+      await expect(answerChat(bad, deps())).rejects.toMatchObject({ code: 'AI_USAGE_UNMEASURED' });
+    }
+  });
+
+  it('el veredicto de entitlement se evalúa antes que el contador', async () => {
+    const usage = usageUnmeasured('no hay contador y tampoco hace falta: este tenant no tiene chat');
+    const error = await answerChat(
+      input({ entitlement: { ok: false, reason: 'plan_base' }, usage }),
+      deps(),
+    ).catch((caught: unknown) => caught);
+    expect(isAiError(error) && error.code).toBe('AI_NOT_ENTITLED');
   });
 });
 

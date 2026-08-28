@@ -14,6 +14,12 @@ export const AI_ERROR_CODES = [
   'AI_NOT_ENTITLED',
   /** Entrada mal formada en el borde del paquete. */
   'AI_INPUT_INVALID',
+  /**
+   * No llegó un parte del contador diario del tenant. **No es lo mismo que cero mensajes.** El soft
+   * cap es el techo de la factura y sin medidor no hay techo, así que se falla cerrado y ruidoso:
+   * un cableado sin contador tiene que aparecer en Sentry el primer día.
+   */
+  'AI_USAGE_UNMEASURED',
 ] as const;
 
 export type AiErrorCode = (typeof AI_ERROR_CODES)[number];

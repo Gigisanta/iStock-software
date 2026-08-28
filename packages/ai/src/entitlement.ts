@@ -14,6 +14,8 @@
  * ## El soft cap protege la factura, no al comprador
  * 40 mensajes por tenant por día. Después: sólo el botón de WhatsApp. El contador **no vive acá**
  * (necesita almacenamiento y esto es TS sin I/O): acá vive la decisión, que es lo que se testea.
+ * Lo que sí vive acá desde el 2026-08-28 es la **forma del parte** (`TenantUsageToday`), para que
+ * "todavía no hay contador" sea un valor con nombre y no un `0` escrito para poder compilar.
  * El contador de tokens por tenant va en ruta autenticada, nunca en la vidriera
  * (`ARCHITECTURE.md` §Seguridad: los contadores del WAF son por región y el límite global efectivo
  * es N×límite).
@@ -22,8 +24,20 @@
 import { z } from 'zod';
 import { AiError } from './errors';
 
-/** Rate limit de la vidriera. Se aplica en el WAF de Vercel, no en la app (fragmenta el cache ISR). */
-export const RATE_LIMIT_PER_IP = { max: 8, windowMinutes: 10 } as const;
+/**
+ * El techo por IP de `/api/chat` vive en `config/firewall-rules.json` (regla `chatbot-rl`, del
+ * LEAD) y lo aplica el WAF de Vercel. **`packages/ai` no lo aplica ni lo conoce**, y por eso acá no
+ * hay constante.
+ *
+ * La había —`RATE_LIMIT_PER_IP = { max: 8, windowMinutes: 10 }`— y se borró el 2026-08-28 con su
+ * test. No estaba mal escrita: estaba **vieja**, porque el WAF ya decía 20/600s. Una copia de un
+ * valor cuya fuente está en otro archivo no se sincroniza sola, y la segunda fuente es siempre la
+ * vieja. Encima nadie la importaba salvo su propio test, así que lo único que ese test certificaba
+ * era que la copia existía, nunca que fuera cierta.
+ *
+ * Y aunque estuviera al día no serviría de techo de la factura: un límite por IP y un cupo por
+ * tenant son **ejes distintos**. Lo que acota el gasto de un tenant es el soft cap de acá abajo.
+ */
 
 /** Soft cap por tenant y por día. Llegado el tope, sólo queda el botón de WhatsApp. */
 export const SOFT_CAP_MESSAGES_PER_TENANT_PER_DAY = 40;
@@ -86,4 +100,123 @@ export function assertChatEntitled(entitlement: ChatEntitlement | null | undefin
 /** ¿Ya se consumió el cupo diario del tenant? `count` = mensajes de hoy, antes de este. */
 export function softCapReached(count: number, cap: number = SOFT_CAP_MESSAGES_PER_TENANT_PER_DAY): boolean {
   return count >= cap;
+}
+
+/**
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *  El contador es el techo de la factura, así que su AUSENCIA tiene que ser un valor con nombre.
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * Hasta el 2026-08-28 `ChatInput` pedía `messagesToday: number`. La constante existía, el predicado
+ * existía y el gate de `chat.ts` existía; **el contador no**. El modo de falla no era hipotético y
+ * lo midió `cost-auditor`: el día que alguien cablee `/api/chat` va a necesitar compilar, el
+ * contador todavía no va a existir, y `messagesToday: 0` **compila, pasa los tests, pasa la eval y
+ * apaga el cap sin que nada se ponga rojo**. Un cero fabricado es indistinguible de un cero real
+ * cuando los dos son el mismo `number`.
+ *
+ * La cuenta que hace que esto importe (medida, no estimada — `pnpm --filter @istock/ai eval`):
+ * USD 0,00008032 por mensaje de vidriera × 40 mensajes/día × 30 días = **USD 0,0964/mes** por
+ * tenant al tope. Sin contador no hay tope: el techo del WAF es por IP (`/api/chat`, 20/600s) y un
+ * límite por IP no puede acotar un costo por tenant — son ejes distintos, y el peor caso por IP
+ * queda en ~USD 6,94/mes contra un plan Negocio de USD 35.
+ *
+ * ## Por qué un tipo con marca y no un `number` "bien documentado"
+ * `messagesToday` no es un número: es **un parte de un contador**, y un parte tiene dos estados
+ * posibles —midió, o no hay contador—. Modelarlo como `number` deja el segundo estado sin
+ * representación, y un estado sin representación se codifica igual: con el valor más inocente que
+ * haya a mano. Acá el más inocente es el que apaga el cap.
+ *
+ * La marca es un `unique symbol` **declarado y no exportado**: fuera de este módulo el nombre no
+ * existe, así que no se puede escribir un literal de esta forma ni con `kind` correcto. Los dos
+ * constructores de abajo son la única puerta. Falsificar sigue siendo posible con un `as`, y eso es
+ * a propósito: ningún sistema de tipos evita una mentira deliberada. Lo que sí evita es la
+ * **omisión**, que es el modo de falla real — el que ocurre por apuro y no por decisión.
+ *
+ * ## Este paquete sigue sin tener el contador
+ * Igual que con `ChatEntitlement`: acá vive la decisión, no el estado. El contador necesita
+ * almacenamiento por tenant/día en un camino anónimo de vidriera y eso es el ADR C1, que todavía no
+ * está escrito. Mientras no exista, el cableado honesto es `usageUnmeasured(...)`, que **falla
+ * ruidoso** (`AI_USAGE_UNMEASURED`) en vez de contestar gratis.
+ */
+declare const USAGE_EVIDENCE: unique symbol;
+
+/** El contador midió. `messagesToday` = mensajes de hoy de este tenant, sin contar el actual. */
+export interface MeasuredUsage {
+  /** Marca fantasma: no existe en runtime y no se puede nombrar afuera. */
+  readonly [USAGE_EVIDENCE]: 'measured';
+  readonly kind: 'measured';
+  readonly messagesToday: number;
+}
+
+/** No hay contador. No es "cero mensajes": es "no sé", y no saber cuesta la factura. */
+export interface UnmeasuredUsage {
+  readonly [USAGE_EVIDENCE]: 'unmeasured';
+  readonly kind: 'unmeasured';
+  readonly reason: string;
+}
+
+/** Parte del contador diario del tenant. Sólo lo producen `usageMeasured` / `usageUnmeasured`. */
+export type TenantUsageToday = MeasuredUsage | UnmeasuredUsage;
+
+/**
+ * Afirma que el contador midió, y cuánto.
+ *
+ * Quien llama esto está **firmando** que el número salió de un contador real. Un `usageMeasured(0)`
+ * escrito para que compile no es un atajo: es la misma mentira que antes se escribía sola.
+ */
+export function usageMeasured(messagesToday: number): MeasuredUsage {
+  if (!Number.isInteger(messagesToday) || messagesToday < 0) {
+    throw new AiError(
+      'AI_INPUT_INVALID',
+      `un parte de contador tiene que ser un entero >= 0 y llegó ${JSON.stringify(messagesToday)}. ` +
+        'Un contador que devuelve basura no es un contador: si no se pudo medir, usá usageUnmeasured().',
+    );
+  }
+  return { kind: 'measured', messagesToday } as MeasuredUsage;
+}
+
+/**
+ * Declara que **no hay contador**. Compila; `answerChat` tira `AI_USAGE_UNMEASURED` al primer
+ * request. Ruidoso a propósito: un cableado sin medidor tiene que aparecer en Sentry el primer día,
+ * no en la factura del mes siguiente.
+ *
+ * El motivo se exige de 12 caracteres para arriba por la misma razón que `web-lint:sin-tenant` pide
+ * 30: una excepción se declara y se explica, y la alternativa a explicarla no es "sin excepción",
+ * es la excepción invisible.
+ */
+export function usageUnmeasured(reason: string): UnmeasuredUsage {
+  const trimmed = reason.trim();
+  if (trimmed.length < 12 || trimmed.length > 160) {
+    throw new AiError(
+      'AI_INPUT_INVALID',
+      'declarar que no hay contador exige un motivo de 12 a 160 caracteres. Sin motivo escrito, ' +
+        'nadie sabe si falta cablear el contador o si se cayó el que había.',
+    );
+  }
+  return { kind: 'unmeasured', reason: trimmed } as UnmeasuredUsage;
+}
+
+/**
+ * Devuelve los mensajes de hoy, o tira. **Falla cerrado**, igual que `assertChatEntitled`: ausencia
+ * de parte es "no medido", nunca "cero". Los dos defaults cuestan algo; el opuesto cuesta el único
+ * vector del producto con costo por uso, sin techo y en silencio.
+ *
+ * Acepta `unknown` porque el borde real es JS: un route handler puede pasar lo que sea y la marca
+ * de tipos no viaja hasta ahí.
+ */
+export function requireMeasuredUsage(usage: TenantUsageToday | null | undefined): number {
+  const candidate = usage as { kind?: unknown; messagesToday?: unknown; reason?: unknown } | null | undefined;
+  if (candidate?.kind === 'measured' && Number.isInteger(candidate.messagesToday)) {
+    return candidate.messagesToday as number;
+  }
+  const why =
+    candidate?.kind === 'unmeasured' && typeof candidate.reason === 'string'
+      ? candidate.reason
+      : 'no llegó un parte de contador válido';
+  throw new AiError(
+    'AI_USAGE_UNMEASURED',
+    `sin contador de mensajes del tenant no hay chat (${why}). El soft cap de ` +
+      `${SOFT_CAP_MESSAGES_PER_TENANT_PER_DAY}/día es el techo de la factura y no puede depender de un ` +
+      'número escrito a mano en el call site. El parte se construye con usageMeasured() / usageUnmeasured().',
+  );
 }

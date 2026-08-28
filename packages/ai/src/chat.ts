@@ -4,6 +4,7 @@
  * ## El orden de las defensas es la mitad del diseño
  * ```
  * 1. entitlement      → en Base no se arma ni el prompt
+ * 1b. parte del contador → sin medidor no hay chat (AI_USAGE_UNMEASURED), no "cero mensajes"
  * 2. soft cap         → 40/tenant/día, después sólo el botón
  * 3. intención        → reservar/pagar/iCloud/identificador/envío/canje: se deriva SIN llamar al modelo
  * 4. dieta            → se arma, se MIDE y se asserta contra 1200
@@ -28,7 +29,13 @@ import type { TtlCache } from './cache';
 import type { CatalogChunk } from './chunks';
 import { buildChatContext, type ChatContext } from './context';
 import { assertWithinBudget } from './budget';
-import { assertChatEntitled, softCapReached, type ChatEntitlement } from './entitlement';
+import {
+  assertChatEntitled,
+  requireMeasuredUsage,
+  softCapReached,
+  type ChatEntitlement,
+  type TenantUsageToday,
+} from './entitlement';
 import { AiError } from './errors';
 import { buildHandoff, detectHandoffIntent, type HandoffReason } from './handoff';
 import { guardAnswer } from './guard';
@@ -68,8 +75,15 @@ export interface ChatInput {
   readonly chunks: readonly CatalogChunk[];
   readonly turns: readonly ChatTurn[];
   readonly userMessage: string;
-  /** Mensajes que este tenant ya gastó hoy, sin contar éste. */
-  readonly messagesToday: number;
+  /**
+   * Parte del contador diario del tenant. **No es un `number` a propósito.**
+   *
+   * Un `number` admite un `0` escrito para poder compilar, y ese cero apaga el único techo por
+   * tenant que tiene el producto sin poner nada en rojo (`entitlement.ts`, §"El contador es el
+   * techo de la factura"). Se construye con `usageMeasured(n)` o, mientras el contador no exista,
+   * con `usageUnmeasured('motivo')` — que falla ruidoso en vez de contestar gratis.
+   */
+  readonly usage: TenantUsageToday;
 }
 
 export interface ChatDeps {
@@ -172,10 +186,12 @@ async function generateWithFallback(
 /** Contesta. Nunca tira por culpa del modelo: si no puede contestar, deriva a WhatsApp. */
 export async function answerChat(input: ChatInput, deps: ChatDeps): Promise<ChatAnswer> {
   assertChatEntitled(input.entitlement);
+  // Antes de armar nada: sin medidor no hay techo de factura, y eso se falla cerrado y ruidoso.
+  const messagesToday = requireMeasuredUsage(input.usage);
 
   const noTokens = { promptTokens: 0, tokensIn: 0, tokensOut: 0, guardViolations: [] as readonly string[] };
 
-  if (softCapReached(input.messagesToday)) {
+  if (softCapReached(messagesToday)) {
     return answerFromHandoff(input.listing, 'soft_cap', { provider: 'none', model: null, ...noTokens });
   }
 

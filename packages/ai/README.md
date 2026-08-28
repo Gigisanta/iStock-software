@@ -34,17 +34,41 @@ inflado de 20 turnos.
 
 ## Costo medido
 
-Lo mide `pnpm --filter @istock/ai eval`, no una estimación:
+Lo mide `pnpm --filter @istock/ai eval`, no una estimación — y **lo escribe la eval, no una
+persona**. El bloque de abajo está entre marcadores y lo pisa el runner en cada corrida verde:
+editarlo a mano no sirve de nada, porque la próxima corrida lo vuelve a poner.
+
+<!-- eval:costo-medido:inicio · lo genera `pnpm --filter @istock/ai eval`, no lo edites a mano -->
 
 ```
-turnos que llegan al modelo: 124/168 (74%)   ← el resto se deriva antes y cuesta CERO
-tokens IN   p50 1026  p95 1049  max 1096
-tokens OUT  p50 21    p95 30    max 36
-costo /1000 mensajes de vidriera: USD 0.079
+primario: gemini-2.5-flash-lite   fallback: openai/gpt-oss-20b
+casos: 174/174 verdes   preguntas reales: 50
+
+turnos que llegan al modelo: 130/174 (75%)   ← el resto se deriva antes y cuesta CERO
+tokens IN   p50 1017  p95 1082  max 1087  (techo 1200)
+tokens OUT  p50 21  p95 35  max 36  (techo 180)
+costo /1000 mensajes facturados:  USD 0.1075
+costo /1000 mensajes de vidriera: USD 0.0803   ← el número real
 ```
+
+| | |
+|---|---|
+| costo por mensaje de vidriera | USD 0,00008032 |
+| un tenant al tope del soft cap | 40 msg/día × 30 días × USD 0,00008032 = **USD 0,0964/mes** |
+
+<!-- eval:costo-medido:fin -->
 
 El número que importa es el **mezclado**, no el facturado: uno de cada cuatro mensajes se resuelve
 por detección de intención sin llegar al proveedor. La defensa más barata es la que corre antes.
+`runEval()` filtra los turnos que llegaron al modelo **antes** de promediar y recién después
+multiplica por la tasa, así que ese descuento se aplica una sola vez.
+
+> **Por qué se genera.** Hasta el 2026-08-28 este bloque estaba transcripto a mano, decía `124/168`
+> y `USD 0.079` de una corrida vieja, y de ahí salió un `USD 0,094/mes` reportado como si fuera
+> medición (0,079 × 1200 = 0,0948; el exacto es USD 0,0964/mes, 2,5% arriba). El defecto no fue de
+> quien copió: fue tener **dos fuentes para un número**, donde la segunda es siempre la vieja.
+> El gate es `pnpm eval && git diff --exit-code`: si el corpus se movió y nadie regeneró, el árbol
+> queda sucio y se ve.
 
 Los números finales viven en `docs/CHATBOT.md`, que escribe `docs-keeper` (`CLAUDE.md` §4).
 
@@ -75,6 +99,7 @@ turno, porque cada vuelta paga el prompt entero de nuevo.
 
 ```
 1. entitlement      en plan Base el widget está AUSENTE del DOM; acá ni se arma el prompt
+1b. parte del contador  sin medidor no hay chat → AI_USAGE_UNMEASURED (no es "cero mensajes")
 2. soft cap         40 msgs/tenant/día → después sólo el botón de WhatsApp
 3. intención        reservar · pagar · iCloud · identificador · envío · canje → deriva SIN llamar al modelo
 4. dieta            se arma, se MIDE, se asserta
@@ -83,6 +108,29 @@ turno, porque cada vuelta paga el prompt entero de nuevo.
                     y "disponible" sobre una unidad `reserved` → se descarta la respuesta y se deriva
 8. siempre          `waUrl` + `waMessage` del DTO
 ```
+
+### El paso 1b: el contador es el techo de la factura
+
+`answerChat` no recibe `messagesToday: number`. Recibe un **parte** (`TenantUsageToday`), que se
+construye con `usageMeasured(n)` o con `usageUnmeasured('motivo')` y nada más — la marca del tipo es
+un `unique symbol` no exportado, así que afuera del paquete no hay literal posible.
+
+El motivo es un modo de falla medido: el cap tenía constante, predicado y gate, y **no tenía
+contador**. Con un `number` en la firma, el primer cableado real de `/api/chat` iba a escribir un
+`0` para poder compilar —el contador todavía no existe— y eso apagaba el único techo por tenant del
+producto **sin poner nada en rojo**: compilaba, pasaban los tests y pasaba la eval.
+
+El costo por mensaje y el costo de un tenant al tope del cap están en **§Costo medido**, que genera
+la eval. No se repiten acá a propósito: un número escrito dos veces envejece en una de las dos.
+
+El techo por IP del WAF (`config/firewall-rules.json`, hoy 20/600s) **no** sustituye a este contador:
+un límite por IP y un cupo por tenant son ejes distintos, y el peor caso por IP queda dos órdenes de
+magnitud por encima del cap. El contador **es** el techo de la factura, y por eso su ausencia se
+declara en vez de codificarse como cero.
+
+El contador no vive en este paquete y esta slice no lo construye: necesita estado por tenant/día en
+un camino anónimo de vidriera, que es el ADR C1 (abierto). Mientras tanto, el cableado honesto es
+`usageUnmeasured(...)`, que falla ruidoso en el primer request en vez de contestar gratis.
 
 Los pasos 3 y 7 son los que hacen que los evals de jailbreak sean **deterministas**: no dependen de
 que el modelo se porte bien. Un modelo nuevo mueve la *probabilidad* de la salida mala; no mueve si
@@ -96,7 +144,7 @@ delimita con `sanitizeForPrompt` de `packages/domain` antes de entrar al prompt.
 `src/evals/cases.eval.ts` — **50 preguntas reales** de comprador del Alto Valle + handoffs
 obligatorios + jailbreaks de costo y de identificador en varias formulaciones + el caso `reserved` +
 inyección escondida en la descripción del dueño. El corpus corre en dos formas de conversación
-(primer mensaje y conversación cargada): 168 casos.
+(primer mensaje y conversación cargada): 174 casos.
 
 Corre **sin red y sin credenciales** — B4 (keys de Gemini y Groq) es un bloqueo humano abierto y la
 eval no lo espera. `LLM_DRIVER=stub` está **forzado** en la eval: un `.env` local con `live` no puede
