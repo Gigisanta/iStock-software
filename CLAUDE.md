@@ -144,6 +144,17 @@ IMEI + origen + resultado de consulta ENACOM (link + enum) **en el panel**.
   `"use client"` sólo donde hay interacción.
 - **Supabase:** UN proyecto para todos los tenants. Postgres + Auth + RLS + pgvector. **Spend cap ON.**
 - **Drizzle** + migraciones versionadas en git.
+  **Trampa medida por `db-agent` en FASE 4 (2026-08-28):** el migrador de Drizzle decide qué
+  aplicar comparando **`created_at`, no el hash del archivo**. Si editás una migración después de
+  haberla aplicado —típico: `drizzle-kit generate`, correrla, y recién ahí agregarle el guard—, la
+  base que ya la tiene **nunca recibe la corrección y `migrate` dice `OK`**. El síntoma es mudo: el
+  hash registrado en `drizzle.__drizzle_migrations` no coincide con el del `.sql`, y nadie mira eso.
+  No es riesgo de producción (allá se aplica una vez, desde el archivo commiteado); es riesgo de
+  **desarrollo**, donde produce dos agentes midiendo contra bases distintas y culpando al código.
+  Se detecta con `shasum -a 256` del archivo contra la fila, y se arregla borrando la fila y el
+  objeto creado y re-aplicando. **No hay gate para esto y es a propósito:** en CI la base nace
+  limpia, así que un guard ahí estaría verde por construcción — un gate que no puede fallar es un
+  adorno, y este es de los que enseñan a ignorar los adornos.
 - **Fotos: Cloudflare R2** (egress $0). Upload server-side → resize a WebP/AVIF máx 1600px →
   variantes `thumb` / `card` / `detail`. La vidriera sirve `card` (~80–150KB) por CDN de Cloudflare.
   - PROHIBIDO servir originales de 2MB.
