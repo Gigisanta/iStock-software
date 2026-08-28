@@ -11,5 +11,11 @@ export default defineConfig({
     exclude: ['node_modules/**'],
     environment: 'node',
     globals: false,
+    // `rls-cross-tenant.test.ts` abre conexiones reales a Postgres y monta/desmonta un fixture de
+    // dos tenants más un schema de control. Sin esto, dos archivos podrían pisarse el fixture y el
+    // síntoma sería intermitencia, que es la peor forma de perder un test de seguridad.
+    fileParallelism: false,
+    testTimeout: 30_000,
+    hookTimeout: 30_000,
   },
 });

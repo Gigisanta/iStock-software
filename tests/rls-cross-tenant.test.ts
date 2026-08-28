@@ -1,10 +1,16 @@
 /**
  * ══════════════════════════════════════════════════════════════════════════════════════════════
- *  R0–R8 · RLS CRUZADO CONTRA POSTGRES REAL. Owner: `db-agent`.
- *  (El encabezado decía `qa-agent`. `CLAUDE.md` §4, corregido en FASE 2: el test unitario de un
- *   paquete es del owner del paquete — nace y muere con el código que prueba. `qa-agent` es dueño
- *   de lo que CRUZA un límite: e2e e integración. Este archivo vive en `packages/db/src`.)
+ *  R0–R8 · UN RESELLER NO VE, NI ESCRIBE, NI BORRA UNA FILA DE OTRO. POSTGRES REAL, CERO MOCKS.
  * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * ## Por qué este archivo vive en `tests/` y no en `packages/db/src/`
+ * Las policies que este archivo audita las escribe `db-agent`. Si el test viviera en su paquete,
+ * el mismo writer estaría en las dos puntas del invariante más caro del producto (*"sin RLS no hay
+ * merge"*): el que escribe la regla no puede ser también el que decide cuándo la regla se cumple.
+ * Es la misma separación que saca un gate del directorio que audita. Un test de RLS que sólo mira
+ * su propio tenant sí es del paquete y se queda allá (`packages/db/src/rls.test.ts`); éste cruza
+ * dos tenants, dos conexiones y dos roles, así que es de `tests/` (`CLAUDE.md` §4, desempate de
+ * FASE 4).
  *
  * Este archivo es el gate de `CLAUDE.md` §Reglas duras 7 (*"Multi-tenant: tenant_id + RLS en toda
  * tabla de negocio. Sin RLS no hay merge"*). Es el único test del repo cuyo fallo significa
@@ -86,12 +92,13 @@
  * *más* estricto que el general (sólo SELECT, sólo las 5 nominadas, todas acotadas por el claim).
  *
  * Nada de esto relaja el gate: `packages/db/scripts/rls-lint.mjs` (reglas 0020/0022/0023/0024/0025)
- * lee las migraciones y `src/rls-anon-storefront.test.ts` §f lee el catálogo con la allowlist de
- * columnas **por nombre**. La allowlist está escrita dos veces, en dos archivos, a propósito: si
- * alguien la ensancha en uno para poner algo en verde, el otro sigue en rojo.
+ * lee las migraciones y `packages/db/src/rls-anon-storefront.test.ts` §f lee el catálogo con la
+ * allowlist de columnas **por nombre**. La allowlist está escrita dos veces, en dos archivos, a
+ * propósito: si alguien la ensancha en uno para poner algo en verde, el otro sigue en rojo.
  *
- * `db-agent` no arregla el código bajo test para poner un test en verde (`CLAUDE.md` §4). Si algo
- * de acá se pone rojo, se reporta al LEAD.
+ * `qa-agent` no arregla el código bajo test para poner un test en verde, y el owner del paquete no
+ * edita este archivo para tapar un fallo (`CLAUDE.md` §4). Si algo de acá se pone rojo, el defecto
+ * es del código hasta que se demuestre lo contrario, y se reporta al LEAD.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -105,7 +112,7 @@ import postgres from 'postgres';
 // Mismo default que `packages/db/src/env.ts`, replicado a mano a propósito: el test no debe
 // poder "pasar" porque alguien cambió el borde de env del paquete que está bajo test.
 const DATABASE_URL = process.env['DATABASE_URL'] ?? 'postgresql://localhost:5432/istock_dev';
-const MIGRATIONS = resolve(dirname(fileURLToPath(import.meta.url)), '../drizzle');
+const MIGRATIONS = resolve(dirname(fileURLToPath(import.meta.url)), '../packages/db/drizzle');
 const CONTROL_SCHEMA = 'qa_rls_control';
 
 // ── Fixture ─────────────────────────────────────────────────────────────────────────────────
