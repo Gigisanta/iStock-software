@@ -277,14 +277,17 @@ describe('c · las filas que no son públicas devuelven 0 filas, no un error', (
 });
 
 // ══════════════════════════════════════════════════════════════════════════════════════════════
-describe('d · la vidriera no escribe, salvo el click de WhatsApp (S4)', () => {
-  // Este bloque decía "no escribe. Nunca." y era verdad hasta S3. El LEAD abrió **una** excepción
-  // en S4 —el INSERT de `wa_click_events`, la única escritura sin autenticar del producto— y ese
-  // caso salió de esta lista porque ahora tiene que PASAR. Su polaridad completa (legítimo pasa /
-  // tenant ajeno rechazado / listing ajeno rechazado / no lee nada) vive en
-  // `src/rls-anon-wa-click.test.ts`, para que la excepción esté probada en un archivo entero y no
-  // como una línea suelta acá. Todo lo demás sigue siendo `42501`, y esta lista es lo que impide
-  // que la excepción se ensanche sin que nadie lo note.
+describe('d · la vidriera no escribe, salvo el click de WhatsApp (S4) y el canje (S8)', () => {
+  // Este bloque decía "no escribe. Nunca." y era verdad hasta S3. El LEAD abrió **dos** excepciones
+  // y ninguna se coló: el INSERT de `wa_click_events` (S4) y el INSERT de `tradein_leads` (S8, el
+  // lead de canje del visitante). Los dos casos salieron de esta lista porque ahora tienen que
+  // PASAR, y su polaridad completa vive en un archivo entero cada uno —
+  // `src/rls-anon-wa-click.test.ts` y `src/rls-anon-tradein-lead.test.ts`— para que una excepción
+  // esté probada como excepción y no como una línea suelta acá.
+  //
+  // Lo que SIGUE en esta lista, y es lo que la hace valer: de las dos tablas que `anon` escribe,
+  // no lee ni corrige ni borra ninguna fila — ni la que acaba de escribir. Ensanchar una excepción
+  // "de paso" es lo que esta lista existe para romper.
   const escrituras: readonly (readonly [string, string])[] = [
     [
       'insert listing',
@@ -299,7 +302,16 @@ describe('d · la vidriera no escribe, salvo el click de WhatsApp (S4)', () => {
     ['insert foto', `insert into listing_photos (tenant_id, listing_id, master_key, thumb_key, card_key, detail_key) values ('${TENANT_A}', '${LISTING_A_PUBLIC}', 'm', 't', 'c', 'd')`],
     ['delete foto', `delete from listing_photos where tenant_id = '${TENANT_A}'`],
     ['update fx', `update fx_settings set ars_per_usd = 1.00 where tenant_id = '${TENANT_A}'`],
-    ['insert lead de canje', `insert into tradein_leads (tenant_id, customer_name, customer_wa_phone, model_text) values ('${TENANT_A}', 'x', '5492990000000', 'iPhone 12')`],
+    // El INSERT de `tradein_leads` salió de esta lista en S8 porque ahora pasa. Lo que queda de él
+    // acá es todo lo demás: el visitante deja su canje y no lo lee, no lo corrige, no lo borra, no
+    // se pone precio (`offer_usd` es el COSTO de la unidad que nace del canje) y no se auto-aprueba.
+    ['leer lead de canje', `select customer_name from tradein_leads where tenant_id = '${TENANT_A}'`],
+    ['leer la oferta del canje', `select offer_usd from tradein_leads`],
+    ['update lead de canje', `update tradein_leads set status = 'accepted' where tenant_id = '${TENANT_A}'`],
+    ['delete lead de canje', `delete from tradein_leads where tenant_id = '${TENANT_A}'`],
+    ['insert lead con su propia oferta', `insert into tradein_leads (tenant_id, customer_name, customer_wa_phone, model_text, offer_usd) values ('${TENANT_A}', 'x', '5492990000000', 'iPhone 12', 480.00)`],
+    ['insert lead ya aceptado', `insert into tradein_leads (tenant_id, customer_name, customer_wa_phone, model_text, status) values ('${TENANT_A}', 'x', '5492990000000', 'iPhone 12', 'accepted')`],
+    ['insert checklist de canje', `insert into tradein_checklists (tenant_id, tradein_lead_id, item_key, item_label) values ('${TENANT_A}', '${LISTING_A_PUBLIC}', 'battery', 'Bateria')`],
     ['insert evento de bitácora', `insert into listing_events (tenant_id, listing_id, kind) values ('${TENANT_A}', '${LISTING_A_PUBLIC}', 'created')`],
     ['insert reserva', `insert into reservations (tenant_id, listing_id, expires_at) values ('${TENANT_A}', '${LISTING_A_PUBLIC}', now() + interval '60 minutes')`],
     // La excepción de S4 es de INSERT y de tres columnas: leer, corregir o borrar clicks sigue
@@ -390,16 +402,28 @@ describe('f · la forma del privilegio, leída de la base (no del archivo de mig
     expect(tablas.map((x) => x.t)).toEqual([]);
   });
 
-  it('el único privilegio de escritura de anon son 3 columnas de wa_click_events (S4)', async () => {
-    // Esto valía `[]` hasta S3. Sigue siendo una allowlist EXACTA y no una excepción abierta: si
-    // aparece una cuarta columna, o una segunda tabla, este test la dice por nombre. `id` y
-    // `created_at` no están y no pueden estar — salen de sus defaults para que no se forjen.
+  it('el privilegio de escritura de anon son 12 columnas de 2 tablas: el click (S4) y el canje (S8)', async () => {
+    // Esto valía `[]` hasta S3 y 3 columnas hasta S7. Sigue siendo una allowlist EXACTA y no una
+    // excepción abierta: si aparece una columna más, o una tercera tabla, este test la dice por
+    // nombre. Lo que NO puede aparecer nunca, y por eso se lee entero en vez de por tabla:
+    // `id`/`created_at`/`updated_at` (salen de sus defaults para que no se forjen), `status` (el
+    // visitante no elige el estado de su propio lead) y `offer_usd`/`internal_notes` (son el costo
+    // y las notas del dueño, `CLAUDE.md` §0.9).
     const columnas = await adminRows<{ p: string }>(`
       select table_name || '.' || column_name || ':' || privilege_type as p
       from information_schema.column_privileges
       where table_schema = 'public' and grantee = 'anon' and privilege_type <> 'SELECT'
       order by 1`);
     expect(columnas.map((x) => x.p)).toEqual([
+      'tradein_leads.battery_pct:INSERT',
+      'tradein_leads.color:INSERT',
+      'tradein_leads.customer_name:INSERT',
+      'tradein_leads.customer_wa_phone:INSERT',
+      'tradein_leads.declared_condition:INSERT',
+      'tradein_leads.model_text:INSERT',
+      'tradein_leads.notes:INSERT',
+      'tradein_leads.storage_gb:INSERT',
+      'tradein_leads.tenant_id:INSERT',
       'wa_click_events.listing_id:INSERT',
       'wa_click_events.source:INSERT',
       'wa_click_events.tenant_id:INSERT',
@@ -433,7 +457,7 @@ describe('f · la forma del privilegio, leída de la base (no del archivo de mig
     expect(r.map((x) => x.col)).toEqual([]);
   });
 
-  it('las policies `TO anon` son 5 de SELECT + la única de INSERT, y ninguna es decorativa', async () => {
+  it('las policies `TO anon` son 5 de SELECT + las 2 de INSERT, y ninguna es decorativa', async () => {
     // La lista es exhaustiva a propósito: se compara el conjunto entero, no "todas cumplen X".
     // Una policy `TO anon` nueva rompe este test aunque esté bien escrita, y eso es lo que se
     // busca — la superficie sin autenticar se agranda por decisión, no por descuido.
@@ -446,6 +470,7 @@ describe('f · la forma del privilegio, leída de la base (no del archivo de mig
       'listings.listings_storefront_anon_select:SELECT',
       'locations.locations_storefront_anon_select:SELECT',
       'tenants.tenants_storefront_anon_select:SELECT',
+      'tradein_leads.tradein_leads_storefront_insert:INSERT',
       'wa_click_events.wa_click_events_storefront_insert:INSERT',
     ]);
     for (const row of r) {

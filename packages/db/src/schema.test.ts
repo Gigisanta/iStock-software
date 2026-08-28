@@ -95,19 +95,23 @@ describe('forma de las policies (ADR-005 · los seis lints ERROR de Supabase)', 
     expect(aPublic.map((x) => x.p)).toEqual([]);
   });
 
-  it('las policies `TO anon` son de SELECT, salvo la ÚNICA escritura sin autenticar del producto', async () => {
+  it('las policies `TO anon` son de SELECT, salvo las DOS escrituras sin autenticar del producto', async () => {
     // Hasta S3 esto era `[]` y el comentario decía que el click de WhatsApp iba a entrar "por el
     // server, con el rol del server". El LEAD lo decidió al revés en S4: con `service_role` (que
     // tiene BYPASSRLS) la garantía de que la fila cae en el tenant correcto vive entera en el
     // handler, y la base deja de ser la última línea de defensa justo en el único endpoint al que
     // le puede pegar cualquiera sin login. Con `anon` + policy, el `WITH CHECK` lo evalúa el
     // planner en cada insert.
-    // La lista es EXACTA: una segunda policy de escritura para `anon` rompe este test, que es lo
-    // que se busca. El lead de canje sigue sin ser una excepción y entra por el server.
+    // La línea anterior de este comentario decía "el lead de canje sigue sin ser una excepción y
+    // entra por el server". El LEAD lo decidió al revés en S8, por el mismo argumento y sobre la
+    // misma mesa: si `service_role` no servía para el click, tampoco sirve para un formulario que
+    // trae PII y que dispara la creación de una unidad con costo. Son dos, y la lista sigue siendo
+    // EXACTA — una tercera policy de escritura para `anon` rompe este test, que es lo que se busca.
     const r = await rows<{ p: string; cmd: string }>(`
       select tablename || '.' || policyname as p, cmd from pg_policies
       where schemaname = 'public' and 'anon' = any(roles) and cmd <> 'SELECT' order by 1`);
     expect(r.map((x) => `${x.p}:${x.cmd}`)).toEqual([
+      'tradein_leads.tradein_leads_storefront_insert:INSERT',
       'wa_click_events.wa_click_events_storefront_insert:INSERT',
     ]);
 
@@ -273,31 +277,66 @@ describe('columnas SENSIBLES — marcadas en la base, no sólo en el TypeScript'
     expect(marks).toHaveLength(SENSITIVE.length);
   });
 
-  it('ninguna columna SENSITIVE tiene GRANT hacia anon', async () => {
+  it('ninguna columna SENSITIVE es LEGIBLE por anon', async () => {
     // La vidriera anónima SÍ tiene GRANTs desde 0002, pero **de columna** y sobre el read model
     // público. Contar "cero privilegios de anon" dejó de ser el invariante correcto; el
-    // invariante es que ninguna de estas columnas esté entre los otorgados.
+    // invariante es que ninguna de estas columnas esté entre las que puede leer.
     // El detalle que lo hace verificable: un GRANT de columna **no** otorga privilegio de tabla,
     // así que `select *` sigue dando 42501. Ver `src/rls-anon-storefront.test.ts`.
     const r = await rows<{ col: string }>(`
       select table_name || '.' || column_name as col
       from information_schema.column_privileges
-      where table_schema = 'public' and grantee = 'anon'
+      where table_schema = 'public' and grantee = 'anon' and privilege_type = 'SELECT'
         and (table_name, column_name) in (${SENSITIVE.map(([t, c]) => `('${t}', '${c}')`).join(', ')})
       order by 1`);
     expect(r.map((x) => x.col)).toEqual([]);
   });
 
-  it('todo privilegio de anon es de COLUMNA, nunca de tabla, y el de escritura es uno solo', async () => {
-    // El privilegio de escritura de `anon` (S4) es una allowlist cerrada de 3 columnas sobre 1
-    // tabla. `id` y `created_at` NO están: salen de sus defaults justamente para que un visitante
-    // no pueda elegir el id de su evento ni antedatar un click.
+  it('de las SENSITIVE, `anon` sólo ESCRIBE las dos que el propio visitante tipea', async () => {
+    // Este test se partió en dos en S8, y el corte es doctrinal, no cosmético. Hasta S7 la
+    // aserción era "ninguna columna SENSITIVE tiene GRANT hacia anon", sin distinguir lectura de
+    // escritura, y con el lead de canje eso da rojo: `customer_name` y `customer_wa_phone` son
+    // SENSITIVE **y** las escribe el visitante — es su propio nombre y su propio WhatsApp, que ya
+    // tiene. Lo que SENSITIVE prohíbe es que salgan (`never in public DTO`): la prohibición es de
+    // LECTURA. Que un anónimo escriba su teléfono en el inbox del reseller no filtra nada; que
+    // pueda leerlo de vuelta filtraría la base de leads entera.
+    //
+    // Lo que NO se relaja, y por eso esta lista es exacta en vez de "salvo tradein_leads":
+    // `offer_usd` e `internal_notes` son SENSITIVE de la MISMA tabla y NO están acá. Son el costo
+    // y las notas del dueño (`CLAUDE.md` §0.9 y §2). El día que alguien las agregue al GRANT
+    // "porque el form las necesita", este test lo dice por nombre.
+    const r = await rows<{ col: string }>(`
+      select table_name || '.' || column_name || ':' || privilege_type as col
+      from information_schema.column_privileges
+      where table_schema = 'public' and grantee = 'anon' and privilege_type <> 'SELECT'
+        and (table_name, column_name) in (${SENSITIVE.map(([t, c]) => `('${t}', '${c}')`).join(', ')})
+      order by 1`);
+    expect(r.map((x) => x.col)).toEqual([
+      'tradein_leads.customer_name:INSERT',
+      'tradein_leads.customer_wa_phone:INSERT',
+    ]);
+  });
+
+  it('todo privilegio de anon es de COLUMNA, nunca de tabla, y el de escritura son 12', async () => {
+    // El privilegio de escritura de `anon` es una allowlist cerrada: 3 columnas del click (S4) y
+    // 9 del lead de canje (S8), sobre 2 tablas. `id`, `created_at` y `updated_at` NO están: salen
+    // de sus defaults justamente para que un visitante no pueda elegir el id de lo que deja ni
+    // antedatarlo. `status` tampoco: nadie entra a un inbox eligiendo en qué estado entra.
     const noSelect = await rows<{ p: string }>(`
       select table_name || '.' || column_name || ':' || privilege_type as p
       from information_schema.column_privileges
       where table_schema = 'public' and grantee = 'anon' and privilege_type <> 'SELECT'
       order by 1`);
     expect(noSelect.map((x) => x.p)).toEqual([
+      'tradein_leads.battery_pct:INSERT',
+      'tradein_leads.color:INSERT',
+      'tradein_leads.customer_name:INSERT',
+      'tradein_leads.customer_wa_phone:INSERT',
+      'tradein_leads.declared_condition:INSERT',
+      'tradein_leads.model_text:INSERT',
+      'tradein_leads.notes:INSERT',
+      'tradein_leads.storage_gb:INSERT',
+      'tradein_leads.tenant_id:INSERT',
       'wa_click_events.listing_id:INSERT',
       'wa_click_events.source:INSERT',
       'wa_click_events.tenant_id:INSERT',
@@ -313,11 +352,12 @@ describe('columnas SENSIBLES — marcadas en la base, no sólo en el TypeScript'
       order by 1`);
     expect(deTabla.map((x) => x.t)).toEqual([]);
 
-    // La tabla que `anon` escribe no la lee: cero columnas de SELECT sobre ella.
+    // Las dos tablas que `anon` escribe no las lee: cero columnas de SELECT sobre ninguna de las
+    // dos. Ni el click que acaba de registrar, ni el canje que acaba de dejar.
     const leeLoQueEscribe = await rows<{ c: string }>(`
-      select column_name as c from information_schema.column_privileges
+      select table_name || '.' || column_name as c from information_schema.column_privileges
       where table_schema = 'public' and grantee = 'anon'
-        and table_name = 'wa_click_events' and privilege_type = 'SELECT'`);
+        and table_name in ('wa_click_events', 'tradein_leads') and privilege_type = 'SELECT'`);
     expect(leeLoQueEscribe.map((x) => x.c)).toEqual([]);
   });
 });

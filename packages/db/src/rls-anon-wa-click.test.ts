@@ -1,7 +1,13 @@
 /**
  * ══════════════════════════════════════════════════════════════════════════════════════════════
- *  LA ÚNICA ESCRITURA SIN AUTENTICAR DEL PRODUCTO, CONTRA POSTGRES REAL Y CON EL ROL `anon`.
+ *  EL CLICK DE WHATSAPP: ESCRITURA SIN AUTENTICAR, CONTRA POSTGRES REAL Y CON EL ROL `anon`.
  * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * Este encabezado decía "LA ÚNICA escritura sin autenticar del producto" y dejó de ser cierto en
+ * S8: el LEAD abrió una segunda excepción con la misma forma, el lead de canje
+ * (`src/rls-anon-tradein-lead.test.ts`). Se corrige acá en vez de dejarlo pasar porque un
+ * comentario que dice "única" mientras hay dos es peor que no tener comentario: le enseña al que
+ * lo lee que este archivo no se actualiza.
  *
  * S4: el click en el botón de WhatsApp de la vidriera escribe una fila en `wa_click_events`. El
  * LEAD decidió que se haga con un INSERT de `anon` acotado y **no** con una ruta de
@@ -273,13 +279,21 @@ describe('c · el visitante escribe su click y NO lee ninguno — ni el propio',
     }
   });
 
-  it('y no escribe en NINGUNA otra tabla: la excepción es una tabla, no una puerta', async () => {
+  it('y no escribe en casi ninguna otra tabla: las excepciones son DOS y se nombran', async () => {
+    // El `insert into tradein_leads` estaba en esta lista hasta S7 y salió en S8: el LEAD abrió la
+    // segunda (y por ahora última) escritura sin autenticar, el lead de canje. Su polaridad entera
+    // vive en `src/rls-anon-tradein-lead.test.ts`. Que haya salido de acá es el cambio de
+    // superficie de ataque hecho visible en el diff, que es para lo que existe la lista.
     const otras: readonly string[] = [
       `insert into listing_events (tenant_id, listing_id, kind) values ('${TENANT_A}', '${LISTING_A}', 'created')`,
-      `insert into tradein_leads (tenant_id, customer_name, customer_wa_phone, model_text) values ('${TENANT_A}', 'x', '5492990000000', 'iPhone 12')`,
+      `insert into tradein_checklists (tenant_id, tradein_lead_id, item_key, item_label) values ('${TENANT_A}', '${LISTING_A}', 'battery', 'Bateria')`,
       `insert into reservations (tenant_id, listing_id, expires_at) values ('${TENANT_A}', '${LISTING_A}', now() + interval '60 minutes')`,
       `insert into chatbot_threads (tenant_id, listing_id) values ('${TENANT_A}', '${LISTING_A}')`,
       `insert into listings (tenant_id, slug, title, condition, price_usd) values ('${TENANT_A}', 'trucho', 'x', 'sealed', 1.00)`,
+      // De la tabla que SÍ escribe desde S8 tampoco lee, ni corrige, ni borra.
+      `select customer_name from tradein_leads where tenant_id = '${TENANT_A}'`,
+      `update tradein_leads set status = 'accepted' where tenant_id = '${TENANT_A}'`,
+      `delete from tradein_leads where tenant_id = '${TENANT_A}'`,
     ];
     for (const q of otras) expect(await vidrieraA.expectError(q), q).toBe('42501');
   });
@@ -308,11 +322,17 @@ describe('d · `id` y `created_at` no se pueden forjar: quedaron fuera del privi
 
 // ══════════════════════════════════════════════════════════════════════════════════════════════
 describe('e · la forma del privilegio, leída de la base y no del archivo de migración', () => {
-  it('el privilegio de escritura de anon es EXACTAMENTE 3 columnas de 1 tabla', async () => {
+  it('el privilegio de escritura de anon sobre ESTA tabla es EXACTAMENTE 3 columnas', async () => {
+    // Acotado a `wa_click_events` a propósito desde S8: la aserción global —"la escritura sin
+    // autenticar del producto entero es ésta y ninguna más"— dejó de vivir en este archivo cuando
+    // apareció la segunda excepción (el lead de canje). La global sigue existiendo, en
+    // `rls-anon-storefront.test.ts` y en `schema.test.ts`, que son los dos que enumeran las 12
+    // columnas de las 2 tablas. Acá se afirma lo que este archivo sabe: que el beacon son 3.
     const r = await adminRows<{ p: string }>(`
       select table_name || '.' || column_name as p
       from information_schema.column_privileges
       where table_schema = 'public' and grantee = 'anon' and privilege_type <> 'SELECT'
+        and table_name = 'wa_click_events'
       order by 1`);
     expect(r.map((x) => x.p)).toEqual([
       'wa_click_events.listing_id',
@@ -342,11 +362,17 @@ describe('e · la forma del privilegio, leída de la base y no del archivo de mi
     expect(r.map((x) => x.c)).toEqual([]);
   });
 
-  it('la única policy de escritura para anon es la de wa_click_events, y es de INSERT', async () => {
+  it('las policies de escritura para anon son 2, las dos de INSERT, y ninguna de UPDATE/DELETE', async () => {
+    // Esta lista decía "la única" hasta S7. Se deja global (no filtrada por tabla) porque el
+    // hallazgo que importa no es cuántas hay sino que aparezca una tercera, o una de UPDATE, sin
+    // que nadie lo haya decidido. Un visitante no corrige ni borra, y eso no cambió con S8.
     const r = await adminRows<{ p: string; cmd: string }>(`
       select tablename || '.' || policyname as p, cmd from pg_policies
       where schemaname = 'public' and 'anon' = any(roles) and cmd <> 'SELECT' order by 1`);
-    expect(r).toEqual([{ p: 'wa_click_events.wa_click_events_storefront_insert', cmd: 'INSERT' }]);
+    expect(r).toEqual([
+      { p: 'tradein_leads.tradein_leads_storefront_insert', cmd: 'INSERT' },
+      { p: 'wa_click_events.wa_click_events_storefront_insert', cmd: 'INSERT' },
+    ]);
   });
 
   it('esa policy tiene WITH CHECK, no es `true`, y mira el claim del slug', async () => {

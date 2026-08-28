@@ -57,6 +57,13 @@
       "when": 1787940520823,
       "tag": "0007_sales_one_sale_per_listing",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1787946498759,
+      "tag": "0008_storefront_tradein_lead_insert",
+      "breakpoints": true
     }
   ]
 }
