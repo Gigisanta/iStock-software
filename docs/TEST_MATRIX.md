@@ -239,6 +239,9 @@ da—, `guard-leaks.sh`, `guard-grants.sh`, `guard-r2.sh`,
 **`accept-fase2.sh`** (`:137`, el único job con Postgres migrado y seedeado — desde el 2026-08-28
 trae adentro **D5 · G6**, `scripts/probes/el-grant-cubre-el-insert-de-drizzle.test.ts`: **ADR-021**),
 **`guard-firewall.sh`** (`:118`), **`guard-firewall.test.sh`** (`:126`),
+**`guard-doc-tables.sh`** (`:181`) y su polaridad **`guard-doc-tables.test.sh`** (`:185`) —los dos
+desde `d3deb86`, el 2026-08-28 con **T32**: toda fila de tabla de `docs/**` tiene las columnas que
+declara su cabecera, y con ellos `guard-gates.sh` pasó de censar **21** gates a **23**—,
 `guard-artifacts.sh --harness`, **`accept-fase3.sh`** (`:137`, hace su propio `next build`) y
 —dentro del job `e2e`, el único que ya tiene un `.next`, el del `webServer` de Playwright—
 `guard-routes.sh` (`:208`) más **cinco aceptaciones por slice**: `accept-s1.sh` (`:224`),
@@ -257,14 +260,14 @@ aceptación por slice no puede ver el invariante que la slice derogó.** `accept
 > ```
 > $ git ls-remote --heads origin      # (sin salida)
 > $ git rev-list --count HEAD
-> 110
+> 140
 > ```
 >
 > `origin` está configurado y **no tiene una sola rama**; `origin/main` figura `gone`. En **110** commits
-> locales **no hubo una corrida de GitHub Actions**. Decía 89, después 103, y se re-midió sobre
-> `68c0bd6` el 2026-08-28 tras el barrido serial de los cinco `accept-*`: **veintiún commits más que
-> el primer conteo, y el número que importa sigue siendo cero.** Los dos steps nuevos de
-> `guard-gates` nacieron ya en esa condición. Por lo tanto, en este doc y en todo `docs/**`:
+> locales **no hubo una corrida de GitHub Actions**. Decía 89, después 103, después 110, y se
+> re-midió sobre `d3deb86` el 2026-08-28: **cincuenta y un commits más que el primer conteo, y el
+> número que importa sigue siendo cero.** Los cuatro steps nuevos de `guard-gates` y de
+> `guard-doc-tables` nacieron ya en esa condición. Por lo tanto, en este doc y en todo `docs/**`:
 >
 > | se lee | significa |
 > |---|---|
