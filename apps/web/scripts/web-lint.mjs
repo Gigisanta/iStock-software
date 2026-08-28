@@ -11,10 +11,33 @@
  * Cada regla cita el artículo que hace cumplir.
  */
 import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..');
+/**
+ * `HERE` es siempre `apps/web` real, derivado de la ubicación de este script. `ROOT` es el árbol
+ * que se AUDITA, y se puede apuntar a otro lado con `WEB_LINT_ROOT`.
+ *
+ * El override existe por un solo motivo y no es la comodidad: `scripts/web-lint.test.sh` necesita
+ * ver a cada una de las 15 reglas ENCENDERSE contra un caso que la viole. Sin poder mover la raíz,
+ * la única forma de ejercer la polaridad era inyectar archivos rotos en `apps/web/app`, que es
+ * columna de `app-agent` y de `storefront-agent` — o sea que el arnés del gate tendría que escribir,
+ * aunque fuera por un instante, en el código que el gate audita. Es exactamente lo que §4 prohíbe,
+ * y además deja basura en el árbol ajeno el día que el arnés se muere a mitad de camino.
+ *
+ * Los casos de borde de W015 —"presencia no es filtro", "sin ancla no hay exención", "proximidad
+ * no es alcance"— están todos documentados abajo como hallazgos, y ninguno era reejecutable: se
+ * midieron a mano, fuera del repo. Una afirmación de cobertura que nadie puede reproducir vale lo
+ * mismo que ninguna.
+ *
+ * `WEB_LINT_SCHEMA` es el segundo override y prueba la otra mitad: que W015 falle cuando NO puede
+ * leer el schema. Ausencia de medición es FAIL, nunca PASS — sin esto, esa rama se escribió y
+ * nunca se ejecutó.
+ *
+ * Ninguno de los dos se lee en CI: allá se corre sin env y la raíz es la real.
+ */
+const HERE = join(fileURLToPath(new URL('.', import.meta.url)), '..');
+const ROOT = process.env.WEB_LINT_ROOT ? resolve(process.env.WEB_LINT_ROOT) : HERE;
 const APP = join(ROOT, 'app');
 const STOREFRONT = join(APP, '(storefront)');
 
@@ -211,7 +234,11 @@ must('W011', 'sin console.log de un listing/unit/row entero (CLAUDE.md §2)', sr
 // lista. Si el schema no se puede leer, la regla FALLA: ausencia de medicion es FAIL, nunca PASS —
 // una lista vacia haria que todas las queries pasen y el lint diria PASS con 0 tablas miradas.
 {
-  const SCHEMA = join(ROOT, '..', '..', 'packages', 'db', 'src', 'schema');
+  // Desde `HERE`, no desde `ROOT`: el schema real es el que manda aunque se audite otro árbol.
+  // `WEB_LINT_SCHEMA` sólo lo mueve el arnés de polaridad, para ver fallar la rama de ilegible.
+  const SCHEMA = process.env.WEB_LINT_SCHEMA
+    ? resolve(process.env.WEB_LINT_SCHEMA)
+    : join(HERE, '..', '..', 'packages', 'db', 'src', 'schema');
   const negocio = new Set();
   const negocioSql = new Set();
   let leible = true;

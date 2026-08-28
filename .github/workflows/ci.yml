@@ -131,6 +131,15 @@ jobs:
       # habia ejercido a mano y fuera del repo. El dia que se volvio un comando encontro que SEIS
       # reglas de F1 no fallaban nunca — las fixtures mutaban campos en la raiz de la regla y los
       # limites de Pro viven bajo `rateLimit`. Seis reglas verdes por vacio durante toda T1.
+      # Hermano del de abajo, y por el mismo motivo. Va aca —job sin base, sin build— porque no
+      # necesita ninguna de las dos: arma su propio arbol de fixtures en un temporal y le apunta
+      # el linter con `WEB_LINT_ROOT`. Las 15 reglas se ven encender contra su ID, no contra el
+      # exit code: 15 reglas sobre un mismo arbol hacen que un fixture pueda salir rojo por la
+      # regla equivocada, y eso reportaria cobertura sin haber ejercido nada.
+      - name: polaridad de web-lint (las 15 reglas se tienen que ver encender)
+        if: always()
+        run: ./scripts/web-lint.test.sh
+
       - name: polaridad del gate de WAF (cada regla se tiene que ver romper)
         if: always()
         run: ./scripts/guard-firewall.test.sh
