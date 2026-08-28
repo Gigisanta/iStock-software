@@ -76,6 +76,34 @@ import { WaButton } from '../../../../_components/wa-button';
  * existió, y encima `{inventado}.maat.work/` (que sí distinguía) contestaba otra cosa sobre el
  * mismo hecho. El desempate, y por qué se pregunta **después** del `null` y no antes, están abajo
  * en `storefrontExists()`.
+ *
+ * ── Los tags de las DOS entradas de esta página, y por qué el miss lleva uno más (S6.1) ───────
+ * El cuerpo y la metadata son dos entradas de cache distintas y cada una registra los suyos.
+ * Ninguna de las dos registra `storefront:{slug}`: ese tag es el de la **grilla**, y mientras esta
+ * página lo llevara, `invalidateStorefrontUnit()` —que lo emite para tirar abajo la grilla— purgaba
+ * las 61 páginas de un tenant de 60 equipos cada vez que se reservaba una. Cold-hit ~39% contra una
+ * alarma de 5% (`cost-auditor` sobre S6, `docs/COST.md` §2.4).
+ *
+ * | camino | tags de la entrada | de dónde sale cada uno |
+ * |---|---|---|
+ * | equipo publicado | `tenant-config:{slug}` · `listing:{uuid}` | el primero acá; el segundo acá **y** heredado de `getStorefrontListing()` |
+ * | equipo/vidriera que no existe | `tenant-config:{slug}` · `storefront:{slug}` | los dos acá, y el segundo **además** heredado |
+ *
+ * La herencia no es una figura retórica: el wrapper de `'use cache'` copia los tags de la entrada
+ * interna al scope que la contiene, en las cinco rutas de lectura (generada, hit del cache handler,
+ * resume data cache y los dos joins entre requests). La única excepción es la revalidación en
+ * background de una entrada stale, cuyo camino de lectura en primer plano ya propagó.
+ *
+ * El camino negativo recibiría `storefront:{slug}` por herencia igual —lo propagan el miss de
+ * `getStorefrontListing()` (ver `listingMiss()` en `_lib/listings.ts`) y el `getStorefrontTenant()`
+ * del desempate— y aun así **lo registra a mano**. La redundancia es a propósito y la decidió el
+ * LEAD: la propagación está verificada contra `use-cache-wrapper.js`, un interno de Next sin
+ * contrato público, y el piso de versiones de Next se mueve por seguridad (`CLAUDE.md` §3), no por
+ * esta slice. El camino positivo no depende de ese interno —registra su `listing:{uuid}` él mismo—
+ * y las dos ramas tienen que estar igualadas, porque el día del upgrade nadie se acuerda de que una
+ * de las dos era distinta. Si la herencia cambiara y el registro no estuviera, **publicar un equipo
+ * dejaría esta página mostrando "ya no está publicado" hasta 15 minutos** (`MISS_EXPIRE_SECONDS`),
+ * sin error, sin log y sin ningún test en rojo.
  */
 
 /**
@@ -106,8 +134,10 @@ export async function generateMetadata({ params }: ListingPageProps): Promise<Me
 
   const { slug, listing: listingSlug } = await params;
 
-  // Validar antes de `cacheTag()`: `storefrontTag()` tira con un slug basura y bajo
-  // `cacheComponents` + PPR un throw de render es un stream que no cierra con el 200 ya emitido.
+  // Validar antes de `cacheTag()`: `tenantConfigTag()` pasa por el mismo `assertSlug()` que
+  // `storefrontTag()` y tira igual con un slug basura, así que sacar el tag del catálogo no aflojó
+  // esta guarda. Bajo `cacheComponents` + PPR un throw de render no es un 500: es un stream que no
+  // cierra con el 200 ya emitido.
   // Un slug de tenant que no pasa `isSlugShaped` **no puede existir en la base** (el CHECK
   // `tenants_slug_format` de `packages/db` no lo deja entrar), así que la respuesta honesta es la
   // del tenant, no la del equipo: no hay vidriera en esa dirección. El validador de la ficha
@@ -119,11 +149,29 @@ export async function generateMetadata({ params }: ListingPageProps): Promise<Me
     return STOREFRONT_MISS_METADATA;
   }
 
-  cacheTag(storefrontTag(slug), tenantConfigTag(slug));
+  // **Sólo el tag de config, nunca el del catálogo (S6.1).** Un tag es un OR: mientras esta
+  // entrada registrara `storefront:{slug}`, reservar UNA unidad purgaba las 61 páginas del tenant
+  // —la que cambió y las 60 que no—, porque `invalidateStorefrontUnit()` emite ese tag para tirar
+  // abajo la grilla. Medido por `cost-auditor` sobre S6: cold-hit ~39% contra una alarma de 5%.
+  // Lo que mata a esta entrada cuando corresponde: `tenant-config:{slug}` si cambia el TC o un
+  // punto de retiro, y `listing:{uuid}` —heredado del loader por propagación— si cambia el equipo.
+  cacheTag(tenantConfigTag(slug));
 
   const listing = await getStorefrontListing(slug, listingSlug);
   if (listing === null) {
     cacheStorefrontMiss();
+    // **El tag del tenant, registrado acá y no heredado.** El loader ya lo propaga (su miss lo
+    // lleva), así que esta línea es redundante *hoy*. No es defensa en profundidad decorativa: es
+    // que el camino positivo registra su `listing:{uuid}` explícitamente doce líneas más abajo, y
+    // dos ramas del mismo archivo no pueden tener distinto grado de dependencia de un interno de
+    // Next. La propagación de tags de un `'use cache'` interno al que lo contiene está verificada
+    // en `use-cache-wrapper.js`, que es un interno **sin contrato público**, y `CLAUDE.md` §3 nos
+    // obliga a subir el piso de Next (CVE-2026-64648 no tiene workaround, sólo upgrade). Un
+    // `pnpm up` que cambie ese orden no pondría rojo ningún test nuestro: el síntoma sería una
+    // ficha recién publicada mostrando "este equipo ya no está publicado" hasta
+    // `MISS_EXPIRE_SECONDS` (15 min), sin error y sin log. Eso es lo que se lleva puesto quien
+    // borre esta línea por redundante.
+    cacheTag(storefrontTag(slug));
     // El desempate de los dos miss vive UNA sola vez, en `missMetadataFor()` (abajo), para que el
     // `<title>` no pueda decir "este equipo ya no está publicado" mientras el cuerpo dice "no hay
     // ninguna vidriera en esta dirección". Cuerpo y metadata son dos entradas de cache distintas:
@@ -176,21 +224,32 @@ export default async function ListingPage({ params }: ListingPageProps) {
     return <StorefrontMiss />;
   }
 
-  cacheTag(storefrontTag(slug), tenantConfigTag(slug));
+  // Sólo el de config, igual que en `generateMetadata`: el del catálogo (`storefront:{slug}`) es
+  // de la grilla, y registrarlo acá hacía que reservar una unidad purgara las 61 páginas. El tag
+  // del equipo se hereda del loader, y el camino negativo de abajo hereda el del catálogo.
+  cacheTag(tenantConfigTag(slug));
 
   // El caso frecuente, y el que paga esta página: el equipo se vendió y se despublicó, y el link
   // del estado de WhatsApp sigue circulando. Se **devuelve** el miss (ver el docblock de arriba).
   const listing = await getStorefrontListing(slug, listingSlug);
   if (listing === null) {
     cacheStorefrontMiss();
+    // Mismo registro explícito que en `generateMetadata`, por el mismo motivo: es el único tag que
+    // el panel emite al publicar este equipo —todavía no hay UUID que registrar— y no puede quedar
+    // dependiendo de que la propagación de un interno de Next siga funcionando igual después del
+    // próximo upgrade. Si esto se borra: ficha publicada que sigue mostrando el miss hasta 15 min.
+    cacheTag(storefrontTag(slug));
     // Y recién ACÁ se pregunta si la vidriera existe. Ver `storefrontExists()`, abajo: el orden es
     // el invariante de costo de esta página, no una preferencia de lectura.
     return (await storefrontExists(slug)) ? <ListingMiss /> : <StorefrontMiss />;
   }
 
-  // El tag propio de la unidad, además de los dos del tenant. Se registra recién acá porque el
-  // UUID se conoce después del `await`; `cacheTag()` es acumulativo dentro del scope. Es lo que
-  // permite que publicar UNA unidad deje de purgar el catálogo entero de su vidriera.
+  // El tag propio de la unidad, además del de config del tenant —ya no de los dos: ver arriba—.
+  // Se registra recién acá porque el UUID se conoce después del `await`; `cacheTag()` es
+  // acumulativo dentro del scope. Es el que hace que publicar o reservar UNA unidad purgue UNA
+  // ficha y no el catálogo entero. Se registra igual aunque el loader ya lo lleve (y propague el
+  // suyo hacia acá): que la página nombre el tag que la mata no puede depender de que un módulo de
+  // más abajo se acuerde de hacerlo.
   cacheTag(listingTag(listing.id));
   cacheLife('max');
 

@@ -132,12 +132,128 @@ describe('la descripción del dueño es input no confiable', () => {
   });
 });
 
-describe('cache: la ficha registra su propio tag además de los del tenant', () => {
-  it('emite storefront, tenant-config y listing', () => {
+/**
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *  Cache: el tag del CATÁLOGO es de la grilla, y la ficha ya no lo lleva (S6.1)
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * Este describe afirmaba lo contrario hasta S6.1 —"emite storefront, tenant-config y listing"— y
+ * era correcto cuando se escribió: el panel todavía no emitía `listing:{uuid}`, así que el tag del
+ * tenant era lo único que alcanzaba a la ficha. Desde S6 el panel sí lo emite, y entonces registrar
+ * además `storefront:{slug}` dejó de ser redundante para pasar a ser caro: un tag es un **OR**, y
+ * `invalidateStorefrontUnit()` emite ese tag para tirar abajo la grilla, así que reservar UNA
+ * unidad purgaba las **61** páginas de un tenant de 60 equipos. Cold-hit ~39% contra una alarma de
+ * 5% (`cost-auditor` sobre S6, `docs/COST.md` §2.4).
+ *
+ * Lo que se afirma acá es sobre el FUENTE, como todo este archivo, y es deliberadamente estructural:
+ * **de dónde puede salir cada tag**, no qué tags tiene la entrada en runtime. La entrada real se
+ * arma por propagación desde los loaders —el wrapper de `'use cache'` copia los tags del scope
+ * interno al que lo contiene— y eso no es afirmable con mocks sin terminar afirmando el mock. Los
+ * tags que registra cada camino del loader se fijan en `_lib/listings.test.ts`, que corre el código
+ * de verdad; el radio de purga punta a punta lo mide el e2e de `qa-agent`.
+ */
+describe('cache: la ficha lleva el tag de config y el de la unidad, nunca el del catálogo', () => {
+  /**
+   * **La aserción es POSICIONAL, y tiene que serlo.** La primera versión de este test decía
+   * "la ficha no nombra `storefrontTag` en ninguna parte", y quedó obsoleta en el mismo commit:
+   * el camino negativo ahora **sí** lo registra, a propósito y por decisión del LEAD. Prohibir el
+   * nombre en todo el archivo confunde dos hechos opuestos —el hit que no lo lleva y el miss que
+   * tiene que llevarlo— y el reemplazo tiene que distinguirlos, no ablandarse hasta no afirmar
+   * nada.
+   *
+   * Se parte cada una de las dos entradas por su `await getStorefrontListing(...)`: lo de arriba
+   * es lo que registra TODA respuesta (hit y miss), lo de abajo es lo que se decide sabiendo cuál
+   * de los dos es. El tag del catálogo no puede estar arriba: ahí es donde purgaba las 61 páginas.
+   */
+  const ANTES_DEL_AWAIT = 'const listing = await getStorefrontListing(';
+
+  /**
+   * Las llamadas a `cacheTag(...)` de un pedazo de fuente. Se mira **la llamada** y no el nombre
+   * suelto: el `import` de `storefrontTag` vive arriba de todo y aparecería en el primer pedazo,
+   * que es exactamente el falso positivo con el que este test se puso rojo la primera vez.
+   * Importar un constructor de tag no registra nada; llamarlo adentro de `cacheTag` sí.
+   */
+  const registros = (region: string): string[] => region.match(/cacheTag\([^;]*\)/gu) ?? [];
+
+  /**
+   * Las dos entradas de cache de la ficha, como dos pedazos de fuente. Partir el archivo por el
+   * `await` **sin** separar antes por función no sirve: el pedazo del medio mezcla la cola de
+   * `generateMetadata` con el preámbulo del componente, y el test pasa a afirmar otra cosa. Se
+   * verificó midiendo, no leyendo: así escrito, el primer intento daba rojo por el registro del
+   * camino negativo de la metadata, que está del lado correcto.
+   */
+  function entradas(src: string): string[] {
+    const meta = src.indexOf('export async function generateMetadata');
+    const body = src.indexOf('export default async function ListingPage');
+    expect(meta).toBeGreaterThan(-1);
+    expect(body).toBeGreaterThan(meta);
+    return [src.slice(meta, body), src.slice(body)];
+  }
+
+  it('ninguna de las dos entradas registra el tag del catálogo ANTES de saber si hay equipo', () => {
+    for (const [i, entrada] of entradas(code(FICHA?.src ?? '')).entries()) {
+      const partes = entrada.split(ANTES_DEL_AWAIT);
+      // Un solo await del loader por entrada → 2 pedazos. Si esto cambia, el test no mira lo que cree.
+      expect(partes, `entrada ${String(i)}`).toHaveLength(2);
+      // El preámbulo es lo que corre para TODA respuesta, hit o miss: ahí va `tenant-config` y
+      // nada más. El tag del catálogo ahí era el que purgaba las 61 páginas.
+      const preambulo = registros(partes[0] ?? '').join('\n');
+      expect(preambulo, `entrada ${String(i)}`).not.toMatch(/storefrontTag/u);
+      expect(preambulo, `entrada ${String(i)}`).toMatch(/tenantConfigTag/u);
+    }
+  });
+
+  it('la forma exacta que purgaba 61 páginas no puede volver por la puerta de atrás', () => {
+    // `cacheTag(storefrontTag(slug), tenantConfigTag(slug))` era la línea del bug: registrada
+    // antes del await, o sea en toda ficha del tenant, incluidas las 60 que no cambiaron.
+    expect(code(FICHA?.src ?? '')).not.toMatch(/cacheTag\(\s*storefrontTag\([^)]*\)\s*,/u);
+  });
+
+  it('las DOS ramas negativas registran el tag del catálogo explícitamente', () => {
+    // Y explícitamente quiere decir *en la rama*, no heredado del loader por propagación. La
+    // herencia existe y alcanzaría hoy, pero está verificada contra un interno de Next sin
+    // contrato público (`next/dist/server/use-cache/use-cache-wrapper.js`) y el piso de Next se mueve
+    // por seguridad, no por esta slice. Sin estas dos líneas, un upgrade de Next puede dejar una
+    // ficha recién publicada mostrando el miss hasta `MISS_EXPIRE_SECONDS` sin poner nada rojo.
     const src = code(FICHA?.src ?? '');
-    expect(src).toMatch(/storefrontTag\(/u);
+    const ramas = src.split('if (listing === null) {').slice(1);
+    expect(ramas).toHaveLength(2);
+    for (const [i, rama] of ramas.entries()) {
+      const bloque = rama.slice(0, rama.indexOf('\n  }'));
+      expect(bloque, `rama ${String(i)}`).toMatch(/cacheTag\(storefrontTag\(slug\)\)/u);
+      // El bloque extraído tiene que ser el bloque de verdad, no un pedazo vacío por un cambio de
+      // formato: si no termina en un `return`, este test dejó de mirar lo que cree que mira.
+      expect(bloque, `rama ${String(i)}`).toMatch(/return /u);
+    }
+  });
+
+  it('sí registra tenant-config y listing, que son los dos que la tienen que matar', () => {
+    // `tenant-config:{slug}`: el TC, los puntos de retiro y los medios de pago salen en la ficha.
+    // `listing:{uuid}`: el equipo. Sin este segundo, sacar el del catálogo dejaría la ficha sin
+    // ningún tag que el panel emita al reservar, que es el bug opuesto y peor.
+    const src = code(FICHA?.src ?? '');
     expect(src).toMatch(/tenantConfigTag\(/u);
     expect(src).toMatch(/listingTag\(/u);
+  });
+
+  it('la grilla SÍ lo registra: el tag no se borró del producto, se movió a su página', () => {
+    // La contracara, y la mitad que no se puede tocar: `storefront:{slug}` existe para purgar el
+    // catálogo. Si esta línea se pusiera roja, publicar una unidad dejaría de actualizar la grilla
+    // y el dueño cargaría 15 equipos sin verlos aparecer.
+    const home = FILES.find((f) => f.rel === 's/[slug]/page.tsx');
+    expect(code(home?.src ?? '')).toMatch(/storefrontTag\(/u);
+  });
+
+  it('el camino negativo de la ficha pasa por un loader, que es de donde hereda el tag de tenant', () => {
+    // La ficha cacheada como miss tiene que quedar registrada bajo un tag que el panel emita al
+    // publicar ese equipo; `listing:{uuid}` no sirve (no hay UUID todavía). Lo hereda de
+    // `getStorefrontListing()`, cuyo miss registra `storefront:{slug}` a propósito
+    // (`_lib/listings.ts` → `listingMiss()`), y de `getStorefrontTenant()` en el desempate. Si
+    // alguien reemplazara los loaders por un fetch local, esta herencia desaparecería en silencio
+    // y publicar un equipo dejaría la página de miss pegada 15 min.
+    const src = code(FICHA?.src ?? '');
+    expect(src).toMatch(/await getStorefrontListing\(/u);
+    expect(src).toMatch(/getStorefrontTenant\(/u);
   });
 
   it('no hay TTL por tiempo en ninguna página de la vidriera', () => {

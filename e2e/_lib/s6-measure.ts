@@ -258,3 +258,327 @@ export function sweepProblems(m: SweepMeasurement): readonly string[] {
 
   return problems;
 }
+
+/**
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *  S6 · el RADIO de la invalidación por unidad, medido en PÁGINAS. Owner: `qa-agent`.
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * ## Por qué esto no se puede afirmar con los tests de tags que ya existen
+ * Los tests unitarios de `storefront-cache.ts` afirman **qué strings se emiten**, y los de
+ * `listings.ts` afirman **qué strings se registran**. Las dos mitades pueden estar verdes y el
+ * catálogo entero purgarse igual, porque lo que decide qué página muere es la **intersección** de
+ * las dos listas, y esa intersección no vive en ningún archivo: vive en el cache de Next, que
+ * además tiene entradas en **dos niveles** (la ruta y cada `'use cache'` de adentro). Una página
+ * puede sobrevivir en el nivel de adentro y morir en el de afuera; el resultado es una función
+ * invocada, un HTML re-renderizado y una escritura de ISR — o sea el costo — con cero queries.
+ *
+ * Por eso la afirmación que queda parada acá es sobre **páginas**, no sobre tags.
+ *
+ * ## Cómo se detecta un re-render (la decisión delicada de esta medición)
+ * Se pide cada página **una sola vez** después de la mutación y se mira `x-nextjs-cache`:
+ *
+ * - `HIT`  → la entrada de ruta sobrevivió: nadie invocó la función. La página no se re-renderizó.
+ * - lo que sea (`MISS`, `STALE`, ausente) → la entrada murió y esta request la volvió a generar.
+ *
+ * Una sola request y no más, porque la segunda ya vuelve a decir `HIT` y borraría la evidencia.
+ *
+ * El contador de sentencias del espía de Postgres (`_lib/pg-spy.ts`) va **al lado, no en lugar**:
+ * `statements > 0` prueba que además se pagó una query. No alcanza solo —el caso "re-render sin
+ * query" es real y es justo el que produce el arreglo a medias— pero es el que distingue "murió la
+ * ruta" de "murió también el loader", que es la diferencia entre un arreglo parcial y uno completo.
+ *
+ * Lo que **no** sirve, dicho para que nadie lo intente de nuevo: comparar el HTML. Un re-render
+ * produce exactamente el mismo HTML, así que una aserción de igualdad de body no puede fallar.
+ */
+export type PageRole = 'grilla' | 'ficha-reservada' | 'ficha-hermana';
+
+/**
+ * Una página de la vidriera, observada **antes y después** de la reserva.
+ *
+ * `cacheBefore` es el control y no es decorativo: una página que nunca llegó a `HIT` no puede
+ * "sobrevivir" a nada, y contarla como sobreviviente daría verde con la invalidación borrada.
+ */
+export interface PageVisit {
+  /** Nombre corto para la línea MEDIDO (`grilla`, `ficha-b`, `ficha-a`). Sin ` · ` adentro. */
+  readonly label: string;
+  readonly role: PageRole;
+  readonly url: string;
+  /** `x-nextjs-cache` de la página ya calentada, antes de tocar nada. Tiene que ser `HIT`. */
+  readonly cacheBefore: string;
+  /** `x-nextjs-cache` de **la única** request posterior a la reserva. */
+  readonly cacheAfter: string;
+  /** Sentencias que el server le mandó a Postgres durante esa única request. */
+  readonly statementsAfter: number;
+  /** Lo que la página decía del equipo antes de la reserva (badge). */
+  readonly saidBefore: string;
+  /** Lo que dice después. Para la grilla es el badge de la card del equipo reservado. */
+  readonly saysAfter: string;
+}
+
+/**
+ * ¿Esta página se volvió a generar? La ruta cacheada es la señal primaria; la query es la
+ * corroboración. Cualquiera de las dos alcanza: las dos cuestan plata y ninguna implica a la otra.
+ */
+export function pageWasRerendered(visit: PageVisit): boolean {
+  return visit.cacheAfter !== 'HIT' || visit.statementsAfter > 0;
+}
+
+/** Qué señal se prendió, para que un rojo diga *cómo* se supo. Vacío = la página sobrevivió. */
+export function rerenderSignal(visit: PageVisit): string {
+  const signals: string[] = [];
+  if (visit.cacheAfter !== 'HIT') signals.push(`cache=${visit.cacheAfter}`);
+  if (visit.statementsAfter > 0) signals.push(`db=${String(visit.statementsAfter)}`);
+  return signals.join('+');
+}
+
+export interface InvalidationRadiusMeasurement {
+  /** El equipo que se reservó desde el panel. */
+  readonly reservedListingId: string;
+  /** Cuántas unidades publicadas tiene la vidriera. Es el `N` del que el radio no puede depender. */
+  readonly publishedUnits: number;
+  /**
+   * Sentencias de la primerísima request, con todo frío. Es el control de que el espía está en el
+   * camino: si acá sale 0, el contador no está midiendo nada y los ceros de abajo no significan
+   * "sobrevivió", significan "no vi".
+   */
+  readonly coldStatements: number;
+  readonly visits: readonly PageVisit[];
+}
+
+/**
+ * El radio que este producto puede pagar: la grilla (cambia: aparece el badge) y la ficha del
+ * equipo señado. Dos. Nada más cambió, así que nada más puede morir.
+ */
+export const EXPECTED_RADIUS = 2;
+
+/** Cuántas páginas se volvió a generar el server por una reserva. */
+export function invalidationRadius(m: InvalidationRadiusMeasurement): number {
+  return m.visits.filter(pageWasRerendered).length;
+}
+
+function labelsOf(visits: readonly PageVisit[]): string {
+  return visits.length === 0 ? '(ninguna)' : visits.map((v) => v.label).join(',');
+}
+
+/**
+ * La línea que el gate lee de la salida de la corrida.
+ *
+ * ```
+ * MEDIDO s6 radio · unidad=<id> · publicadas=<N> · paginas=<M> · rerender=<K> · esperado=2 · purgadas=[…] · sobrevivieron=[…] · grilla_dice=<texto> · ficha_dice=<texto> · frio=<N>
+ * ```
+ *
+ * Ningún valor lleva ` · ` adentro: el parser de `scripts/accept-s*.sh` corta por ahí.
+ */
+export function invalidationRadiusMedidoLine(m: InvalidationRadiusMeasurement): string {
+  const purgadas = m.visits.filter(pageWasRerendered);
+  const vivas = m.visits.filter((v) => !pageWasRerendered(v));
+  const grilla = m.visits.find((v) => v.role === 'grilla');
+  const ficha = m.visits.find((v) => v.role === 'ficha-reservada');
+  const detalle = purgadas.map((v) => `${v.label}(${rerenderSignal(v)})`).join(',');
+
+  return (
+    `MEDIDO s6 radio · unidad=${m.reservedListingId} · ` +
+    `publicadas=${String(m.publishedUnits)} · ` +
+    `paginas=${String(m.visits.length)} · ` +
+    `rerender=${String(invalidationRadius(m))} · ` +
+    `esperado=${String(EXPECTED_RADIUS)} · ` +
+    `purgadas=[${detalle.length === 0 ? '(ninguna)' : detalle}] · ` +
+    `sobrevivieron=[${labelsOf(vivas)}] · ` +
+    `grilla_dice=${JSON.stringify(grilla?.saysAfter ?? '(no se midió)')} · ` +
+    `ficha_dice=${JSON.stringify(ficha?.saysAfter ?? '(no se midió)')} · ` +
+    `frio=${String(m.coldStatements)}`
+  );
+}
+
+/**
+ * Todo lo que está mal con el radio. Vacío = una reserva cuesta dos páginas y no el catálogo.
+ *
+ * Las reglas, y por qué ninguna sobra:
+ *
+ * - **El espía tiene que haber visto la request fría.** Sin eso los ceros no son evidencia.
+ * - **Toda página medida tenía que estar en `HIT` antes.** Es el control: una página fría no
+ *   sobrevive, aparece.
+ * - **Tiene que haber al menos dos fichas hermanas.** Con una sola, "el radio no crece con N" es
+ *   una frase sobre un solo dato.
+ * - **La grilla SÍ se tiene que haber purgado, y tiene que decir `Reservado`.** Sin esta mitad, el
+ *   veredicto entero lo aprobaría un arreglo que rompió la invalidación: no purgar nada da radio
+ *   0 y "mejora" el número mientras la vidriera le miente al visitante.
+ * - **La ficha del equipo señado también.** Es la que abre el que tiene el link pegado en el estado.
+ * - **Ninguna hermana.** Es la regla que este archivo vino a poner de pie.
+ * - **A ninguna hermana le cambió lo que dice.** Una ficha ajena que se re-renderizó y además
+ *   cambió de contenido es un bug peor que el costo.
+ */
+export function invalidationRadiusProblems(m: InvalidationRadiusMeasurement): readonly string[] {
+  const problems: string[] = [];
+
+  if (m.coldStatements <= 0) {
+    problems.push(
+      'el espía de Postgres no vio ni una sentencia en la request fría: el contador no está en el ' +
+        'camino, así que los ceros de después no prueban que nadie consultó la base.',
+    );
+  }
+
+  const frias = m.visits.filter((v) => v.cacheBefore !== 'HIT');
+  if (frias.length > 0) {
+    problems.push(
+      `estas páginas nunca se sirvieron desde el cache antes de la reserva: ${labelsOf(frias)}. ` +
+        'Una página fría no puede sobrevivir a una purga, así que medirla no dice nada del radio.',
+    );
+  }
+
+  const hermanas = m.visits.filter((v) => v.role === 'ficha-hermana');
+  if (hermanas.length < 2) {
+    problems.push(
+      `el fixture tiene ${String(hermanas.length)} ficha(s) hermana(s): con menos de dos, "el radio ` +
+        'no crece con el tamaño del stock" es una afirmación sobre un solo dato.',
+    );
+  }
+
+  const grilla = m.visits.find((v) => v.role === 'grilla');
+  if (grilla === undefined) {
+    problems.push('no se midió la grilla: la mitad "sí se invalida" del veredicto no existe.');
+  } else {
+    if (!pageWasRerendered(grilla)) {
+      problems.push(
+        'la grilla sobrevivió a la reserva: la card del equipo señado sigue saliendo del cache ' +
+          'diciendo lo de antes. Un radio chico que se consigue no invalidando nada es la ' +
+          'regresión, no el arreglo.',
+      );
+    }
+    if (grilla.saysAfter !== BADGE_RESERVADO) {
+      problems.push(
+        `la card del equipo señado en la grilla dice ${JSON.stringify(grilla.saysAfter)} y no ` +
+          `${JSON.stringify(BADGE_RESERVADO)}: dos personas viajan al local por el mismo teléfono.`,
+      );
+    }
+  }
+
+  const ficha = m.visits.find((v) => v.role === 'ficha-reservada');
+  if (ficha === undefined) {
+    problems.push('no se midió la ficha del equipo reservado.');
+  } else {
+    if (!pageWasRerendered(ficha)) {
+      problems.push(
+        'la ficha del equipo señado sobrevivió a la reserva: el link que circula por WhatsApp la ' +
+          'sigue mostrando como estaba.',
+      );
+    }
+    if (ficha.saysAfter !== BADGE_RESERVADO) {
+      problems.push(
+        `la ficha del equipo señado dice ${JSON.stringify(ficha.saysAfter)} con la seña puesta.`,
+      );
+    }
+  }
+
+  const purgadasDeMas = hermanas.filter(pageWasRerendered);
+  if (purgadasDeMas.length > 0) {
+    const detalle = purgadasDeMas.map((v) => `${v.label} (${rerenderSignal(v)})`).join(', ');
+    problems.push(
+      `señar UN equipo tiró abajo la ficha cacheada de ${String(purgadasDeMas.length)} equipo(s) que ` +
+        `no cambiaron: ${detalle}. En un negocio de ${String(m.publishedUnits)} publicados esto es ` +
+        'todo el catálogo re-renderizándose por cada reserva del día, que es el cold-hit rate del ' +
+        'que se queja `cost-auditor`. El tag que las alcanza es el que sobra en la intersección: ' +
+        'mirá qué registra la RUTA de la ficha, no sólo qué registra el loader.',
+    );
+  }
+
+  const contaminadas = hermanas.filter((v) => v.saysAfter !== v.saidBefore);
+  if (contaminadas.length > 0) {
+    problems.push(
+      `reservar un equipo le cambió lo que dice la ficha de otro: ${labelsOf(contaminadas)}.`,
+    );
+  }
+
+  const radio = invalidationRadius(m);
+  if (radio !== EXPECTED_RADIUS) {
+    problems.push(
+      `el radio de la purga por unidad es ${String(radio)} página(s) sobre ${String(m.visits.length)} ` +
+        `medidas y tiene que ser ${String(EXPECTED_RADIUS)} (la grilla y la ficha del equipo).`,
+    );
+  }
+
+  return problems;
+}
+
+/**
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *  La otra punta: publicar un borrador tiene que matar el miss cacheado de SU ficha.
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * Es la mitad que se pierde si alguien "arregla" el radio sacándole `storefront:{slug}` a la ficha
+ * **entera**. La ficha registra el tag de la unidad **después** del `await` y sólo cuando la unidad
+ * existe y es pública: en el camino de MISS no hay `listing:{uuid}` que emitir, así que el único
+ * tag que puede alcanzar esa entrada es el del tenant. Sacarlo dejaría la página de "este equipo ya
+ * no está publicado" servida hasta que venza el perfil corto — el dueño publica, pega el link, y
+ * durante minutos el link dice que el equipo no está.
+ *
+ * Un test que sólo mirara el radio aprobaría ese arreglo. Por eso esta medición existe.
+ */
+export interface DraftPublishMeasurement {
+  readonly listingId: string;
+  /** La ficha del borrador se estaba sirviendo **desde el cache** como "no publicado". */
+  readonly cacheBefore: string;
+  /** Y era el miss del equipo, no otra página. */
+  readonly missWasCached: boolean;
+  /** Estado en Postgres después de apretar "Publicar". */
+  readonly statusAfterPublish: string;
+  /** Qué se vio en cada visita posterior, en orden: `miss` · `ficha` · `otro(...)`. */
+  readonly sequence: readonly string[];
+}
+
+/** En qué visita apareció la ficha publicada. `0` = nunca apareció. */
+export function visitsUntilPublished(m: DraftPublishMeasurement): number {
+  const index = m.sequence.indexOf('ficha');
+  return index === -1 ? 0 : index + 1;
+}
+
+/**
+ * ```
+ * MEDIDO s6 alta-de-unidad · unidad=<id> · miss_cacheado=<HIT> · estado=<available> · visita_que_la_muestra=<n> · secuencia=[miss,ficha]
+ * ```
+ */
+export function draftPublishMedidoLine(m: DraftPublishMeasurement): string {
+  return (
+    `MEDIDO s6 alta-de-unidad · unidad=${m.listingId} · ` +
+    `miss_cacheado=${m.missWasCached ? m.cacheBefore : `no(${m.cacheBefore})`} · ` +
+    `estado=${m.statusAfterPublish} · ` +
+    `visita_que_la_muestra=${String(visitsUntilPublished(m))} · ` +
+    `secuencia=[${m.sequence.length === 0 ? '(ninguna)' : m.sequence.join(',')}]`
+  );
+}
+
+export function draftPublishProblems(m: DraftPublishMeasurement): readonly string[] {
+  const problems: string[] = [];
+
+  if (!m.missWasCached || m.cacheBefore !== 'HIT') {
+    problems.push(
+      `la ficha del borrador no se estaba sirviendo desde el cache como "no publicado" ` +
+        `(cache=${m.cacheBefore}, miss=${String(m.missWasCached)}): sin esa entrada cacheada, verla ` +
+        'publicada después no prueba que publicar la haya invalidado.',
+    );
+  }
+
+  if (m.statusAfterPublish !== 'available') {
+    problems.push(
+      `el equipo quedó en \`${m.statusAfterPublish}\` y no en \`available\`: no se publicó nada, así ` +
+        'que la invalidación no tenía por qué correr y esta medición no dice nada.',
+    );
+  }
+
+  const visita = visitsUntilPublished(m);
+  if (visita === 0) {
+    problems.push(
+      'publicar el equipo no tiró abajo el miss cacheado de su ficha: el dueño publica, pega el ' +
+        'link en un estado, y el link sigue diciendo que el equipo no está publicado hasta que ' +
+        'venza el perfil corto. Es el mismo bug que S1 atrapa para el tenant, un nivel más abajo.',
+    );
+  } else if (visita > 1) {
+    problems.push(
+      `la ficha recién apareció en la visita ${String(visita)} (secuencia: ${m.sequence.join(', ')}): ` +
+        'el primero que abre el link se come la página vieja.',
+    );
+  }
+
+  return problems;
+}

@@ -46,6 +46,22 @@ export function isMiss(html: string): boolean {
 }
 
 /**
+ * El **otro** miss: la vidriera existe, el equipo no está publicado
+ * (`apps/web/app/(storefront)/_components/listing-miss.tsx`).
+ *
+ * Son dos páginas distintas y confundirlas cambia el diagnóstico entero: "no hay negocio en esta
+ * dirección" se arregla dando de alta un tenant; "este equipo ya no está publicado" se arregla
+ * publicando la unidad, y su entrada de cache la mata otro tag. Un test que sólo mirara `MISS_MARKER`
+ * leería las dos como la misma cosa.
+ */
+export const LISTING_MISS_MARKER = 'data-storefront="listing-miss"';
+
+/** ¿Esta respuesta es la página de "este equipo ya no está publicado"? */
+export function isListingMiss(html: string): boolean {
+  return domHtml(html).includes(LISTING_MISS_MARKER);
+}
+
+/**
  * Afirma que `html` es **la página de dirección sin vidriera**, y no un shell vacío, ni un error
  * de Next, ni una vidriera a medio pintar.
  *

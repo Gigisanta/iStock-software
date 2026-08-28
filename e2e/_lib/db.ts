@@ -381,6 +381,54 @@ export async function seedPublicUnit(unit: SeedPublicUnit): Promise<string> {
 }
 
 /**
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *  Un BORRADOR publicable, por SQL. El que se usa para medir el camino de MISS de la ficha.
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * Es el hermano de `seedPublicUnit` con dos diferencias que no son cosméticas:
+ *
+ * 1. Nace en `draft`, así que su ficha responde **el miss del equipo** (`ListingMiss`) y no la
+ *    ficha. Ese miss es el que se cachea y el que publicar tiene que tirar abajo.
+ * 2. Lleva **`catalog_model_id`**, y sin eso no serviría para nada: `checkTransition('draft',
+ *    'available', …)` deniega con `missing_catalog_model` para `kind: 'unit'`, o sea que el panel
+ *    **no dibuja el botón "Publicar"** (`canPublish` en `stock/_ui/unit-row.tsx`) y el escenario no
+ *    se puede montar. `seedListing()` no lo pone porque su unidad no está para publicarse: es el
+ *    objetivo de un ataque cross-tenant.
+ *
+ * Lo que está bajo prueba acá es **la invalidación**, no el alta: la unidad es el decorado. La
+ * publicación sí pasa por el botón del panel, que es el camino real y el que puede perder el
+ * `revalidateTag` en un refactor.
+ */
+export interface SeedDraftUnit {
+  readonly tenantId: string;
+  readonly slug: string;
+  readonly title: string;
+  /** `catalog_models.id`. Sin él la unidad es impublicable y el botón no existe. */
+  readonly catalogModelId: string;
+  readonly priceUsd?: number;
+}
+
+export async function seedDraftUnit(unit: SeedDraftUnit): Promise<string> {
+  const q = sql();
+  const rows = await q<{ id: string }[]>`
+    insert into public.listings (
+      tenant_id, slug, kind, title, catalog_model_id, storage_gb, color, condition, battery_pct,
+      screen_original, icloud_status_text, warranty_text, provenance_text, price_usd, qty, status
+    )
+    values (
+      ${unit.tenantId}::uuid, ${unit.slug}, 'unit', ${unit.title}, ${unit.catalogModelId}::uuid,
+      128, 'Medianoche', 'used_excellent'::listing_condition, 91,
+      true, 'Libre de iCloud, verificado en el local', '90 días de garantía del local',
+      'Compra directa a cliente en Neuquén', ${unit.priceUsd ?? 540}, 1, 'draft'
+    )
+    returning id
+  `;
+  const id = rows[0]?.id;
+  if (id === undefined) throw new Error(`no se pudo sembrar el borrador ${unit.slug}`);
+  return id;
+}
+
+/**
  * Una fila de `listing_photos` con keys **con la forma pública real** (`v1/{ab}/{sha256_32}.webp`)
  * pero **sin bytes detrás**.
  *
@@ -391,6 +439,32 @@ export async function seedPublicUnit(unit: SeedPublicUnit): Promise<string> {
  *
  * **No se usa donde se miden bytes.** Una key sin objeto detrás devuelve 404 y 404 pesa poco: un
  * spec de presupuesto que midiera esto daría verde midiendo la nada.
+ *
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *  Por qué el hash se re-tira con sal (y por qué eso NO es tapar un bug)
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ * `assertPublicVariantKey` (`packages/media/src/keys.ts`) rechaza toda key que matchee `/\d{15}/`
+ * como "posible IMEI", y la corre **dos veces**: en el upload (`upload.ts:85`) y otra vez al armar
+ * la URL en el render de la ficha (`url.ts:31`). Un sha256 en hexadecimal cae en esa regex
+ * **1 de cada ~156 veces** (medido, 3M de muestras), así que un fixture que copia la forma real
+ * de la key hereda la lotería.
+ *
+ * En el pipeline de verdad esa key nunca llega a la base: la rechaza el upload. Este helper
+ * saltea el upload —inserta directo— así que sí puede plantar una key que el producto habría
+ * rechazado, y entonces lo que revienta es el **render**. Bajo `cacheComponents` un throw adentro
+ * de un render cacheado no es un 500: es un 200 que nunca cierra el stream (ver `_lib/http.ts`),
+ * o sea que la ficha **cuelga** y el spec muere por timeout de hook con un mensaje que no habla
+ * de media. Costó una corrida entera de `pnpm e2e` diagnosticarlo.
+ *
+ * La sal hace que este fixture siembre sólo keys **que el pipeline real habría aceptado**, que es
+ * la única clase de key que puede existir en `listing_photos` en producción. Sigue siendo
+ * determinista: mismo `listingId` + `sortOrder` + variante ⇒ misma key en toda corrida.
+ *
+ * Lo que la sal **no** hace es arreglar el defecto que destapó, y a propósito: que el 1.9% de las
+ * fotos reales sea imposible de subir para siempre —la key es content-addressed, reintentar da el
+ * mismo hash— es de `packages/media`, y `qa-agent` no edita el código bajo test (`CLAUDE.md` §4).
+ * Está reportado al LEAD. Si algún día se arregla, esta sal queda sin efecto sola: no habrá hash
+ * que re-tirar.
  */
 export async function seedListingPhoto(
   tenantId: string,
@@ -398,11 +472,20 @@ export async function seedListingPhoto(
   sortOrder = 0,
 ): Promise<void> {
   const q = sql();
-  const digest = (tag: string): string =>
-    createHash('sha256')
-      .update(`qae2e/${listingId}/${String(sortOrder)}/${tag}`)
-      .digest('hex')
-      .slice(0, 32);
+  /** El mismo guard que corre el producto, replicado acá para no importar `packages/media`. */
+  const pareceImei = /\d{15}/u;
+  const digest = (tag: string): string => {
+    for (let sal = 0; sal < 64; sal += 1) {
+      const hash = createHash('sha256')
+        .update(`qae2e/${listingId}/${String(sortOrder)}/${tag}/${String(sal)}`)
+        .digest('hex')
+        .slice(0, 32);
+      // `v1/` y `.webp` no pueden alargar una corrida de dígitos (los separadores la cortan), así
+      // que chequear el hash equivale a chequear la key entera.
+      if (!pareceImei.test(hash)) return hash;
+    }
+    throw new Error(`64 hashes seguidos parecen un IMEI para ${listingId}/${tag}: es imposible`);
+  };
   const key = (tag: string): string => {
     const hash = digest(tag);
     return `v1/${hash.slice(0, 2)}/${hash}.webp`;

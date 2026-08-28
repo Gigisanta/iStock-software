@@ -73,20 +73,37 @@ describe('invalidateStorefront · la vidriera entera', () => {
 });
 
 describe('invalidateStorefrontUnit · cambió la unidad y la grilla', () => {
-  it('emite los TRES tags, con el de la unidad exacto', () => {
+  it('emite DOS tags: la grilla y esa unidad', () => {
     invalidateStorefrontUnit(SLUG, LISTING_ID);
 
     expect(emitted()).toEqual([
       'storefront:lacoope',
-      'tenant-config:lacoope',
       'listing:3f2b1a90-7c4d-4e21-9b8a-0c1d2e3f4a5b',
     ]);
   });
 
   /**
+   * **La aserción del RADIO (S6).** Es la única cosa que impide que alguien vuelva a meter
+   * `tenantConfigTag(slug)` acá adentro "por las dudas". No es un detalle de estilo: la ficha
+   * pública registra el tag de config, y un tag es un OR, así que emitirlo desde una mutación de
+   * UNA unidad purga las fichas de TODAS las hermanas. Medido en S6: 61 páginas invalidadas por
+   * una reserva en un tenant de 60 equipos, cold-hit rate ~39% contra una alarma de 5%.
+   *
+   * Reservar no cambia el TC, ni los puntos de retiro, ni el teléfono. Si una mutación futura sí
+   * los cambia, la función es `invalidateStorefront()`, no esta.
+   */
+  it('NO purga la config del tenant: el radio es la grilla + una ficha, no el catálogo', () => {
+    invalidateStorefrontUnit(SLUG, LISTING_ID);
+
+    expect(emitted()).not.toContain(tenantConfigTag(SLUG));
+    expect(emitted()).not.toContain('tenant-config:lacoope');
+    expect(emitted()).toHaveLength(2);
+  });
+
+  /**
    * **La aserción de S3.2.** Si alguien saca el `updateTag(listingTag(id))` de
    * `invalidateStorefrontUnit`, o le cambia el prefijo, esto se cae. Verificado sacándolo a mano:
-   * `expected [ 'storefront:lacoope', 'tenant-config:lacoope' ] to contain 'listing:3f2b…'`.
+   * `expected [ 'storefront:lacoope' ] to contain 'listing:3f2b…'`.
    */
   it('el tag de la unidad se emite y es el mismo string que registra la ficha', () => {
     invalidateStorefrontUnit(SLUG, LISTING_ID);
@@ -95,6 +112,23 @@ describe('invalidateStorefrontUnit · cambió la unidad y la grilla', () => {
     expect(emitted()).toContain(listingTag(LISTING_ID));
   });
 
+  /**
+   * La grilla se queda **aunque** el radio se haya achicado: reservar cambia la card (aparece el
+   * badge "Reservado"). Sin este tag la grilla seguiría diciendo "Disponible" sobre una unidad
+   * reservada, que es la regresión que el adversary rechazó en S6.
+   */
+  it('sí purga la grilla: el badge "Reservado" vive en la card', () => {
+    invalidateStorefrontUnit(SLUG, LISTING_ID);
+
+    expect(emitted()).toContain(storefrontTag(SLUG));
+  });
+
+  /**
+   * Con el radio de dos tags, el de la unidad es lo **único** que alcanza a la ficha. Si el id no
+   * tiene forma de UUID y no se ensanchara, quedaría sólo `storefront:{slug}`: la grilla se
+   * actualiza y la ficha queda pegada en el CDN con `cacheLife('max')` hasta un año. Purgar de más
+   * en un caso que no debería ocurrir nunca es mejor que servir una ficha mentirosa.
+   */
   it('un listingId que no es UUID no explota: se ensancha a los tags de tenant', () => {
     invalidateStorefrontUnit(SLUG, 'no-soy-un-uuid');
 
@@ -148,10 +182,9 @@ describe('el fallback de updateTag (E872 fuera de una Server Action)', () => {
 
     expect(revalidateTag.mock.calls).toEqual([
       ['storefront:lacoope', { expire: 0 }],
-      ['tenant-config:lacoope', { expire: 0 }],
       [`listing:${LISTING_ID}`, { expire: 0 }],
     ]);
-    expect(logEvent).toHaveBeenCalledTimes(3);
+    expect(logEvent).toHaveBeenCalledTimes(2);
   });
 
   it('un tag que falla no se lleva puestos a los otros', () => {
@@ -161,7 +194,7 @@ describe('el fallback de updateTag (E872 fuera de una Server Action)', () => {
 
     invalidateStorefrontUnit(SLUG, LISTING_ID);
 
-    expect(emitted()).toHaveLength(3);
+    expect(emitted()).toHaveLength(2);
     expect(revalidateTag.mock.calls).toEqual([['storefront:lacoope', { expire: 0 }]]);
   });
 });

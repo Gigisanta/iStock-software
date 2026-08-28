@@ -52,6 +52,11 @@ import { logEvent } from '../log';
  * para quien tenga el link y es invisible para Google — y "pegá el link en un estado" es la mitad
  * del producto.
  *
+ * **"Siempre juntos" vale para lo que cambia el tenant**: el alta, el TC, un punto de retiro, el
+ * teléfono. **No** para lo que cambia una unidad: reservar un iPhone no toca el `<title>` ni el TC,
+ * y emitir `tenant-config:{slug}` ahí purgaba las 60 fichas hermanas por nada. Ver
+ * `invalidateStorefrontUnit()`.
+ *
  * Los nombres de los tags se importan de `(storefront)/_lib/cache-tags.ts` (owner:
  * `storefront-agent`) en vez de re-escribirse acá. Un tag que el panel arma distinto del que la
  * vidriera registró no invalida nada **y no falla**: es la misma clase de bug que dos listas de
@@ -61,14 +66,21 @@ import { logEvent } from '../log';
  *  Y el TERCER tag: `listing:{uuid}`, el de la unidad (S3.2)
  * ══════════════════════════════════════════════════════════════════════════════════════════════
  *
- * La ficha registra tres tags: los dos del tenant **y el suyo propio**
- * (`(storefront)/_lib/listings.ts`, `getStorefrontListing`). Un tag de Vercel es un OR: la entrada
- * cacheada muere si se purga **cualquiera** de los tres. Eso convierte a `listing:{uuid}` en un
- * bisturí que el panel no estaba usando:
+ * Un tag de Vercel es un OR: una entrada cacheada muere si se purga **cualquiera** de los tags que
+ * registró. Quién registra qué (`(storefront)/_lib/listings.ts`, owner: `storefront-agent`):
+ *
+ * - **la grilla** → `storefront:{slug}` + `tenant-config:{slug}`;
+ * - **la ficha**  → `tenant-config:{slug}` + `listing:{uuid}`.
+ *
+ * La ficha registró `storefront:{slug}` hasta S6 y ya no: era el otro extremo del mismo cable que
+ * hacía que una reserva purgara el catálogo entero. Lo que queda compartido entre grilla y fichas es
+ * `tenant-config:{slug}`, y ese es el que se emite cuando de verdad cambió algo del tenant. Eso
+ * convierte a `listing:{uuid}` en un bisturí:
  *
  * | mutación | qué cambia de verdad | qué se emite |
  * |---|---|---|
- * | publicar / despublicar | la grilla **y** la ficha | los tres |
+ * | alta del negocio, TC, punto de retiro | **todo** | los dos de tenant |
+ * | publicar / despublicar / reservar / vender | la grilla **y** la ficha | `storefront:{slug}` + `listing:{uuid}` |
  * | 2ª y 3ª foto de una unidad publicada | **sólo** la ficha (la grilla pinta `photos[0]`) | sólo `listing:{uuid}` |
  *
  * La fila de abajo es la que paga la slice: con 200 equipos, agregar una foto emitía
@@ -77,8 +89,9 @@ import { logEvent } from '../log';
  * ("95% de los hits no tocan Postgres"), que no se cumple regenerando 200 páginas por foto.
  *
  * La primera foto **sí** cambia la grilla (la card pasa de placeholder a foto), así que ahí se
- * emiten los tres. Lo decide `addUnitPhoto` con el `count(*)` de adentro de su transacción, no
- * este módulo: la pregunta "¿esta foto es la que se ve en la card?" es de quien escribió la fila.
+ * emite también `storefront:{slug}`. Lo decide `addUnitPhoto` con el `count(*)` de adentro de su
+ * transacción, no este módulo: la pregunta "¿esta foto es la que se ve en la card?" es de quien
+ * escribió la fila.
  *
  * ── El UUID se valida, y si no es un UUID no se explota ─────────────────────────────────────
  * `listingTag()` **tira** con un id que no tiene forma de UUID, y acá una excepción llegaría
@@ -116,16 +129,43 @@ export function invalidateStorefront(slug: string): void {
 
 /**
  * "Esta unidad cambió **y** la grilla también": publicar, despublicar, vender, reservar, la
- * primera foto. Emite los tres tags.
+ * primera foto. Emite **dos** tags: `storefront:{slug}` y `listing:{uuid}`.
  *
- * El de la unidad es hoy redundante con `storefront:{slug}` —la ficha lleva los dos y muere con
- * cualquiera— y se emite igual, por dos motivos: es el contrato que le permite a
- * `storefront-agent` sacarle a la ficha el tag de tenant sin que el panel deje de invalidarla, y
- * un tag de más en una llamada que ya emite dos no cuesta nada (el techo de Vercel es 16 por
- * purga bulk).
+ * ## Por qué dos y no tres — el radio se mide, no se estima (S6)
+ * Hasta S6 esta función emitía además `tenant-config:{slug}`. Un tag es un OR y la ficha registra
+ * los dos tags de tenant, así que **una reserva en un tenant de 60 equipos purgaba las 61
+ * páginas**: la grilla y las 60 fichas, 59 de las cuales no habían cambiado en nada. La función
+ * que dice `Unit` en el nombre invalidaba el catálogo entero, y se vio en el cold-hit rate:
+ * ~39% contra una alarma de 5% (`cost-auditor` sobre S6, `docs/COST.md` §2.4).
+ *
+ * Qué purga cada tag que **sí** se emite, y por qué no sobra ninguno de los dos:
+ *
+ * | tag | qué purga | por qué hace falta acá |
+ * |---|---|---|
+ * | `storefront:{slug}` | la grilla | reservar sí cambia la card: aparece el badge "Reservado". Sacarlo dejaría la grilla diciendo "Disponible" sobre una unidad reservada — la regresión que `adversary-reviewer` rechazó en S6. |
+ * | `listing:{uuid}` | esa ficha, y sólo esa | es el bisturí: la ficha muere sin arrastrar a las hermanas. |
+ *
+ * El que se cayó es `tenant-config:{slug}`, que cachea el TC, los puntos de retiro, los medios de
+ * pago y el teléfono. **Reservar una unidad no cambia nada de eso.** Estaba puramente de más, y
+ * era exactamente el que hacía que la purga alcanzara a las 60 fichas hermanas.
+ * **Radio: 2 páginas en vez de 61.**
+ *
+ * Si lo que cambió es config del tenant, la función no es esta: es `invalidateStorefront()`, que
+ * sigue emitiendo los dos tags de tenant a propósito.
+ *
+ * ## El id que no tiene forma de UUID: se ensancha (misma decisión que `invalidateListing()`)
+ * `unitTagOrWiden()` devuelve `[]` con un id que no es UUID. Antes ese caso quedaba tapado por los
+ * tags de tenant; con la emisión de dos tags dejaría **sólo `storefront:{slug}`**, o sea: la grilla
+ * se actualiza y la ficha queda pegada en el CDN con `cacheLife('max')` — hasta un año mostrando
+ * "Disponible" sobre algo que se vendió. Esa asimetría es peor que la purga ancha, así que esa rama
+ * ensancha a `tenantTags(slug)`: cuando el panel no puede **nombrar** la ficha, el tag de tenant es
+ * lo único que le queda para alcanzarla. Purgar de más en un caso que no debería ocurrir nunca es
+ * estrictamente mejor que servir una ficha mentirosa; es la misma política que el `catch` de
+ * `updateTag`, y por eso también deja rastro en el log.
  */
 export function invalidateStorefrontUnit(slug: string, listingId: string): void {
-  emit([...tenantTags(slug), ...unitTagOrWiden(slug, listingId)]);
+  const unit = unitTagOrWiden(slug, listingId);
+  emit(unit.length === 0 ? tenantTags(slug) : [storefrontTag(slug), ...unit]);
 }
 
 /**

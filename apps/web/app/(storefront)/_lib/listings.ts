@@ -400,11 +400,45 @@ export async function getStorefrontCatalog(slug: string): Promise<StorefrontCata
  * El `null` se cachea con el perfil corto: un bot que pruebe mil slugs de ficha inventados hace
  * mil queries la primera vez y **cero** después, sin sembrar entradas de 30 días.
  *
- * Registra un tag propio, `listing:{uuid}`, **además** de los dos del tenant. Hoy el panel sólo
- * emite los dos del tenant, así que este tag todavía no invalida solo; existe para que cuando el
- * panel lo emita, publicar una unidad deje de purgar el catálogo entero de ese tenant. El tag se
- * registra después del `await` porque el UUID recién se conoce ahí — `cacheTag()` es acumulativo
- * dentro del scope, igual que `cacheLife()`.
+ * ── El hit y el miss llevan tags DISTINTOS, y ahí está la plata de esta slice ─────────────────
+ *
+ * | camino | tags de esta entrada | quién la mata |
+ * |---|---|---|
+ * | ficha publicada | `tenant-config:{slug}` · `listing:{uuid}` | config del tenant · esa unidad |
+ * | miss (`null`)   | `tenant-config:{slug}` · `storefront:{slug}` | config del tenant · **publicar cualquier cosa** |
+ *
+ * **El hit ya no registra `storefront:{slug}`.** Un tag es un OR: la entrada muere si se purga
+ * *cualquiera* de los suyos. Desde S6 el panel emite tres tags en `invalidateStorefrontUnit()`
+ * (`storefront` + `tenant-config` + `listing:{uuid}`), así que mientras la ficha siguiera
+ * registrando el tag del catálogo, **reservar UNA unidad en un tenant de 60 equipos purgaba las 61
+ * páginas** — la que cambió y las 60 que no. Lo midió `cost-auditor` en S6: cold-hit ~39% contra
+ * una alarma de 5% (`docs/COST.md` §2.4). Este docblock decía hasta S6.1 que el panel *"sólo emite
+ * los dos del tenant, así que este tag todavía no invalida solo"*: era verdad cuando se escribió y
+ * dejó de serlo con S6. El motivo por el que `listing:{uuid}` existía ya se cumplió, y por eso el
+ * tag del catálogo pasó de redundante a caro.
+ *
+ * **`tenant-config:{slug}` se queda, y no por simetría:** el TC, los puntos de retiro, los medios de
+ * pago y el teléfono salen en la ficha, así que un cambio de config del tenant *tiene* que purgarla.
+ * Es también lo que mantiene en pie al alta del tenant, que emite `storefront` + `tenant-config`.
+ *
+ * **El miss sí lo lleva, y sacárselo sería un bug distinto y peor.** `listing:{uuid}` se registra
+ * *después* del `await` y sólo cuando la unidad es públicamente visible, así que una ficha cacheada
+ * como miss —el equipo todavía en `draft`, el link ya circulando— no quedaría bajo **ningún** tag
+ * que el panel emita al publicarla, y publicarla dejaría *"este equipo ya no está publicado"*
+ * servido hasta 15 minutos (`MISS_EXPIRE_SECONDS`). Por eso las dos ramas negativas de acá abajo
+ * pasan por `listingMiss()`, que registra el tag y el perfil corto juntos: son dos mitades de la
+ * misma decisión y separarlas es cómo se pierde una.
+ *
+ * Las dos ramas **anteriores** al `cacheTag()` —slug sin forma de slug— no registran nada y así se
+ * quedan: un slug que no pasa `isSlugShaped` no puede entrar en `tenants` (CHECK
+ * `tenants_slug_format`), así que no hay publicación futura que lo vuelva válido y no hay evento que
+ * invalidar. Además `storefrontTag()` tiraría, y un throw de render bajo `cacheComponents` + PPR es
+ * un stream que no cierra, no un 500.
+ *
+ * Todo lo de arriba describe **la entrada de cache de este loader**. La página
+ * (`s/[slug]/p/[listing]/page.tsx`) tiene la suya y registra sus propios tags; los de acá se
+ * propagan hacia afuera (el wrapper de `'use cache'` copia tags y cache life al scope que lo
+ * contiene), pero no al revés: lo que registre la página no se resta desde acá.
  */
 export async function getStorefrontListing(
   slug: string,
@@ -421,11 +455,12 @@ export async function getStorefrontListing(
     return null;
   }
 
-  cacheTag(storefrontTag(slug), tenantConfigTag(slug));
+  // Sólo el de config. El del catálogo (`storefront:{slug}`) es del camino negativo y lo pone
+  // `listingMiss()`; el de la unidad se registra abajo, cuando se conoce el UUID.
+  cacheTag(tenantConfigTag(slug));
 
   if (isReservedSubdomain(slug)) {
-    cacheLife(STOREFRONT_MISS_LIFE);
-    return null;
+    return listingMiss(slug);
   }
 
   const source = await withStorefrontDb(slug, async (tx) => {
@@ -461,12 +496,34 @@ export async function getStorefrontListing(
   });
 
   if (source === null || !isPubliclyVisible(source.status)) {
-    cacheStorefrontMiss();
-    return null;
+    return listingMiss(slug);
   }
 
   cacheTag(listingTag(source.id));
   cacheLife('max');
 
   return publicListingDTO(source);
+}
+
+/**
+ * El miss de la ficha: **el tag del catálogo y el perfil corto, en una sola llamada.**
+ *
+ * Están juntos porque son la misma decisión mirada de dos lados. Una entrada negativa necesita las
+ * dos cosas: expirar sola en minutos (contra el envenenamiento con slugs inventados, ADR-012) y
+ * quedar registrada bajo un tag que el panel emita cuando esa unidad se publique. `listing:{uuid}`
+ * no sirve para lo segundo —no hay UUID que registrar cuando no hay unidad visible—, así que el
+ * único que queda es `storefront:{slug}`, que es justo el que el camino positivo dejó de llevar.
+ *
+ * Es una función y no dos líneas repetidas para que una tercera rama negativa futura no pueda nacer
+ * con la mitad: el modo de falla de olvidarse el tag acá es una ficha que se queda mostrando "este
+ * equipo ya no está publicado" hasta 15 minutos después de publicarlo, sin error y sin log.
+ *
+ * Devuelve `null` (y no `void`) para que el call site sea `return listingMiss(slug)`: así el tipo de
+ * retorno de la función de arriba sigue siendo el que se lee, y no hay forma de llamar a esto y
+ * seguir de largo.
+ */
+function listingMiss(slug: string): null {
+  cacheTag(storefrontTag(slug));
+  cacheStorefrontMiss();
+  return null;
 }
