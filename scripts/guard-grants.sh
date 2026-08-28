@@ -27,11 +27,7 @@ cd "$(dirname "$0")/.."
 SCHEMA_DIR="packages/db/src/schema"
 MIG_DIR="packages/db/drizzle"
 
-fail=0
-ok()  { printf '  \033[32mPASS\033[0m  %s\n' "$1"; }
-no()  { printf '  \033[31mFAIL\033[0m  %s\n' "$1"; fail=1; }
-inf() { printf '  \033[36m····\033[0m  %s\n' "$1"; }
-sec() { printf '\n\033[1m── %s\033[0m\n' "$1"; }
+. scripts/_lib.sh   # sec/ok/no/inf/none/noneraw + el contador `fail`. Probado en scripts/_lib.test.sh
 
 printf '\n\033[1mguard-grants · CLAUDE.md §2 · GRANT explicito por tabla\033[0m\n'
 

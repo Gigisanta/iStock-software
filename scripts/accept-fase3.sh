@@ -6,32 +6,10 @@
 # K4 layout del panel mobile-first · K5 probe de upload a R2
 set -uo pipefail
 cd "$(dirname "$0")/.."
-fail=0
-sec()  { printf '\n\033[1m── %s\033[0m\n' "$1"; }
-ok()   { printf '  \033[32mPASS\033[0m  %s\n' "$1"; }
-no()   { printf '  \033[31mFAIL\033[0m  %s\n' "$1"; fail=1; }
+. scripts/_lib.sh   # sec/ok/no/inf/none/noneraw + el contador `fail`. Probado en scripts/_lib.test.sh
 chk()  { if eval "$2" >/dev/null 2>&1; then ok "$1"; else no "$1"; fi; }
 # nofile: el archivo tiene que existir Y no estar vacio (phantom-file guard de CLAUDE.md).
 have() { if [ -s "$1" ]; then ok "existe y no esta vacio: $1"; else no "falta o esta vacio: $1"; fi; }
-# grep que NO tiene que encontrar nada, ignorando comentarios.
-none() { local d="$1" re="$2"; shift 2
-  local o; o=$(grep -rnE --exclude-dir=.next --exclude-dir=node_modules --exclude-dir=dist \
-      --exclude-dir=.turbo --exclude="*.map" "$re" "$@" 2>/dev/null \
-      | grep -vE '^([^:]*:)?[0-9]+:[[:space:]]*(//|\*|/\*|#|--)' || true)
-  # `git check-ignore`: lo que git ignora es artefacto de build; lo que no, es codigo nuestro
-  # AUNQUE no este en el indice todavia (los archivos de una slice recien escrita estan sin
-  # `git add` y filtrar por "trackeado" los saltearia justo cuando hay que auditarlos).
-  # Motivo real: `apps/web/tsconfig.tsbuildinfo` lista cada archivo del repo y hacia MATCH con
-  # cualquier patron. 2026-08-27.
-  local kept="" line f
-  while IFS= read -r line; do
-    [ -z "$line" ] && continue
-    f="${line%%:*}"
-    git check-ignore -q "$f" 2>/dev/null && continue
-    kept="${kept}${line}"$'\n'
-  done <<< "$o"
-  if [ -z "${kept//[$'\n\t ']/}" ]; then ok "$d"
-  else no "$d"; echo "$kept" | sed 's/^/        /' | cut -c1-200 | head -6; fi; }
 
 sec "K3 · proxy de host (storefront-agent)"
 have apps/web/proxy.ts

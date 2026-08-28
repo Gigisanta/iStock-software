@@ -81,6 +81,12 @@ jobs:
       # Los cuatro corren SIEMPRE y por separado, no encadenados con `&&`: encadenarlos hace que
       # el primer rojo tape a los otros tres y que el reporte de CI diga una sola cosa cuando
       # pasaron cuatro. `if: always()` cuesta segundos y compra el diagnostico completo.
+      # Los helpers compartidos de los gates, en las dos polaridades. Es la contrapartida de haber
+      # centralizado en `scripts/_lib.sh` (T4): si un cambio aca rompiera `none()`/`noneraw()`, TODOS
+      # los gates se volverian vacuamente verdes a la vez, que es el unico riesgo real de compartir.
+      - name: polaridad de los helpers de los gates
+        run: ./scripts/_lib.test.sh
+
       - name: gate de datos sensibles
         run: ./scripts/guard-leaks.sh
 

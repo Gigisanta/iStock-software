@@ -26,47 +26,7 @@
 #
 set -uo pipefail
 cd "$(dirname "$0")/.."
-fail=0
-sec()  { printf '\n\033[1m── %s\033[0m\n' "$1"; }
-ok()   { printf '  \033[32mPASS\033[0m  %s\n' "$1"; }
-no()   { printf '  \033[31mFAIL\033[0m  %s\n' "$1"; fail=1; }
-inf()  { printf '  \033[36m····\033[0m  %s\n' "$1"; }
-# Mismo `none()` que accept-s2.sh (T4 del board lo va a extraer a scripts/_lib.sh; hasta entonces
-# se duplica a proposito y no se "simplifica": un gate que importa de otro gate se rompe de a dos).
-none() { local d="$1" re="$2"; shift 2
-  local o; o=$(grep -rnE --exclude-dir=.next --exclude-dir=node_modules --exclude-dir=dist \
-      --exclude-dir=.turbo --exclude="*.map" "$re" "$@" 2>/dev/null \
-      | grep -vE '^([^:]*:)?[0-9]+:[[:space:]]*(//|\*|/\*|#|--)' || true)
-  local kept="" line f
-  while IFS= read -r line; do
-    [ -z "$line" ] && continue
-    f="${line%%:*}"
-    git check-ignore -q "$f" 2>/dev/null && continue
-    kept="${kept}${line}"$'\n'
-  done <<< "$o"
-  if [ -z "${kept//[$'\n\t ']/}" ]; then ok "$d"
-  else no "$d"; echo "$kept" | sed 's/^/        /' | cut -c1-200 | head -6; fi; }
-
-# `none()` descarta las lineas que ARRANCAN con marcador de comentario, para que una regla como
-# "cero imei" no grite contra un comentario que explica por que no hay imei. Correcto para todas las
-# reglas menos una: **un `TODO: despues el RLS` vive SIEMPRE dentro de un comentario**, asi que esa
-# regla quedaba filtrada por el propio helper y no podia fallar nunca. Descubierto el 2026-08-28
-# corriendo la polaridad negativa de este gate contra un fixture: el archivo tenia el TODO textual y
-# la regla dio PASS. Estaba igual de muerta en accept-s1.sh y accept-s2.sh desde S1, o sea que
-# llevaba dos slices en verde sin poder distinguir un arbol limpio de uno sucio.
-# `noneraw()` es el mismo grep SIN el filtro de comentarios. Es para reglas cuyo hallazgo ES un comentario.
-noneraw() { local d="$1" re="$2"; shift 2
-  local o; o=$(grep -rnE --exclude-dir=.next --exclude-dir=node_modules --exclude-dir=dist \
-      --exclude-dir=.turbo --exclude="*.map" "$re" "$@" 2>/dev/null || true)
-  local kept="" line f
-  while IFS= read -r line; do
-    [ -z "$line" ] && continue
-    f="${line%%:*}"
-    git check-ignore -q "$f" 2>/dev/null && continue
-    kept="${kept}${line}"$'\n'
-  done <<< "$o"
-  if [ -z "${kept//[$'\n\t ']/}" ]; then ok "$d"
-  else no "$d"; echo "$kept" | sed 's/^/        /' | cut -c1-200 | head -6; fi; }
+. scripts/_lib.sh   # sec/ok/no/inf/none/noneraw + el contador `fail`. Probado en scripts/_lib.test.sh
 
 DBURL="${DATABASE_URL:-postgresql://localhost:5432/istock_dev}"
 PORT="${E2E_PORT:-3100}"

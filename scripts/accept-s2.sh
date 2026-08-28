@@ -16,51 +16,7 @@
 # existe este archivo. Sin server, M3 y M4 FALLAN.
 set -uo pipefail
 cd "$(dirname "$0")/.."
-fail=0
-sec()  { printf '\n\033[1m── %s\033[0m\n' "$1"; }
-ok()   { printf '  \033[32mPASS\033[0m  %s\n' "$1"; }
-no()   { printf '  \033[31mFAIL\033[0m  %s\n' "$1"; fail=1; }
-inf()  { printf '  \033[36m····\033[0m  %s\n' "$1"; }
-# --exclude-dir NO es cosmetico: `grep -r apps/web` entra a `.next/` y a `node_modules/`, y ahi un
-# sourcemap de 4MB matchea cualquier cosa. La primera corrida de este gate (2026-08-27) dio un
-# falso positivo de "URL de R2 armada a mano" apuntando a un `.js.map` de drizzle. Un gate que
-# grita por artefactos de build se apaga solo: la proxima persona lo ignora.
-# `git check-ignore` y no una lista de extensiones: lo que git ignora es artefacto de build, y lo
-# que no, es codigo nuestro AUNQUE todavia no este en el indice. Esa segunda mitad importa: los
-# archivos de una slice recien escrita estan sin `git add`, y filtrar por "trackeado" los saltearia
-# justo cuando hay que auditarlos. Motivo real: `apps/web/tsconfig.tsbuildinfo` lista cada archivo
-# del repo, asi que hacia MATCH con cualquier patron y M5 daba FAIL contra un artefacto (2026-08-27).
-none() { local d="$1" re="$2"; shift 2
-  local o; o=$(grep -rnE --exclude-dir=.next --exclude-dir=node_modules --exclude-dir=dist \
-      --exclude-dir=.turbo --exclude="*.map" "$re" "$@" 2>/dev/null \
-      | grep -vE '^([^:]*:)?[0-9]+:[[:space:]]*(//|\*|/\*|#|--)' || true)
-  local kept="" line f
-  while IFS= read -r line; do
-    [ -z "$line" ] && continue
-    f="${line%%:*}"
-    git check-ignore -q "$f" 2>/dev/null && continue
-    kept="${kept}${line}"$'\n'
-  done <<< "$o"
-  if [ -z "${kept//[$'\n\t ']/}" ]; then ok "$d"
-  else no "$d"; echo "$kept" | sed 's/^/        /' | cut -c1-200 | head -6; fi; }
-
-# `none()` filtra las lineas que ARRANCAN con marcador de comentario, y eso deja MUERTA a la unica
-# regla cuyo hallazgo ES un comentario: un `TODO: despues el RLS` siempre esta comentado, asi que
-# nunca podia fallar. Estuvo vacuamente en verde desde S1; lo encontro el LEAD el 2026-08-28
-# corriendo la polaridad negativa del gate de S3 contra un fixture con el TODO textual adentro.
-# `noneraw()` es el mismo grep sin ese filtro. Polaridad probada en los dos sentidos ese mismo dia.
-noneraw() { local d="$1" re="$2"; shift 2
-  local o; o=$(grep -rnE --exclude-dir=.next --exclude-dir=node_modules --exclude-dir=dist \
-      --exclude-dir=.turbo --exclude="*.map" "$re" "$@" 2>/dev/null || true)
-  local kept="" line f
-  while IFS= read -r line; do
-    [ -z "$line" ] && continue
-    f="${line%%:*}"
-    git check-ignore -q "$f" 2>/dev/null && continue
-    kept="${kept}${line}"$'\n'
-  done <<< "$o"
-  if [ -z "${kept//[$'\n\t ']/}" ]; then ok "$d"
-  else no "$d"; echo "$kept" | sed 's/^/        /' | cut -c1-200 | head -6; fi; }
+. scripts/_lib.sh   # sec/ok/no/inf/none/noneraw + el contador `fail`. Probado en scripts/_lib.test.sh
 
 DBURL="${DATABASE_URL:-postgresql://localhost:5432/istock_dev}"
 PORT="${E2E_PORT:-3100}"
