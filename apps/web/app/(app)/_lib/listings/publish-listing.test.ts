@@ -8,8 +8,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * 1. Que la decisión la tome `@istock/domain` (no una tabla de aristas reescrita acá) **con el
  *    contexto real**, no con uno inventado. Ver el bloque de abajo: es el bug que S6 metió.
  * 2. Que la invalidación lleve el id de la unidad (S3.2).
- * 3. Que el efecto declarado por el dominio (`closesReservation`) se **ejecute**, en la misma
- *    transacción y después de haber movido el listing (orden de locks, D1).
+ * 3. Que el efecto declarado por el dominio (`closesReservationAs`) se **ejecute con el estado
+ *    que el dominio dice**, en la misma transacción y después de haber movido el listing (orden de
+ *    locks, D1).
  *
  * Qué aristas son legales y qué efectos tiene cada una ya tiene test en `packages/domain`;
  * repetirlo acá sería tener dos máquinas de estados otra vez.
@@ -300,7 +301,7 @@ describe('transitionUnit · una unidad RESERVADA (el bug de S6)', () => {
 
   /**
    * El otro lado del mismo invariante: cuando la transición **sí** procede, el efecto obligatorio
-   * que declara el dominio (`transitionEffects().closesReservation`) se ejecuta. Salir de `reserved`
+   * que declara el dominio (`transitionEffects().closesReservationAs`) se ejecuta. Salir de `reserved`
    * dejando la reserva `active` deja la unidad irreservable con el badge diciendo "En vidriera".
    */
   it('con la reserva vencida se libera Y se cierra la reserva, en la misma transacción', async () => {
@@ -332,8 +333,9 @@ describe('transitionUnit · una unidad RESERVADA (el bug de S6)', () => {
   });
 
   /**
-   * `reserved → sold`: la reserva no se cancela, se **convierte**. El dominio dice que hay que
-   * cerrarla y no en qué estado; el mapeo vive en `closingStatusFor()` y esto es lo que lo fija.
+   * `reserved → sold`: la reserva no se cancela, se **convierte**. El estado de cierre lo trae el
+   * mismo efecto (`closesReservationAs`), no un mapeo local: esto fija que lo que llega a la fila
+   * es el valor del dominio y no un `'cancelled'` por descarte.
    */
   it('vender una unidad reservada cierra la reserva como confirmed', async () => {
     givenUnit('reserved');

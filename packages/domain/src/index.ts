@@ -69,9 +69,11 @@ export {
 } from './listing-status';
 
 export {
+  RESERVATION_CLOSING_STATUSES,
   RESERVATION_DEFAULT_MINUTES,
   RESERVATION_MAX_MINUTES,
   RESERVATION_MIN_MINUTES,
+  RESERVATION_STATUSES,
   createReservation,
   expireReservation,
   isReservationExpired,
@@ -79,6 +81,7 @@ export {
   type CreateReservationInput,
   type ExpireReservationResult,
   type Reservation,
+  type ReservationClosingStatus,
   type ReservationStatus,
 } from './reservation';
 

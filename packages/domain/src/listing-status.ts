@@ -15,6 +15,7 @@
  * transición que no está listada devuelve `false`. No hay default permisivo.
  */
 
+import type { ReservationClosingStatus } from './reservation';
 import {
   SIDE_STATUSES,
   type Condition,
@@ -82,7 +83,8 @@ const EDGES: Readonly<Record<ListingStatus, readonly ListingStatus[]>> = {
   draft: ['available', ...SIDE_STATUSES],
   available: ['draft', 'reserved', 'sold', ...SIDE_STATUSES],
   // Desde `reserved` se puede ir a un lateral (el equipo se fue a service / se cayó la venta).
-  // Efecto obligatorio: cierra la reserva activa. Ver `transitionEffects`.
+  // Efecto obligatorio: cierra la reserva activa, y con QUÉ estado la cierra también lo dice el
+  // dominio. Ver `transitionEffects`.
   reserved: ['available', 'sold', ...SIDE_STATUSES],
   // `sold` es TERMINAL. Revertir es un evento de corrección auditado, no una transición.
   sold: [],
@@ -154,27 +156,94 @@ export function canTransition(from: ListingStatus, to: ListingStatus, ctx: Trans
   return checkTransition(from, to, ctx).ok;
 }
 
+/**
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *  Por qué acá no hay un `closesReservation: boolean`
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * Lo hubo, y produjo exactamente el defecto que este campo viene a cerrar. El booleano decía
+ * *que* había que cerrar la reserva y callaba *cómo*, así que el único consumidor que apareció
+ * (`apps/web/.../publish-listing.ts`) tuvo que inventarse un `closingStatusFor(to)` local. Eso es
+ * una regla de la máquina de estados viviendo en la capa de aplicación: el segundo call site que
+ * cierre una reserva —la venta manual, un canje— la va a re-derivar a mano, y la segunda
+ * derivación siempre es la que se olvida de un caso.
+ *
+ * El reemplazo no es cosmético: **es imposible consumir el efecto sin recibir el estado de
+ * cierre**, porque son el mismo valor. No hay forma de leer "cierra" y elegir el estado por fuera.
+ * Un `boolean` + un `ReservationClosingStatus` al lado habría dejado esa puerta abierta, además
+ * de un estado ilegal representable (`true` con estado `null`); por eso es reemplazo y no agregado.
+ */
 export interface TransitionEffects {
   /** `revalidateTag('storefront:{slug}')`: entra o sale de la vidriera. */
   readonly revalidateStorefront: boolean;
   readonly createsReservation: boolean;
-  readonly closesReservation: boolean;
+  /**
+   * En qué estado queda la reserva activa que esta transición cierra.
+   * `null` = esta transición **no cierra ninguna reserva** y no hay que tocar la tabla.
+   *
+   * No es `null` exactamente cuando `from === 'reserved'`: salir de `reserved` sin cerrar la
+   * reserva deja viva una fila que el índice único parcial sigue contando, y la unidad queda
+   * irreservable con el badge diciendo "En vidriera".
+   */
+  readonly closesReservationAs: ReservationClosingStatus | null;
   readonly createsSale: boolean;
   /** Toda transición escribe en `listing_events`. Siempre `true`, explícito a propósito. */
   readonly writesListingEvent: boolean;
 }
 
 /**
+ * En qué queda la reserva que esta transición cierra. Privada a propósito: la única puerta es
+ * `transitionEffects`, para que nadie pueda pedir el estado de cierre sin pedir también el resto
+ * de los efectos, ni al revés.
+ *
+ * - `reserved → sold`: la reserva se **convirtió** en venta. `'confirmed'`, sin importar el
+ *   `intent`: no existe una venta que "venció".
+ * - `reserved → available` con `intent: 'expire'`: se le acabó el reloj y lo registra el cron.
+ *   `'expired'`. Es el mismo valor que ya devuelve `expireReservation()` para la misma reserva
+ *   —y `reserved → available` es la única transición que esa función produce—; si esta tabla
+ *   dijera `'cancelled'` ahí, el barrido y el dominio contarían dos historias del mismo hecho.
+ * - cualquier otro destino desde `reserved` (`available` a mano, `in_service`, canje):
+ *   la soltó una persona. `'cancelled'`, **incluso si la reserva ya estaba vencida** — `'expired'`
+ *   significa "se venció sola", y quien tiene la definición de vencida es `expireReservation()`.
+ *   Dos definiciones de "vencida" es cómo se pierde el borde cerrado.
+ *
+ * `intent: 'expire'` sólo pesa sobre `to === 'available'` porque ése es su alcance declarado
+ * (`TransitionIntent`: *"Motivo humano de `reserved → available`"*, y el mismo alcance que le da
+ * `checkTransition`). Un `reserved → in_service` no lo hace un reloj, lo hace alguien que agarró
+ * el equipo y lo mandó a service: ahí `'expire'` no significa nada y no se lo deja teñir el
+ * registro.
+ */
+function closingStatusFor(
+  from: ListingStatus,
+  to: ListingStatus,
+  intent: TransitionIntent | null,
+): ReservationClosingStatus | null {
+  if (from !== 'reserved') return null;
+  if (to === 'sold') return 'confirmed';
+  return to === 'available' && intent === 'expire' ? 'expired' : 'cancelled';
+}
+
+/**
  * Efectos declarados de una transición. El dominio los describe; `apps/web` los ejecuta.
  * Acá no hay I/O: es una tabla, no un side effect.
+ *
+ * `intent` es **obligatorio** y admite `null` en vez de ser opcional. Un parámetro opcional cuyo
+ * default es un valor válido no distingue "no me lo pasaron" de "me pasaron que no hay intención",
+ * y esa distinción es justo la que el compilador tiene que sostener: sin él, el cron llamando a
+ * esta tabla se llevaría `'cancelled'` en silencio donde corresponde `'expired'`. `null` = "no hay
+ * una intención humana declarada", que es lo que dice el panel cuando publica un borrador.
  */
-export function transitionEffects(from: ListingStatus, to: ListingStatus): TransitionEffects {
+export function transitionEffects(
+  from: ListingStatus,
+  to: ListingStatus,
+  intent: TransitionIntent | null,
+): TransitionEffects {
   const wasPublic = from === 'available' || from === 'reserved';
   const isPublic = to === 'available' || to === 'reserved' || to === 'sold';
   return {
     revalidateStorefront: wasPublic || isPublic,
     createsReservation: from === 'available' && to === 'reserved',
-    closesReservation: from === 'reserved',
+    closesReservationAs: closingStatusFor(from, to, intent),
     createsSale: to === 'sold',
     writesListingEvent: true,
   };

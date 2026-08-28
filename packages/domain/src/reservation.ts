@@ -16,7 +16,32 @@ export const RESERVATION_DEFAULT_MINUTES = 60;
 
 const MS_PER_MINUTE = 60_000;
 
-export type ReservationStatus = 'active' | 'expired' | 'cancelled' | 'confirmed';
+/**
+ * Estados de una reserva. **El dominio es la fuente; `packages/db` lo espeja.**
+ *
+ * Alineado con el `pgEnum('reservation_status', ...)` de `packages/db/src/schema/enums.ts`
+ * (`reservationStatusEnum`). Ese archivo importa `CONDITIONS`, `LISTING_KINDS` y
+ * `LISTING_STATUSES` de acá, pero **los cuatro literales de la reserva los repite a mano**: la
+ * alineación no la sostiene el compilador todavía, la sostiene esta constante siendo la
+ * referencia escrita contra la que se compara. Se exporta como `const` justamente para que `db`
+ * pueda dejar de repetirla; mientras la repita, una divergencia se ve mirando estos dos archivos
+ * y no hay un tercer lugar donde buscar.
+ */
+export const RESERVATION_STATUSES = ['active', 'expired', 'cancelled', 'confirmed'] as const;
+export type ReservationStatus = (typeof RESERVATION_STATUSES)[number];
+
+/**
+ * En qué puede **quedar** una reserva cuando se cierra: todo lo que no es `'active'`.
+ *
+ * Se define por exclusión y no repitiendo los tres literales, para que agregar un estado nuevo a
+ * `RESERVATION_STATUSES` obligue a decidir si es un cierre —y rompa la compilación de las tablas
+ * exhaustivas que lo consumen— en vez de quedar afuera en silencio.
+ */
+export type ReservationClosingStatus = Exclude<ReservationStatus, 'active'>;
+
+/** La misma exclusión en runtime, derivada de la lista de arriba. Nunca escrita dos veces. */
+export const RESERVATION_CLOSING_STATUSES: readonly ReservationClosingStatus[] =
+  RESERVATION_STATUSES.filter((status): status is ReservationClosingStatus => status !== 'active');
 
 export interface Reservation {
   readonly id: string;

@@ -8,6 +8,7 @@ import {
   transitionEffects,
   type TransitionContext,
 } from './listing-status';
+import { RESERVATION_CLOSING_STATUSES, createReservation, expireReservation } from './reservation';
 import { LISTING_STATUSES, SIDE_STATUSES, type ListingStatus } from './types';
 
 const NOW = new Date('2026-08-27T18:00:00.000Z');
@@ -171,17 +172,116 @@ describe('canTransition — máquina de estados del listing', () => {
   });
 
   it('cada transición declara sus efectos: revalidar, reserva, venta y evento', () => {
-    expect(transitionEffects('draft', 'available')).toEqual({
+    expect(transitionEffects('draft', 'available', null)).toEqual({
       revalidateStorefront: true,
       createsReservation: false,
-      closesReservation: false,
+      closesReservationAs: null,
       createsSale: false,
       writesListingEvent: true,
     });
-    expect(transitionEffects('available', 'reserved').createsReservation).toBe(true);
-    expect(transitionEffects('reserved', 'in_service').closesReservation).toBe(true);
-    expect(transitionEffects('available', 'sold').createsSale).toBe(true);
-    expect(transitionEffects('in_transit', 'in_service').revalidateStorefront).toBe(false);
-    expect(transitionEffects('reserved', 'available').revalidateStorefront).toBe(true);
+    expect(transitionEffects('available', 'reserved', null).createsReservation).toBe(true);
+    expect(transitionEffects('available', 'sold', null).createsSale).toBe(true);
+    expect(transitionEffects('in_transit', 'in_service', null).revalidateStorefront).toBe(false);
+    expect(transitionEffects('reserved', 'available', 'cancel').revalidateStorefront).toBe(true);
+  });
+});
+
+/**
+ * `closesReservationAs` reemplazó al booleano `closesReservation`. La afirmación que sostienen
+ * estos tests no es "el valor es el correcto" sino algo más fuerte: **no existe forma de saber que
+ * una transición cierra la reserva sin recibir en el mismo valor con qué estado la cierra.**
+ */
+describe('transitionEffects — el efecto trae el estado de cierre, no un booleano', () => {
+  const INTENTS = [null, 'cancel', 'expire'] as const;
+
+  it('E1 — reserved → sold cierra como `confirmed`: la reserva se convirtió en venta', () => {
+    for (const intent of INTENTS) {
+      expect(transitionEffects('reserved', 'sold', intent).closesReservationAs).toBe('confirmed');
+    }
+  });
+
+  it('E2 — reserved → available a mano cierra como `cancelled`', () => {
+    expect(transitionEffects('reserved', 'available', null).closesReservationAs).toBe('cancelled');
+    expect(transitionEffects('reserved', 'available', 'cancel').closesReservationAs).toBe('cancelled');
+  });
+
+  it('E3 — reserved → available por vencimiento cierra como `expired` (es la arista del cron)', () => {
+    expect(transitionEffects('reserved', 'available', 'expire').closesReservationAs).toBe('expired');
+  });
+
+  it('E3b — el estado que dice la tabla para el cron es el MISMO que devuelve expireReservation', () => {
+    const reservation = createReservation(
+      { id: 'r-1', tenantId: TENANT, listingId: 'l-1', minutes: 30 },
+      new Date('2026-08-27T16:00:00.000Z'),
+    );
+    const decision = expireReservation(reservation, NOW);
+    expect(decision.changed).toBe(true);
+    expect(decision.listingTransition).toEqual({ from: 'reserved', to: 'available' });
+    const { from, to } = decision.listingTransition ?? { from: 'reserved', to: 'available' };
+    // Dos caminos del dominio describiendo el mismo hecho. Si divergen, el cron y el panel
+    // escriben historias distintas de la misma reserva.
+    expect(transitionEffects(from, to, 'expire').closesReservationAs).toBe(decision.reservation.status);
+  });
+
+  it('E4 — reserved → cualquier lateral cierra como `cancelled`, incluso con intent `expire`', () => {
+    for (const side of SIDE_STATUSES) {
+      for (const intent of INTENTS) {
+        expect(transitionEffects('reserved', side, intent).closesReservationAs).toBe('cancelled');
+      }
+    }
+  });
+
+  it('E5 — toda transición que NO sale de `reserved` cierra `null`', () => {
+    // Recorrido derivado de la máquina de estados, no una lista escrita a mano: una arista nueva
+    // entra sola a este test.
+    for (const from of LISTING_STATUSES) {
+      for (const to of allowedTargets(from)) {
+        for (const intent of INTENTS) {
+          const { closesReservationAs } = transitionEffects(from, to, intent);
+          if (from === 'reserved') {
+            expect(closesReservationAs).not.toBeNull();
+          } else {
+            expect(closesReservationAs).toBeNull();
+          }
+        }
+      }
+    }
+  });
+
+  it('E5b — el campo es no-null EXACTAMENTE cuando from === reserved, sobre TODOS los pares', () => {
+    // Incluye pares que no son aristas válidas: la tabla de efectos es total y no puede mentir
+    // sobre un par que un caller le pase por error.
+    for (const from of LISTING_STATUSES) {
+      for (const to of LISTING_STATUSES) {
+        for (const intent of INTENTS) {
+          const cierra = transitionEffects(from, to, intent).closesReservationAs !== null;
+          expect(cierra).toBe(from === 'reserved');
+        }
+      }
+    }
+  });
+
+  it('E6 — el estado de cierre nunca es `active`: cerrar es salir de activa', () => {
+    for (const from of LISTING_STATUSES) {
+      for (const to of allowedTargets(from)) {
+        for (const intent of INTENTS) {
+          const status = transitionEffects(from, to, intent).closesReservationAs;
+          if (status === null) continue;
+          expect(RESERVATION_CLOSING_STATUSES).toContain(status);
+          expect(status).not.toBe('active');
+        }
+      }
+    }
+  });
+
+  it('E7 — el resto de los efectos no cambió al reemplazar el booleano', () => {
+    for (const from of LISTING_STATUSES) {
+      for (const to of allowedTargets(from)) {
+        const effects = transitionEffects(from, to, null);
+        expect(effects.writesListingEvent).toBe(true);
+        expect(effects.createsSale).toBe(to === 'sold');
+        expect(effects.createsReservation).toBe(from === 'available' && to === 'reserved');
+      }
+    }
   });
 });

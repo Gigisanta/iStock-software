@@ -1,6 +1,6 @@
 import 'server-only';
 import { and, asc, eq, lte, sql } from 'drizzle-orm';
-import { expireReservation } from '@istock/domain';
+import { expireReservation, transitionEffects } from '@istock/domain';
 import { listingEvents, listings, reservations, tenants } from '@istock/db';
 import { pgErrorCode } from '../db/pg-error';
 import { withServiceDb } from '../db/session';
@@ -172,7 +172,28 @@ export async function expireDueReservations(now: Date = new Date()): Promise<Exp
       now,
     );
 
-    if (!decision.changed) {
+    /**
+     * **El `'expired'` que estaba escrito acá era la misma regla derivada dos veces.** El dominio
+     * ya dice las dos mitades: `expireReservation()` qué arista del listing produce esta reserva, y
+     * `transitionEffects(..., 'expire')` con qué estado queda cerrada. Una constante suelta en el
+     * cron es el mecanismo exacto del fallo de S6 — el panel cierra la misma arista como
+     * `'cancelled'`, y con el mapeo escrito en cada call site nada obliga a que sigan de acuerdo.
+     *
+     * El `intent` es obligatorio y acá es `'expire'` porque **se venció sola**: nadie apretó nada.
+     * Pasar `null` desde este archivo escribiría `'cancelled'` en silencio y `reservations`
+     * contaría dos historias del mismo hecho.
+     *
+     * Los dos `null` son la misma frase —"el dominio dice que no hay nada que hacer"— y por eso
+     * cuentan igual: uno es la reserva que no venció, el otro es una arista que no cierra ninguna
+     * reserva. Ninguno escribe.
+     */
+    const transition = decision.changed ? decision.listingTransition : null;
+    const closesAs =
+      transition === null
+        ? null
+        : transitionEffects(transition.from, transition.to, 'expire').closesReservationAs;
+
+    if (transition === null || closesAs === null) {
       skipped += 1;
       continue;
     }
@@ -198,7 +219,7 @@ export async function expireDueReservations(now: Date = new Date()): Promise<Exp
 
         const closed = await tx
           .update(reservations)
-          .set({ status: 'expired', closedAt: sql`now()`, updatedAt: sql`now()` })
+          .set({ status: closesAs, closedAt: sql`now()`, updatedAt: sql`now()` })
           .where(
             and(
               eq(reservations.tenantId, row.tenantId),

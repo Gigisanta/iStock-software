@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest';
 
 import { DomainError } from './errors';
 import {
+  RESERVATION_CLOSING_STATUSES,
   RESERVATION_DEFAULT_MINUTES,
   RESERVATION_MAX_MINUTES,
   RESERVATION_MIN_MINUTES,
+  RESERVATION_STATUSES,
   createReservation,
   expireReservation,
   isReservationExpired,
@@ -118,5 +120,36 @@ describe('helpers de vigencia', () => {
   it('reservationMsRemaining nunca es negativo', () => {
     expect(reservationMsRemaining(reservation(), NOW)).toBe(3_600_000);
     expect(reservationMsRemaining(reservation(), new Date('2026-08-28T00:00:00.000Z'))).toBe(0);
+  });
+});
+
+/**
+ * El vocabulario de la reserva. `packages/db` lo espeja a mano en el `pgEnum`
+ * `reservation_status` (`src/schema/enums.ts`): estos tests son el lado del dominio de esa
+ * alineación, y lo que se afirma es la forma, no el reflejo — el dominio no importa `db`.
+ */
+describe('vocabulario de estados de la reserva', () => {
+  it('RESERVATION_STATUSES son los cuatro del enum `reservation_status`, en ese orden', () => {
+    expect(RESERVATION_STATUSES).toEqual(['active', 'expired', 'cancelled', 'confirmed']);
+  });
+
+  it('RESERVATION_CLOSING_STATUSES se DERIVA de la lista: es todo menos `active`', () => {
+    expect(RESERVATION_CLOSING_STATUSES).toEqual(['expired', 'cancelled', 'confirmed']);
+    expect(RESERVATION_CLOSING_STATUSES).not.toContain('active');
+    // Derivada, no copiada: si alguien agrega un estado arriba, aparece acá solo.
+    expect(RESERVATION_CLOSING_STATUSES).toHaveLength(RESERVATION_STATUSES.length - 1);
+    for (const status of RESERVATION_CLOSING_STATUSES) {
+      expect(RESERVATION_STATUSES).toContain(status);
+    }
+  });
+
+  it('una reserva nace `active` y el único cierre que escribe este módulo es `expired`', () => {
+    const nueva = createReservation({ id: 'r', tenantId: 't', listingId: 'l' }, NOW);
+    expect(nueva.status).toBe('active');
+    expect(RESERVATION_CLOSING_STATUSES).not.toContain(nueva.status);
+
+    const vencida = expireReservation(nueva, new Date('2026-08-27T23:00:00.000Z'));
+    expect(vencida.reservation.status).toBe('expired');
+    expect(RESERVATION_CLOSING_STATUSES).toContain(vencida.reservation.status);
   });
 });

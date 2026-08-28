@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { transitionEffects } from '@istock/domain';
 
 /**
  * El barrido del cron, con Postgres de mentira.
@@ -280,5 +281,42 @@ describe('expireDueReservations · sin nada que hacer', () => {
     expect(db.writes).toHaveLength(0);
     expect(invalidateStorefrontUnit).not.toHaveBeenCalled();
     expect(logEvent).not.toHaveBeenCalled();
+  });
+});
+
+describe('expireDueReservations · el estado de cierre lo dice el dominio, no una constante de acá', () => {
+  /**
+   * Hasta esta slice el cron escribía `status: 'expired'` literal. No estaba mal el valor: estaba
+   * mal el **lugar**. La misma arista (`reserved → available`) la cierra también el panel, y ahí el
+   * estado es `'cancelled'`; con el mapeo escrito en cada call site nada obliga a que los dos sigan
+   * de acuerdo, que es exactamente la forma del fallo de S6.
+   *
+   * Estos tests no fijan el string: fijan que lo que llega a la fila **es lo que devuelve la tabla
+   * del dominio para la arista del cron**. Si el dominio cambia el mapeo, cambian juntos.
+   */
+  it('cierra con el `closesReservationAs` de la arista del cron', async () => {
+    db.due = [due()];
+
+    await expireDueReservations(NOW);
+
+    const esperado = transitionEffects('reserved', 'available', 'expire').closesReservationAs;
+    expect(esperado).not.toBeNull();
+    expect(rowsOf(reservations)[0]?.row['status']).toBe(esperado);
+  });
+
+  /**
+   * La mitad que un booleano no podía sostener: el `intent` **importa**. La misma arista sin
+   * `'expire'` cierra `'cancelled'`, y ése es el valor que el cron escribiría en silencio si algún
+   * día alguien le pasara `null` a la tabla. Si este test se pone en verde por los dos lados, el
+   * cron dejó de distinguir "se venció sola" de "la soltó una persona".
+   */
+  it('NO escribe el estado de la misma arista sin intent: `expire` y `cancel` no son lo mismo', async () => {
+    db.due = [due()];
+
+    await expireDueReservations(NOW);
+
+    const aMano = transitionEffects('reserved', 'available', null).closesReservationAs;
+    expect(aMano).toBe('cancelled');
+    expect(rowsOf(reservations)[0]?.row['status']).not.toBe(aMano);
   });
 });

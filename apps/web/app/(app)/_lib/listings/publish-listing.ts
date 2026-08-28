@@ -6,7 +6,6 @@ import {
   transitionEffects,
   type ActiveReservation,
   type ListingStatus,
-  type ReservationStatus,
   type TransitionContext,
   type TransitionDenyReason,
   type TransitionIntent,
@@ -38,10 +37,10 @@ import { loadUnitForTransition, type UnitForTransition } from './queries';
  * Reimplementar el criterio acá sería tener dos máquinas de estados, y la segunda siempre es la
  * que se olvida de que `sold` es terminal.
  *
- * Y los **efectos** tampoco se deciden a ojo: `transitionEffects(from, to)` dice si la vidriera
- * cambió. `CLAUDE.md` §0.7 — *"Mutación que cambia stock visible → siempre
- * `revalidateTag('storefront:' + slug)`"*. Acá eso se cumple porque la tabla del dominio lo dice,
- * no porque quien escribió esta función se acordó.
+ * Y los **efectos** tampoco se deciden a ojo: `transitionEffects(from, to, intent)` dice si la
+ * vidriera cambió y en qué estado queda la reserva que la transición cierra. `CLAUDE.md` §0.7 —
+ * *"Mutación que cambia stock visible → siempre `revalidateTag('storefront:' + slug)`"*. Acá eso
+ * se cumple porque la tabla del dominio lo dice, no porque quien escribió esta función se acordó.
  *
  * ── Por qué el alta NO llama a esto ──────────────────────────────────────────────────────────
  * Una unidad nace en `draft`. La policy de `anon` sobre `listings` exige
@@ -216,23 +215,6 @@ export function transitionContextFor(
 }
 
 /**
- * En qué queda la reserva que esta transición cierra.
- *
- * El dominio declara **que** hay que cerrarla (`transitionEffects().closesReservation`) y no en qué
- * estado: `reservation_status` es un enum de `packages/db`, no un concepto de la máquina de
- * estados del listing. Dos casos y nada más:
- *
- * - `reserved → sold`: la reserva se **convirtió** en venta. `confirmed`.
- * - `reserved → cualquier otra cosa` (available, service, canje): la soltó una persona desde el
- *   panel. `cancelled`, igual que `cancelReservation()`, incluso si ya estaba vencida — el que
- *   escribe `expired` es el cron, que es quien tiene la definición de "venció" (`expireReservation()`
- *   del dominio). Dos definiciones de vencida es cómo se pierde el borde cerrado.
- */
-function closingStatusFor(to: ListingStatus): ReservationStatus {
-  return to === 'sold' ? 'confirmed' : 'cancelled';
-}
-
-/**
  * Cambia el estado de una unidad. El actor sale de la sesión, no del request: su `slug` es el que
  * se usa para invalidar el cache y uno de otro tenant purgaría la vidriera ajena.
  *
@@ -250,12 +232,18 @@ function closingStatusFor(to: ListingStatus): ReservationStatus {
  *  El efecto declarado se EJECUTA, en la misma transacción
  * ══════════════════════════════════════════════════════════════════════════════════════════════
  *
- * `transitionEffects(from, to).closesReservation` es `from === 'reserved'`, y el dominio lo comenta
- * como *"Efecto obligatorio"*. Salir de `reserved` dejando la reserva `active` es el mismo bug con
- * otro disfraz: el índice único `reservations_one_active_per_listing` la sigue contando, así que la
- * unidad queda irreservable —"Ya tiene una reserva activa" sobre una fila cuyo badge dice "En
- * vidriera"— hasta que el cron la venza. Va adentro de la transacción que mueve el listing: si el
- * `update` de la reserva falla, la unidad no se movió.
+ * `transitionEffects(from, to, intent).closesReservationAs` es no-`null` exactamente cuando
+ * `from === 'reserved'`, y **trae el estado con el que la reserva queda cerrada**. No hay forma de
+ * enterarse de que hay que cerrarla sin recibir en el mismo valor con qué estado: el
+ * `closingStatusFor(to)` que vivía acá era esa regla derivada por segunda vez en la capa de
+ * aplicación, y una segunda derivación es siempre la que se olvida de un caso — el cron cierra la
+ * misma arista como `expired` y este mapeo local no tenía cómo saberlo.
+ *
+ * Salir de `reserved` dejando la reserva `active` es el mismo bug con otro disfraz: el índice único
+ * `reservations_one_active_per_listing` la sigue contando, así que la unidad queda irreservable
+ * —"Ya tiene una reserva activa" sobre una fila cuyo badge dice "En vidriera"— hasta que el cron la
+ * venza. Va adentro de la transacción que mueve el listing: si el `update` de la reserva falla, la
+ * unidad no se movió.
  *
  * ══════════════════════════════════════════════════════════════════════════════════════════════
  *  Orden de locks: `listings` → `reservations` (D1 del LEAD)
@@ -288,14 +276,22 @@ export async function transitionUnit(
   ]);
 
   const from = unit.status;
-  const check = checkTransition(
-    from,
-    to,
-    transitionContextFor(ctx, unit, now, { reservationsEnabled: access.ok, activeReservation }),
-  );
+  /**
+   * Un solo objeto para las dos preguntas. El dominio decide **si se puede** y **qué hay que
+   * hacer** con el mismo contexto: si el `check` y los `effects` se armaran por separado, el día
+   * que aparezca un call site con `intent` uno de los dos se quedaría viejo.
+   */
+  const extras: TransitionExtras = { reservationsEnabled: access.ok, activeReservation };
+
+  const check = checkTransition(from, to, transitionContextFor(ctx, unit, now, extras));
   if (!check.ok) return { ok: false, message: denyReasonText(check.reason, access) };
 
-  const effects = transitionEffects(from, to);
+  /**
+   * `null` = **no hay intención humana declarada**, que es lo que dice este camino: publicar,
+   * despublicar o mandar a un lateral. El `'cancel'` del botón de soltar entra por
+   * `cancelReservation()` y el `'expire'` es del cron; ninguno de los dos pasa por acá.
+   */
+  const effects = transitionEffects(from, to, extras.intent ?? null);
 
   let updated: boolean;
   try {
@@ -322,10 +318,14 @@ export async function transitionUnit(
        * transacción. El guard `status = 'active'` la hace idempotente contra el cron corriendo al
        * mismo tiempo.
        */
-      if (effects.closesReservation) {
+      if (effects.closesReservationAs !== null) {
         await tx
           .update(reservations)
-          .set({ status: closingStatusFor(to), closedAt: sql`now()`, updatedAt: sql`now()` })
+          .set({
+            status: effects.closesReservationAs,
+            closedAt: sql`now()`,
+            updatedAt: sql`now()`,
+          })
           .where(
             and(
               eq(reservations.tenantId, ctx.tenantId),
