@@ -154,8 +154,32 @@ export async function isSlugTaken(slug: string): Promise<boolean> {
   return rows.length > 0;
 }
 
-/** ¿Este usuario ya tiene negocio? En Capa 1 es uno solo por persona. */
-export async function hasMembership(userId: string): Promise<boolean> {
+/**
+ * ¿Este usuario ya tiene negocio? En Capa 1 es uno solo por persona.
+ *
+ * **Module-private a propósito**: su único llamador es `createTenant()`, ocho líneas más abajo.
+ * Exportarla ofrecería una lectura privilegiada cross-tenant a cualquier módulo del panel, y
+ * cada consumidor nuevo sería una copia de la justificación de abajo que nadie vuelve a leer.
+ *
+ * No lleva filtro de tenant porque no hay tenant contra el cual filtrar. `createTenant()` la
+ * llama en su primera línea, cuando la persona todavía no es miembro de ningún negocio; acotarla
+ * a un `tenantId` la convertiría en "¿es miembro de ESTE negocio?", que durante el alta responde
+ * "no" siempre. El "un negocio por persona" de Capa 1 dejaría de existir sin que falle nada.
+ *
+ * Que eso no sea un agujero es la otra mitad, y hay que mostrarla: lo único que se proyecta es un
+ * `id` que no sale de esta función —el retorno es un `boolean`—, el `user_id` viene de
+ * `requireUser()`, o sea de la sesión y jamás del `FormData`, y no hay forma de preguntar por la
+ * membresía de otra persona. No cruza el borde ningún dato de ningún tenant.
+ *
+ * El privilegio tampoco sobra. Las policies de `memberships` se evalúan contra
+ * `app_metadata.tenant_id`, que es exactamente el claim que todavía no existe: bajo
+ * `withTenantDb` esto no fallaría con un error, devolvería 0 filas y contestaría "no tiene
+ * negocio" siempre. Acá menos permiso no da menos datos, da la respuesta equivocada — y la
+ * equivocada habilita una escritura. Es el uso 2 de `withServiceDb` (`_lib/db/session.ts`).
+ *
+ * web-lint:sin-tenant pregunta existencial sobre todos los tenants, hecha antes de que exista el primero
+ */
+async function hasMembership(userId: string): Promise<boolean> {
   const rows = await withServiceDb(async (tx) =>
     tx.select({ id: memberships.id }).from(memberships).where(eq(memberships.userId, userId)).limit(1),
   );

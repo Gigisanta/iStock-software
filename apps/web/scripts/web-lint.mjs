@@ -195,6 +195,173 @@ must('W011', 'sin console.log de un listing/unit/row entero (CLAUDE.md §2)', sr
   }
 }
 
+
+// ── W015 · filtro de tenant EN LA QUERY, ademas de RLS ────────────────────────────────────────
+// `CLAUDE.md` §2: "Query sin filtro de tenant *ademas* de RLS → rechazo (defensa en profundidad)".
+// Lo levanto `qa-agent` el 2026-08-28 auditando cobertura: era una de las prohibiciones que la
+// constitucion declara y que NINGUN test ni lint sostenia. Una prohibicion sin gate es una opinion.
+//
+// Por que importa teniendo RLS: la RLS depende del claim de la sesion. Una query que corre con
+// `service_role` (los jobs, el signup, cualquier `withServiceDb`) NO tiene RLS encima — ahi el
+// filtro explicito es la unica defensa que queda, y es justo donde se escribe menos porque "total,
+// hay RLS". Las dos capas se caen en momentos distintos: por eso van las dos.
+//
+// La lista de tablas se DERIVA del schema real (las que tienen `tenantId`), no se escribe aca. Una
+// tabla de negocio nueva queda cubierta el dia que nace y no el dia que alguien se acuerda de esta
+// lista. Si el schema no se puede leer, la regla FALLA: ausencia de medicion es FAIL, nunca PASS —
+// una lista vacia haria que todas las queries pasen y el lint diria PASS con 0 tablas miradas.
+{
+  const SCHEMA = join(ROOT, '..', '..', 'packages', 'db', 'src', 'schema');
+  const negocio = new Set();
+  const negocioSql = new Set();
+  let leible = true;
+  try {
+    for (const f of readdirSync(SCHEMA)) {
+      if (!f.endsWith('.ts') || f.includes('.test.')) continue;
+      const s = readFileSync(join(SCHEMA, f), 'utf8');
+      const re = /export\s+const\s+(\w+)\s*=\s*pgTable\(\s*['"](\w+)['"]/g;
+      let m;
+      while ((m = re.exec(s))) {
+        const sig = s.indexOf('\nexport const', m.index + 1);
+        if (!/tenantId\s*:/.test(s.slice(m.index, sig === -1 ? s.length : sig))) continue;
+        negocio.add(m[1]);      // `waClickEvents`, como se escribe en el builder de Drizzle
+        negocioSql.add(m[2]);   // `wa_click_events`, como se escribe en un sql`` crudo
+      }
+    }
+  } catch { leible = false; }
+
+  if (!leible || negocio.size === 0) {
+    bad('W015', 'no pude leer las tablas de negocio de packages/db/src/schema: la regla no midio nada', []);
+  } else {
+    // Ventana de la sentencia: hacia atras hasta el `;` `{` o `}` mas cercano, hacia adelante hasta
+    // el proximo `;`. Angosta a proposito. Una ventana ancha produce FALSOS NEGATIVOS — un
+    // `tenantId` que aparece diez lineas mas arriba, en otra query, dejaria pasar a esta.
+    // ## Presencia NO es filtro (2026-08-28, encontrado midiendo la propia regla)
+    // La primera version de W015 preguntaba si `tenantId` APARECIA en la sentencia. `session.ts:71`
+    // la pasaba en verde: nombra `m.tenant_id` en el SELECT y en el `join ... on t.id = m.tenant_id`,
+    // y no filtra por tenant en ningun lado. Es el MISMO defecto que M3b (afirmar substrings en vez
+    // del invariante) que este repo commiteo como bug esta misma manana. Un `select` que PROYECTA
+    // tenant_id es justamente el que hay que mirar, no el que hay que eximir.
+    // Ahora se exige que aparezca en posicion de FILTRO: dentro de `.where(...)` en el builder, y
+    // despues del `where` en el SQL crudo. Un `join ... on` no cuenta: acota la fila que se une, no
+    // el tenant que se lee.
+    const filtra = (frag) => /tenantId|tenant_id/.test(frag);
+    const MARCA = 'web-lint:sin-tenant';
+    // Escape con MOTIVO ESCRITO, como el censo de rutas de guard-firewall. La ventana hacia atras
+    // es acotada: una marca perdida al principio de un docblock largo NO exime. Falla cerrado
+    // (rojo, no verde), asi que el modo de fallo es pedir un motivo de mas, nunca dejar pasar uno
+    // de menos. Lo reporto `app-agent` al declarar la primera excepcion.
+    // La ventana de la excepcion es la FUNCION QUE CONTIENE la query, mas su docblock pegado
+    // arriba. Antes eran "los 400 caracteres anteriores", que es proximidad y no alcance: una
+    // marca legitima excusaba a cualquier query vecina que cayera en el radio, aunque fuera de
+    // otra funcion y nunca se hubiera declarado. Ese es el falso PASS que importa — la regla
+    // existe para separar declarado de invisible, y una excepcion heredada por cercania es
+    // invisible con suerte. El docblock cuenta porque asi se usa la unica marca real del repo:
+    // `hasMembership` la declara en su docblock, con la firma de la funcion en el medio.
+    // Ancla en COLUMNA 0 a proposito. La version anterior permitia sangria y matcheaba lineas
+    // INTERNAS: `const rows = (await withServiceDb(async (tx) =>` entraba por la alternativa de
+    // arrow porque `[^)\n]*` no excluye `(`, se comia `await withServiceDb(async (tx` y cerraba
+    // con el `)` del `tx`. La ventana anclaba adentro de la funcion y dejaba el docblock afuera,
+    // o sea que la marca puesta donde la documentacion dice que va NO eximia. Lo midio `app-agent`.
+    // Tampoco se pide una forma de RHS: `const x = cache(async (...) => {}` es una declaracion como
+    // cualquier otra, y exigir `=>` o `function` la volvia invisible. Una declaracion de modulo es
+    // "empieza en la columna 0", y eso es todo lo que hace falta saber.
+    const FNDECL = /^(?:export\s+)?(?:default\s+)?(?:async\s+)?function\s+\w+|^(?:export\s+)?(?:const|let|var)\s+\w+\s*(?::[^=\n]*)?=/;
+    const COMENT = /^\s*(\/\/|\/\*|\*|$)/;
+    const exento = (texto, hasta) => {
+      const lineas = texto.slice(0, hasta).split('\n');
+      let i = lineas.length - 1;
+      while (i >= 0 && !FNDECL.test(lineas[i])) i--;
+      let j = i - 1;
+      while (j >= 0 && COMENT.test(lineas[j])) j--;
+      // SIN ANCLA NO HAY EXENCION. Esto decia `i < 0 ? 0`, o sea que cuando no encontraba la
+      // declaracion contenedora abria la ventana al ARCHIVO ENTERO desde la linea 1 — el agujero
+      // que esta regla existe para cerrar, en su version mas ancha, y metido justo por la linea
+      // del caso de borde. Un default que falla ABIERTO en un gate no es un default, es la regla
+      // real el dia que algo no matchea. Mismo criterio que `no pude leer el schema -> FAIL`.
+      if (i < 0) return { marcada: false, vale: false };
+      const contexto = lineas.slice(j + 1).join('\n');
+      const k = contexto.lastIndexOf(MARCA);
+      if (k === -1) return { marcada: false, vale: false };
+      const motivo = contexto.slice(k + MARCA.length).split('\n')[0].trim();
+      return { marcada: true, vale: motivo.length >= 30 };
+    };
+    const hits = [];
+    // El campo se renombra a `texto`: `for (const { src } of src)` es un TDZ — el iterable se evalua
+    // en el scope que ya declara la variable del loop, y tira "Cannot access 'src' before init".
+    for (const { rel, src: texto } of src) {
+      const re = /\.(from|update|delete|insert|into)\(\s*(\w+)/g;
+      let m;
+      while ((m = re.exec(texto))) {
+        if (!negocio.has(m[2])) continue;
+        const atras = Math.max(texto.lastIndexOf(';', m.index), texto.lastIndexOf('{', m.index), texto.lastIndexOf('}', m.index));
+        const ade = texto.indexOf(';', m.index);
+        const vent = texto.slice(atras + 1, ade === -1 ? texto.length : ade);
+        // La vara depende de la OPERACION. Un `insert` no tiene `.where()` por construccion: lo que
+        // lo ata al tenant es que la fila que escribe lleve `tenantId` en el `.values()`. Medir el
+        // insert con la vara del select daba 8 falsos positivos sobre inserts perfectamente atados
+        // (`tx.insert(listings).values({ tenantId: ctx.tenantId, ... })`), y una regla que grita
+        // sobre codigo correcto se termina apagando: es la forma mas comun de perder un gate.
+        const esInsert = m[1] === 'insert' || m[1] === 'into';
+        const rel0 = m.index - (atras + 1);
+        const ok_ = esInsert ? filtra(vent.slice(rel0)) : (() => {
+          const w = vent.indexOf('.where(', rel0);
+          return w !== -1 && filtra(vent.slice(w));
+        })();
+        if (ok_) continue;
+        // Hay preguntas legitimamente cross-tenant: `hasMembership(userId)` corre en el signup,
+        // ANTES de que exista un tenant, para el "un negocio por persona" de Capa 1. Filtrarla por
+        // tenant la volveria sin sentido. Pero la excepcion se DECLARA y se explica, no se asume.
+        const e = exento(texto, m.index);
+        if (e.vale) continue;
+        const ln = texto.slice(0, m.index).split('\n').length;
+        hits.push(`${rel}:${ln}: query sobre '${m[2]}' sin tenantId ${m[1] === 'insert' || m[1] === 'into' ? 'en el .values()' : 'en el .where()'}` + (e.marcada ? ' (la marca web-lint:sin-tenant no explica por que: se piden 30+ caracteres de motivo)' : ''));
+      }
+    }
+    // ## Segunda pasada: SQL crudo. Lo encontro `app-agent` declarando la primera excepcion.
+    // La pasada de arriba exige el builder de Drizzle (`.from(memberships)`) y por lo tanto NO ve
+    // `tx.execute(sql`... from public.memberships m join ...`)`. Habia una segunda lectura
+    // cross-tenant privilegiada sobre `memberships` que pasaba por INVISIBLE y no por declarada,
+    // que es exactamente la diferencia entre un gate y una casualidad. Y lo que hoy es un `select`
+    // invisible manana es un `insert` invisible.
+    //
+    // El SQL crudo nombra la tabla como la nombra Postgres (`wa_click_events`), no como la nombra
+    // el builder (`waClickEvents`): por eso se derivan los DOS nombres del mismo `pgTable(...)`.
+    for (const { rel, src: texto } of src) {
+      const tpl = /sql`([^`]*)`/g;
+      let t;
+      while ((t = tpl.exec(texto))) {
+        const cuerpo = t[1];
+        const tocadas = [...cuerpo.matchAll(/\b(?:from|join|into|update)\s+(?:public\.)?([a-z_][a-z0-9_]*)/gi)]
+          .map((x) => x[1].toLowerCase())
+          .filter((n) => negocioSql.has(n));
+        if (!tocadas.length) continue;
+        // Misma vara por operacion que arriba. El beacon de S4 es `insert into wa_click_events
+        // ("tenant_id", ...) select ... where claim.tid is not null`: esta atado al tenant por el
+        // claim y por la lista de columnas, y su `where` no nombra tenant_id ni tiene por que.
+        const bajo = cuerpo.toLowerCase();
+        const esIns = /insert\s+into/.test(bajo);
+        let pasa;
+        if (esIns) {
+          pasa = filtra(cuerpo);
+        } else {
+          const donde = bajo.lastIndexOf('where');
+          pasa = donde !== -1 && filtra(cuerpo.slice(donde).split(/order\s+by|group\s+by|limit/i)[0]);
+        }
+        if (pasa) continue;
+        const e = exento(texto, t.index);
+        if (e.vale) continue;
+        const ln = texto.slice(0, t.index).split('\n').length;
+        hits.push(`${rel}:${ln}: sql crudo (template) sobre '${[...new Set(tocadas)].join(', ')}' sin tenant_id en el where` + (e.marcada ? ' (la marca no explica por que: se piden 30+ caracteres de motivo)' : ''));
+      }
+    }
+
+    hits.length
+      ? bad('W015', `query sobre tabla de negocio sin filtro de tenant explicito (CLAUDE.md §2; ${negocio.size} tablas derivadas del schema)`, hits)
+      : ok(`W015 toda query sobre las ${negocio.size} tablas de negocio filtra por tenant ademas de RLS (builder y sql crudo)`);
+  }
+}
+
 console.log('');
 if (failed) { console.log(`WEB-LINT: FAIL (${failed} regla${failed > 1 ? 's' : ''})`); process.exit(1); }
-console.log('WEB-LINT: PASS (14 reglas)');
+console.log('WEB-LINT: PASS (15 reglas)');

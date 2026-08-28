@@ -67,6 +67,31 @@ type MembershipRow = {
  * Capa 1 = **un tenant por usuario**. El `order by` + `limit 1` es determinista a propósito: si
  * mañana hay multi-tenant, esto se convierte en un selector explícito, no en "el primero que
  * devuelva Postgres".
+ *
+ * ── Por qué esta query no filtra por tenant ──────────────────────────────────────────────────
+ * Porque no hay tenant contra el cual filtrar: **resolver a qué tenant pertenece una sesión es,
+ * por definición, anterior a tener uno**. Acotarla a un `tenantId` la convertiría en "¿es miembro
+ * de ESTE negocio?", que es justamente la pregunta que esta función existe para responder: quien
+ * la hiciera ya tendría la respuesta. El único predicado posible es el que está: `m.user_id`.
+ *
+ * Que eso no sea un agujero es la otra mitad, y hay que mostrarla. El `userId` sale de
+ * `authDriver().currentIdentity()` — de la sesión, jamás del request, del `FormData` ni de un
+ * `searchParam` —, y es el único parámetro: **no hay forma de pedir la membresía de otra
+ * persona**, ni siquiera conociendo su `user_id`, porque nadie de afuera elige el argumento. Lo
+ * que se proyecta es la propia membresía del usuario más los datos del tenant que ese usuario ya
+ * administra, todos públicos en su vidriera (`slug`, `name`) o suyos (`plan`, `status`,
+ * `trial_ends_at`). No cruza el borde ningún dato de ningún otro tenant, y `cost_usd`, `margin`
+ * e `imei` no están ni en el `select`.
+ *
+ * El privilegio tampoco sobra, que es el otro modo de que una excepción sea pereza. Las policies
+ * de `memberships` se evalúan contra `app_metadata.tenant_id`, o sea contra el claim que esta
+ * misma función existe para bootstrapear: bajo `withTenantDb` esto no fallaría con un error,
+ * devolvería **0 filas** y contestaría "no tiene negocio" siempre. Menos permiso acá no da menos
+ * datos, da la respuesta equivocada — y la equivocada manda a `/app/crear-negocio` a un dueño que
+ * ya tiene negocio, con el slug quemado esperándolo del otro lado. Es el uso 1 de `withServiceDb`
+ * (`_lib/db/session.ts`), hermano del uso 2 (`hasMembership`, `_lib/tenants/create-tenant.ts`).
+ *
+ * web-lint:sin-tenant resolver a qué tenant pertenece una sesión es anterior a que exista el tenant
  */
 const resolveMembership = cache(async (userId: string): Promise<{ tenant: TenantSummary; role: MembershipRole } | null> => {
   const rows = (await withServiceDb(async (tx) =>

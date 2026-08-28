@@ -104,6 +104,18 @@ IMEI + origen + resultado de consulta ENACOM (link + enum) **en el panel**.
 - IMEI, `cost_usd`, `margin`, `internal_notes` cruzando a un DTO público → rechazo.
 - `TODO: después el RLS` / `TODO: después R2` → rechazo.
 - Query sin filtro de tenant *además* de RLS → rechazo (defensa en profundidad).
+  Lo sostiene `W015` de `apps/web/scripts/web-lint.mjs`, que deriva las tablas de negocio del
+  schema (las que tienen `tenantId`) y mira builder de Drizzle **y** `sql` crudo. **La vara depende
+  de la operación:** un `select`/`update`/`delete` se ata por `tenant_id` en el `where`; un `insert` no
+  tiene `where` por construcción y se ata por `tenantId` en el `values()` o en la lista de columnas.
+  Y **presencia no es filtro**: proyectar `m.tenant_id` o nombrarlo en un `join ... on` no filtra nada.
+  Hay preguntas legítimamente cross-tenant —resolver a qué tenant pertenece una sesión es anterior a
+  tener tenant—, y para eso está la marca `web-lint:sin-tenant <motivo>`: motivo de 30+ caracteres,
+  en una sola línea, **dentro de la declaración de nivel de módulo que contiene la query, o en su
+  docblock pegado arriba** (el docblock del módulo no cuenta: los `import` lo separan). El alcance es
+  esa declaración, no la cercanía: una marca no excusa a la query de al lado, y **si no se encuentra
+  declaración contenedora no hay exención** — sin ancla, FAIL. Una excepción se declara y se explica;
+  la alternativa no es "sin excepción", es la excepción invisible, que es lo que la regla vino a matar.
 - Secret en el bundle del browser → rechazo.
 - `tenant_id` en `user_metadata` de Supabase → rechazo. Va en `app_metadata` (el usuario puede
   escribir `user_metadata`; es escalación de tenant, lint `0015`, severidad ERROR).
