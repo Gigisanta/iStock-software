@@ -167,6 +167,23 @@ jobs:
         if: always()
         run: ./scripts/ai-lint.test.sh
 
+      # El board es el estado de la verdad de este repo —quien es dueno de que, que slice esta
+      # abierta, que gate corrio— y se corrompe de UNA forma repetida: un `|` sin escapar adentro
+      # de codigo inline. Markdown parte la fila por el pipe antes de mirar los backticks, asi que
+      # la fila gana una columna y las celdas de la derecha se corren un lugar. El texto sigue
+      # estando; lo que cambia es a que columna pertenece, y una fila de ownership con el dueno
+      # corrido un casillero dice que el dueno es otro. Paso cuatro veces, las tres primeras las
+      # encontro un humano mirando y la cuarta la encontro este gate en su primera corrida — y en
+      # la direccion opuesta (una columna de MENOS), que es la que nadie ve leyendo.
+      # `guard-artifacts.sh` no lo tapa y no es su trabajo: un board corrupto tiene bytes de sobra.
+      - name: gate de tablas de docs (una fila corrida de columna cambia quien es dueno)
+        if: always()
+        run: ./scripts/guard-doc-tables.sh
+
+      - name: polaridad del gate de tablas (se tiene que ver encender y se tiene que ver callar)
+        if: always()
+        run: ./scripts/guard-doc-tables.test.sh
+
       - name: polaridad del gate de WAF (cada regla se tiene que ver romper)
         if: always()
         run: ./scripts/guard-firewall.test.sh
