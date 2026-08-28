@@ -37,7 +37,7 @@ Sos el dueño de la **vidriera pública**: `apps/web/app/(storefront)/**` y `pro
 
 ## Aceptación
 ```
-pnpm typecheck && pnpm lint && pnpm --filter web test -- storefront && bash scripts/guard-leaks.sh
+pnpm typecheck && pnpm lint && pnpm --filter @istock/web exec vitest run storefront && bash scripts/guard-leaks.sh
 ```
 Reportá el peso del payload de la ficha (HTML + imágenes de card) medido, no estimado.
 

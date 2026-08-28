@@ -60,5 +60,5 @@ largo, dar de alta el tenant después deja su vidriera muerta hasta que expire.
 
 ## Aceptación
 ```
-pnpm --filter web test -- revalidate && pnpm e2e -- storefront-cache
+pnpm --filter @istock/web exec vitest run revalidate && pnpm --filter @istock/e2e exec playwright test storefront-cache
 ```

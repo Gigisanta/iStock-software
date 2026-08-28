@@ -51,7 +51,7 @@ Se lee **con una mano, parado en la calle, con 4G malo**. Tocá los tamaños de 
 
 ## Aceptación
 ```
-pnpm --filter web test -- storefront-ficha
+pnpm --filter @istock/web exec vitest run storefront-ficha
 ```
 El test verifica los 15 campos presentes, cero campos prohibidos en el HTML renderizado
 (incluido `__NEXT_DATA__`), y el peso de la imagen `card`.

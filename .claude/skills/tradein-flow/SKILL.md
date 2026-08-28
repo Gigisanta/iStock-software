@@ -48,7 +48,7 @@ antes de publicar. Publicar solo lo decide una persona.
 
 ## Aceptación
 ```
-pnpm --filter web test -- tradein && pnpm e2e -- tradein
+pnpm --filter @istock/web exec vitest run tradein && pnpm --filter @istock/e2e exec playwright test tradein
 ```
 e2e: form público → aparece en inbox → checklist → aceptar → existe unidad en `draft` con el costo
 cargado, **invisible para el rol seller**.

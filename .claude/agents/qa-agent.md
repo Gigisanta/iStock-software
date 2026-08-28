@@ -30,7 +30,7 @@ un test tuyo se pone rojo, el defecto es del código hasta que se demuestre lo c
 ## Aceptación
 ```
 pnpm typecheck && pnpm lint && pnpm test
-pnpm e2e -- --reporter=line   # line, NO el default: emite una linea por test
+pnpm --filter @istock/e2e exec playwright test --reporter=line   # line, NO el default: emite una linea por test
 ```
 Reportá números: tests corridos, fallando, y **cuáles reglas de CLAUDE.md quedaron sin cobertura**.
 

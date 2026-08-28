@@ -149,11 +149,32 @@ chk "hay driver local para trabajar sin las credenciales B1" "ls packages/media/
 sec "Global · el arbol compila, pasa y no filtra"
 if pnpm -s typecheck >/tmp/f3-tc.log 2>&1; then ok "pnpm typecheck"; else no "pnpm typecheck"; tail -25 /tmp/f3-tc.log | sed 's/^/        /'; fi
 if pnpm -s lint      >/tmp/f3-lint.log 2>&1; then ok "pnpm lint"; else no "pnpm lint"; tail -25 /tmp/f3-lint.log | sed 's/^/        /'; fi
-if pnpm -s test      >/tmp/f3-test.log 2>&1; then ok "pnpm test"; else no "pnpm test"; tail -30 /tmp/f3-test.log | sed 's/^/        /'; fi
-SKIP=$(grep -coiE '↓|skipped' /tmp/f3-test.log 2>/dev/null || echo 0)
-grep -qiE '[1-9][0-9]* skipped' /tmp/f3-test.log 2>/dev/null \
-  && { no "hay tests skipeados: los drivers mock existen, no hay excusa"; grep -iE 'skipped' /tmp/f3-test.log | sed 's/^/        /' | head -3; } \
-  || ok "cero tests skipeados"
+# OJO: aca NO va `pnpm -s test`. Con `-s` pnpm silencia la salida de los paquetes hijos y el log
+# queda en CERO bytes; el exit code sigue siendo bueno, asi que `ok "pnpm test"` es correcto, pero
+# las dos reglas que leen el log dejan de leer nada. La de abajo grepeaba "skipped" en un archivo
+# vacio y por lo tanto decia "cero tests skipeados" SIEMPRE — incluso con la suite entera skipeada.
+# Encontrado por el LEAD el 2026-08-28, despues de reportar el mismo verde vacio en su propia
+# verificacion. Sin `-s` el log trae los resumenes de vitest de los 5 paquetes.
+if pnpm test >/tmp/f3-test.log 2>&1; then ok "pnpm test"; else no "pnpm test"; tail -30 /tmp/f3-test.log | sed 's/^/        /'; fi
+
+# Ausencia de medicion = FAIL, nunca PASS: si el log no trae ni un resumen de vitest, las dos
+# reglas de abajo no midieron nada y no pueden dar verde.
+PAQ_CON_TEST=5   # domain, media, db, tests, apps/web. Si cambia, se cambia ACA y en el mismo commit.
+RESUM=$(grep -cE 'Tests +[0-9]+ passed' /tmp/f3-test.log 2>/dev/null || echo 0)
+if [ "$RESUM" -lt "$PAQ_CON_TEST" ]; then
+  no "solo $RESUM de $PAQ_CON_TEST paquetes reportaron un resumen de vitest: alguno no midio nada"
+  grep -E 'test\$|Scope:' /tmp/f3-test.log | sed 's/^/        /' | head -8
+else
+  ok "los $PAQ_CON_TEST paquetes con tests reportaron resumen"
+  TOT=$(grep -oE 'Tests +[0-9]+ passed' /tmp/f3-test.log | grep -oE '[0-9]+' | paste -sd+ - | bc)
+  ok "tests corridos en total: ${TOT:-0}"
+  if grep -qiE '[1-9][0-9]* skipped' /tmp/f3-test.log 2>/dev/null; then
+    no "hay tests skipeados: los drivers mock existen, no hay excusa"
+    grep -iE 'skipped' /tmp/f3-test.log | sed 's/^/        /' | head -3
+  else
+    ok "cero tests skipeados"
+  fi
+fi
 if ./scripts/guard-leaks.sh >/tmp/f3-guard.log 2>&1; then ok "guard-leaks"; else no "guard-leaks"; grep -A3 LEAK /tmp/f3-guard.log | sed 's/^/        /' | head -20; fi
 for g in guard-grants guard-r2 guard-artifacts; do
   EXTRA=""; [ "$g" = guard-artifacts ] && EXTRA="--harness"

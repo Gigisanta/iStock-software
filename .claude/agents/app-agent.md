@@ -21,7 +21,7 @@ que no existe, la pedís en tu reporte; no la escribís vos.
 
 ## Aceptación
 ```
-pnpm typecheck && pnpm lint && pnpm --filter web test
+pnpm typecheck && pnpm lint && pnpm --filter @istock/web test
 ```
 
 ## Comandos que bloquean  ·  regla del harness, no de estilo

@@ -45,6 +45,6 @@ consultado a MP **por request** (vive en `subscriptions`, se actualiza por webho
 
 ## Aceptación
 ```
-pnpm --filter web test -- billing
+pnpm --filter @istock/web exec vitest run billing
 ```
 Test obligatorio: **el mismo webhook enviado dos veces produce un solo efecto.**

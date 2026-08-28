@@ -23,7 +23,7 @@ Sos el dueño de billing: `apps/web/app/(billing)/**` y las rutas de webhook de 
 
 ## Aceptación
 ```
-pnpm --filter web test -- billing
+pnpm --filter @istock/web exec vitest run billing
 ```
 Incluí un test que manda **el mismo webhook dos veces** y prueba que el efecto ocurre una sola vez.
 
