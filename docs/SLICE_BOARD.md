@@ -54,7 +54,7 @@ ADRs cerradas: **005** (RLS por claim) · **006** (fotos, 2 buckets) · **007** 
 |---|---|---|---|---|---|
 | D1 | `packages/domain` puro + tests | **done** | `domain-agent` | los 5 exports del gate (`applyFx`, `buildWaMessage`, `canTransition`, `expireReservation`, `publicListingDTO`) tienen **archivo de test propio**, no un test compartido | `packages/domain/src/` |
 | D2 | schema Drizzle + RLS + migraciones | **done** | `db-agent` | ver **"Gate de D2"** abajo — el texto viejo era inalcanzable por diseño | `packages/db/src/schema/`, `packages/db/drizzle/` |
-| D3 | test RLS cruzado (A no lee B) | **done** | `qa-agent` (ver **T3**) | Postgres real, dos claims, dos conexiones físicas, sin un solo mock de la policy | `packages/db/src/rls-cross-tenant.test.ts` |
+| D3 | test RLS cruzado (A no lee B) | **done** | `qa-agent` | Postgres real, dos claims, dos conexiones físicas, sin un solo mock de la policy | `tests/rls-cross-tenant.test.ts` (mudado desde `packages/db/src/` en **T3**, `d686923`) |
 | D4 | seed demo | **done** | `db-agent` | 8 iPhones + 2 accesorios + 1 `reserved`, **asertado en test**, no descrito en prosa | `packages/db/src/seed-data.ts` |
 
 ### Evidencia de la re-ejecución (2026-08-27)
@@ -63,7 +63,7 @@ ADRs cerradas: **005** (RLS por claim) · **006** (fotos, 2 buckets) · **007** 
 |---|---|---|
 | D1 | `pnpm --filter @istock/domain test` | **144 passed, 11 archivos.** Los 5 exports mapean 1:1: `applyFx`→`fx.test.ts` · `buildWaMessage`→`wa.test.ts` · `canTransition`→`listing-status.test.ts` · `expireReservation`→`reservation.test.ts` · `publicListingDTO`→`dto.test.ts` |
 | D2 | `pnpm --filter @istock/db test` | **19 tablas, 17 con RLS**; las 2 sin RLS son exactamente `catalog_faqs` y `catalog_models` |
-| D3 | `pnpm --filter @istock/db test` | **59 `it()` contra Postgres real** en `rls-cross-tenant.test.ts`, dentro de los 302 del paquete |
+| D3 | `pnpm --filter @istock/db test` | **59 `it()` contra Postgres real** en `rls-cross-tenant.test.ts`, dentro de los 302 del paquete. **Los dos números quedaron viejos con T3** (`d686923`): el archivo ya no vive en `packages/db` y son **69** casos, no 59 — el 59 contaba `it()` literales y se comía el `it.each` sobre 10 columnas sensibles. Corrida vigente: la del LEAD desde `tests/`, `69 tests` verdes |
 | D4 | `pnpm --filter @istock/db test` | `seed-data.test.ts:188` asserta `8 unit + 2 lot`; `:196` asserta exactamente uno en `reserved` |
 
 ### Gate de D2 — reescrito el 2026-08-27, porque el anterior no se podía cumplir
@@ -85,7 +85,8 @@ dos son malos — falla para siempre, o alguien lo afloja a mano y desde ese dí
    (`EXPECTED_TABLES - EXPECTED_RLS_TABLES === GLOBAL_TABLES.length`).
 3. **La excepción es de lectura y está asertada.** `rls.test.ts` y `rls-cross-tenant.test.ts` exigen
    que `authenticated` pueda leer el catálogo y reciba **`42501`** en `insert` / `update` / `delete`
-   (`rls-cross-tenant.test.ts:236-237`). Global no quiere decir escribible: la siembra es de
+   (`tests/rls-cross-tenant.test.ts:809-811`; el `:236-237` que decía esta línea ya estaba corrido
+   antes de la mudanza de T3). Global no quiere decir escribible: la siembra es de
    `service_role`.
 
 **Por qué esta redacción sirve de gate.** Agregar una tabla de negocio sin RLS rompe las tres cosas a
@@ -134,7 +135,7 @@ cuyo gate no pudo correr: las cinco quedan `todo` hasta que el gate corra **ente
 | S1 | host → hello storefront | **done** | `storefront-agent` | `{slug}.local` resuelve al tenant; slug inexistente → página legible con `noindex` (**ADR-011**, el gate viejo "404 real en la primera request" era inalcanzable); se verifica con `bash scripts/accept-s1.sh`. **Re-ejecutado por el LEAD el 2026-08-28: EXIT=0 · 26 PASS · 0 FAIL · `S1: ACEPTADA`** |
 | S2 | listing unit + fotos R2 con variantes | **done** | `media-agent` → `app-agent` | 3 variantes generadas; `card` ≤150KB **medido sobre bytes** (`card=50692B`, techo `153600B`). **Re-ejecutado por el LEAD el 2026-08-28: EXIT=0 · 21 PASS · 0 FAIL · `S2: ACEPTADA`** |
 | S3 | grilla + ficha mínima | **done** | `storefront-agent` | `bash scripts/accept-s3.sh`: los **15 campos** de `CLAUDE.md` §1 —los 15 de verdad recién desde **M3b** (`0edb661`), que agregó el botón `wa.me`—; cero campos prohibidos en el HTML; el byte medido es el que **pide el browser** (P3). **Re-ejecutado entero por el LEAD el 2026-08-28: 58 PASS · 0 FAIL · `S3: ACEPTADA`** (la corrida que la aceptó dio 50; M3b sumó 8 aserciones) |
-| S4 | botón `wa.me` + tracking de eventos | todo | `domain-agent` → `storefront-agent` | texto exacto byte a byte; evento registrado sin PII |
+| S4 | botón `wa.me` + tracking de eventos | todo — **la mitad del `wa.me` ya está entregada y medida** | `domain-agent` → `storefront-agent` | texto exacto byte a byte; evento registrado sin PII. **Lo entregado (M3b de `accept-s3.sh`, `0edb661`, re-corrido en 58 PASS):** sobre la **ficha servida** se decodifica el `href`, y se afirma UN solo anchor `wa.me`, el teléfono del tenant, el precio en USD, el dominio de la vidriera, la intención de compra (`y lo quiero.`) y **el par de registros de condición** (que diga `usado A` **y que no diga** `usado excelente`). El *byte a byte* del string completo lo fija `packages/domain/src/wa.test.ts` U14 (`toBe(CANONICAL_TEXT)`), fuera de la página: **son dos aserciones distintas y hacen falta las dos** — la de dominio prueba el string, M3b prueba que la página servida lo lleva. **Lo que queda abierto de S4 es el tracking**, y su rate limit ya está declarado (`storefront-track-rl`, `lands_with: S4b`, ver §T1) |
 | S5 | FX → precio en ARS | todo | `domain-agent` → `app-agent` | TC del dueño; redondeo testeado; ARS visible en ficha |
 | S6 | reserva + cron de expiración | todo | `app-agent` | reserva 30–120min; cron libera; vidriera revalida |
 | S7 | venta manual | todo | `app-agent` | `→ sold`; sale de la grilla; URL directa no rompe |
@@ -183,9 +184,9 @@ cuyo gate no pudo correr: las cinco quedan `todo` hasta que el gate corra **ente
 > Dónde vuelve a morder está fechado: en **FASE 8** la observabilidad no puede depender del status,
 > el mismo corolario que dejó la corrección medida de ADR-014 para el panel.
 >
-> **Aceptar la slice no cierra sus deudas.** Siguen abiertas, con dueño y sin tocar: **T1** (rate
-> limiting: no hay implementación), **T2** (guard de query sin filtro de tenant), **S2.1**
-> (`blocked` por **B1**), **S2.2**, **S2.3** y **S2.4**.
+> **Aceptar la slice no cierra sus deudas.** Siguen abiertas, con dueño y sin tocar: **T2** (guard de
+> query sin filtro de tenant), **S2.1** (`blocked` por **B1**), **S2.2**, **S2.3** y **S2.4**.
+> **T1** cerró su **nivel 1** el 2026-08-28 (`4fce968`) — declarada y validada, **no aplicada**.
 >
 > **El aviso de drift de FASE 2 se cerró.** D1–D4 pasaron a `done` con la re-ejecución registrada
 > arriba, en "Evidencia de la re-ejecución".
@@ -258,19 +259,22 @@ cuyo gate no pudo correr: las cinco quedan `todo` hasta que el gate corra **ente
 > silencio, una medición que no se puede tomar, y prohibiciones que no chequea nadie.
 > **Cerradas al 2026-08-28:** **P1**, **P2** y **P3** (las tres condiciones previas a S3), **T9**,
 > **T11**, **T4** (`scripts/_lib.sh` + su test de polaridad) y **T10** (los 8 comandos de aceptación
-> que no filtraban); y con la corrida de `accept-s3.sh` del LEAD, **S3.1**, **S3.2** y **T8**.
-> **Abiertas el 2026-08-28 cerrando S3: S3.3** —el tenant-miss de la ficha— y **T15**, que salió de
-> medir el mensaje de WhatsApp. **T1**, **T2**, **S2.1**, **S2.2**, **S2.3** y **S2.4** siguen
-> abiertas después de aceptar S1 y S2: **aceptar la slice no cierra sus deudas.**
+> que no filtraban); con la corrida de `accept-s3.sh` del LEAD, **S3.1**, **S3.2**, **T8** y
+> **S3.3**; **T3** (el test de RLS cruzado ya vive en `tests/`, 69 casos verdes desde la ubicación
+> nueva); y **T1 en su nivel 1** —las reglas del WAF existen, están versionadas y tienen censo de
+> rutas, pero **no están aplicadas**: leer la fila entera, no el `done`.
+> **Sigue abierta T15**, que salió de medir el mensaje de WhatsApp. **T2**, **S2.1**, **S2.2**,
+> **S2.3** y **S2.4** siguen abiertas después de aceptar S1, S2 y S3: **aceptar la slice no cierra
+> sus deudas.**
 
 | id | título | estado | owner | bloqueo | gate de aceptación | artefacto |
 |---|---|---|---|---|---|---|
 | S2.1 | upload directo a R2 por URL prefirmada | blocked | `media-agent` → `app-agent` | **B1** + pregunta abierta de abajo | 8 fotos sin round-trip por foto; el original **nunca** es alcanzable; `card` sigue ≤150KB | `packages/media/src/*`, `apps/web/app/api/**` |
 | P1 | `robots.txt` / `sitemap.xml` por tenant — **decisión de diseño** | **done** | `storefront-agent` + `qa-agent` | — | decisión escrita **antes** de arrancar S3 → **ADR-015**, verificada por el LEAD (30 URLs contra el `path-to-regexp` compilado) | `docs/DECISIONS.md` ADR-015 · `apps/web/proxy.ts` (`117c4f0`) |
 | P2 | metadata file conventions bajo host de tenant — **decisión de diseño** | **done** | `storefront-agent` + `qa-agent` | — | ídem P1: misma causa raíz, misma ADR, mismo commit | ADR-015 · `apps/web/proxy.ts` · `tests/proxy-matcher-no-deja-la-vidriera-sin-vigilar.test.ts` |
-| T1 | rate limiting en el edge: las 2 reglas de Vercel Firewall | todo | **LEAD** (`vercel.json`, §4) | — | 2 reglas activas + prueba de que disparan; **cero** contador en Postgres sobre la vidriera | falta definir (no hay `vercel.json` hoy) |
+| T1 | rate limiting en el edge: las 2 reglas de Vercel Firewall | **done** — nivel 1 | **LEAD** (`config/**` + `scripts/**`, §4) | — | **el gate original decía "2 reglas activas + prueba de que disparan" y eso NO se cumple entero**: las 2 reglas están declaradas y validadas, y **no están aplicadas** (no hay proyecto Vercel — **B2**/**B5** —, y aplicar es un paso operativo aparte que `vercel deploy` **no** hace). Cerrado el **nivel 1**: el archivo existe, pasa las restricciones reales de Pro, y **el censo de route handlers no deja entrar una ruta sin decidir**. `bash scripts/guard-firewall.sh` → `GUARD-FIREWALL: PASS`. **Cero** contador en Postgres sobre la vidriera. Ver §T1 abajo | `config/firewall-rules.json` + `scripts/guard-firewall.sh` (`4fce968`) |
 | T2 | guard estático de "query sin filtro de tenant" | todo | **LEAD** (`scripts/**`, §4) | — | el guard falla sobre una query sin `tenant_id` **y** pasa con la excepción declarada | `scripts/guard-leaks.sh` §16 |
-| T3 | mudar el test de RLS cruzado a `tests/` | **doing** | `qa-agent` | S2 cerró el 2026-08-28 y la destrabó; la mudanza **ya está en el working tree, sin commitear ni correr** | los 59 `it()` corren desde `tests/` contra Postgres real, verdes, sin perder ninguno; `packages/db/src/rls-cross-tenant.test.ts` deja de existir; **y en la misma mudanza se borra el encabezado que se declara `db-agent`**, derogado por la regla de desempate de `CLAUDE.md` §4 | `tests/` |
+| T3 | mudar el test de RLS cruzado a `tests/` | **done** | `qa-agent` | — | los casos corren desde `tests/` contra Postgres real, verdes, sin perder ninguno; `packages/db/src/rls-cross-tenant.test.ts` deja de existir; **y en la misma mudanza se borra el encabezado que se declara `db-agent`**, derogado por la regla de desempate de `CLAUDE.md` §4. **Re-ejecutado por el LEAD desde la ubicación nueva: `rls-cross-tenant.test.ts (69 tests)` verdes** — no 59: ese número contaba `it()` literales y se comía el `it.each` sobre 10 columnas sensibles (`:625-630`). Total del repo: **919** | `tests/rls-cross-tenant.test.ts` + `tests/vitest.config.ts` (`d686923`) |
 | T4 | extraer los helpers de los gates a `scripts/_lib.sh` | **done** | **LEAD** | — | un solo juego de helpers en el repo; los gates que lo importan re-corridos con el mismo veredicto **y** el helper probado en las dos polaridades, en CI | `scripts/_lib.sh` + `scripts/_lib.test.sh` (`dc1d854`) |
 | S2.2 | `collectOrphanObjects` existe y no lo llama nadie | todo | `media-agent` (función) + `app-agent` (comentarios) | — | se elige **(a)** o **(b)** por escrito: si (a), el job corre y borra un huérfano sembrado; si (b), **ningún** comentario del repo la nombra en presente | `packages/media/src/unlink.ts`, `apps/web/app/(app)/_lib/listings/*.ts` |
 | S2.3 | el `<input type="file">` conserva la foto después de subirla | todo | `app-agent` | — | tras un alta exitosa el input queda vacío; `PhotoActionState` distingue inicial de éxito | `apps/web/app/(app)/app/(panel)/stock/[id]/fotos/*` |
@@ -279,7 +283,7 @@ cuyo gate no pudo correr: las cinco quedan `todo` hasta que el gate corra **ente
 | T7 | `readMatchers()` trunca el matcher en el primer `]` | todo | `qa-agent` | — | **nada roto hoy** — trampa conocida, ver abajo | `tests/proxy-matcher-no-deja-la-vidriera-sin-vigilar.test.ts:144` |
 | S3.1 | un tenant real nace sin `fx_settings` y sin `locations` | **done** | `app-agent` | — | **severidad alta** — alta o onboarding siembran un `fx_settings` y ≥ 1 punto de retiro; un tenant nuevo que carga 3 equipos ve grilla con precio y retiro, no vacía. **Cerrada por la corrida de `accept-s3.sh` del LEAD (2026-08-28, 50 PASS/0 FAIL):** M3 exige el punto de retiro, el horario y el ARS con la forma de `formatArs`, y los tres salen de las filas sembradas | `apps/web/app/(app)/_lib/tenants/create-tenant.ts` (`eaccfee`) |
 | S3.2 | publicar un equipo purga el catálogo entero del tenant | **done** | `app-agent` | — | al mutar una unidad se emite además `updateTag(listingTag(id))`; los dos tags de tenant dejan de ser la única invalidación. **Cerrada por la misma corrida:** `MEDIDO s3 db-hits · primera=9 · cacheada=0` | `apps/web/app/(app)/_lib/tenants/storefront-cache.ts` (`eaccfee`) |
-| S3.3 | bajo un **tenant** inexistente la ficha dice que el equipo se vendió | **doing** — código en el working tree, sin corrida | `storefront-agent` | — | una ficha bajo un slug de tenant que no existe contesta el *tenant-miss* (`STOREFRONT_MISS_TITLE`, "No hay ninguna vidriera en esta dirección"), no el *listing-miss* ("Este equipo ya no está publicado"); el `null` del tenant se sigue cacheando con `STOREFRONT_MISS_LIFE` | `apps/web/app/(storefront)/s/[slug]/p/[listing]/page.tsx` |
+| S3.3 | bajo un **tenant** inexistente la ficha dice que el equipo se vendió | **done** | `storefront-agent` | — | una ficha bajo un slug de tenant que no existe contesta el *tenant-miss* (`STOREFRONT_MISS_TITLE`, "No hay ninguna vidriera en esta dirección"), no el *listing-miss* ("Este equipo ya no está publicado"); el `null` del tenant se sigue cacheando con `STOREFRONT_MISS_LIFE`. **Verificado por el LEAD contra server real** (`next build` + `next start`, leyendo el HTML servido y no el fuente) y `accept-s3.sh` re-ejecutado: **58 PASS · 0 FAIL · S3 ACEPTADA**, con `MEDIDO s3 db-hits · primera=9 · cacheada=0` — el mismo número de antes del fix, o sea que **el camino feliz no se encareció**. Tabla de los 4 casos en §S3.3 abajo | `apps/web/app/(storefront)/s/[slug]/p/[listing]/page.tsx` + `apps/web/app/(storefront)/ficha.test.ts` (15 → 24 tests) (`042e24e`) |
 | T8 | los dos specs que miden S3 no emiten ninguna medición | **done** | `qa-agent` | — | las dos líneas `MEDIDO` exactas (ver abajo); **la de imagen se mide sobre la grilla**, no sobre la ficha. **Emitidas y verificadas por el LEAD el 2026-08-28** (`transferSize=51016B` / `primera=9 · cacheada=0`) | `e2e/s3-la-grilla-en-un-telefono-no-baja-la-foto-grande.spec.ts`, `e2e/s3-la-ficha-cacheada-no-le-pega-a-postgres.spec.ts` (`09c9bc3`) |
 | T9 | forma de `listings.slug` en `domain` + en el motor | **done** | `domain-agent` + `db-agent` | resto en vuelo con `storefront-agent` | ver abajo | `packages/domain/src/slug.ts`, `packages/db/drizzle/0003_listing_slug_format.sql` |
 | T10 | ocho comandos de aceptación corrían la suite entera creyendo filtrar | **done** | **LEAD** (`.claude/**`, §4) | — | el comando de cada contrato **filtra de verdad**, verificado en las dos polaridades (filtra, y falla con exit 1 ante un patrón que no matchea) | 4 `.claude/agents/*.md` + 4 `.claude/skills/*/SKILL.md` + `scripts/accept-fase3.sh` (`0d647c6`) |
@@ -398,14 +402,68 @@ una prueba propia de **30 URLs** contra el `path-to-regexp` compilado de Next.
 Lo que queda para S3 es implementar `/s/[slug]/robots.txt` y `/s/[slug]/sitemap.xml` **con su propio
 perfil de cache**. El enrutamiento ya está.
 
-### T1 · rate limiting: no hay implementación ni test  ·  deuda de S1
+### T1 · rate limiting en el edge  ·  **NIVEL 1 CERRADO el 2026-08-28** (`4fce968`)
 
-Las **2 reglas de Vercel Firewall** que `ARCHITECTURE.md` §"Seguridad de la vidriera" presupuesta
-(vidriera + chatbot) y que son parte de por qué se paga **Vercel Pro** (`CLAUDE.md` §3) **no existen
-todavía**: no hay `vercel.json` en el repo ni un test que las ejercite.
+**La premisa de la fila era falsa y la demolió `researcher`.** La fila pedía "2 reglas activas" con
+owner *LEAD (`vercel.json`)* y artefacto *"falta definir"*. **El rate limit del WAF no entra en
+`vercel.json` y no puede entrar:** el schema oficial tipa `routes[].mitigate.action` como enum
+cerrado `["challenge","deny"]` con `additionalProperties: false`, y la palabra `rate_limit` aparece
+**cero veces** (verificado contra `openapi.vercel.sh/vercel.json` el 2026-08-28,
+`docs/research/vercel-firewall-as-code.md`). Por eso **`vercel.json` sigue sin existir**, y la regla
+**F5** del gate falla si alguien lo crea creyendo declarar el límite ahí.
 
-Al escribirla, el borde que ya está en `CLAUDE.md` §2: **rate limiting con contador en Postgres
-sobre la vidriera es rechazo automático**, porque rompe el 95% de hits que no tocan Postgres.
+Las reglas viven versionadas en `config/firewall-rules.json` y se aplican **por CLI**
+(`vercel firewall rules add …` + `vercel firewall publish`), que **no es parte del build**: un
+`vercel deploy` **no** sincroniza el WAF.
+
+**Qué está hecho y qué no — el gate original no se cumple entero, y se deja escrito así.**
+
+| nivel | qué afirma | estado |
+|---|---|---|
+| 1 · estático, sin red | el archivo existe, parsea, cabe en los límites reales de Pro, **ninguna regla le cobra peaje al HTML de la vidriera**, y **todo route handler de la app está decidido** | ✅ `bash scripts/guard-firewall.sh` → `GUARD-FIREWALL: PASS` — pero **no está en CI**, ver abajo |
+| 2 · contra la config viva (`vercel firewall diff --json`) | lo declarado **es** lo aplicado | 🔴 **sin implementar**: falta verificar qué scope de token permite el `publish` (§UNVERIFIED del research) |
+| aplicación | las 2 reglas corriendo y **disparando** un `429` | 🔴 **no aplicadas**. No hay proyecto Vercel (**B2**/**B5**) y las dos están `status: "planned"` porque sus rutas **todavía no existen**: `/api/track` aterriza con **S4b** y `/api/chat` con **FASE 5** |
+
+**Lo que hace fuerte al gate no es validar el JSON** contra los límites de Pro (`keys ⊆ {ip, ja4}` —
+`header:` es Enterprise —, `algo = fixed_window`, ventana 10–600 s, ≤ 40 reglas): eso es aritmética.
+Es el **censo**. Cada route handler tiene que estar cubierto por una regla **o** exceptuado con
+motivo escrito de 60+ caracteres, así que **una ruta nueva sin decidir rompe el gate el día que se
+crea**, no el día que la floodean. Al 2026-08-28 censa **3** route handlers, los 3 exceptuados con
+motivo verificado contra el código: `/api/health` (el handler entero es un `Response.json`
+constante), `/api/tenants/slug-check` (exige `getPanelSession()` no-nulo **antes** de tocar la
+tabla) y `/_media/[...key]` (el mayor egress del producto, exceptuado con `revisit: B1` porque en
+producción esos bytes los sirve el CDN de Cloudflare desde otro host).
+
+**Decisión del LEAD que contradice al `researcher`, y por eso se registra.** El research proponía
+una regla de vidriera con condición `host suf .maat.work`. **Rechazada.** El rate limit se factura
+por *allowed requests* —los que matchean **y pasan**—, así que esa regla le cobraría peaje a **cada
+pageview de vidriera**, que es exactamente lo que `ARCHITECTURE.md:197` declara scrapeable a
+propósito (*"se defiende lo que cuesta plata"*). Las dos reglas apuntan a lo que sí cuesta:
+`/api/track` —única escritura **sin autenticar** del producto: con el spend cap de Supabase en ON,
+floodearla no infla una factura, **apaga el proyecto para todos los tenants**— y `/api/chat`, donde
+cada request es un token pagado. Para abuso masivo del HTML la palanca es **Attack Challenge Mode**,
+gratis en todos los planes e inmediato, sin `publish`. La regla **F2** del guard **falla** si alguien
+declara una regla por `host` sin acotar path, o un catch-all.
+
+> **Esto parece material de ADR y todavía no lo es.** Hay decisión, alternativa descartada y
+> verificación con fuente, o sea la forma exacta de una ADR — pero las ADR las **ratifica el LEAD**
+> (`CLAUDE.md` §4) y ésta no fue abierta como tal. Queda acá hasta que el LEAD diga si abre
+> **ADR-016**; `docs-keeper` no numera una decisión por su cuenta.
+
+**Lo que le falta al nivel 1 para valer lo que promete: `guard-firewall.sh` no corre en cada push.**
+Verificado contra `.github/workflows/ci.yml` el 2026-08-28: los guards del job principal son
+`_lib.test.sh`, `guard-leaks`, `guard-grants`, `guard-r2`, `accept-fase2` y `guard-artifacts
+--harness`; `guard-routes` corre en el job `e2e`. **`guard-firewall` no está en ninguno de los dos.**
+Y el censo es precisamente la parte que sólo sirve si corre sola: *"una ruta nueva sin decidir rompe
+el gate el día que se crea"* es falso si el gate lo corre una persona cuando se acuerda. Es la
+segunda mitad de la pregunta que este repo ya aprendió a hacerse —*¿hay chequeo?* **y** *¿lo corre
+alguien?*— y hoy la respuesta es *sí* y *no*. **Cablearlo a CI es del LEAD** (`scripts/**` y el
+workflow), y hasta que pase, este nivel 1 depende de disciplina.
+
+**El borde de `CLAUDE.md` §2 sigue en pie y esta fila no lo cubre:** *rate limiting con contador en
+Postgres sobre la vidriera es rechazo automático*. Que exista el WAF **no** pone un gate sobre esa
+prohibición —son dos cosas distintas: una configura un techo en el edge, la otra prohíbe una
+implementación en el código— y eso es **T14.1**, que sigue en 🔴.
 
 ### T2 · falta el guard estático de "query sin filtro de tenant"  ·  deuda de S1
 
@@ -418,15 +476,15 @@ declarada en `packages/db/src/schema/catalog.ts`, sin columna `tenant_id`, `GRAN
 `authenticated`, sembrada por `service_role`). **Cuando exista el guard, esa excepción tiene que
 estar declarada, no descubierta.**
 
-### T3 · el test de RLS cruzado está en la columna equivocada  ·  reasignación del LEAD
+### T3 · el test de RLS cruzado estaba en la columna equivocada  ·  **CERRADA el 2026-08-28** (`d686923`)
 
-**No bloquea D3 y D3 está `done`.** El test existe, corre contra Postgres real, tiene 59 `it()` y
-está verde: el requisito se cumple. Lo que está mal es **quién lo puede editar**.
+**No bloqueaba D3 y D3 está `done`.** El test existía, corría contra Postgres real y estaba verde:
+el requisito se cumplía. Lo que estaba mal era **quién lo podía editar**.
 
-`packages/db/src/rls-cross-tenant.test.ts` vive en el directorio de `db-agent`, y su propio
-encabezado se declara owner `db-agent` citando la corrección de FASE 4 de `CLAUDE.md` §4 (*"el test
-unitario de un paquete es del owner del paquete"*). **El LEAD reasigna** (§4: *"conflicto de
-ownership = el LEAD reasigna"*): **este test es de `qa-agent` y se muda a `tests/`.**
+`packages/db/src/rls-cross-tenant.test.ts` vivía en el directorio de `db-agent`, y su propio
+encabezado se declaraba owner `db-agent` citando la corrección de FASE 4 de `CLAUDE.md` §4 (*"el test
+unitario de un paquete es del owner del paquete"*). **El LEAD reasignó** (§4: *"conflicto de
+ownership = el LEAD reasigna"*): **este test es de `qa-agent` y vive en `tests/`.**
 
 **El motivo es el mismo principio de independencia que ya se aplicó a los gates de bytes**, por el
 que `scripts/probes/s2-media-measure.test.ts` vive afuera de `packages/media` aunque mida a
@@ -442,18 +500,29 @@ seguía en `packages/db/src/` y su encabezado (`:3-6`) todavía se declaraba `Ow
 la mitad de la regla de §4 que el desempate de FASE 4 **derogó** para este archivo. Se conserva
 porque es el argumento de por qué se muda; el estado actual está abajo.
 
-**Estado al 2026-08-28, verificado en el working tree y no en un reporte** (`docs-keeper`): la
-mudanza **ya está hecha y sin commitear** — `git status` la muestra como `RM
-packages/db/src/rls-cross-tenant.test.ts -> tests/rls-cross-tenant.test.ts`, el archivo tiene sus
-**59 `it()`**, `tests/vitest.config.ts` está tocado, y el encabezado **ya se reescribió**: en vez de
-declararse `db-agent` ahora explica por qué vive en `tests/` y remite al desempate de `CLAUDE.md` §4.
-O sea que las dos mitades del gate que dependen de leer archivos están cumplidas.
-**Sigue `doing`, no `done`:** falta la corrida de los 59 contra Postgres real por el LEAD, y falta el
-commit. Nada de esto lo puede afirmar `docs-keeper`: es la misma regla que tuvo a S1, S2, S3.1 y S3.2
-esperando con el código en `main`.
+**CERRADA el 2026-08-28** (`d686923`). El archivo vive en `tests/rls-cross-tenant.test.ts`, el
+encabezado que se declaraba `db-agent` está borrado —ahora explica por qué vive acá y remite al
+desempate de `CLAUDE.md` §4— y el LEAD **re-ejecutó desde la ubicación nueva**:
+`rls-cross-tenant.test.ts (69 tests)` verdes, total del repo **919**.
+
+**El número de esta fila estaba mal desde D3 y son 69, no 59.** El 59 contaba `it()` literales y se
+comía el `it.each(sensibles)` sobre las **10 columnas sensibles** de `listings`
+(`tests/rls-cross-tenant.test.ts:625-630`: `imei`, los cuatro `imei_check_*`, `cost_usd`,
+`margin_usd`, `supplier`, `internal_notes`, `created_by`). Es un detalle con moraleja propia y es la
+misma que el repo ya aprendió contando menciones en vez de aserciones: **un inventario que cuenta
+`it()` en el fuente cuenta la forma del archivo, no los casos que corren.** El número que vale es el
+que imprime el runner.
+
+**Lo que se movió además del `git mv`, y no es cosmético:**
+- `MIGRATIONS` resolvía `'../drizzle'` relativo a la ubicación vieja; ahora resuelve
+  `'../packages/db/drizzle'` (`:115`). Sin eso el archivo migraba contra una carpeta inexistente.
+- `tests/vitest.config.ts` ganó `fileParallelism: false` y `testTimeout`/`hookTimeout` de 30 s: son
+  69 casos contra un Postgres real montando y desmontando un fixture de dos tenants más un schema
+  de control, y en paralelo **se pisan el rol y el claim**. El síntoma de no hacerlo sería
+  intermitencia, que es la peor forma de perder un test de seguridad.
 
 **Se agendaba después de que cerrara S2, y S2 cerró el 2026-08-28** (21 PASS / 0 FAIL). El motivo de
-la espera era no mudar 59 tests con una slice en vuelo; ya no hay slice en vuelo sobre `packages/db`.
+la espera era no mudar el archivo con una slice en vuelo; ya no hay slice en vuelo sobre `packages/db`.
 La segunda mitad de la fila —*"al mudarlo hay que corregir el encabezado, o el próximo agente lee la
 versión vieja de la decisión"*— **está cumplida en la misma entrega**: el comentario no quedó atrás
 del código.
@@ -618,7 +687,8 @@ tranquilizadora dentro de un docblock.
 **Hay que elegir una de las dos, explícitamente, y la decisión es del LEAD:**
 
 **(a) Agendarla en un cron.** El cron de expiración de reservas es de **S6** (FASE 4, no FASE 6) y
-hoy no existe: no hay `vercel.json` en el repo. Ojo con el tamaño real de esta opción:
+hoy no existe: no hay `vercel.json` en el repo. (Los **crons** sí se declaran ahí; el **rate limit**
+no — ver **T1**, y `guard-firewall.sh` F5 lo hace fallar.) Ojo con el tamaño real de esta opción:
 `collectOrphanObjects` recibe `{ candidateKeys }` y **no descubre huérfanos sola** — el refcount
 entra por `deps.countReferencesAcrossAllTenants`, que cruza todos los tenants con `service_role`.
 Hoy **nadie persiste** las keys liberadas: `unlinkListingPhotos` devuelve `releasedKeys` y el valor
@@ -824,7 +894,7 @@ es el defecto que P3 encontró y por el que existe esta medición: un `srcset` s
 browser pida `detail` (128.570 B) donde el presupuesto dice `card` (50.692 B). Medir la ficha daría
 verde midiendo el byte equivocado.
 
-### S3.3 · la ficha de un tenant que no existe dice que el equipo se vendió  ·  `storefront-agent`
+### S3.3 · la ficha de un tenant que no existe decía que el equipo se vendió  ·  **CERRADA el 2026-08-28** (`042e24e`)
 
 Abierta el 2026-08-28 al cerrar S3. Lo reconoció `storefront-agent` en su entrega y no tenía fila.
 
@@ -843,10 +913,16 @@ esta dirección"** (`_components/storefront-miss.tsx:72`), que es la página que
 sí devuelve para el mismo caso. O sea que hoy **`{inventado}.maat.work/` y
 `{inventado}.maat.work/p/{cualquiera}` contestan cosas distintas sobre el mismo hecho.**
 
-**Alcance:** ~10 líneas. Un `getStorefrontTenant(slug)` antes del loader de la ficha, y `<StorefrontMiss />`
-en la rama `null`. La función ya es `'use cache'` y ya cachea su `null` con `STOREFRONT_MISS_LIFE`
-(`_lib/tenant.ts:71-100`), así que **no agrega una query por pageview**: el bot que escanea
-subdominios sigue pagando una vez y cero después. No toca el camino feliz.
+**Alcance:** ~10 líneas. Un `getStorefrontTenant(slug)` y `<StorefrontMiss />` en la rama `null`. La
+función ya es `'use cache'` y ya cachea su `null` con `STOREFRONT_MISS_LIFE` (`_lib/tenant.ts:71-100`),
+así que **no agrega una query por pageview**: el bot que escanea subdominios sigue pagando una vez y
+cero después. No toca el camino feliz.
+
+> **Este párrafo decía "antes del loader de la ficha" y así implementado habría sido un defecto de
+> costo.** Preguntar por el tenant **antes** le suma una consulta a **toda** ficha, incluidas las 99
+> de cada 100 que sí existen, para arreglar el caso raro. La entrega lo pregunta **después** del
+> `null`, y ese orden es hoy un invariante testeado. Se deja el error a la vista porque es la clase
+> de detalle que un diagnóstico correcto puede arruinar en la línea de la solución.
 
 **Gate:** una ficha bajo un slug de tenant inexistente contesta el *tenant-miss* y no el
 *listing-miss*, con el `noindex` de ADR-011 y sin perder el cacheo corto del `null`.
@@ -855,17 +931,42 @@ subdominios sigue pagando una vez y cero después. No toca el camino feliz.
 primera request no salga en blanco. Éste es sobre **cuál de los dos textos** se devuelve, y los dos
 casos ya salen 200 con contenido.
 
-**Actualización del 2026-08-28, tarde — pasa a `doing`.** El arreglo **está en el working tree, sin
-commitear**: `page.tsx` ya importa `getStorefrontTenant` y `StorefrontMiss`, la rama `null` del
-loader devuelve `(await storefrontExists(slug)) ? <ListingMiss /> : <StorefrontMiss />`, y el mismo
-desempate se aplica al `<title>` en un solo lugar (`missMetadataFor()`), que era la otra mitad del
-bug —un cuerpo que dice "no hay vidriera" con un `<title>` que dice "este equipo ya no está
-publicado" es el mismo defecto corrido de lugar—. Trae además una decisión que la fila no pedía y
-que conviene mirar al aceptar: un slug de tenant que **no pasa `isSlugShaped`** ahora contesta el
-tenant-miss **sin consultar Postgres**, apoyándose en el CHECK `tenants_slug_format` de
-`packages/db` (si no puede entrar a la tabla, no hace falta preguntar). **`docs-keeper` no afirma
-que esto funcione:** lo que está verificado es que el código existe y qué hace. Falta la corrida del
-gate por el LEAD.
+**Cerrada el 2026-08-28 (`042e24e`), y el LEAD lo verificó contra un server real** —`next build` +
+`next start`, leyendo el **HTML servido**, no el fuente— con dos controles adentro de la medición:
+
+| caso | `<title>` | marcador |
+|---|---|---|
+| A · `{inventado}/p/lo-que-sea` | No hay ninguna vidriera en esta dirección | `data-storefront="miss"` |
+| D · `{inventado}/` (**control**: la home ya distinguía) | idéntico a A | `miss` |
+| B · `demo/p/no-existe` | Este equipo ya no está publicado | `listing-miss` |
+| C · ficha real (**control**: el camino feliz sigue vivo) | iPhone 14 Pro 256 GB Negro espacial — USD 620 | `index, follow` + 1 `wa.me` |
+
+Cero `wa.me` en el DOM de los dos miss. `accept-s3.sh` re-ejecutado entero: **58 PASS · 0 FAIL ·
+`S3: ACEPTADA`**, con **`MEDIDO s3 db-hits · primera=9 · cacheada=0`** — el **mismo** número que
+antes del fix, que es la forma de decir que **el camino feliz no se encareció**.
+
+**Cómo quedó, en una línea:** el desempate se pregunta **después** del `null` y nunca antes
+(`storefrontExists()`), y cuerpo y metadata lo resuelven con **el mismo predicado en un solo lugar**
+(`missMetadataFor()`) porque son **dos entradas de cache distintas**: copiado, deriva, y sale un
+`<h1>` de una respuesta con un `<title>` de la otra.
+
+`ficha.test.ts` pasó de 15 a **24** tests. El que importa no es ninguno de los de texto sino el
+**invariante de costo**: `expect(tenantAt).toBeGreaterThan(listingAt)` (`:219-227`), que se pone rojo
+el día que alguien suba el `getStorefrontTenant` arriba del `getStorefrontListing`. Es una aserción
+sobre la posición en el **fuente** del módulo, y está bien que lo sea: lo que defiende es el orden
+de las llamadas, y ninguna medición de HTML lo puede ver.
+
+**Trae además una decisión que la fila no pedía:** un slug de tenant que **no pasa `isSlugShaped`**
+contesta el tenant-miss **sin consultar Postgres**, apoyándose en el CHECK `tenants_slug_format` de
+`packages/db` — si no puede entrar a la tabla, no hace falta preguntar.
+
+**Deuda aceptada, no fila:** en el miss frío el tenant se consulta **dos veces**. Está escrita con su
+número medido en `DECISIONS.md` §Notas operativas (*"La consulta duplicada del tenant en el miss frío
+es deuda aceptada"*). **No abre fila accionable** y eso es deliberado.
+
+**Hallazgo de la medición que NO es un defecto, anotado para que nadie lo re-diagnostique:** el HTML
+servido de una ficha **sana** contiene la palabra `noindex`. Está en el payload de RSC, no en el
+`<meta>`. Detalle y números en `DECISIONS.md` §Notas operativas.
 
 ### T9 · la forma de `listings.slug` · **CERRADA el 2026-08-28**, con un resto en vuelo
 
@@ -974,10 +1075,13 @@ O sea que el agujero está **tapado y anotado**, que es distinto de cerrado.
 Verificado una por una el 2026-08-28 contra los gates del repo. **De la lista de §2 quedan dos sin
 nadie que las chequee:**
 
-1. **Rate limiting con contador en Postgres sobre la vidriera.** Cero menciones de *rate limit* en
-   `scripts/**`, `apps/web/scripts/**`, `tests/**` y `e2e/**`. **No es lo mismo que T1:** T1 es la
-   *implementación* que falta (las 2 reglas de Vercel Firewall); esto es que **nada detecta la
-   violación**. Mañana alguien mete un `insert into rate_limit_hits` en el render de la vidriera y
+1. **Rate limiting con contador en Postgres sobre la vidriera.** **No es lo mismo que T1, y T1
+   cerrando no cierra esto.** T1 puso el techo del lado del edge (`config/firewall-rules.json` +
+   `scripts/guard-firewall.sh`, `4fce968`); esta fila es que **nada detecta la violación del lado
+   del código**. Son dos cosas distintas: una configura un límite, la otra prohíbe una
+   implementación. Re-verificado el 2026-08-28 **después** de T1: las menciones de *rate limit* en
+   `scripts/**` son las del gate del WAF, que valida un JSON de configuración y **no mira una sola
+   query**. Mañana alguien mete un `insert into rate_limit_hits` en el render de la vidriera y
    todo el pipeline sale verde — rompiendo el 95% de hits sin Postgres, que es el objetivo entero.
 2. **Imagen original (>500 KB) servida a la vidriera.** Hay dos chequeos y **ninguno corre en cada
    push**: el probe `scripts/probes/s2-media-measure.test.ts:47` fija

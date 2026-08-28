@@ -838,3 +838,64 @@ una página. El día que alguien "arregle la inconsistencia" unificando `WA_COND
 (`packages/domain/src/types.ts:69`), **todos los tests unitarios siguen verdes** y sólo falla este
 gate. Una decisión de producto deliberada que sólo un test defiende es una decisión con fecha de
 vencimiento.
+
+
+### 2026-08-28 · La consulta duplicada del tenant en el miss frío es **deuda aceptada**, con su número
+
+**Decisión del LEAD al aceptar S3.3** (`042e24e`). `storefront-agent` la planteó al entregar y es un
+trade-off real, no una excusa: en el **miss frío** de una ficha el tenant se resuelve **dos veces**.
+`getStorefrontListing()` ya lo resuelve **adentro de su transacción** (`tenantContext(tx, slug)`,
+`_lib/listings.ts:426`) y **descarta esa información** al devolver `null`; después
+`storefrontExists()` vuelve a preguntar con `getStorefrontTenant()` para desempatar cuál de los dos
+miss corresponde.
+
+**La alternativa de cero duplicación existe y está descartada:** que el loader devuelva un resultado
+discriminado (`{ kind: 'ok' | 'listing-miss' | 'tenant-miss' }`) en vez de `null`.
+
+**Por qué se queda como está — el número, que es lo que decide.** El extra es **una transacción**
+(≈5 sentencias: `begin`, `set local role anon`, `set_config` del claim, el `select` y `commit`) **por
+slug muerto y por ventana de `STOREFRONT_MISS_LIFE` (5 min)**, no por request. La entrada de
+`getStorefrontTenant(slug)` es `'use cache'` con el perfil corto, así que:
+
+- un bot probando **mil** fichas de un subdominio inventado paga **5 sentencias de más en total**,
+  no mil — y el cuerpo y la metadata, que son dos entradas de cache distintas, comparten esa misma
+  entrada;
+- para un **tenant real** el extra es **cero**: `getStorefrontTenant(slug)` es la misma entrada de
+  cache que ya usa la home de la vidriera;
+- el **camino feliz no la ejecuta nunca**: el desempate se pregunta después del `null`, y eso está
+  testeado (`ficha.test.ts:219-227`).
+
+Cambiar el contrato del loader para ahorrar eso mueve `_lib/listings.ts`, su docblock y
+`ficha.test.ts`. **No abre fila en el board, y es a propósito:** una fila `todo` es una promesa, y
+esto no es una promesa — es un costo medido que se decidió pagar. Si algún día el número cambia de
+forma (por ejemplo, si el miss dejara de cachearse), la deuda se reabre por el número, no por el
+estilo.
+
+### 2026-08-28 · El `noindex` en el HTML de una ficha **sana** está en el flight, no en el `<meta>`
+
+Hallazgo del LEAD midiendo S3.3, **perseguido hasta el final: no es un defecto y no es nuevo.** Se
+anota para que el próximo que lo vea no lo diagnostique de cero.
+
+**El síntoma:** el HTML servido de una ficha que existe y se indexa contiene la palabra `noindex`.
+
+**Los números, sobre el build** (`apps/web/.next/server/app/s/…`):
+
+| archivo | ocurrencias de `noindex` | `<meta name="robots">` real |
+|---|---|---|
+| `demo/p/iphone-14-pro-256-grafito.html` (ficha sana) | **1** | `index, follow` |
+| `noexiste-xyz.html` y los `p/no-existe-*.html` (miss) | **5** | `noindex, nofollow` |
+| `demo.html` (home de la vidriera, **que S3.3 no tocó**) | **1** | — |
+
+**Qué es:** el `notFound` boundary serializado en el payload de RSC para navegación de cliente. En el
+flight se lee, textual, `"notFound":[["$","main",null,{"data-storefront":"miss",…,"children":[["$","meta",null,{"name":"robots","content":"noindex, nofollow"}]…`.
+O sea: es el **componente de miss** viajando como dato para que el router pueda renderizarlo sin
+volver al server — **no** es un `<meta>` hoisteado al `<head>` ni una directiva que Google vaya a
+leer. Que `s/demo.html` (que viene de S1/S2) tenga exactamente lo mismo es la prueba de que no lo
+introdujo S3.3.
+
+**La regla que se guarda, porque es reutilizable:** en un HTML de App Router **una ocurrencia de
+texto no es una directiva**. El mismo documento lleva el DOM renderizado y el payload de RSC, y el
+segundo repite componentes que no están activos. Ya mordió una vez en este repo con otro nombre: M3b
+de `accept-s3.sh` cuenta **anchors** `<a … href="https://wa.me/…">` y no ocurrencias de `wa.me`,
+porque en la ficha el texto aparece **3 veces** y el botón es **uno**. **Un gate que mide sobre HTML
+servido cuenta la estructura (`<meta name="robots">`, anchors), nunca el substring.**

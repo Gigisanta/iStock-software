@@ -2,7 +2,8 @@
 
 _Owner: `cost-auditor`. **Escrito por el LEAD en FASE 1** (excepción declarada en `CLAUDE.md` §4).
 Números con fuente salvo los marcados `[EST]` / `[UNVERIFIED]`, que **no** son evidencia._
-_Fecha: 2026-08-28. Insumos: R1 (wildcard/ISR), R2 (R2/imágenes), R3 (LLM), R7 (amenazas)._
+_Fecha: 2026-08-28. Insumos: R1 (wildcard/ISR), R2 (R2/imágenes), R3 (LLM), R7 (amenazas),
+`docs/research/vercel-firewall-as-code.md` (T1)._
 _Re-medido el 2026-08-27 después de **ADR-011** (el slug inexistente dejó de ser 404) y **ADR-012**
 (los dos polos del cache). Lo que cambió está en §2.1; lo que **no** cambió también, y dice por qué._
 
@@ -15,11 +16,17 @@ El **piso fijo** se cuenta **aparte** del marginal. No mezclar.
 
 **Se cumple, y con margen — pero no por donde parecía en FASE 0.**
 
-| | FASE 0 `[EST]` | FASE 1 (con fuente) | FASE 4 (S1 + S2 **medidas**) |
-|---|---|---|---|
-| Marginal plan **Base** | ~USD 0.03 | USD 0.07 | **USD 0.09** |
-| Marginal plan **Negocio** | 0.03 + `[R3]` | USD 0.24 – 0.30 | **USD 0.25 – 0.31** |
-| Headroom del Negocio contra el objetivo | «~15× abajo» | ~1.7× | **~1.6×** |
+| | FASE 0 `[EST]` | FASE 1 (con fuente) | FASE 4 (S1 + S2 **medidas**) | T1 (WAF **acotado**) |
+|---|---|---|---|---|
+| Marginal plan **Base** | ~USD 0.03 | USD 0.07 | USD 0.09 | **USD 0.03** |
+| Marginal plan **Negocio** | 0.03 + `[R3]` | USD 0.24 – 0.30 | USD 0.25 – 0.31 | **USD 0.20 – 0.26** |
+| Headroom del Negocio contra el objetivo | «~15× abajo» | ~1.7× | ~1.6× | **~1.9 – 2.5×** |
+
+**La columna T1 no baja porque el código se haya puesto más rápido: baja porque una regla de WAF
+dejó de apuntar a la vidriera.** El renglón de WAF pasó de USD 0.06 a **USD 0.002 – 0.003**, o sea
+17–25× abajo, y con eso el plan Base pierde de golpe **el 67% de su costo marginal** — era su línea
+más grande, más grande que todo S2 junto. El detalle y la aritmética están en §2.3. No hay ninguna
+medición nueva de tráfico atrás de este número: hay un **alcance** distinto.
 
 **S2 (pipeline de fotos) aporta USD 0.013/tenant/mes** y el 70% de eso **no es R2**: es el
 Active CPU de `sharp` en el upload por Server Action. R2 entero —storage, writes, reads, egress—
@@ -54,7 +61,8 @@ es sólo la razón por la que el objetivo está escrito sobre el marginal y no s
 **Supuestos** (los que no tienen fuente son míos y están marcados; si cambian, cambia todo):
 60 listings · 4 fotos/listing · 3 variantes · 3.000 pageviews/mes `[EST]` ·
 ~120.000 requests/mes/tenant `[EST, R1]` · plan Negocio con el soft cap de **40 msgs/día = 1.200/mes**
-(`CLAUDE.md` §3).
+(`CLAUDE.md` §3) · **requests que matchean una regla de WAF: ≤ 4.200/mes/tenant** `[EST]` (§2.3 —
+no confundir con los 120.000: sólo dos rutas están bajo regla, y el HTML de la vidriera no).
 
 | vector | cálculo | USD/mes | fuente |
 |---|---|---|---|
@@ -67,22 +75,29 @@ es sólo la razón por la que el objetivo está escrito sobre el marginal y no s
 | **ISR Writes** | ~200 mutaciones/mes × 15 write units | **0.012** | R1: USD 4.00/1M units de 8 KB (iad1) |
 | ISR Reads | sólo en CDN miss | ~0 | R1: USD 0.40/1M |
 | Edge Requests | 10M incluidos ≈ 80 tenants; después USD 2.00/1M | **~0.04** | R1 (iad1) |
-| **WAF Rate Limiting** | 120k allowed req/mes × USD 0.50/1M | **0.06** | R7 |
+| **WAF Rate Limiting** — Base | ≤3.000 allowed req/mes × USD 0.80/1M | **0.0024** | **§2.3, T1** |
+| **WAF Rate Limiting** — Negocio | ≤4.200 allowed req/mes × USD 0.80/1M | **0.0034** | **§2.3, T1** |
 | Postgres | 95% de hits cacheados | ~0 | ADR-007 |
 | LLM plan **Base** | **widget ausente** | **0** | `CLAUDE.md` §3 |
 | LLM plan **Negocio** | 1.200 msgs × USD 0.000144–0.000192 | **0.17 – 0.23** | R3 |
-| **Marginal Base** | | **~USD 0.09** | |
-| **Marginal Negocio** | | **USD 0.25 – 0.31** | |
+| **Marginal Base** | | **~USD 0.03** | |
+| **Marginal Negocio** | | **USD 0.20 – 0.26** | |
 
 La línea vieja de R2 decía **«~140 MB → ~0.001»** y estaba baja **4,7×**, no por el storage
 (120 MB medidos contra 140 supuestos: acertó) sino porque **contaba Class A y Class B como si
 fueran cero**. No lo son; son chicos, que es otra cosa. Y aparecieron dos renglones que R2 no
 tiene: el upload pasa por una Vercel Function y `sharp` cuesta CPU. Detalle en §2.2.
 
-**Las dos líneas que no estaban en FASE 0 y ahora pesan:** el WAF rate limiting (USD 0.06, **12% del
-presupuesto** — el precio de no fragmentar el cache filtrando en el edge en vez de en la app) y los
-Edge Requests, que **no son gratis pasados ~80 tenants** porque el proxy corre en el 100% de los
-pageviews, HIT incluido.
+**La línea que no estaba en FASE 0 y sigue pesando** son los Edge Requests, que **no son gratis
+pasados ~80 tenants** porque el proxy corre en el 100% de los pageviews, HIT incluido.
+
+**La otra —el WAF— se desinfló, y conviene entender por qué.** La línea de FASE 1 decía
+«120k allowed req/mes × USD 0.50/1M = USD 0.06» y era correcta *para la regla que R7 imaginaba*:
+una que condicionara por `host suf .maat.work`, o sea todo el tráfico del tenant. En T1 el LEAD
+rechazó esa regla y quedaron dos que apuntan a **dos rutas**, no a un host. Los 120.000 requests
+del supuesto de tráfico siguen existiendo; lo que cambió es que **ninguno de ellos matchea una
+regla**, y lo que se factura son los que matchean. Es la misma corrección de forma que la de
+Class B en §2.2: el renglón no escalaba con lo que decía escalar.
 
 ### 2.1 Medido en S1 — la vidriera dejó de ser un supuesto (2026-08-27)
 
@@ -168,8 +183,20 @@ escaneo SOSTENIDO 1 h, re-tocando cada slug dentro de cada ventana de 300 s (120
 
 **El perfil corto cuesta 12× más en writes bajo escaneo sostenido.** Es el precio explícito de no
 dejar 10.000 entradas muertas de 30 días, y está bien pagado: cambia un problema **durable y no
-purgable** por uno **transitorio y rate-limiteable**. Lo que lo acota es el **WAF rate limiting**
-que ya está presupuestado en §2 (USD 0.06/tenant/mes): sin esa regla, esta línea no tiene techo.
+purgable** por uno **transitorio y acotable**.
+
+> ⚠️ **Corregido en T1 (2026-08-28): esta línea decía «lo acota el WAF rate limiting que ya está
+> presupuestado en §2», y desde T1 eso es falso.** Las dos reglas que existen apuntan a `/api/track`
+> y `/api/chat`; **el camino de render de la vidriera no tiene ninguna regla**, a propósito
+> (§2.3: una regla ahí cuesta USD 0.096/tenant/mes *siempre*, y cuadruplica el marginal del plan
+> Base para defender HTML que declaramos scrapeable). **El techo de este vector es Attack Challenge
+> Mode**, que es gratis, inmediato y no requiere `publish` — pero es **reactivo y manual**: lo
+> prende un humano después de ver la alarma de §5 («ISR writes sobre slugs que no son de ningún
+> tenant»). Lo que queda descubierto es la ventana entre que el escaneo arranca y que alguien mira.
+> **Una hora de escaneo sostenido sin que nadie lo note son USD 2.88** — el presupuesto de WAF de
+> los 100 tenants durante **8,5 meses** (100 × 0.0034 = USD 0.34/mes). No es un agujero de tamaño
+> peligroso, pero es el único vector del documento cuya mitigación depende de que alguien esté
+> despierto, y por eso la métrica de §5 es la que es.
 
 **No mueve el marginal por tenant y no lo va a mover:** los slugs inventados no son de nadie, así
 que este gasto es de plataforma, no atribuible. Por eso necesita su propia métrica (§5) — es el
@@ -487,6 +514,11 @@ marginal Base    = 0.073 + 0.013 = USD 0.086   →  17% del objetivo de 0.50
 marginal Negocio = 0.30  + 0.013 = USD 0.313   →  63% del objetivo de 0.50 (headroom 1,6×)
 ```
 
+> ⚠️ **Las dos últimas líneas de este bloque son el registro de S2 y quedaron viejas al día
+> siguiente.** El 0.073 que arrastran incluye USD 0.06 de WAF calculados sobre una regla que T1
+> rechazó. Los totales vigentes son **0.03 (Base)** y **0.20 – 0.26 (Negocio)**: §2.3. Lo que S2
+> midió —bytes, CPU, Class A/B— no cambió ni un dígito.
+
 **SUPUESTOS:** 3.000 pageviews/mes/tenant `[EST]` · 60 listings × 4 fotos (piso del producto: 3) ·
 rotación mensual del stock 30% `[EST]` · 6 PoPs de Cloudflare con tráfico `[EST]` · plan Negocio
 con el soft cap de 40 msgs/día · región `iad1` · factor ×2 de la CPU de la Mac al vCPU de Vercel.
@@ -515,6 +547,233 @@ Esto aplica al **polo positivo** y sólo a él. El polo negativo usa un perfil c
 
 `cacheLife` **es una decisión de costo, no de UX** (R1). Un `revalidate: 60` puesto sin pensar
 multiplica el costo por 216× y por sí solo tira el objetivo. Gate de `cost-auditor`.
+
+### 2.3 Auditado en T1 — Firewall Rate Limit Requests (2026-08-28)
+
+Insumos: `config/firewall-rules.json`, `scripts/guard-firewall.sh` (commit `4fce968`) y
+`docs/research/vercel-firewall-as-code.md` (fuentes consultadas 2026-08-28).
+**Esto es una auditoría de configuración, no una medición:** no hay proyecto en Vercel, no hay
+factura y no hay un solo allowed request contado de verdad. Todos los volúmenes de acá son `[EST]`.
+
+#### El precio, y lo que no sabemos de él
+
+| ítem | valor | estado |
+|---|---|---|
+| Precio por allowed request — `iad1` | USD **0.50** / 1M | verificado (pricing regional `iad1`) |
+| Precio por allowed request — `gru1` | USD **0.80** / 1M | verificado (pricing regional `gru1`) |
+| Requests incluidos en **Pro** | **0** | verificado — se factura desde el request 1 que matchee |
+| Requests incluidos en Hobby | 1.000.000 | verificado (dato inútil: Hobby está prohibido, `CLAUDE.md` §3) |
+| Tráfico **mitigado** (deny / challenge / 429) | **no genera** Edge Requests ni Fast Data Transfer | verificado, textual |
+| A qué tarifa se factura el tráfico **argentino** | **no sabemos** | **`[UNVERIFIED]`** |
+
+**El renglón se escribe con `gru1` (USD 0.80) por conservador, y eso es una elección, no un dato.**
+La doc dice que el precio *"is based on the region(s) from which the requests come from"*, pero
+`researcher` **no encontró la tabla que mapea país → región de facturación**, y la sección
+«Rate limiting pricing» de `usage-and-pricing` viene **vacía** en la versión markdown de la doc.
+El rango real es **USD 0.50 – 0.80 / 1M** y todo lo de abajo se mueve ±37% dentro de él.
+
+Ojo con un cruce fácil: §7 dice «todos los números de §2 asumen `iad1`» refiriéndose a la **región
+de la función**. Acá no aplica — el WAF corre en el PoP del visitante, así que la región que manda
+es **de dónde viene el request**, no dónde deployamos la función. Son dos ejes distintos y la
+elección de `iad1` para funciones **no** compra la tarifa de `iad1` para el WAF.
+
+#### Cuántos requests matchean, por tenant
+
+Sólo dos rutas están bajo regla: `/api/track` (beacon de S4b, aterriza con S4b) y `/api/chat`
+(FASE 5). **Las dos están `planned`: hoy el gasto real de esta línea es USD 0.00.** El resto de la
+app —el HTML de la vidriera, `/_media`, `/api/health`, `/api/tenants/slug-check`— no matchea nada.
+
+| escenario | allowed req/tenant/mes | @ USD 0.50/1M | @ USD 0.80/1M |
+|---|---|---|---|
+| Base, beacon sólo en el click de `wa.me` (~5% de 3.000 pv) `[EST]` | 150 | 0.000075 | 0.00012 |
+| **Base, beacon en cada pageview** (peor caso) | 3.000 | 0.0015 | **0.0024** |
+| Negocio, beacon por click + chat al soft cap (1.200 msgs) | 1.350 | 0.00068 | 0.0011 |
+| **Negocio, beacon por pageview + chat al cap** (peor caso) | 4.200 | 0.0021 | **0.0034** |
+
+**El renglón se reserva en su peor caso: USD 0.0024 (Base) y USD 0.0034 (Negocio).** Contra el
+objetivo de 0.50 es **0,5% y 0,7%**. Contra el marginal Base entero (0.03) es el 8,5%.
+
+#### El número de 100k requests: la aritmética está bien, la atribución no
+
+`100.000 × USD 0.80 / 1.000.000 = USD 0.08/mes`. ✅ Y `0.08 / 0.50 = 16%`, `0.008 / 0.50 = 1.6%`. ✅
+Las tres cuentas cierran.
+
+**Lo que no cierra es el escenario.** Con los supuestos de tráfico de §2, un tenant genera ≤4.200
+requests que matcheen; para llegar a 100.000 hacen falta **~24 tenants** (100.000 / 4.200 = 23,8).
+O sea que el mundo donde la plataforma factura 100k allowed requests es un mundo con 24 tenants, y
+ahí el reparto es **USD 0.0033/tenant = 0,67% del budget**, no 16%. La frase «con 1 tenant es el 16%
+de su budget» sólo es cierta si ese único tenant produce 24× el tráfico modelado **o** si una regla
+volvió a apuntar al HTML — que es exactamente el fallo que T1 evita. Sirve como **techo de
+plataforma**, no como línea marginal, y por eso el renglón de §2 dice 0.0024 / 0.0034 y no 0.08.
+
+Traducido a la unidad del objetivo: **la línea completa de WAF, sumada sobre 100 tenants, es
+USD 0.24 – 0.34/mes para toda la plataforma.** Es menos que un café. El riesgo nunca fue el precio.
+
+#### Por qué bajo abuso la regla es neta negativa — con el umbral, no con un adjetivo
+
+La afirmación *"WAF deny, challenge, or rate-limit mitigated traffic does not incur CDN Requests or
+Fast Data Transfer"* es verificada y contraintuitiva, pero **no es incondicional**: se factura lo
+que pasa, no lo que se bloquea, así que la regla ahorra sólo si bloquea una fracción suficiente.
+
+Sea `d` la fracción de requests que la regla **deniega**, `W` el precio del allowed request y `E+F`
+lo que ese request habría costado igual (Edge Request + invocación de función + lo que dispare).
+La regla ahorra plata cuando `d > W / (E + F + W)`.
+
+| ruta | lo que cuesta un request **permitido**, por 1M | umbral `d*` de rentabilidad |
+|---|---|---|
+| `/api/track` | Edge 2.00 `[iad1]` + invocación 0.60 `[UNVERIFIED]` + WAF 0.80 | **~23%** (17% si el Edge Request se factura a tarifa `gru1`, 3.20) |
+| `/api/chat` | Edge 2.00 + invocación 0.60 + **turno de LLM 144 – 192** (R3) + WAF 0.80 | **~0,5%** |
+
+**Los dos números dicen cosas distintas y las dos importan.**
+La regla del chat se paga sola si deniega **más del 0,5%** de lo que ve: un turno de LLM cuesta
+**180–240× el peaje del WAF**, así que basta con que corte un puñado de mensajes al mes.
+La regla de `/api/track` necesita denegar **~1 de cada 4** para pagarse en dinero — y aun así se
+justifica, porque **su motivo no es el dinero sino la disponibilidad**: con el spend cap de Supabase
+en ON, floodear el único endpoint de escritura anónima no infla una factura, **apaga el proyecto
+para los 100 tenants**. Es una regla de blast radius que además, en cualquier flood serio, termina
+siendo gratis.
+
+**En régimen normal (`d ≈ 0`) la regla es un recargo del +40% sobre lo que esos requests ya cuestan
+en Edge Requests** (0.80 / 2.00; +25% si el Edge Request es de `gru1`). Esa es la frase que explica
+todo el resto de esta sección: **poner una regla sobre un stream de requests cuesta un 40% más de lo
+que ese stream ya costaba.** Sobre 4.200 requests no se nota. Sobre 120.000 sí.
+
+#### El scoping: qué habría costado la regla que el LEAD rechazó
+
+La regla que proponía el research (`condition: {type: host, op: suf, value: ".maat.work"}`, sin
+acotar path) matchea **todo el tráfico del tenant**: los ~120.000 requests/mes de §2, pageviews
+cacheados incluidos.
+
+```
+120.000 req/tenant/mes × USD 0.80 / 1M = USD 0.096 / tenant / mes
+```
+
+| | marginal Base | contra el objetivo de 0.50 |
+|---|---|---|
+| con las reglas de T1 | **USD 0.03** | 6% |
+| con la regla `host suf .maat.work` | **USD 0.124** | 25% |
+
+**Rechazarla no evitó un riesgo hipotético: le sacó al plan Base el 77% de su costo marginal.**
+Habría sido, sola, más cara que R2, `sharp`, los ISR Writes y el storage **sumados** — y todo para
+proteger HTML que `ARCHITECTURE.md` declara scrapeable a propósito y que el CDN ya sirve sin tocar
+la función. Es el caso de libro de *costo tonto*: pagar por proteger lo que decidimos no proteger.
+
+#### Los tres caminos por los que igual podríamos terminar facturando pageviews
+
+Auditado contra el archivo y contra el gate, no supuesto. **Ninguno está abierto hoy**; los tres son
+el mismo tipo de deriva y merecen quedar escritos.
+
+1. **El beacon de S4b, si dispara en el `view` en vez de en el click.** Es el camino más probable y
+   el único que no depende de que alguien se equivoque: si `/api/track` se llama en el load de la
+   ficha, **allowed requests ≈ pageviews** y la línea de WAF vuelve a ser proporcional al tráfico.
+   No es fatal —3.000 pv/mes son USD 0.0024, 1/40 de lo que costaba la regla de `host`, porque un
+   pageview son ~8 requests y el beacon es 1— pero convierte un renglón fijo en uno que crece con
+   la viralidad. **Gate para S4b, no blocker de T1:** el beacon dispara en el evento (`click` de
+   `wa.me`, `reserva`), nunca en el render. Si tiene que disparar en el render, se dice acá y el
+   renglón sube a 0.0024, que sigue entrando.
+2. **`op: "pre"` es un prefijo, no una igualdad.** `/api/track` matchea también `/api/tracking`,
+   `/api/track-v2` y cualquier ruta futura que empiece igual. Hoy no existe ninguna, y el censo F3
+   del guard usa la misma lógica de prefijo, así que una ruta nueva bajo ese prefijo **hereda la
+   regla y el medidor en silencio** — pasa el gate porque la da por cubierta. Es el único punto
+   donde el censo puede dar verde a algo que nadie decidió.
+3. **El `route` del archivo es metadata del repo; la `condition` es lo que Vercel publica.** El
+   chequeo F2 del guard bloquea `type: "host"` **sólo si la regla no declara `route`**
+   (`if (c.type === 'host' && !r.route)`). Una regla con `condition: {type:"host", suf:".maat.work"}`
+   **y** `route: "/api/track"` pasa el gate y factura cada pageview. Lo mismo con
+   `{type:"path", op:"pre", value:"/s"}` — el path al que ADR-007 reescribe la vidriera — que no
+   está en la lista `CATCHALL` de F2 y matchearía el 100% de los renders. Y como el gate de nivel 2
+   (`vercel firewall diff` contra la config viva) **no está implementado**, entre el repo y la
+   factura no hay ninguna verificación: lo único que sostiene el número de esta sección es que
+   nadie publique una condición distinta de la del archivo. **No es un fallo de T1 —el gate de
+   nivel 1 es lo que se prometió— pero es dónde está el riesgo residual, y es de configuración, no
+   de código.**
+
+#### 🚩 Managed Rulesets / OWASP CRS — NO prender sin ADR
+
+Nota para el `cost-auditor` del futuro, que va a ser yo mismo mirando el dashboard de Vercel.
+**Managed Rulesets (OWASP Core Rule Set) es un feature pago distinto del rate limiting**, y está en
+la misma pantalla que lo que sí queremos. Prenderlo es un toggle; entenderlo, no.
+
+| | rate limiting (lo que queremos) | Managed Rulesets (lo que **no**) |
+|---|---|---|
+| unidad | allowed requests (los que **matchean y pasan**) | **inspected requests** (los que el WAF **mira**) |
+| precio | USD 0.50 – 0.80 / 1M | **USD 0.80 – 1.28 / 1M** + **USD 0.20 – 0.32 / GB** de payload inspeccionado |
+| volumen nuestro | ≤4.200 req/tenant/mes | **~120.000 req/tenant/mes** — todo lo que llega |
+
+```
+120.000 req/tenant/mes × USD 1.28 / 1M = USD 0.154 / tenant / mes
+marginal Base 0.03 + 0.154 = USD 0.18  →  6,4× el marginal de hoy, 36% del objetivo
+100 tenants × 0.154         = USD 15.4 / mes de plataforma
+```
+
+**Un toggle multiplica el costo marginal del plan Base por ~6 y se come más de un tercio del
+objetivo, sin que ninguna slice cambie ni un byte.** Es el pie en el que este proyecto se puede
+disparar sin darse cuenta, porque el daño no aparece en ningún diff.
+**Condición para prenderlo: ADR propio, ratificado por el LEAD, con el número de inspected requests
+del mes anterior a la vista.** Si algún día hace falta protección contra OWASP, la pregunta previa
+es qué ruta la necesita — casi seguro `/app/*`, que es tráfico autenticado y de volumen chico, no la
+vidriera. `[UNVERIFIED]`: si «inspected» incluye los hits servidos desde el CDN cache. Si los
+incluye, los USD 0.154 son un **piso**, no un techo.
+
+#### Nota de transferencia: los 181.739 B de `/_next/static` de la ficha
+
+Dato que trajo el LEAD midiendo S3 y que no tiene fila propia en ningún artefacto. **No cambia
+ninguna cuenta de esta sección** (el WAF cobra por request, no por byte) y **no abre un renglón
+nuevo en §2**, pero sí toca dos supuestos y conviene dejarlo anotado:
+
+- **Fast Data Transfer sigue en cero marginal.** Visita **fría**: 181.739 B de chunks + 14.831 B de
+  HTML ≈ **196,6 KB**. Visita **tibia**: los chunks son `immutable`, no se vuelven a pedir ni se
+  revalidan → ~15–24 KB. Con una mezcla 50/50 el promedio es **~110 KB/pageview**, contra los
+  **120 KB `[EST]`** que R1 usó para dimensionar FDT. **El supuesto de R1 sobrevive a la medición**,
+  que es el único motivo por el que esto no abre un renglón.
+  `3.000 pv × 110 KB = 0,33 GB/tenant/mes` → **100 tenants = 33 GB/mes contra 1 TB incluido en Pro
+  (3,3%)**. FDT recién se factura pasados ~3.000 tenants: no existe en Capa 1.
+- **Donde sí toca es en Edge Requests, que no son gratis pasados ~80 tenants.** Cada chunk es un
+  request aparte (el build de hoy tiene 17 archivos en `.next/static/chunks`), así que el supuesto
+  de «~8 requests/pageview» de R1 describe una visita **fría** y sobreestima una tibia. El número
+  de §2 (USD ~0.04) queda del lado conservador.
+- **Lo que sí es una fila de otro:** 181.739 B de JS para una ficha que es HTML de 14,8 KB son
+  **12,3× el peso del contenido**, y no hay ningún gate mirando ese número — ni de costo (no cuesta)
+  ni de performance (que es de quien corresponda). Lo dejo dicho acá porque el día que a alguien se
+  le ocurra bajar el JS, este es el número contra el que se compara.
+
+#### Veredicto de T1
+
+```
+COST_VERDICT: PASS
+DELTA_POR_TENANT_MES: USD 0.0024 (Base)  ·  USD 0.0034 (Negocio)   ← peor caso, tarifa gru1
+                      USD 0.0000 hoy: las dos reglas están `planned`, no publicadas
+
+  Base     3.000 allowed req/mes × USD 0.80/1M = 0.0024   (beacon en cada pageview, peor caso)
+  Negocio  4.200 allowed req/mes × USD 0.80/1M = 0.0034   (+1.200 msgs de chat al soft cap)
+  a tarifa iad1 (USD 0.50/1M) los mismos volúmenes dan 0.0015 y 0.0021
+
+  y ADEMÁS corrige hacia abajo el renglón de FASE 1:
+  marginal Base    0.086 − 0.060 (WAF viejo) + 0.0024 = USD 0.029   → 6% del objetivo
+  marginal Negocio 0.313 − 0.060 (WAF viejo) + 0.0034 = USD 0.256   → 51% del objetivo
+```
+
+**SUPUESTOS:** 3.000 pageviews/mes/tenant `[EST]` · beacon de S4b en el peor caso (1 por pageview)
+`[EST — el trigger no está decidido]` · conversión a click de `wa.me` 5% `[EST]` · chat al soft cap
+de 40 msgs/día = 1.200/mes · tarifa `gru1` USD 0.80/1M `[UNVERIFIED que sea la que aplica a AR]` ·
+las dos reglas se publican tal como están en `config/firewall-rules.json`.
+
+**VECTOR_MAS_RIESGOSO:** **el scoping de las reglas, no su precio.** El precio unitario del rate
+limit es irrelevante en todos los escenarios que modelé (peor caso: 0,7% del objetivo). Lo que sí
+mueve la aguja es **a qué stream de requests se le apunta una regla**, porque cada regla cuesta un
++40% sobre lo que ese stream ya costaba en Edge Requests: apuntar al HTML de la vidriera cuadruplica
+el marginal del plan Base (0.03 → 0.124) y prender Managed Rulesets lo sextuplica (0.03 → 0.18).
+Las dos son decisiones de **una línea de configuración que no pasa por ningún diff del repo**, y el
+gate de drift contra la config viva **no está implementado**.
+
+**METRICA_A_VIGILAR:** **allowed requests del WAF ÷ pageviews de vidriera del mismo período.**
+Valor de diseño **≤ 0,05** (beacon en el click) y **≤ 1,05** (beacon en cada pageview, peor caso
+aceptado). **Alarma en > 1,5**: significa que una regla se corrió al camino de render o a `/_media`
+(donde una grilla pide ~20 imágenes de una y el ratio saltaría a ~20). Es un **ratio y no un monto**
+a propósito: el monto absoluto va a seguir siendo despreciable durante todo el tiempo en que el
+error sea barato de arreglar, así que un umbral en USD avisaría tarde. El monto (dashboard de Vercel
+→ *Usage* → **Rate Limit Requests**) sirve de confirmación, con alarma secundaria en
+**> USD 0.01/tenant/mes** (3× el peor caso modelado).
 
 ## 3. Techo de LLM a 50 tenants `negocio`
 ```
@@ -545,9 +804,16 @@ por tenant en DB. R7 lo llama *el mayor riesgo de costo del producto*: sin el ca
 | Postgres | ~0 **si** el ISR está bien |
 | R2 egress | **0** por diseño |
 | R2 Class B | **techo: 720 objetos × PoPs, no 15 por pageview.** El renglón viejo («~750k reads») modelaba mal: un objeto se lee de origen una vez por PoP, no una vez por visita. Aunque el pico traiga tráfico de los 300+ PoPs, son **216.000 reads = USD 0.078**, y no vuelve a pagarse al día siguiente |
-| Edge Requests + WAF | ~400k requests → **~USD 1.00 en el día**, el vector real |
+| Edge Requests | ~400k requests × USD 2.00/1M → **USD 0.80 en el día**, el vector real |
+| **WAF Rate Limiting** | **USD 0.04 en el día** (§2.3). Sólo matchea el beacon: ≤50.000 allowed × USD 0.80/1M. El chat está acotado por el soft cap. El renglón viejo decía «Edge Requests + WAF ~USD 1.00» y ese USD 0.20 de más era la regla `host` que T1 rechazó — con las reglas acotadas el WAF es el **5%** del día caro, no la mitad |
 | Vercel functions | sólo en misses |
 | LLM | acotado por el soft cap de 40 msgs/tenant/día |
+
+**Y si el pico es abuso en vez de viralidad, el día sale más barato, no más caro.** El tráfico que
+la regla deniega **no genera Edge Requests, ni Fast Data Transfer, ni invocaciones, ni allowed
+requests**: la factura de un flood bloqueado es literalmente cero en esas cuatro líneas. Es
+contraintuitivo y está verificado (§2.3). El umbral está calculado: la regla del chat se paga sola
+denegando el 0,5% de lo que ve; la de `/api/track`, el 23%.
 
 **Lo que se rompe primero:** la tasa de hits que llega a Postgres, si una mutación tira el cache en
 pleno pico. Por eso el `revalidateTag` es quirúrgico por tenant y nunca un `revalidatePath('/')`.
@@ -570,7 +836,9 @@ ser gratis. Deployar en pico de tráfico es un evento de costo.
 | LLM | **tokens reales/turno por tenant** | > 1200 in o > 180 out, o modelo frontier en el log |
 | proxy | CPU-ms del proxy por pageview | **> 2 ms**, o cualquier llamada de red |
 | edge | Edge Requests/mes | acercarse a 10M (≈ 80 tenants) |
-| **miss** | **ISR writes sobre slugs que no son de ningún tenant** | **cualquier ritmo sostenido** — es el único vector que no aparece en el costo de ningún tenant, y el perfil corto lo hace 12× más caro por hora que el viejo `'max'` (a cambio de que no quede nada pegado) |
+| **WAF** | **allowed requests ÷ pageviews de vidriera** | **> 1,5** — una regla se corrió al camino de render o a `/_media`. Valor de diseño: 0,05 (beacon en el click) a 1,05 (beacon en cada pageview). Es un ratio y no un monto porque el monto avisaría tarde: sigue siendo despreciable durante todo el tiempo en que el error es barato de arreglar (§2.3) |
+| **WAF** | **líneas de facturación del Firewall activas** | **cualquiera que no sea `Rate Limit Requests`** — en particular `Managed Rulesets` / *inspected requests*, que se prende con un toggle, no aparece en ningún diff y sextuplica el marginal del plan Base (§2.3) |
+| **miss** | **ISR writes sobre slugs que no son de ningún tenant** | **cualquier ritmo sostenido** — es el único vector que no aparece en el costo de ningún tenant, y el perfil corto lo hace 12× más caro por hora que el viejo `'max'` (a cambio de que no quede nada pegado). **La palanca es Attack Challenge Mode** (gratis, inmediato, sin `publish`), no una regla de rate limit: el camino de render **no tiene regla y no la va a tener** (§2.3). Es la única alarma del documento cuya mitigación es manual — USD 2.88 por hora no mirada |
 
 ## 6. Fallos automáticos (bloquean merge)
 Fotos por Supabase Storage público o Vercel Image Optimization · original >500KB al browser ·
@@ -584,7 +852,12 @@ byte de foto salga por Vercel; cerrado en el código desde S2 — el `superRefin
 `packages/media/src/env.ts` hace fallar el boot antes de que esto llegue a producción, salvo que el
 deploy no sea Vercel, § 2.2.2) ·
 **`head()` antes del `put` "para aprovechar la dedup"** (ahorra USD 0.0000041 por foto y agrega un
-round-trip a R2 en el upload — §2.2.3: costo tonto en la dirección contraria).
+round-trip a R2 en el upload — §2.2.3: costo tonto en la dirección contraria) ·
+**regla de WAF cuya `condition` matchee el camino de render de la vidriera** — `type: "host"`,
+`path pre /s`, o cualquier catch-all — porque los allowed requests se facturan y eso le cobra peaje
+a cada pageview: cuadruplica el marginal del plan Base (§2.3) ·
+**Managed Rulesets / OWASP CRS prendido sin ADR ratificado** (§2.3: 6,4× el marginal Base, y el
+daño no aparece en ningún diff).
 
 **BotID Deep Analysis (USD 1/1000 llamadas): NO activar preventivamente.** A 10.000 conversaciones/mes
 son USD 10/mes — **el 53% del precio de lista de un plan Base**. (Precio, no margen: el margen
@@ -632,6 +905,28 @@ unitario del Base no está calculado en ningún artefacto — ver §7.)
   su tamaño. Es el **62,7% de los bytes almacenados** de S2 medido por una sola punta.
 - **Class B contra R2 real.** El 6 de «6 PoPs» es mío. El rango entre el caso regional (USD 0.0016)
   y el global (USD 0.078) es de **48×**, y sólo se cierra con métricas del bucket → **B1**.
+- **A qué tarifa regional se factura el rate limit del WAF para tráfico argentino.** La doc dice que
+  el precio *"is based on the region(s) from which the requests come from"* pero **no existe (o
+  `researcher` no encontró) la tabla país → región de facturación**, y la sección «Rate limiting
+  pricing» de `usage-and-pricing` **viene vacía** en la versión markdown de la doc: los precios
+  salen de las páginas de pricing regional. **El rango real es USD 0.50 (`iad1`) – 0.80 (`gru1`) por
+  1M allowed requests**, y §2.3 usa 0.80 por conservador. **No es lo mismo que la región de
+  funciones**: el WAF corre en el PoP del visitante, así que elegir `iad1` para las funciones no
+  compra la tarifa de `iad1` acá. Se cierra con la primera factura, y el error máximo es ±37% sobre
+  un renglón de USD 0.003 — o sea que **no vale la pena cerrarlo antes**.
+- **Si «inspected requests» de Managed Rulesets incluye los hits servidos desde el CDN cache.** Si
+  los incluye, los USD 0.154/tenant/mes de §2.3 son un **piso**. No se verifica: se verifica el día
+  que haya un ADR para prenderlo, y no hay ninguno.
+- **Cuántos requests matchean de verdad una regla.** Las dos reglas de T1 están `planned`
+  (`/api/track` aterriza con S4b, `/api/chat` con FASE 5): **hoy el gasto de esta línea es USD 0.00
+  y el número de §2.3 es una proyección sobre dos endpoints que todavía no existen.** El supuesto
+  más frágil es el **trigger del beacon** —click vs. pageview—, que decide si el renglón es fijo o
+  proporcional al tráfico. Se cierra en S4b, decidiéndolo, no midiéndolo.
+- **Drift entre `config/firewall-rules.json` y la config viva del WAF.** El gate de nivel 1
+  (estático) pasa; el de nivel 2 (`vercel firewall diff --json` contra Vercel) **no está
+  implementado** — falta saber qué scope de token permite `publish`. **Entre el archivo que audité y
+  la factura no hay verificación automática**: todo §2.3 vale mientras nadie publique una condición
+  distinta de la del repo. Es el riesgo residual de T1 y es de configuración, no de código.
 - **Región de funciones.** `iad1` es 1.6× más barato que `gru1` en ISR y ~7× en Fast Origin Transfer
   (USD 0.06 vs 0.41/GB), pero está más lejos si Supabase queda en `sa-east-1`. Falta la medición de
   latencia real contra el Alto Valle → **ADR-010 abierta**. Todos los números de §2 asumen `iad1`.
@@ -656,6 +951,18 @@ de costo** (1,00×): el master, que es el 62,7% de los bytes, no dedupea nunca.
 El gate de coalescing que S1 le dejó a S2 se cumple **en el eje de las fotos** (un `draft` no
 invalida nada), no en la letra: una tanda de 15 altas son 15 invalidaciones, USD 0.00048 y 1,3% de
 hits a Postgres contra una alarma de 5%.
+
+**T1 auditada (2026-08-28): PASS, delta USD 0.0024 (Base) / USD 0.0034 (Negocio) por tenant/mes** —
+ver §2.3. Es la primera auditoría del repo que **baja** el modelo en vez de subirlo: el renglón de
+WAF de FASE 1 (USD 0.06, calculado sobre una regla `host suf .maat.work` que el LEAD rechazó) cae
+17–25× y con él **el 68% del marginal del plan Base**, que pasa de 0.09 a **0.03**. La aritmética
+de los 100k requests → USD 0.08 es correcta, pero es un **techo de plataforma** (~24 tenants) y no
+una línea marginal: atribuirlo a un tenant solo daba 16% del budget cuando el número real es 0,5%.
+Tres cosas quedan escritas para el futuro: el **umbral** que hace neta negativa a cada regla (0,5%
+de denegación en el chat, 23% en `/api/track`), la alerta de **Managed Rulesets** (un toggle,
+6,4× el marginal Base, invisible en cualquier diff) y los **tres caminos** por los que igual
+podríamos terminar facturando pageviews — de los cuales el más probable es el trigger del beacon
+de S4b, y el más silencioso es que el gate valida el archivo pero no la config publicada.
 
 **Abierto:** precio de Supabase (B2) · **precio de fluid compute de Vercel (§7)** · comisión de MP
 (B3, ADR-008) · región (ADR-010) · **Class B real y bytes del master (B1)** ·

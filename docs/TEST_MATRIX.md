@@ -41,11 +41,17 @@ lo mantiene otro. Resuelto por el LEAD el 2026-08-28.
 | U20 | sanitización de descripción neutraliza instrucciones inyectadas | `sanitizeDescription` |
 
 ## RLS — Postgres real
-Archivo único, **59 `it()`**, cero mocks, dos conexiones físicas con dos claims. Es de `qa-agent`.
-**Al 2026-08-28 está mudado a `tests/rls-cross-tenant.test.ts` en el working tree, sin commitear ni
-correr** (fila **T3**, `doing`): el encabezado que se declaraba `db-agent` ya se reescribió. Hasta
-que el LEAD corra los 59 contra Postgres real, los ✅ de abajo son de la **última corrida verde desde
-`packages/db/src/`**, no de la ubicación nueva.
+`tests/rls-cross-tenant.test.ts`. Archivo único, **69 casos**, cero mocks, dos conexiones físicas
+con dos claims. Es de **`qa-agent`**, y vive en `tests/` desde **T3** (`d686923`): `db-agent` escribe
+las policies, así que no puede ser dueño del test que las audita (`CLAUDE.md` §4, desempate de
+FASE 4). El encabezado que se declaraba `db-agent` está borrado.
+
+**Los ✅ de abajo son de la corrida del LEAD desde `tests/`** —`rls-cross-tenant.test.ts (69 tests)`,
+total del repo 919—, no de la ubicación vieja.
+
+> **Este doc decía 59 y eran 69.** El 59 contaba `it()` literales en el fuente y se comía el
+> `it.each(sensibles)` sobre 10 columnas sensibles (`:625-630`). Es la misma clase de error que la
+> nota del `wa.me`: **contar en el fuente no es contar lo que corre.** El número lo dice el runner.
 
 | # | aserción | estado |
 |---|---|---|
@@ -85,7 +91,7 @@ aceptación de S3.
 | E11 | LCP mobile de la ficha (4G simulado) | dentro del presupuesto de `ARCHITECTURE.md` | 🔴 **sin cubrir** — hoy se mide **bytes**, no tiempo. Y `/_media` no manda `Timing-Allow-Origin` (**T13**), así que la Performance API no es una fuente disponible para esto |
 | E12 | mutar precio en el panel → recargar vidriera | precio nuevo **sin esperar TTL** | 🟡 **parcial** — el mecanismo de invalidación está probado para el **alta del negocio** (`s1-alta-invalida-el-miss-cacheado`) y el efecto de cache está medido (`cacheada=0`, S3.2). Falta el caso escrito: **mutar un precio** y verlo cambiar |
 | E13 | host de tenant A **nunca** sirve contenido de B | cero cross-tenant en el cache | ✅ `s1-vidriera-por-host.spec.ts:62`, explícitamente *"ni siquiera desde el cache"* |
-| E14 | slug inexistente | página legible: `<h1` literal en el body, `robots noindex`, título propio ≠ `iStock`, cero markup de vidriera (`wa.me`/`data-listing`), req2 en `HIT`. **No 404** — ADR-011 | ✅ `s1-vidriera-por-host.spec.ts:96,109,127,169` + `s1-ruta-…:273`. **Ojo:** esto cubre el slug de **tenant**; la **ficha** bajo un tenant inexistente es el agujero **S3.3** del board |
+| E14 | slug inexistente | página legible: `<h1` literal en el body, `robots noindex`, título propio ≠ `iStock`, cero markup de vidriera (`wa.me`/`data-listing`), req2 en `HIT`. **No 404** — ADR-011 | ✅ `s1-vidriera-por-host.spec.ts:96,109,127,169` + `s1-ruta-…:273`. **Ojo:** esto cubre el slug de **tenant** en la **home**. La **ficha** bajo un tenant inexistente era el agujero **S3.3**, cerrado el 2026-08-28 (`042e24e`): lo afirman `apps/web/app/(storefront)/ficha.test.ts` (24 tests, `storefront-agent`) y la verificación del LEAD contra server real, **no** un e2e — ningún browser recorre todavía los 4 casos |
 
 > **Cerrado: el gate de S3 aseguraba 14 de los 15 campos, y ahora asegura 15.** El aviso que estaba
 > acá decía que M3 exigía las 3 fotos, condición, GB, color, procedencia, batería, iCloud, garantía,
@@ -112,6 +118,15 @@ aceptación de S3.
 | S6 | IDOR | pedir un recurso de otro tenant por ID → 404/403, **nunca** 200 |
 | S7 | prompt injection en la descripción | eval dedicada en `packages/ai` |
 
+> **Cómo se cuenta sobre HTML servido, porque acá hay cuatro filas que greppean bytes.** Un HTML de
+> App Router lleva **dos** cosas: el DOM renderizado y el payload de RSC. El segundo repite
+> componentes que **no están activos**, así que **una ocurrencia de texto no es una directiva**.
+> Medido el 2026-08-28: la ficha **sana** del demo contiene la palabra `noindex` (viene del boundary
+> de `not-found` serializado) aunque su `<meta name="robots">` diga `index, follow`; y `wa.me`
+> aparece **3 veces** con **un** solo botón. Por eso M3b cuenta **anchors** y no substrings.
+> Un gate que mide sobre HTML servido cuenta **estructura**, nunca menciones
+> (`DECISIONS.md` §Notas operativas, *"El `noindex` … está en el flight"*).
+
 ## CI (bloqueante)
 ```
 pnpm typecheck && pnpm lint && pnpm test && pnpm e2e
@@ -123,6 +138,11 @@ Verde o no se mergea. Sin excepciones "porque es un fix chico".
 helpers compartidos de los gates), `guard-leaks.sh`, `guard-grants.sh`, `guard-r2.sh`,
 `guard-artifacts.sh --harness` y —dentro del job `e2e`, el único que tiene un `.next`—
 `guard-routes.sh`.
+
+**`scripts/guard-firewall.sh` (T1) NO está en esa lista** — verificado contra `ci.yml` el
+2026-08-28. Es el gate cuyo valor entero es el **censo** (*"una ruta nueva sin decidir rompe el gate
+el día que se crea"*), y eso sólo es cierto si lo corre la máquina. Hoy lo corre una persona. Es la
+segunda pregunta de este doc —*¿hay chequeo?* **y** *¿lo corre alguien?*— con respuesta *sí* y *no*.
 
 > **Dos precisiones que costaron caro y se dejan escritas, 2026-08-28.**
 > 1. `pnpm e2e` es `pnpm --filter @istock/e2e e2e`. **No** `@istock/web`: `apps/web` no tiene
@@ -137,16 +157,16 @@ lo que hay acá es lo que ya está confirmado, incluidos los huecos.
 
 | prohibición de §2 | quién la afirma hoy | ¿en cada push? |
 |---|---|---|
-| `tenant_id` en `user_metadata` | **estático:** `guard-leaks.sh:127` · `web-lint.mjs:123` (W008) · `accept-fase3.sh:61` — **y en runtime:** `rls-cross-tenant.test.ts:528`, que **forja un claim** con el tenant en `user_metadata` contra Postgres real y verifica que **no abre nada** | ✅ (los dos primeros + el test) |
+| `tenant_id` en `user_metadata` | **estático:** `guard-leaks.sh:127` · `web-lint.mjs:123` (W008) · `accept-fase3.sh:61` — **y en runtime:** `tests/rls-cross-tenant.test.ts:535`, que **forja un claim** con el tenant en `user_metadata` contra Postgres real y verifica que **no abre nada** | ✅ (los dos primeros + el test) |
 | tabla nueva sin `GRANT` | `guard-grants.sh` (parsea por **sentencia**, no por línea: 5 de los 6 `GRANT` son multilínea) — **y en runtime:** R7a/R7b/R7c preguntan por el privilegio **efectivo** (`has_table_privilege`), así que también cae un `GRANT … TO PUBLIC` | ✅ desde `985c369` |
 | borrado de un objeto de R2 por key | `guard-r2.sh` R1 + R2 (**T11**) | ✅ |
 | IMEI / costo / margen / notas en la vidriera | M4 de `accept-s3.sh` sobre los **bytes** de ficha **y** grilla, con los IMEI leídos del seed · `web-lint.mjs` W009 · `guard-leaks.sh` | 🟡 el lint sí; M4 no (`accept-s3.sh` no es job de CI) |
-| **rate limiting con contador en Postgres sobre la vidriera** | **nadie** | 🔴 **T14.1** |
+| **rate limiting con contador en Postgres sobre la vidriera** | **nadie**. **T1 no la cubre**: `guard-firewall.sh` audita el techo del WAF (config + censo de rutas), que es otra cosa que prohibir un contador en Postgres. Y además `guard-firewall.sh` **no corre en CI** (verificado contra `.github/workflows/ci.yml`) | 🔴 **T14.1** |
 | **imagen original (>500 KB) servida a la vidriera** | `scripts/probes/s2-media-measure.test.ts` (sólo dentro de `accept-s2.sh`) · M2 de `accept-s3.sh` (ya midió: 51016 B) | 🔴 **T14.2** — existe en dos lados y **no corre en ninguno** en cada push |
 
 > **Dos de estas se dieron por descubiertas y estaban cubiertas.** Un reporte del 2026-08-28 listaba
 > `user_metadata` como *"cubierta sólo estáticamente por el lint 0015"* y la de `GRANT` como *"R5/R6
-> chequean RLS, no privilegios"*. **Las dos son falsas**: `rls-cross-tenant.test.ts:528` es un test
+> chequean RLS, no privilegios"*. **Las dos son falsas**: `tests/rls-cross-tenant.test.ts:535` es un test
 > de runtime que forja el claim, y R7 chequea privilegios y no policies. La única de las tres que
 > resultó real es el rate limiting, y **ya tenía fila** (T14.1). De ahí la regla de abajo.
 

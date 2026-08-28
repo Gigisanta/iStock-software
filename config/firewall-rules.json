@@ -3,6 +3,7 @@
   "$owner": "LEAD (CLAUDE.md §4). El gate que audita esto es scripts/guard-firewall.sh, tambien del LEAD.",
   "$apply": "NO es parte del build. Un `vercel deploy` NO sincroniza el WAF. Es un paso operativo: `vercel firewall rules add ... --yes` por regla y despues `vercel firewall publish --yes`. Procedimiento completo en docs/OPERACION.md (FASE 8).",
   "$plan": "Vercel Pro. Restricciones que el guard hace cumplir: keys solo ip|ja4 (header: es Enterprise), algo fixed_window, window 10..600s (la doc del CLI dice 3600 pero el limite del plan manda), maximo 40 reglas.",
+  "$scoping_eq": "Las dos condiciones matchean por `eq`, no por `pre`. `pre` es PREFIJO: `/api/track` matchearia tambien `/api/tracking` y `/api/track-v2`, y como el censo del guard usa la misma logica, una ruta futura bajo ese prefijo heredaria el techo, heredaria el medidor, y el gate la daria por cubierta sin que nadie lo hubiera decidido. Es el unico punto donde el censo puede dar verde a algo que no se miro; lo encontro `cost-auditor` auditando T1. Precio del `eq`: un POST a `/api/track/` (con barra) no matchea la regla. No abre un agujero de escritura — Next tiene `trailingSlash: false` y devuelve 308, que en POST preserva metodo y reintenta contra `/api/track`, que SI esta cubierta: el costo del bypass es un redirect, no una escritura sin techo.",
   "$scoping": "Por que NO hay una regla `host suf .maat.work`: matchearia CADA pageview de vidriera, y el rate limit se factura por *allowed requests* (los que matchean y pasan). Seria pagar 0.80 USD/1M por proteger HTML que ARCHITECTURE.md declara scrapeable a proposito. Se defiende lo que cuesta plata: escrituras sin autenticar y el chatbot. Para un abuso masivo del HTML la palanca es Attack Challenge Mode (`vercel firewall attack-mode enable --duration 1h`), que es gratis en todos los planes, inmediato y sin publish.",
   "rules": [
     {
@@ -11,7 +12,7 @@
       "route": "/api/track",
       "condition": {
         "type": "path",
-        "op": "pre",
+        "op": "eq",
         "value": "/api/track"
       },
       "rateLimit": {
@@ -36,7 +37,7 @@
       "route": "/api/chat",
       "condition": {
         "type": "path",
-        "op": "pre",
+        "op": "eq",
         "value": "/api/chat"
       },
       "rateLimit": {

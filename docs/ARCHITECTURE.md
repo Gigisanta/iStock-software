@@ -192,7 +192,14 @@ Idempotente: correr el cron dos veces no rompe nada.
 
 ## Seguridad de la vidriera y del chatbot (R7 PASS)
 - Anti-bot vive **en el edge de Vercel** (managed rulesets + WAF rate limit), **nunca en la app**:
-  filtrar dentro de la app fragmenta el cache ISR. Presupuesto: **2 reglas** (vidriera + chatbot).
+  filtrar dentro de la app fragmenta el cache ISR. Presupuesto: **2 reglas**.
+  **Corregido el 2026-08-28 contra `config/firewall-rules.json` (T1): las 2 reglas son `/api/track`
+  y `/api/chat`, no "vidriera + chatbot".** La regla de vidriera —condición por `host`— se propuso y
+  **se rechazó**: el rate limit se factura por *allowed requests*, o sea los que matchean **y
+  pasan**, así que le cobraría peaje a cada pageview de la vidriera, que es exactamente lo que la
+  viñeta de abajo declara scrapeable a propósito. Para abuso masivo del HTML la palanca es **Attack
+  Challenge Mode**, gratis. Las reglas **no** van en `vercel.json` (su schema no tiene `rate_limit`)
+  y se aplican por CLI, que no es parte del build: `SLICE_BOARD.md` §T1.
 - **Cloudflare es sólo R2.** Nunca un proxy delante de Vercel: rompe Bot Protection.
 - **La vidriera es scrapeable por diseño.** Se defiende lo que cuesta plata (chatbot, queries a
   Postgres), no el HTML público. **Prohibido servir contenido distinto a Googlebot** (cloaking).

@@ -32,7 +32,9 @@ ok()  { printf '  \033[32mok\033[0m    %s\n' "$1"; }
 bad() { printf '  \033[31mWAF\033[0m   %s\n' "$1"; fail=1; }
 inf() { printf '  \033[36m····\033[0m  %s\n' "$1"; }
 
-CFG=config/firewall-rules.json
+# `WAF_CFG` existe SOLO para la polaridad: un gate que nunca se vio fallar es un adorno, y probarlo
+# pisando el archivo real deja el repo en un estado sucio si el shell se muere en el medio.
+CFG="${WAF_CFG:-config/firewall-rules.json}"
 
 say "F0 · censo: el archivo de reglas existe y parsea"
 if [ ! -f "$CFG" ]; then
@@ -97,22 +99,54 @@ if (rules.length && !out.some((l) => l.startsWith('NO ')))
   ok('todas las reglas respetan keys/algo/window/limit/action de Pro');
 
 // ── F2 · scoping. El riesgo de costo del rate limit no es el precio unitario, es el alcance:
-// se facturan los *allowed requests*, o sea los que matchean y pasan.
+// se facturan los *allowed requests*, o sea los que matchean y pasan. Una regla mal alcanzada no
+// falla: cobra. Por eso este es el unico bloque del guard que rechaza reglas VALIDAS.
+//
+// ## Lo que `route` NO es
+// La primera version eximia del chequeo de host a toda regla que declarara `route` — `if (c.type
+// === 'host' && !r.route)`. Estaba mal y lo encontro `cost-auditor` auditando T1: **`route` es
+// metadata del repo y `condition` es lo que Vercel publica.** Una regla con
+// `condition:{type:"host",suf:".maat.work"}` **y** `route:"/api/track"` pasaba el gate y facturaba
+// cada pageview de vidriera — exactamente la regla que el LEAD habia rechazado y que este bloque
+// existe para impedir. Un campo declarativo no puede eximir del chequeo al campo ejecutable.
+// Ahora `type: "host"` se rechaza siempre: si algun dia hace falta host + path, va a hacer falta un
+// array de condiciones, y esa es una decision que se pide, no que se cuela por un campo vecino.
 sec('F2 · ninguna regla le cobra peaje al HTML publico de la vidriera');
 let anchoDeMas = 0;
 for (const r of rules) {
   const c = r.condition || {};
-  const v = String(c.value ?? '');
-  const CATCHALL = ['/', '/(.*)', '.*', '/*', '^/', '^/.*', '/.*'];
+  const v = String(c.value ?? c.suf ?? '');
+  // `/s` y `/s/` entran a la lista porque ADR-007 hace de `/s/**` la vidriera ENTERA: una regla
+  // ahi es la regla de host con otro nombre. Tampoco estaban, y son el segundo camino que
+  // `cost-auditor` marco como abierto.
+  const CATCHALL = ['/', '/(.*)', '.*', '/*', '^/', '^/.*', '/.*', '/s', '/s/'];
   const sinLiterales = c.op === 're' && v.replace(/[^a-z0-9]/gi, '') === '';
+  const segmentos = v.split('/').filter(Boolean).length;
   const atrapaTodo = CATCHALL.includes(v) || sinLiterales;
-  if (c.type === 'host' && !r.route) {
+  if (c.type === 'host') {
     anchoDeMas++;
-    no(`la regla ${r.name} condiciona por host sin acotar path: matchea CADA pageview de vidriera y cada uno se factura como allowed request. ARCHITECTURE.md: "la vidriera es scrapeable por diseño; se defiende lo que cuesta plata"`);
+    no(`la regla ${r.name} condiciona por host: matchea CADA pageview de vidriera y cada uno se factura como allowed request. Declarar route no la exime — route es metadata del repo, condition es lo que Vercel publica. ARCHITECTURE.md: "la vidriera es scrapeable por diseño; se defiende lo que cuesta plata"`);
   }
   if (atrapaTodo) {
     anchoDeMas++;
     no(`la regla ${r.name} matchea ${JSON.stringify(v)}, o sea todo el sitio. Para abuso masivo del HTML la palanca es Attack Challenge Mode, que es gratis; una regla de rate limit ahi es pagar por proteger lo que decidimos no proteger`);
+  }
+  // Un `pre` de un solo segmento (`/api`, `/s`) alcanza medio producto sin nombrarlo.
+  if (c.type === 'path' && c.op === 'pre' && segmentos < 2 && !atrapaTodo) {
+    anchoDeMas++;
+    no(`la regla ${r.name} usa prefijo ${JSON.stringify(v)}, de un solo segmento: alcanza rutas que nadie enumero y las factura`);
+  }
+  // `pre` es PREFIJO: `/api/track` tambien matchea `/api/tracking` y `/api/track-v2`. El censo F3
+  // usa la misma logica, asi que una ruta nueva bajo ese prefijo hereda la regla, hereda el
+  // medidor, y el gate la da por cubierta sin que nadie lo haya decidido. Es el unico lugar donde
+  // F3 puede dar verde a algo que no se miro. Se exige `eq`, o un motivo escrito de por que no.
+  if (c.type === 'path' && c.op === 'pre' && !atrapaTodo && segmentos >= 2) {
+    if (typeof r.prefix_why !== 'string' || r.prefix_why.length < 40) {
+      anchoDeMas++;
+      no(`la regla ${r.name} matchea por prefijo (${JSON.stringify(v)}) sin declarar prefix_why: una ruta futura bajo ese prefijo heredaria el techo y el censo la daria por cubierta. Usar op "eq", o escribir por que el prefijo es deliberado`);
+    } else {
+      inf(`${r.name}: prefijo deliberado — ${r.prefix_why.slice(0, 80)}`);
+    }
   }
 }
 if (!anchoDeMas) ok('las reglas apuntan a escrituras y al chatbot, no al HTML cacheado');
