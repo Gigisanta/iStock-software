@@ -374,6 +374,34 @@ async function missMetadataFor(slug: string): Promise<Metadata> {
  * Las tres fotos. La primera es el `<picture>` del hero (en teléfono `detail` **no** es un
  * candidato alcanzable, ver `_lib/photo.ts`); las otras dos van en una fila y resuelven a `card`.
  * A 390×844 DPR 3 la ficha entera baja 3 × `card`.
+ *
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *  Pueden ser menos de tres, y hasta cero. Qué se hace entonces, y por qué.
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ * `MIN_PHOTOS_TO_PUBLISH` son 3 y el panel no deja publicar con menos, así que en el papel esto no
+ * pasa. En la práctica sí: `_lib/listings.ts` **omite** de la lista la foto cuya fila de
+ * `listing_photos` no se puede servir (una key rota, una importación a medias), porque la
+ * alternativa —listarla igual con `about:invalid`— es un `<img>` que falla y deja un hueco con el
+ * `alt` adentro de la caja. Omitir es correcto; lo que hay que decidir es qué se muestra cuando lo
+ * omitido son las tres.
+ *
+ * **Lo que se eligió: la ficha se publica igual, sin sección de fotos, con una línea que dice que
+ * no hay fotos.** Los otros dos caminos son peores:
+ *
+ * - **Tres cajas grises "Sin foto"** (el placeholder que sí usa la grilla) es decoración: ocupa la
+ *   mitad de la pantalla de un teléfono para no decir nada, y empuja abajo del fold el precio, el
+ *   estado y el botón, que es lo único que esta persona puede usar.
+ * - **Tratarla como miss** (`<ListingMiss />`, "este equipo ya no está publicado") sería mentir: el
+ *   equipo está publicado, el precio, la condición, la batería, la garantía y el punto de retiro
+ *   son todos reales, y el link salió de un estado de WhatsApp que alguien acaba de abrir. Perder
+ *   una venta real porque **nuestra** capa de media falló es cambiar un defecto visible por uno
+ *   caro e invisible. La foto rota es un problema del reseller y se arregla en el panel; mientras
+ *   tanto, la ficha sigue haciendo lo que vino a hacer.
+ *
+ * La línea no es un placeholder decorativo: es el dato de que no hay fotos —que el comprador tiene
+ * derecho a saber antes de tomarse un colectivo— y lo convierte en la única acción disponible, que
+ * es la que ya está en pantalla. **No agrega un segundo `wa.me`**: nombra el botón que está abajo
+ * (`CLAUDE.md` §1, un solo botón por ficha).
  */
 function ListingPhotos({
   cover,
@@ -382,7 +410,16 @@ function ListingPhotos({
   readonly cover: PublicListingDTO['photos'][number] | undefined;
   readonly rest: readonly PublicListingDTO['photos'][number][];
 }) {
-  if (cover === undefined) return null;
+  if (cover === undefined) {
+    return (
+      <section aria-label="Fotos del equipo" className="mt-5">
+        <p className="rounded-xl border border-dashed border-neutral-300 p-3 text-sm leading-relaxed text-neutral-600 dark:border-neutral-700 dark:text-neutral-400">
+          Este equipo todavía no tiene fotos publicadas. Pedilas por WhatsApp, con el botón de acá
+          abajo, antes de ir hasta el local.
+        </p>
+      </section>
+    );
+  }
 
   return (
     <section aria-label="Fotos del equipo" className="mt-5">

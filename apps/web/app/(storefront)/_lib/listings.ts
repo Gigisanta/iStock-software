@@ -5,7 +5,7 @@ import 'server-only';
 import { cacheLife, cacheTag } from 'next/cache';
 import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
 import { catalogModels, fxSettings, listingPhotos, listings, locations, tenants } from '@istock/db';
-import { variantUrl } from '@istock/media';
+import { renderableVariantUrls, reportMediaIncident } from '@istock/media';
 import {
   PUBLIC_STATUSES,
   fxRateFromArsCents,
@@ -237,14 +237,44 @@ async function photosByListing(
     .orderBy(asc(listingPhotos.listingId), asc(listingPhotos.sortOrder));
 
   for (const row of rows) {
-    const list = grouped.get(row.listingId) ?? [];
     // Las URLs las arma `@istock/media`, nunca este archivo: la key es content-addressed y el
     // bucket, el CDN y el prefijo no son asunto de la vidriera (`CLAUDE.md` §2, ADR-006).
-    list.push({
-      cardUrl: variantUrl(row, 'card'),
-      detailUrl: variantUrl(row, 'detail'),
-      alt: row.alt,
-    });
+    //
+    // `renderableVariantUrls` y no `variantUrl`: la diferencia es **omitir** contra **degradar**.
+    // `variantUrl` ya no tira —eso está bien y es lo que evita que una fila rota cuelgue el stream
+    // de un render cacheado—, pero devuelve `UNRENDERABLE_VARIANT_URL` (`about:invalid`), y meter
+    // eso en la lista produce una ficha con un `<img>` que falla al cargar y muestra el `alt`. Un
+    // hueco de imagen rota en la ficha le dice al comprador "este negocio no cuida lo que muestra",
+    // que es exactamente lo contrario de para qué existe la vidriera. La foto que no se puede
+    // servir **no se lista**.
+    //
+    // Es todo-o-nada por foto, y lo decide `packages/media`: las tres keys salen del mismo
+    // `uploadListingPhoto`, así que una sola rota no es "falta un tamaño", es una fila que no se
+    // puede creer — y publicar `card` sin `detail` dejaría a `_lib/photo.ts` armando una lista de
+    // candidatos donde uno de los dos tamaños no carga.
+    const urls = renderableVariantUrls(row);
+    if (urls === null) {
+      // La omisión **no es muda**. `renderableVariantUrls` ya reportó el incidente por variante
+      // (código + motivo + prefijo de key + variante) por el canal de `@istock/media`; esto agrega
+      // el hecho que ese incidente no contiene y que es el que importa acá: **una foto menos en
+      // una página pública**, que es lo que ve el comprador y lo que nadie va a reportar por
+      // soporte. Sin esta línea, el modo de falla es una ficha que va perdiendo fotos de a una sin
+      // que nada se ponga rojo.
+      //
+      // `keyPrefix: ''` es deliberado y no una omisión: la key es content-addressed y desde ella se
+      // llega al master del bucket privado, así que este archivo no la toca ni la recorta — el
+      // único que decide cuánta key se puede ver es `packages/media`, y ya la emitió él.
+      reportMediaIncident({
+        code: 'MEDIA_UNSAFE_KEY',
+        reason: 'foto omitida de la vidriera: la fila de listing_photos no es servible',
+        keyPrefix: '',
+        variant: null,
+      });
+      continue;
+    }
+
+    const list = grouped.get(row.listingId) ?? [];
+    list.push({ cardUrl: urls.card, detailUrl: urls.detail, alt: row.alt });
     grouped.set(row.listingId, list);
   }
   return grouped;
