@@ -189,14 +189,33 @@ for (const r of rutas.sort()) inf(`  · ${r}`);
 // El WAF matchea el path ENTRANTE (`/api/track` sobre `{slug}.maat.work`); el censo enumera
 // HANDLERS (`/s/[slug]/api/track`, que es el destino del rewrite de proxy.ts). No son el mismo
 // string y no tienen por que serlo: `covers` es el puente, declarado a mano y auditado abajo.
-const cubiertas = rules.flatMap((r) => [String(r.route || ''), ...(Array.isArray(r.covers) ? r.covers.map(String) : [])].filter(Boolean));
+// `status` NO se ignora aca, y esa es la mitad del bloque que importa. Una regla `planned` no esta
+// publicada en Vercel: es una promesa de techo, no un techo. La primera version de este censo
+// juntaba TODAS las reglas en `cubiertas` y por lo tanto le habria dado verde a `/api/chat` el dia
+// que aterrizara, porque `chatbot-rl` "ya existe" — en un archivo, sin publicar. Lo levanto
+// `cost-auditor` midiendo la otra punta: con el techo de `chatbot-rl` (12/min/IP = 17.280/dia) una
+// sola IP puede gastar USD 41–99/mes en Gemini contra un plan de USD 35, o sea que ni siquiera
+// publicada la regla es el techo de la factura. Sin publicar no es nada.
+//
+// Es la misma clase de defecto que este archivo ya persigue en F3/F4: un gate que da verde a algo
+// que no existe. La diferencia es que `covers` roto se ve, y `planned` se lee como si estuviera.
+const esRuta = (c, ruta) => c && (ruta === c || ruta.startsWith(c + '/'));
+const cubiertasPor = (r) => [String(r.route || ''), ...(Array.isArray(r.covers) ? r.covers.map(String) : [])].filter(Boolean);
+const cubiertas = rules.filter((r) => r.status === 'active').flatMap(cubiertasPor);
+const planeadas = rules.filter((r) => r.status === 'planned');
 const allow = Array.isArray(cfg.allowlist) ? cfg.allowlist : [];
 const allowByRoute = new Map(allow.map((a) => [a.route, a]));
 let huerfanas = 0;
 for (const ruta of rutas) {
-  const porRegla = cubiertas.some((c) => c && (ruta === c || ruta.startsWith(c + '/')));
+  const porRegla = cubiertas.some((c) => esRuta(c, ruta));
+  const prometida = planeadas.find((r) => cubiertasPor(r).some((c) => esRuta(c, ruta)));
   const exc = allowByRoute.get(ruta);
   if (porRegla) { ok(`${ruta} · cubierta por una regla de rate limit`); continue; }
+  if (prometida && !exc) {
+    huerfanas++;
+    no(`${ruta} EXISTE y su unica regla (${prometida.name}) esta planned, no active. Una regla planned vive en este archivo y no en Vercel: \`vercel deploy\` no sincroniza el WAF, asi que el handler ya esta sirviendo sin techo. La regla se publica (\`vercel firewall rules add\` + \`publish\`) y pasa a active EN EL MISMO COMMIT que el handler, o el handler no aterriza`);
+    continue;
+  }
   if (exc && typeof exc.reason === 'string' && exc.reason.length >= 60) {
     ok(`${ruta} · exceptuada con motivo escrito`);
     continue;

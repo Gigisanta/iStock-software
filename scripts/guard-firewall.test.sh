@@ -61,6 +61,11 @@ mk("f2-pre-hablado", (c) => { r0(c).condition.op = "pre"; r0(c).prefix_why = "el
 mk("f3-sin-motivo",  (c) => { c.allowlist.find((a) => a.route === "/api/health").reason = "no jode"; });
 mk("f3-sin-excepcion", (c) => { c.allowlist = c.allowlist.filter((a) => a.route !== "/_media/[...key]"); });
 mk("f3-covers-falso", (c) => { r0(c).status = "active"; r0(c).covers = ["/s/[slug]/api/inexistente"]; });
+// El gemelo de `f3-covers-falso`, en el otro sentido: la regla nombra un handler que SI existe,
+// pero sigue `planned`. `lands_with` esta puesto a proposito — sin el, el caso lo atajaria F1 y
+// este arnes reportaria verde por el motivo equivocado, que es el defecto que este archivo
+// documenta arriba en `f1-planned`. La regla es del beacon, que es la unica cuyo handler existe.
+mk("f3-planned-viva", (c) => { r0(c).status = "planned"; r0(c).lands_with = "FASE 5"; });
 mk("f4-ruta-muerta", (c) => { c.allowlist.push({ route: "/api/lo-que-fue", reason: "una ruta que ya no existe, con un motivo suficientemente largo como para pasar el minimo de sesenta caracteres que exige F3" }); });
 ' "$T"
 
@@ -110,6 +115,7 @@ printf '\n\033[1m── F3/F4 · el censo, que es lo que impide envejecer en sil
 caso FAIL f3-sin-motivo    "exceptuar una ruta con un motivo de tres palabras"
 caso FAIL f3-sin-excepcion "un handler censado que nadie decidio (el de las fotos)"
 caso FAIL f3-covers-falso  "una regla active que dice cubrir un handler que no existe"
+caso FAIL f3-planned-viva  "un handler que YA existe cuya unica regla sigue planned (o sea: sin publicar)"
 caso FAIL f4-ruta-muerta   "una excepcion que apunta a una ruta que ya no existe"
 
 printf '\n\033[1m── el archivo real\033[0m\n'

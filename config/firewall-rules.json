@@ -34,7 +34,7 @@
     },
     {
       "name": "chatbot-rl",
-      "why": "Cada request al chat es un token pagado a Gemini/Groq. Sin limite, un solo visitante con un for-loop consume el presupuesto de LLM del mes. El contador por IP del WAF es la primera barrera; la segunda es el contador de tokens por tenant en DB, que va en ruta autenticada y NUNCA en la vidriera (ARCHITECTURE.md).",
+      "why": "Cada request al chat es un token pagado a Gemini/Groq, y es el UNICO vector del producto con costo por uso. El techo viejo (12/min/IP) esta medido y no alcanzaba: 12/min = 17.280 msgs/dia = 518.400/mes, que a USD 0,00008032/msg son USD 41,64 esperados (USD 99,53 con los tokens en el techo estructural) desde UNA sola IP, contra un plan Negocio de USD 35. O sea que la regla nunca fue el techo de la factura: era el techo de un for-loop ingenuo. 20/600s deja pasar cualquier conversacion real (nadie pregunta 20 veces en diez minutos por un telefono) y baja el peor caso por IP a ~USD 6,94/mes. El techo de la FACTURA es el contador por tenant/dia, que hoy NO EXISTE: packages/ai tiene softCapReached() y la constante de 40/dia, pero messagesToday es un parametro que solo escriben los tests. Ver docs/COST.md 2.6 y el ADR del contador (C1).",
       "route": "/api/chat",
       "condition": {
         "type": "path",
@@ -42,8 +42,8 @@
         "value": "/api/chat"
       },
       "rateLimit": {
-        "window": 60,
-        "requests": 12,
+        "window": 600,
+        "requests": 20,
         "keys": [
           "ip"
         ],
