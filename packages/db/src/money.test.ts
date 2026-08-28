@@ -53,10 +53,12 @@ describe('ida y vuelta contra Postgres real', () => {
     const r = (await sql.unsafe(
       `select price_usd, cost_usd, margin_usd from listings where slug = 'iphone-14-pro-256-grafito'`,
     )) as unknown as { price_usd: string; cost_usd: string; margin_usd: string }[];
-    expect(decimalToCents(r[0]?.price_usd ?? '')).toBe(62_000_00);
-    expect(decimalToCents(r[0]?.cost_usd ?? '')).toBe(52_000_00);
+    // Valores corregidos 2026-08-28 (ver packages/db/src/seed-data.ts, función `usd()`):
+    // USD 620 de precio y USD 520 de costo, no USD 62.000 / USD 52.000.
+    expect(decimalToCents(r[0]?.price_usd ?? '')).toBe(62_000);
+    expect(decimalToCents(r[0]?.cost_usd ?? '')).toBe(52_000);
     // El margen lo calcula Postgres (columna generada), no el código de la app.
-    expect(decimalToCents(r[0]?.margin_usd ?? '')).toBe(10_000_00);
+    expect(decimalToCents(r[0]?.margin_usd ?? '')).toBe(10_000);
   });
 
   it('el TC del dueño vuelve como centavos de ARS por USD, listo para `applyFx`', async () => {

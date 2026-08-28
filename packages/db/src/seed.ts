@@ -325,7 +325,9 @@ async function main(): Promise<void> {
       declaredCondition: 'used_excellent',
       batteryPct: 82,
       notes: 'Lo quiere entregar por un 14.',
-      offerUsd: 21_000_00,
+      // Mismo defecto que SEED_LISTINGS (2026-08-28): esto NO es "210 con 00 centavos" sino
+      // 210 dólares. `internalNotes` de abajo ya decía "210" — el número bueno estaba al lado.
+      offerUsd: 21_000,
       internalNotes: 'Ofrecer 210 máximo, tiene detalle en el marco.',
       handledBy: SEED_OWNER_ID,
       createdAt: SEED_NOW,

@@ -14,7 +14,7 @@
  */
 
 import { createHash } from 'node:crypto';
-import type { Condition, ListingStatus } from '@istock/domain';
+import { CENTS_PER_UNIT, type Cents, type Condition, type ListingStatus } from '@istock/domain';
 
 /** Instante fijo del seed. Todo lo que dependa del tiempo se calcula desde acá. */
 export const SEED_NOW = new Date('2026-08-27T15:00:00.000Z');
@@ -80,6 +80,28 @@ export interface SeedListing {
 }
 
 /**
+ * Dólares enteros → `Cents` (centavos enteros, `packages/domain/src/money.ts`).
+ *
+ * DEFECTO CORREGIDO 2026-08-28: `SEED_LISTINGS` escribía los montos como un literal tipo
+ * `62_000_00`. Un humano lo lee como "62.000 con 00 centavos"; el tipo `Cents` lo interpreta
+ * como 6.200.000 centavos = USD 62.000 — **cien veces** el precio que se quiso escribir (USD 620,
+ * el mismo que cita CLAUDE.md §1 en el mensaje canónico de WhatsApp). El literal de centavos con
+ * grouping de a tres dígitos es indistinguible a simple vista de un literal con dos ceros de
+ * centavos pegados al final: esa ambigüedad es la causa raíz, no un typo puntual.
+ *
+ * Por eso ningún campo de `SEED_LISTINGS` vuelve a escribir centavos a mano: se escribe el precio
+ * en **dólares enteros**, tal como lo diría el dueño del local, y `usd()` hace la multiplicación
+ * por `CENTS_PER_UNIT`. Si el próximo renglón necesita centavos (ej. `18.50`), `usd()` tira
+ * `DomainError` en vez de truncar en silencio — mejor romper el seed que publicar mal un precio.
+ */
+function usd(dollars: number): Cents {
+  if (!Number.isInteger(dollars)) {
+    throw new Error(`usd(): esperaba dólares enteros, recibí ${String(dollars)}`);
+  }
+  return dollars * CENTS_PER_UNIT;
+}
+
+/**
  * 8 iPhones + 2 accesorios. Estados: 6 `available` + 1 `reserved` + 1 `sold` entre los iPhones,
  * y los 2 accesorios `available`. **Exactamente uno** en `reserved`, que es el gate de D4.
  *
@@ -95,7 +117,7 @@ export const SEED_LISTINGS: readonly SeedListing[] = [
     icloudStatusText: 'Libre de iCloud, verificado en el local',
     warrantyText: '90 días de garantía del local', provenanceText: 'Compra directa a cliente en Cipolletti',
     description: 'Impecable, sin detalles en pantalla. Se entrega con caja y cable.',
-    priceUsdCents: 62_000_00, costUsdCents: 52_000_00, supplier: 'Canje mostrador',
+    priceUsdCents: usd(620), costUsdCents: usd(520), supplier: 'Canje mostrador',
     internalNotes: 'Entró por canje, chequear Face ID antes de entregar.',
     imei: '353915107912345', qty: 1, status: 'available',
   },
@@ -106,7 +128,7 @@ export const SEED_LISTINGS: readonly SeedListing[] = [
     icloudStatusText: 'Libre de iCloud', warrantyText: '30 días de garantía del local',
     provenanceText: 'Importado, ingreso declarado',
     description: 'Tester A+: batería 92%, pantalla original, Face ID OK.',
-    priceUsdCents: 43_000_00, costUsdCents: 36_500_00, supplier: 'Mayorista Buenos Aires',
+    priceUsdCents: usd(430), costUsdCents: usd(365), supplier: 'Mayorista Buenos Aires',
     internalNotes: 'Lote de 5, quedan 1.', imei: '354398765432101', qty: 1, status: 'available',
   },
   {
@@ -116,7 +138,7 @@ export const SEED_LISTINGS: readonly SeedListing[] = [
     icloudStatusText: 'Sellado de fábrica', warrantyText: '1 año Apple',
     provenanceText: 'Importado, caja cerrada',
     description: 'Sellado, caja cerrada. Precio de contado.',
-    priceUsdCents: 71_000_00, costUsdCents: 63_000_00, supplier: 'Mayorista Buenos Aires',
+    priceUsdCents: usd(710), costUsdCents: usd(630), supplier: 'Mayorista Buenos Aires',
     internalNotes: null, imei: '356938035643809', qty: 1, status: 'available',
   },
   {
@@ -126,7 +148,7 @@ export const SEED_LISTINGS: readonly SeedListing[] = [
     icloudStatusText: 'Libre de iCloud', warrantyText: '30 días del local',
     provenanceText: 'Canje presencial en Neuquén',
     description: 'Pantalla cambiada por service, funciona perfecto. Detalle estético en la tapa.',
-    priceUsdCents: 25_500_00, costUsdCents: 20_000_00, supplier: 'Canje mostrador',
+    priceUsdCents: usd(255), costUsdCents: usd(200), supplier: 'Canje mostrador',
     internalNotes: 'Módulo alternativo, avisarlo siempre.', imei: '351824059334455', qty: 1, status: 'available',
   },
   {
@@ -136,7 +158,7 @@ export const SEED_LISTINGS: readonly SeedListing[] = [
     icloudStatusText: 'Libre de iCloud', warrantyText: '30 días del local',
     provenanceText: 'Canje presencial en Cipolletti',
     description: 'Muy buen estado general, batería 84%.',
-    priceUsdCents: 21_000_00, costUsdCents: 16_500_00, supplier: 'Canje mostrador',
+    priceUsdCents: usd(210), costUsdCents: usd(165), supplier: 'Canje mostrador',
     internalNotes: null, imei: '352099001122334', qty: 1, status: 'available',
   },
   {
@@ -147,7 +169,7 @@ export const SEED_LISTINGS: readonly SeedListing[] = [
     provenanceText: 'Compra a cliente conocido',
     // IMEI con dígito verificador malo a propósito: Luhn es warning, NO gate de alta (ADR-009).
     description: 'Color difícil de conseguir. Impecable.',
-    priceUsdCents: 55_000_00, costUsdCents: 47_000_00, supplier: 'Canje mostrador',
+    priceUsdCents: usd(550), costUsdCents: usd(470), supplier: 'Canje mostrador',
     internalNotes: 'IMEI no valida Luhn: revisar grabado antes de publicar en otro lado.',
     imei: '353915107912341', qty: 1, status: 'available',
   },
@@ -158,7 +180,7 @@ export const SEED_LISTINGS: readonly SeedListing[] = [
     icloudStatusText: 'Libre de iCloud, sin cuenta', warrantyText: 'Garantía Apple vigente',
     provenanceText: 'Open box, abierto sólo para probar',
     description: 'Open box, cero uso. Se entrega con caja y accesorios.',
-    priceUsdCents: 118_000_00, costUsdCents: 104_000_00, supplier: 'Mayorista Buenos Aires',
+    priceUsdCents: usd(1180), costUsdCents: usd(1040), supplier: 'Mayorista Buenos Aires',
     internalNotes: null, imei: '357123456789012', qty: 1, status: 'reserved',
   },
   {
@@ -168,7 +190,7 @@ export const SEED_LISTINGS: readonly SeedListing[] = [
     icloudStatusText: 'Libre de iCloud', warrantyText: '90 días del local',
     provenanceText: 'Canje presencial en Neuquén',
     description: 'Vendido el 26/08. Queda de referencia de precio.',
-    priceUsdCents: 47_000_00, costUsdCents: 39_000_00, supplier: 'Canje mostrador',
+    priceUsdCents: usd(470), costUsdCents: usd(390), supplier: 'Canje mostrador',
     internalNotes: 'Vendido a cliente de Plottier.', imei: '358240051111222', qty: 1, status: 'sold',
   },
   // ── Accesorios: `lot`. Sin IMEI (lo impide un CHECK, no la buena voluntad del código). ──
@@ -178,7 +200,7 @@ export const SEED_LISTINGS: readonly SeedListing[] = [
     condition: 'sealed', batteryPct: null, screenOriginal: null,
     icloudStatusText: null, warrantyText: '30 días del local', provenanceText: 'Compra mayorista',
     description: 'Carga rápida, compatible con iPhone 8 en adelante.',
-    priceUsdCents: 1_800_00, costUsdCents: 1_100_00, supplier: 'Mayorista accesorios',
+    priceUsdCents: usd(18), costUsdCents: usd(11), supplier: 'Mayorista accesorios',
     internalNotes: null, imei: null, qty: 24, status: 'available',
   },
   {
@@ -187,7 +209,7 @@ export const SEED_LISTINGS: readonly SeedListing[] = [
     condition: 'sealed', batteryPct: null, screenOriginal: null,
     icloudStatusText: null, warrantyText: 'Colocación incluida', provenanceText: 'Compra mayorista',
     description: 'Se coloca en el local sin cargo.',
-    priceUsdCents: 900_00, costUsdCents: 400_00, supplier: 'Mayorista accesorios',
+    priceUsdCents: usd(9), costUsdCents: usd(4), supplier: 'Mayorista accesorios',
     internalNotes: null, imei: null, qty: 40, status: 'available',
   },
 ];
