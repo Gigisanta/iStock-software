@@ -431,7 +431,7 @@ puntos de las cinco aserciones no sobrevivieron al contacto con la medición, y 
 | D | si **tampoco** se puede anotar el intento, se cuenta aparte | `unrecorded=1` |
 | E | sobre reservas genuinamente vencidas, `skipped` es **cero** | `skipped_sobre_vencidas=0` |
 | F | 200 con la base sana, **500** con una unidad abandonada | `status_base_sana=200` · `status_con_abandonada=500` |
-| G | la **segunda** falla de la misma fila es 500, la primera es 200, y cuesta `tope` líneas de log | `status_primer_fallo=200` · `status_segundo_fallo=500` · `lineas_log_por_envenenada=5` |
+| G | la **segunda** falla de la misma fila es 500, la primera es 200, cuesta `tope` líneas de log, y la fila abandonada **se anuncia una vez** | `status_primer_fallo=200` · `status_segundo_fallo=500` · `lineas_log_por_envenenada=5` · `lineas_cuarentena_por_envenenada=1` |
 
 **El caso G es el que justifica su propia existencia**, y por eso está escrito: el caso F ya sacaba
 su 500 por la pata `abandoned`, así que un `degraded = sweep.abandoned > 0` —el arreglo **sin** la
@@ -446,8 +446,11 @@ otro archivo, otro lenguaje (**ADR-023**). **Ausencia de la línea = FAIL.**
 MEDIDO cron barrido · corridas=7 · envenenadas=200 · sanas=1 · sanas_vencidas_c2=1 ·
 intentos_tras_fallo=1 · reintento_tras_recuperarse=1 · tope=5 · abandonadas_en_el_tope=1 ·
 unrecorded=1 · skipped_sobre_vencidas=0 · status_base_sana=200 · status_con_abandonada=500 ·
-status_primer_fallo=200 · status_segundo_fallo=500 · lineas_log_por_envenenada=5
+status_primer_fallo=200 · status_segundo_fallo=500 · lineas_log_por_envenenada=5 ·
+lineas_cuarentena_por_envenenada=1
 ```
+
+**El campo 16 llegó con T31 el 2026-08-28, y lo que NO discrimina está escrito, no supuesto.** `lineas_cuarentena_por_envenenada` separa las tres conductas que importan —no emitir → **0** · emitir por intento → **5** · emitir una vez por vida de la fila → **1**—, y ahí se termina. `app-agent` predijo que cambiar `===` por `>=` en el cruce del tope lo pondría en **3**; el LEAD corrió la mutación y da **1, verde**, igual que decidir el cruce contra `row.sweepAttempts + 1` en vez del `RETURNING`. Las dos ramas sólo se observan con dos corridas del cron pisándose, y el fixture tiene **un escritor a la vez**. El caso concurrente se **declinó a propósito**: dependería del scheduler, y un rojo intermitente termina en `it.skip` — este repo ya pagó por un gate que se ignora. El hueco queda **declarado** en la probe (`s6-sweep-head-of-line.test.ts:600-608`) y en el mensaje de falla del gate (`accept-s6.sh:404`), que es lo que `ci-exento` y `web-lint:sin-tenant` hacen en otros lados: una cobertura que falta se escribe, no se simula. **Esta matriz no dice que el campo pruebe el `===`, porque no lo prueba.**
 
 **Polaridad, corrida por el LEAD antes de aceptar:** 13 líneas fabricadas contra el bloque V10b
 verbatim —11 rojas, 2 verdes, entre ellas `corridas=9`, que **sube y debe seguir pasando**— más una
