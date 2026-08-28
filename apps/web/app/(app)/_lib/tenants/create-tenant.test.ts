@@ -1,3 +1,4 @@
+import { DrizzleQueryError } from 'drizzle-orm/errors';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
@@ -70,14 +71,26 @@ const db = {
 };
 
 /**
- * Un `23505` como lo entrega `postgres-js`: `code` y `constraint_name`. Sin `constraint_name`
- * cuando se lo omite — ese caso también es una rama, y no la más obvia.
+ * Un `23505` **como llega de verdad al `catch`**, que no es como lo entrega `postgres-js`.
+ *
+ * Hasta el 2026-08-28 esta función devolvía el error plano (`code` y `constraint_name` en la raíz),
+ * y por eso los cinco casos de abajo estaban verdes por el motivo equivocado: `createTenant` corre
+ * sus `insert` por Drizzle, y **Drizzle 0.45.2 envuelve** lo que tira el driver en un
+ * `DrizzleQueryError` con el `PostgresError` colgado en `.cause`. O sea que la forma que este
+ * archivo afirmaba era la única que producción nunca produce — el alta con el link ocupado tiraba
+ * un 500 con estos cinco tests en verde.
+ *
+ * El envoltorio es la clase real de Drizzle, no una imitación: si mañana alguien "simplifica" el
+ * walk de `_lib/db/pg-error.ts`, estos tests se ponen rojos acá, al lado del mensaje que se pierde.
+ * La forma plana no se abandona: la cubre `_lib/db/pg-error.test.ts` contra Postgres real, que es
+ * el único lugar donde se puede afirmar sin inventar un error.
  */
 function uniqueViolation(constraint?: string): Error {
-  const error = Object.assign(new Error('duplicate key value violates unique constraint'), {
+  const pg = Object.assign(new Error('duplicate key value violates unique constraint'), {
     code: '23505',
+    ...(constraint === undefined ? {} : { constraint_name: constraint }),
   });
-  return constraint === undefined ? error : Object.assign(error, { constraint_name: constraint });
+  return new DrizzleQueryError('insert into "tenants" ...', [], pg);
 }
 
 function thenable<T>(produce: () => T): PromiseLike<T> & Record<string, unknown> {
@@ -289,10 +302,17 @@ describe('createTenant · un 23505 no es un mensaje: hay que mirar QUÉ constrai
    * entiende — compartir el código `23505` con dos constraints conocidas no es motivo para heredar
    * su mensaje.
    */
+  /**
+   * Se afirma **identidad**, no el texto del mensaje. Con el error envuelto, el `message` de arriba
+   * es el `Failed query: …` de Drizzle y el `duplicate key` vive en el `.cause`: un `toThrow(/…/)`
+   * contra el texto pasaría a medir cuál de los dos mensajes quedó arriba, que no es lo que este
+   * caso afirma. "Sube intacto" es exactamente `toBe` — el mismo objeto, sin traducir ni re-envolver.
+   */
   it('una constraint desconocida NO se traga: propaga', async () => {
-    db.insertError = { table: fxSettings, error: uniqueViolation('fx_settings_pkey') };
+    const error = uniqueViolation('fx_settings_pkey');
+    db.insertError = { table: fxSettings, error };
 
-    await expect(createTenant(USER_ID, parsedInput())).rejects.toThrow(/duplicate key/u);
+    await expect(createTenant(USER_ID, parsedInput())).rejects.toBe(error);
   });
 
   it('la constraint desconocida queda logueada por nombre, que es lo que se investiga después', async () => {
@@ -323,14 +343,16 @@ describe('createTenant · un 23505 no es un mensaje: hay que mirar QUÉ constrai
     );
   });
 
-  /** Lo de siempre: lo que no es `23505` sigue subiendo intacto. */
+  /** Lo de siempre: lo que no es `23505` sigue subiendo intacto, envoltorio de Drizzle incluido. */
   it('un error que no es 23505 sigue propagando y no se loguea como unique violation', async () => {
-    db.insertError = {
-      table: tenants,
-      error: Object.assign(new Error('deadlock detected'), { code: '40P01' }),
-    };
+    const error = new DrizzleQueryError(
+      'insert into "tenants" ...',
+      [],
+      Object.assign(new Error('deadlock detected'), { code: '40P01' }),
+    );
+    db.insertError = { table: tenants, error };
 
-    await expect(createTenant(USER_ID, parsedInput())).rejects.toThrow(/deadlock/u);
+    await expect(createTenant(USER_ID, parsedInput())).rejects.toBe(error);
     expect(logError).not.toHaveBeenCalled();
   });
 });

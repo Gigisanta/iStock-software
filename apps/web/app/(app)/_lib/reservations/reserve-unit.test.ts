@@ -1,3 +1,4 @@
+import { DrizzleQueryError } from 'drizzle-orm/errors';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
@@ -160,16 +161,36 @@ function givenUnit(status: string): void {
   });
 }
 
+/**
+ * ── Los errores se envuelven porque así llegan al `catch`, y eso se midió ─────────────────────
+ *
+ * Estas dos fábricas devolvían el error PLANO hasta el 2026-08-28, y por eso los cuatro casos de
+ * carrera de este archivo estaban verdes por el motivo equivocado: `reserveUnit` y `cancelUnit`
+ * corren por Drizzle, y **Drizzle 0.45.2 envuelve** lo que tira `postgres-js` en un
+ * `DrizzleQueryError`, dejando el `PostgresError` en `.cause`. Con el error plano, este archivo
+ * afirmaba "Ya tiene una reserva activa" y `LOST_RACE` sobre una forma que producción no produce:
+ * en el mostrador salía un 500.
+ *
+ * El envoltorio es la clase real de Drizzle, no una imitación. La forma plana la cubre
+ * `_lib/db/pg-error.test.ts` contra Postgres real, que es el único lugar donde se la puede afirmar
+ * sin inventar un error.
+ */
+function envuelto(pg: Error): Error {
+  return new DrizzleQueryError('insert into "reservations" ...', [], pg);
+}
+
 /** El `40P01` que tira Postgres cuando elige a esta transacción como víctima de un deadlock. */
 function deadlock(): Error {
-  return Object.assign(new Error('deadlock detected'), { code: '40P01' });
+  return envuelto(Object.assign(new Error('deadlock detected'), { code: '40P01' }));
 }
 
 function uniqueViolation(constraint: string): Error {
-  return Object.assign(new Error('duplicate key value violates unique constraint'), {
-    code: '23505',
-    constraint_name: constraint,
-  });
+  return envuelto(
+    Object.assign(new Error('duplicate key value violates unique constraint'), {
+      code: '23505',
+      constraint_name: constraint,
+    }),
+  );
 }
 
 const rowsOf = (table: unknown): Recorded[] => db.writes.filter((w) => w.table === table);
@@ -314,10 +335,16 @@ describe('reserveUnit · la carrera la corta el motor', () => {
     expect(invalidateStorefrontUnit).not.toHaveBeenCalled();
   });
 
+  /**
+   * Se afirma **identidad** y no el texto: con el error envuelto, el `message` de arriba es el
+   * `Failed query: …` de Drizzle y el `duplicate key` vive en el `.cause`. "Se propaga" es el mismo
+   * objeto subiendo sin traducir, que es `toBe`, no un substring que depende de quién quedó arriba.
+   */
   it('una constraint DESCONOCIDA se propaga: no hereda el mensaje de la que sí conocemos', async () => {
-    db.reservationInsertError = uniqueViolation('reservations_alguna_constraint_nueva');
+    const error = uniqueViolation('reservations_alguna_constraint_nueva');
+    db.reservationInsertError = error;
 
-    await expect(reserveUnit(actor, INPUT, NOW)).rejects.toThrow(/duplicate key/u);
+    await expect(reserveUnit(actor, INPUT, NOW)).rejects.toBe(error);
     expect(logError).toHaveBeenCalledWith(
       'reservation.create.unknown_unique_violation',
       '23505',

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SQL } from 'drizzle-orm';
+import { DrizzleQueryError } from 'drizzle-orm/errors';
 import { PgDialect } from 'drizzle-orm/pg-core';
 import { transitionEffects } from '@istock/domain';
 
@@ -186,6 +187,32 @@ function due(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   };
 }
 
+/**
+ * ── El barrido ve el error ENVUELTO, y esa es la mitad silenciosa del defecto ─────────────────
+ *
+ * `expireDueReservations` corre por Drizzle, y **Drizzle 0.45.2** envuelve lo que tira el driver en
+ * un `DrizzleQueryError` con el `PostgresError` en `.cause`. Hasta el 2026-08-28 estos casos
+ * armaban el error PLANO, así que afirmaban que `pgErrorCode()` escribía `40P01` y `42501` en el
+ * log del cron cuando en producción escribía `unknown` **siempre** — el único lugar que se mira el
+ * día que el cron falla no distinguía un deadlock de una conexión caída, que es literalmente lo
+ * que la función existe para hacer. No rompía nada, y por eso nadie lo iba a encontrar mirando.
+ *
+ * La forma plana la cubre `_lib/db/pg-error.test.ts` contra Postgres real.
+ */
+function envueltoPorDrizzle(pg: Error): Error {
+  return new DrizzleQueryError('update "reservations" ...', [], pg);
+}
+
+/** El `40P01` con el que Postgres mata a la víctima de un deadlock, como llega al `catch`. */
+function deadlock(): Error {
+  return envueltoPorDrizzle(Object.assign(new Error('deadlock detected'), { code: '40P01' }));
+}
+
+/** `42501`: el `GRANT` que falta. Es el fallo del cron que NO es una carrera. */
+function permissionDenied(): Error {
+  return envueltoPorDrizzle(Object.assign(new Error('permission denied'), { code: '42501' }));
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   db.due = [];
@@ -333,7 +360,7 @@ describe('expireDueReservations · el orden de locks (D1)', () => {
 describe('expireDueReservations · una fila podrida no frena el barrido', () => {
   it('cuenta el fallo, loguea el id y sigue con la siguiente', async () => {
     db.due = [due()];
-    db.updateError = Object.assign(new Error('deadlock detected'), { code: '40P01' });
+    db.updateError = deadlock();
 
     const result = await expireDueReservations(NOW);
 
@@ -350,7 +377,7 @@ describe('expireDueReservations · una fila podrida no frena el barrido', () => 
    * reserva que el barrido está venciendo. Un cron rojo por eso enseña a ignorar el rojo.
    */
   it('la primera falla NO es `stuck`; la de una fila que ya venía fallando sí', async () => {
-    db.updateError = Object.assign(new Error('deadlock detected'), { code: '40P01' });
+    db.updateError = deadlock();
 
     db.due = [due()];
     expect(await expireDueReservations(NOW)).toMatchObject({ failed: 1, stuck: 0 });
@@ -394,7 +421,7 @@ describe('expireDueReservations · head-of-line (R2)', () => {
    */
   it('el `+1` se escribe en OTRA transacción que la que falló', async () => {
     db.due = [due({ sweepAttempts: 2 })];
-    db.updateError = Object.assign(new Error('deadlock detected'), { code: '40P01' });
+    db.updateError = deadlock();
 
     await expireDueReservations(NOW);
 
@@ -419,8 +446,8 @@ describe('expireDueReservations · head-of-line (R2)', () => {
    */
   it('si tampoco se puede anotar el intento, se cuenta aparte y el barrido no se cae', async () => {
     db.due = [due()];
-    db.updateError = Object.assign(new Error('deadlock detected'), { code: '40P01' });
-    db.bumpError = Object.assign(new Error('permission denied'), { code: '42501' });
+    db.updateError = deadlock();
+    db.bumpError = permissionDenied();
 
     const result = await expireDueReservations(NOW);
 
@@ -451,7 +478,7 @@ describe('expireDueReservations · head-of-line (R2)', () => {
 });
 
 describe('expireDueReservations · la línea de cuarentena (T23)', () => {
-  const FALLA = Object.assign(new Error('deadlock detected'), { code: '40P01' });
+  const FALLA = deadlock();
 
   const cuarentenas = (): unknown[] =>
     logEvent.mock.calls.filter((c) => c[0] === 'reservation.expire.quarantined');
@@ -530,7 +557,7 @@ describe('expireDueReservations · la línea de cuarentena (T23)', () => {
   it('si el `+1` no se pudo escribir, no se anuncia una cuarentena que no ocurrió', async () => {
     db.due = [due({ sweepAttempts: MAX_SWEEP_ATTEMPTS - 1 })];
     db.updateError = FALLA;
-    db.bumpError = Object.assign(new Error('permission denied'), { code: '42501' });
+    db.bumpError = permissionDenied();
 
     const result = await expireDueReservations(NOW);
 

@@ -1,3 +1,4 @@
+import { DrizzleQueryError } from 'drizzle-orm/errors';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
@@ -224,9 +225,22 @@ describe('GET /api/cron/expire-reservations · con la credencial correcta', () =
     expect(response.headers.get('cache-control')).toBe('no-store');
   });
 
+  /**
+   * El error va **envuelto en el `DrizzleQueryError` real**, que es como llega acá: lo que revienta
+   * adentro de `expireDueReservations` es una query de Drizzle, y Drizzle 0.45.2 no propaga el error
+   * del driver — lo envuelve y deja el `PostgresError` en `.cause`. Con el error plano (como estaba
+   * hasta el 2026-08-28) este test afirmaba que el log del cron dice `08006` cuando en producción
+   * decía `unknown` para todo. Es el caso silencioso del defecto: no rompe una pantalla, sólo hace
+   * que el único log que se mira el día que el cron falla no distinga una conexión caída de un
+   * deadlock, que es exactamente para lo que existe `pgErrorCode`.
+   */
   it('si el barrido explota devuelve 500 y no se traga el error en silencio', async () => {
     expireDueReservations.mockRejectedValue(
-      Object.assign(new Error('connection terminated'), { code: '08006' }),
+      new DrizzleQueryError(
+        'update "reservations" ...',
+        [],
+        Object.assign(new Error('connection terminated'), { code: '08006' }),
+      ),
     );
 
     const response = await call({ authorization: `Bearer ${SECRET}` });
