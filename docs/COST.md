@@ -37,6 +37,27 @@ no un ahorro de hoy. En la misma pasada se partió la celda de dueño de **C6**,
 sola y **violaba `CLAUDE.md` §4** — el consumidor del `ContextTrimReport` vive en la columna de
 `app-agent` y **espera FASE 5**._
 
+_**Censado el 2026-08-28, y no se movió ningún precio.** Se me encargó barrer los once lugares que
+todavía multiplicaban por **4 llamadas** después de que `89ab7c0` bajara el techo a 3: **quedan
+cero**, los once ya los había corregido `84c2f4d` en la misma ronda que midió el techo — lo dejo
+escrito porque el encargo se armó con el archivo en `6aea02b` y la medición estaba vencida, no
+equivocada. Lo que **sí** estaba roto era otra cosa: **`C9` tenía dos filas con dos dueños**
+(`ai-agent` en §2.7, `humano` en §2.8) sobre la misma decisión, y la fila de §2.7 se contradecía con
+su propia columna de la derecha. **El dueño es el humano**; la fila vieja quedó `SUPERADA` con
+puntero, y la regla que evita que vuelva a divergir está bajo la tabla de §2.7. Además se publicó la
+aritmética del techo con `MAX_INPUT_TOKENS = 1374` (**USD 0,6910/mes, 1,45× de headroom** — el par
+`0,8795 / 1,14×` es el de 4 llamadas y está vencido, §2.8.5 §2)._
+
+_**Y el umbral de `C10` se cayó el mismo día, arbitrado por el LEAD** (`CLAUDE.md` §5): `calls > 2`
+falla en las **dos** polaridades —enciende con tráfico legal, porque el turno degradado normal
+factura 3 contra un techo de 3, y calla en el turno quemado, que reporta `calls: 0` porque el
+`throw` descarta la medición—. Quedan **tres condiciones con tres trabajos**:
+`billed.primaryServedEmpty` (degradación) · `handoff === 'provider_down'` (turno quemado) ·
+`calls > MAX_BILLED_CALLS_PER_TURN` (aserción de control de flujo, **no** alarma de costo).
+Actualizados `C10` (§2.8), el `METRICA_A_VIGILAR` de §2.8.7 y la fila de LLM de §5; §6 suma el fallo
+automático de la **clase**: una alarma de costo se acepta mostrando que enciende con el caso
+patológico **y** calla con el tráfico legal. **Ningún precio se movió con esto.**_
+
 ## Objetivo duro
 > **Base ≤ USD 0,50 · Negocio ≤ USD 1,50** por tenant activo, hasta 100 tenants, donde el 1,50 es
 > **0,50 + hasta 1,00 atribuible al chat**.
@@ -2490,7 +2511,24 @@ METRICA_A_VIGILAR: **`turnsDropped + chunksDropped + descriptionDropped` de `Con
 | **C6** *(partida el 2026-08-28)* | **(a)** contar la degradación **sobre el corpus**, adentro de `packages/ai` · **(b)** emitir el `ContextTrimReport` al log estructurado en producción y contarlo ahí. Hoy se construye y **no lo lee ningún consumidor** | **(a)** `ai-agent` (`packages/ai/**`) · **(b)** `app-agent` (`apps/web/app/api/**` y `(app)/**`) | es la única señal de que la dieta se está pasando; sin ella, el síntoma es "el bot contesta peor" |
 | **C7** | ~~un caso con tool call en el corpus~~ **CUMPLIDA el 2026-08-28**: 12 casos (t01–t12), 18 turnos con resultado de tool, y la eval ahora parte `tokensInWithTool` / `tokensInWithoutTool`. El bloque del README quedó unas horas en la corrida vieja y `ai-agent` lo regeneró el mismo día: hoy dice `198/198` y `sin tool 1078 / con tool 1193`, idéntico a lo que mido yo por separado | `ai-agent` | el gate ya publica el turno más caro del producto, y el archivo lo dice |
 | **C8** | que el reporte de costo **sume** los prompts de las dos vueltas en vez de tomar el máximo (o que emita los dos por separado). `promptTokens` como cota de dieta está bien; como línea de factura subcontabiliza 2,2× el turno con tool y **11,8% el corpus entero** | `ai-agent` | el día que haya `usage` real del proveedor (C4) la diferencia se va a ver en la factura, no en el reporte |
-| **C9** | decidir **explícitamente** qué se sacrifica cuando el turno con tool no entra en 1200: hoy lo decide el orden de la escalera (historial primero) sin que nadie lo haya elegido para este caso. **El precio ya está medido y está en §2.7 §2b: subir `MAX_INPUT_TOKENS` de 1200 a 1260 elimina las 390 degradaciones que barrí, y cuesta entre USD 0,0006 y USD 0,0144/tenant/mes** (0,06%–1,4% del presupuesto de chat). La otra rama es achicar el digest de `reserved` | `ai-agent`, con los números de acá | es la única palanca donde costo y calidad se cruzan de frente, y hoy se resuelve por default. Costo **no tiene objeción a ninguna de las dos**: las dos ramas son ruido en la factura, y por eso esta decisión no la puede arbitrar la factura |
+| ~~**C9**~~ **SUPERADA el 2026-08-28 — la entrada VIGENTE es la de §2.8 y el dueño es el HUMANO** | ~~decidir explícitamente qué se sacrifica cuando el turno con tool no entra en 1200 — subir `MAX_INPUT_TOKENS` de 1200 a **1260** cuesta entre USD 0,0006 y USD 0,0144/tenant/mes~~ **La decisión no se movió; se movieron el número y el dueño.** El techo que limpia el corpus es **1374**, no 1260 (la ficha del plan Negocio entró al corpus después de esta fila), y el precio es **USD 0,00047 – 0,0574/tenant/mes** (§2.8.5). Lo que sigue vigente de esta celda es el planteo: hoy lo decide el orden de la escalera (historial primero) sin que nadie lo haya elegido, y la otra rama es achicar el digest de `reserved` | ~~`ai-agent`, con los números de acá~~ **`humano`, con los números de acá** — la celda se contradecía con su propia columna de la derecha | es la única palanca donde costo y calidad se cruzan de frente, y hoy se resuelve por default. Costo **no tiene objeción a ninguna de las dos**: las dos ramas son ruido en la factura, y por eso esta decisión no la puede arbitrar la factura |
+
+> **Qué manda cuando una recomendación aparece en dos secciones, y por qué esta tuvo que arreglarse
+> dos veces.** `C9` vivió desde el 2026-08-28 con **dos filas y dos dueños** —`ai-agent` acá,
+> `humano` en §2.8— sobre la **misma** decisión. La contradicción no era entre dos secciones: estaba
+> **adentro de esta misma fila**, cuya columna de la derecha ya decía *«las dos ramas son ruido en la
+> factura, y por eso esta decisión no la puede arbitrar la factura»* mientras la del medio se la
+> asignaba a un agente. **El dueño es el humano**, por dos motivos que no son de jerarquía: el 1200
+> sale del goal del humano, no de una medición, y una palanca cuyas dos ramas son ruido en la factura
+> no la puede arbitrar el auditor de costo — ni `ai-agent`, que **ejecuta** si se decide moverlo, que
+> es otra cosa que decidir.
+>
+> **Regla, para que no vuelva a pasar:** cuando una recomendación se re-mide en una sección
+> posterior, la fila vieja **no se edita en su lugar** —eso es lo que produce dos verdades— sino que
+> se marca `SUPERADA` con puntero a la nueva, y la nueva **nombra a la vieja**. Manda **siempre la
+> más nueva**. Es el mismo patrón que §2.8.3 → §2.8.3b, y por el mismo motivo: un documento de costo
+> que borra la fila vieja pierde el rastro de qué se sabía cuándo, y uno que la deja sin marcar
+> publica dos respuestas a la misma pregunta.
 
 > **Por qué `C6` va con dos dueños y no con uno, corregido el 2026-08-28.** Esta celda decía
 > `ai-agent` sola y eso **viola `CLAUDE.md` §4**: la mitad que importa es *emitir al log*, y el sink
@@ -2690,7 +2728,9 @@ techo del mensaje con MAX_BILLED_CALLS_PER_TURN = 3, en la composición más car
 `0,000672 − 0,000192 = 0,000480/msg` → USD 0,5760/mes, que es restarle **una llamada del primario**
 al techo viejo. Esa resta describe exactamente la rama **A**; la rama **B** también entra en 3
 llamadas y conserva los dos primarios, así que el máximo real es USD 0,000528 y no 0,000480. El
-docblock de `chat.ts:284-286` publica el −29 % por el mismo motivo. **Es el mismo defecto de forma
+docblock de `chat.ts:338` (HEAD `89ab7c0`) publica el −29 % por el mismo motivo *(y `packages/ai/README.md:174`
+con él; el LEAD re-hizo la aritmética por separado y da −21,4 %, y `ai-agent` los está corrigiendo —
+son su columna, no la mía)*. **Es el mismo defecto de forma
 que C8, un nivel más abajo:** un número bien calculado sobre el caso equivocado. La conclusión no
 cambia —la palanca sigue siendo la más barata del documento y sigue siendo PASS—, pero el número que
 este documento multiplica es **0,000528**.
@@ -2821,6 +2861,24 @@ tres acotaciones que la decisión necesita:
    absoluto queda en **USD 0,6910 contra 1,00: 1,45× de headroom** *(era 0,8795 y 1,14× con las 4
    llamadas de antes de `89ab7c0`; §2.8.3b)*. Subir el techo es barato; subir el techo *y* no tener
    contador del soft cap ya no lo es tanto.
+
+   **La aritmética a la vista, porque es el número que otras filas citan y no puede quedar mágico**
+   — composición cara (B): 2 primarios + 1 fallback, IN 1374, OUT 180:
+
+   ```
+   2 × (1374 × USD 0,10/1M  + 180 × USD 0,40/1M)  = 2 × 0,0002094  = USD 0,0004188
+   1 × (1374 × USD 0,075/1M + 180 × USD 0,30/1M)  = 1 × 0,00015705 = USD 0,00015705
+                                                                     ────────────────
+                                                                     USD 0,00057585 /mensaje
+   × 1.200 msgs/mes al soft cap                                    = USD 0,6910 /tenant/mes
+   headroom contra el 1,00 de chat: 1,00 / 0,6910                  = 1,45×
+   delta contra los 1200 de hoy:    0,6910 − 0,6336                = +USD 0,0574 /tenant/mes
+   ```
+   *(Con las 4 llamadas de antes de `89ab7c0` la segunda línea iba × 2 y daba USD 0,0007329/msg,
+   USD 0,8795/mes y 1,14×. **Ése es el par que quedó citado afuera de este documento** — si alguna
+   fila del board todavía dice `0,8795 / 1,14×`, está calculada con el techo de 4 llamadas y el
+   número vigente es **0,6910 / 1,45×**. Como siempre en este archivo: el recálculo es mío, no de
+   quien cita.)*
 3. **C6 antes que el techo.** Hoy `buildChatContext` devuelve un `ContextTrimReport` que **no lee
    ningún consumidor** — cero llamadores de `.trimmed` fuera de los tests, re-verificado hoy. Un
    techo más alto sin contador te deja en el mismo lugar la próxima vez que la ficha crezca 200
@@ -2854,7 +2912,7 @@ porque el peor caso por IP **es un rango y citar un punto es lo que produjo la d
 
 **Los USD 33,18 de §2.6.6 quedan intactos** y su lectura también: dejan al tenant abusado en
 USD 33,18 de costo contra USD 33,97 de ingreso neto, o sea USD 0,79 de margen. **Lo que agrega
-§2.8.3 es que el extremo del rango cruza el precio del plan:** con el primario degradado, esa misma
+§2.8.3b es que el extremo del rango cruza el precio del plan:** con el primario degradado, esa misma
 IP —sin violar la regla ni una vez— cuesta **USD 45,62 contra USD 33,97 de ingreso: pérdida de
 USD 11,65**. No es el escenario esperado y requiere un primario degradado, pero es el techo que el
 código permite, y §2.6.6 afirmaba que *«el tenant abusado ya no es pérdida por sí solo»*. **Con el
@@ -2913,24 +2971,76 @@ VECTOR_MAS_RIESGOSO: **la llamada facturada que nadie contaba: el primario que d
            162 prompts armados, y **7 de esos 9 son la ficha del plan Negocio**—; ésta la desplaza
            sólo porque cuesta plata además de calidad.
 
-METRICA_A_VIGILAR: **`billed.calls` por turno. Alarma en cualquier valor > 2.**
-           Es la única que separa el techo de USD 0,000384 del de USD 0,000528, ya la **calcula**
-           `chat.ts` (no hay que construir nada, hay que emitirla) y avisa **antes** que la factura:
-           un primario que contesta vacío se ve como `calls: 2` donde debería haber `1`, sin un solo
-           error en el log. Un dashboard de tokens no la puede detectar: los tokens por llamada
-           siguen bajo 1200 por construcción. La métrica de calidad de §2.7
-           (`turnsDropped + chunksDropped + descriptionDropped > 0`) **no se reemplaza, se acompaña**:
-           hoy daría distinto de cero en 9 de 162 prompts armados, y **7 de esos 9 son la ficha del
-           plan Negocio**.
+METRICA_A_VIGILAR: **`billed.primaryServedEmpty` por turno. Alarma en cualquier `true`.**
+           *(Este renglón decía «`billed.calls` > 2» y el LEAD lo arbitró el 2026-08-28 —`CLAUDE.md`
+           §5, «Una alarma se verifica en las dos polaridades»— después de que yo destapara que el
+           turno quemado reporta `calls: 0`. **`calls > 2` falla en las DOS direcciones:** por arriba
+           enciende con tráfico legal —con el techo en 3, el turno degradado normal factura 3 y
+           cruza—, y por abajo no ve el caso patológico. No es un umbral flojo: está
+           anti-correlacionado con lo que dice medir.)*
+           `primaryServedEmpty` es la señal de **degradación** y es la que avisa antes que la
+           factura: un primario que devuelve `200` con texto vacío se factura igual, manda al
+           fallback y encarece el turno **sin un solo error en el log**. No depende del contador, así
+           que sobrevive tanto al arreglo de la medición perdida como a un cambio del techo.
+           **Las otras dos condiciones no son variantes de ésta y no se pueden colapsar en un
+           umbral:** `handoff === 'provider_down'` es el **turno quemado** (se pagó y no contestó), y
+           `calls > MAX_BILLED_CALLS_PER_TURN` es una aserción de **control de flujo**, no una alarma
+           de costo — si enciende, es un bug, no tráfico. Un dashboard de tokens no ve ninguna de las
+           tres: los tokens por llamada siguen bajo 1200 por construcción. La métrica de calidad de
+           §2.7 (`turnsDropped + chunksDropped + descriptionDropped > 0`) **no se reemplaza, se
+           acompaña**: hoy daría distinto de cero en 9 de 162 prompts armados, y **7 de esos 9 son la
+           ficha del plan Negocio**.
 ```
 
 **Recomendaciones nuevas, con dueño, sin implementarlas:**
 
 | # | qué | dueño | por qué es de costo |
 |---|---|---|---|
-| **C10** | emitir `billed.calls` / `billed.tokensIn` al log estructurado, y alarmar en `calls > 2`. El campo ya existe y **no lo lee nadie** — *«se descarta en el borde» era generoso: todavía no hay borde, `answerChat` no tiene un solo llamador fuera del paquete* | `ai-agent` (el campo, **hecho**: `index.ts` exporta `BilledUsage`, `ChatAnswer` y `MAX_BILLED_CALLS_PER_TURN`) · `app-agent` (el log, **espera FASE 5**: `/api/chat` no existe) | es el único indicador que distingue el techo real del techo que creíamos tener; sin él, un primario degradado encarece la factura en silencio. **El umbral `> 2` no se movió con `89ab7c0`**: 2 sigue siendo el camino feliz con tool y ahora el único valor por encima es 3, que es exactamente `MAX_BILLED_CALLS_PER_TURN` — o sea que el log puede alarmar contra la constante exportada en vez de contra un literal. **Y el umbral tiene un punto ciego que conviene escribir antes de que alguien escriba el emisor:** `calls = 2` son **dos historias** —el camino feliz con tool, y un turno de una sola ronda donde el primario contestó vacío y lo cubrió el fallback—, así que un turno degradado barato **no cruza el umbral**. Lo que lo desambigua es un booleano al lado de `calls`, no un número más alto. *(`ai-agent` tiene exactamente eso en vuelo —`BilledUsage.primaryServedEmpty`— **sin commitear** al momento de esta medición; lo anoto porque cambia la condición de alarma, no ningún precio de este documento.)* |
+| **C10** *(umbral arbitrado por el LEAD el 2026-08-28 — `CLAUDE.md` §5)* | emitir `billed` al log estructurado y alarmar con **tres condiciones**, no con un umbral: `billed.primaryServedEmpty === true` (**degradación**) · `handoff === 'provider_down'` (**turno quemado**) · `calls > MAX_BILLED_CALLS_PER_TURN` (**aserción de control de flujo**, no alarma de costo). El campo ya existe y **no lo lee nadie** — *«se descarta en el borde» era generoso: todavía no hay borde, `answerChat` no tiene un solo llamador fuera del paquete* | `ai-agent` (el campo, **hecho**: `index.ts` exporta `BilledUsage`, `ChatAnswer` y `MAX_BILLED_CALLS_PER_TURN`) · `app-agent` (el log, **espera FASE 5**: `/api/chat` no existe) | es el único indicador que distingue el techo real del techo que creíamos tener; sin él, un primario degradado encarece la factura en silencio. ~~**El umbral `> 2` no se movió con `89ab7c0`**~~ **El umbral `> 2` se cayó entero el 2026-08-28, y lo que lo mató fue medirlo en las dos polaridades.** Por arriba enciende con **tráfico legal**: con el techo en 3, el turno degradado normal —primario cobra un `200` vacío, contesta el fallback— factura 3 y cruza. Por abajo **no ve el caso patológico**: cuando los dos proveedores contestan vacío, el turno pagó dos llamadas y reporta `calls: 0`, porque el `throw` descarta la medición. **Un umbral por arriba no puede detectar una medición que se pierde.** Yo lo había escrito como «necesario pero no suficiente» —`calls = 2` son dos historias, el camino feliz con tool y el turno de una ronda que pagó un primario vacío—; el LEAD lo arbitró más fuerte y tiene razón: no es insuficiente, **está anti-correlacionado**, porque alarma sobre lo que el diseño contempla y calla sobre lo que lo rompe. De ahí las tres condiciones con tres trabajos. `BilledUsage.primaryServedEmpty` ya existe y es la primera de las tres |
 | ~~**C11**~~ **CUMPLIDA el 2026-08-28 (`89ab7c0`)** | ~~decidir qué pasa cuando el primario contesta vacío **dos veces en el mismo turno**: hoy son 4 llamadas facturadas y ninguna constante lo dice~~ **Hecho, y con la constante:** el primario que atiende y contesta vacío no se reintenta en lo que queda del turno (`skipPrimary` + `primaryServedEmpty`), y el techo dejó de ser un literal — `MAX_BILLED_CALLS_PER_TURN = TURN_ROUNDS + 1 = 3`, derivado de `MAX_TOOL_ROUNDS` | `ai-agent` | **la palanca más barata del documento, y salió más barata de lo que rinde: −21,4 % del techo absoluto (0,8064 → USD 0,6336/mes), no el −29 % que yo estimé.** Mi cuenta restaba una llamada del primario y eso vale para una de las dos ramas de 3 llamadas, no para la cara (§2.8.3b). **Y el eval no se movió ni un dígito:** lo que se compró es seguro contra el día malo, no un ahorro de hoy |
-| **C9** *(actualizado)* | el precio de comprar la degradación entera **se re-midió con la ficha del plan Negocio adentro**: subir `MAX_INPUT_TOKENS` de 1200 a **1374** (no 1260) elimina las degradaciones del corpus y cuesta entre **USD 0,00047 y USD 0,0574/tenant/mes** (§2.8.5 — la rama cara decía 0,0731 hasta `89ab7c0`, que bajó el techo de llamadas; **la decisión no se movió, sólo su precio**). **Decisión humana pendiente, y sigue abierta:** el 1200 es del goal | humano, con los números de acá | las dos ramas son ruido en la factura, así que la factura no puede arbitrarla |
+| **C9** *(actualizado — **es la entrada VIGENTE**; la de §2.7 quedó marcada `SUPERADA`, y con ella el dueño `ai-agent` que decía)* | el precio de comprar la degradación entera **se re-midió con la ficha del plan Negocio adentro**: subir `MAX_INPUT_TOKENS` de 1200 a **1374** (no 1260) elimina las degradaciones del corpus y cuesta entre **USD 0,00047 y USD 0,0574/tenant/mes** (§2.8.5 — la rama cara decía 0,0731 hasta `89ab7c0`, que bajó el techo de llamadas; **la decisión no se movió, sólo su precio**). **Decisión humana pendiente, y sigue abierta:** el 1200 es del goal | humano, con los números de acá | las dos ramas son ruido en la factura, así que la factura no puede arbitrarla |
+
+> **El turno que falla entero subfactura, y el precio de eso no es plata: es que la alarma de `C10`
+> queda ciega justo donde importa.** Leído hoy en `packages/ai/src/chat.ts`, cuando primario **y**
+> fallback contestan `200` vacío, `generateWithFallback` acumula `servedCalls` y después **tira**
+> (`AI_PROVIDER_FAILED`); el `catch` de arriba deriva a WhatsApp con `handoff: 'provider_down'` y
+> reporta el `billed` **de las rondas anteriores**, perdiendo las de la ronda que falló — en el turno
+> de una sola ronda, que es el caso normal, eso es `calls: 0`. Las dos llamadas **se pagaron**.
+> `ai-agent` lo está cerrando, y lo anoto acá porque el
+> encargo preguntó si tiene consecuencia de costo que yo no esté viendo. **Tiene una, y no es el
+> techo:**
+>
+> 1. **El techo no se mueve y no se movía.** Ese camino factura **2** llamadas y termina el turno,
+>    así que está por debajo de `MAX_BILLED_CALLS_PER_TURN = 3`. Ningún número de §2.8.3b cambia.
+> 2. **La alarma sí, y se llevó puesto el umbral.** `C10` proponía alarmar en `calls > 2`, y el
+>    turno completamente fallado reporta `0`: no cruza el umbral **por abajo**. Un umbral por arriba
+>    no puede detectar una medición que se pierde. **El LEAD lo arbitró el 2026-08-28** (`CLAUDE.md`
+>    §5) y el veredicto es más fuerte que mi reporte: `calls > 2` falla también **por arriba**,
+>    porque con el techo en 3 el turno degradado normal factura 3 y cruza con **tráfico legal**. O
+>    sea que el instrumento alarma sobre lo que el diseño contempla y calla sobre lo que lo rompe:
+>    no es un umbral flojo, está **anti-correlacionado**. Quedan tres condiciones con tres trabajos
+>    —`primaryServedEmpty` (degradación) · `provider_down` (turno quemado) · `calls >
+>    MAX_BILLED_CALLS_PER_TURN` (aserción de control de flujo)— y `C10` y §5 ya están actualizados.
+> 3. **Y los dos instrumentos se mueven en direcciones opuestas sobre el mismo evento.** El visitante
+>    cuyo turno falló **reintenta**, así que `mensajes por tenant por día` —la métrica de §9, la que
+>    avisa antes— **sube** mientras `billed.calls` **baja**. Un dashboard que mire los dos a la vez
+>    va a leer «más tráfico, menos costo por mensaje» en el momento exacto en que el proveedor se
+>    está degradando. Es la misma clase de defecto que C8: un número bien calculado contestando otra
+>    pregunta, ahora con el signo invertido.
+>
+> **Corolario para quien escriba el emisor en FASE 5, escrito para sobrevivir al arreglo.** Yo había
+> propuesto cruzar `calls` con `handoff` porque hoy *«`calls = 0` con `provider_down` es plata
+> quemada y `calls = 0` con `soft_cap` es plata no gastada»*. Eso es correcto **hoy y sólo hoy**:
+> `ai-agent` está cerrando la pérdida de la medición en **los dos** sitios donde ocurre —el `catch`
+> de `answerChat` y el del loop de rondas de tool—, y cuando cierre, el mismo turno quemado va a
+> reportar **`calls: 2` con `provider_down`** en vez de `calls: 0`. **La firma estable del turno
+> quemado es `handoff === 'provider_down'`, no el valor del contador**, y así hay que escribir la
+> condición: el cruce con `handoff` sigue haciendo falta —distingue quemado de derivado— pero el
+> `calls = 0` deja de ser su firma. **Dependencia nombrada, no asumida cerrada:** mientras ese
+> arreglo esté en vuelo, el reporte **subfactura el turno quemado**, así que cualquier promedio de
+> `billed` medido en producción antes de que aterrice está sesgado hacia abajo justo en los turnos
+> caros. No cambia ningún precio de este documento —el techo ya contaba esas llamadas—; cambia qué
+> se va a poder medir en producción, que es lo que dice §7 (B4).
 
 ## 3. Techo de LLM a 50 tenants `negocio`
 
@@ -3030,7 +3140,7 @@ ser gratis. Deployar en pico de tráfico es un evento de costo.
 | storage | GB por tenant | huérfanos de listings borrados — hoy **crecen sin techo**: `collectOrphanObjects` existe y **no tiene caller** |
 | **LLM (la que avisa antes)** | **mensajes de chat por tenant por día** | **> 40** (el soft cap) y **FAIL de costo > 50** — donde el chat se comía su presupuesto de 1,00 entero con el peor caso que el código permitía hasta `89ab7c0` (4 llamadas facturadas por turno). *(Esta fila decía 174, que salía del techo de una sola llamada; con el turno con tool son 87 y con las 4 llamadas, 50.)* **El 50 se DEJA como está y ahora es conservador a propósito:** con el techo de 3 llamadas de §2.8.3b el punto de FAIL se corrió a **63/día**, así que alarmar en 50 avisa **1,26× antes** de que duela. Bajar una alarma porque el código mejoró sería gastarse la mejora. **Hoy NO EXISTE**, y no por olvido: es el mismo objeto que el contador del soft cap, que tampoco existe (§2.6.4). Construir la métrica **es** implementar el cap. El techo del WAF que hoy la sustituye deja pasar **2.880/día/IP/región** (20/600s), o sea 72× la alarma |
 | LLM | **tokens reales/turno por tenant** | > 1200 in o > 180 out, o modelo frontier en el log. El techo está **enforced** (`assertWithinBudget` tira; `env.ts` deja bajar `LLM_MAX_OUTPUT_TOKENS`, nunca subirlo), así que esta métrica no vigila el techo: vigila que el `usage` real del proveedor coincida con nuestro estimador. Alarma práctica el día que cierre B4: **OUT p95 > 60** (3× el promedio del stub) |
-| **LLM (la más barata de emitir)** | **`billed.calls` por turno** | **> 2** — es la única métrica que separa el techo de USD 0,000384 del de USD 0,000528 (§2.8.3b). Desde `89ab7c0` el único valor posible por encima de 2 es **3**, que es `MAX_BILLED_CALLS_PER_TURN`: la alarma se escribe contra la constante exportada, no contra un literal. **El umbral es necesario pero no suficiente:** `calls = 2` es a la vez el camino feliz con tool y el turno de una ronda que pagó un primario vacío, así que la degradación barata pasa por abajo — la condición completa necesita un booleano al lado del contador. Un primario que devuelve `200` con texto vacío **se factura igual**, manda al fallback y duplica el turno **sin un solo error en el log**. `chat.ts` ya la calcula y la descarta en el borde: emitirla es cablear un campo que existe, no construir un contador. Un dashboard de tokens no la puede ver — cada llamada sigue bajo 1200 por construcción |
+| **LLM (la más barata de emitir)** | **`billed.primaryServedEmpty` por turno** | **cualquier `true`** — es la señal de **degradación**: un primario que devuelve `200` con texto vacío **se factura igual**, manda al fallback y encarece el turno **sin un solo error en el log**. Es lo que separa el techo de USD 0,000384 del de USD 0,000528 (§2.8.3b), y no depende del contador, así que no se rompe cuando cambie el techo. *(**Esta celda decía `billed.calls > 2` y el LEAD la arbitró el 2026-08-28** — `CLAUDE.md` §5. `calls > 2` falla en las dos direcciones: por arriba enciende con tráfico legal, porque con el techo en 3 el turno degradado normal factura 3 y cruza; por abajo no ve el turno quemado, que reporta `calls: 0` porque el `throw` descarta la medición. Alarmar sobre lo que el diseño contempla y callar sobre lo que lo rompe no es un umbral flojo: es un instrumento anti-correlacionado con lo que dice medir.)* **Van con ella, y son otras dos preguntas, no variantes:** `handoff === 'provider_down'` para el **turno quemado** —se pagó y no contestó— y `calls > MAX_BILLED_CALLS_PER_TURN` como **aserción de control de flujo**: si enciende es un bug, no tráfico, y por eso se escribe contra la constante exportada y no contra un literal. `chat.ts` ya calcula las tres y no las lee nadie: emitirlas es cablear campos que existen, no construir un contador. Un dashboard de tokens no ve ninguna — cada llamada sigue bajo 1200 por construcción |
 | **LLM** | **`null` de `priceFor(modelId)` en el reporte de costo** | **cualquiera** — significa que `LLM_PRIMARY_MODEL` cambió a un ID que `pricing.ts` no conoce y el costo dejó de estar contabilizado. El módulo hace lo correcto (devuelve `null`, no cero), pero un `null` que nadie mira es un cero con otro nombre |
 | proxy | CPU-ms del proxy por pageview | **> 2 ms**, o cualquier llamada de red |
 | edge | Edge Requests/mes | acercarse a 10M (≈ 80 tenants) |
@@ -3106,6 +3216,17 @@ mensaje con el primario sano y **USD 0,000528** contando las 3 llamadas que el c
 proveedor de respaldo lleva a **USD 0,000768** (**+45,5 %**) — y encima **`MAX_BILLED_CALLS_PER_TURN`
 seguiría diciendo 3**, porque la derivación no tiene ningún término que cuente proveedores. Son las
 dos que no se ven como cambios de costo. Esas cotas son lo único de §2.6 que no depende del stub ·
+**agregado el 2026-08-28 (§2.8, arbitrado por el LEAD en `CLAUDE.md` §5): una alarma de costo
+verificada en UNA sola polaridad** — concretamente, el log de `/api/chat` alarmando con un umbral
+sobre `billed.calls` y nada más. `calls > 2` era exactamente eso y falla en las **dos** direcciones:
+enciende con tráfico legal —el turno degradado normal factura 3 contra un techo de 3— y **calla en
+el turno quemado**, que reporta `calls: 0` porque el `throw` descarta la medición. Un instrumento
+que alarma sobre lo que el diseño contempla y calla sobre lo que lo rompe no es débil: está
+**anti-correlacionado** con lo que dice medir, y da la tranquilidad que es peor que no tener nada
+—el mismo defecto que el censo del WAF que no veía `/_media`. La regla queda como fallo automático
+permanente y **no es sobre este umbral, es sobre la clase**: toda alarma de costo se acepta
+mostrando que **enciende con el caso patológico y calla con el tráfico legal**, las dos cosas, igual
+que un gate. Las tres condiciones que reemplazan a `calls > 2` están en §2.8.7 y en §5 ·
 **más de un round de tools** (`MAX_TOOL_ROUNDS > 1`): cada vuelta paga el prompt entero de nuevo y
 el context caching no aplica a esta dieta (R3 §1)
 
