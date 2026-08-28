@@ -142,6 +142,28 @@ pnpm -r typecheck >/tmp/istock-tc.log 2>&1 && ok "pnpm typecheck" || { no "typec
 DATABASE_URL="$URL" pnpm -r test >/tmp/istock-test.log 2>&1 && ok "pnpm test" || { no "tests rojos"; tail -30 /tmp/istock-test.log | sed 's/^/        /'; }
 grep -qiE "skip|todo" /tmp/istock-test.log && printf '  \033[33mNOTA\033[0m  hay tests skipeados, revisar motivo\n' || true
 
+sec 'D5 · el GRANT de INSERT cubre el insert que Drizzle emite (no el que uno escribiria a mano)'
+# Agregado por el LEAD el 2026-08-28, despues de que `0006` rompiera el alta de reservas del panel
+# con `42501 permission denied for table reservations` y `guard-grants.sh` dijera PASS igual.
+#
+# La causa no estaba en el schema sino en el caller: Drizzle, en `insert().values()`, NOMBRA todas
+# las columnas de la tabla y pone `default` en las que no le pasaste; Postgres exige privilegio
+# sobre cada columna NOMBRADA aunque el valor sea DEFAULT. Un GRANT de INSERT por columna que no
+# cubre el 100% de la tabla no es "mas restrictivo": es un INSERT roto para todo el producto.
+#
+# Va aca y no en `guard-grants.sh` a proposito: ese guard es 100% estatico por contrato declarado
+# en su propio encabezado (corre sin base, en el pre-commit), y esta afirmacion solo se puede hacer
+# contra el catalogo de una base con las migraciones aplicadas. FASE 2 ya la tiene: D2 acaba de
+# migrar contra Postgres real. Duplicar la medicion en el guard estatico seria adivinarla.
+if DATABASE_URL="$URL" pnpm --filter @istock/db exec vitest run --root ../.. \
+     scripts/probes/el-grant-cubre-el-insert-de-drizzle.test.ts >/tmp/istock-g6.log 2>&1; then
+  ok "G6: ninguna tabla de negocio le da a authenticated un INSERT por columna incompleto"
+else
+  no "G6: hay un GRANT de INSERT por columna incompleto — el panel recibe 42501 al insertar"
+  inf "si la intencion era acotar el VALOR de una columna, eso va en la WITH CHECK de la policy"
+  grep -E '×|FAIL|→|sin INSERT en' /tmp/istock-g6.log | head -8 | sed 's/^/        /'
+fi
+
 sec "RESULTADO"
 [ "$fail" -eq 0 ] && echo "FASE 2: PASS" || echo "FASE 2: FAIL"
 exit "$fail"
