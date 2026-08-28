@@ -7,13 +7,14 @@ de negocio, antes de escribirla. **Cuándo se actualiza:** con cada slice que to
 _Owner: **`docs-keeper`** por `CLAUDE.md` §4 (`docs/**` menos `research/` y `COST.md`).
 `domain-agent` es dueño de la **implementación** en `packages/domain`, no de este archivo._
 
-> ⚠ **Conflicto de ownership abierto, levantado el 2026-08-28 — lo resuelve el LEAD, no este doc.**
-> `CLAUDE.md` §4 da `docs/**` a `docs-keeper`; `INDEX.md` daba este archivo a `product-scribe`; y
-> `.claude/agents/product-scribe.md:11` dice *"escribís sólo en `docs/PRODUCT.md` y
-> `docs/DOMAIN.md`"*. **Tres fuentes, dos respuestas** — exactamente la misma forma que el conflicto
-> de `architect` sobre `ARCHITECTURE.md`/`DECISIONS.md`, que el LEAD cerró en FASE 4 a favor de la
-> tabla de §4. Mientras no se decida, **manda `CLAUDE.md` §4** (regla escrita en el propio §4:
-> *"conflicto de ownership = el LEAD reasigna"*). `.claude/**` es del LEAD y no se toca desde acá.
+> **Conflicto de ownership CERRADO por el LEAD el 2026-08-28, y cerrado como clase, no como caso.**
+> Era el de siempre: `CLAUDE.md` §4 da `docs/**` a `docs-keeper`, `INDEX.md` daba este archivo a
+> `product-scribe`, y `.claude/agents/product-scribe.md:11` dice *"escribís sólo en `docs/PRODUCT.md`
+> y `docs/DOMAIN.md`"* — tres fuentes, dos respuestas, la misma forma que `architect` sobre
+> `ARCHITECTURE.md`/`DECISIONS.md`. La regla nueva de §4 no arbitra este archivo, arbitra todos:
+> **un contrato de agente puede acotar lo que su dueño escribe, nunca ampliarlo**; si
+> `.claude/agents/*.md` y §4 discrepan sobre un path, **gana §4** y el contrato queda derogado en esa
+> línea. `product-scribe` queda **dormido**, igual que `architect`. Este archivo es de `docs-keeper`.
 
 ## Glosario
 | término | significado en iStock |
@@ -164,3 +165,42 @@ dice `usado excelente` (`CONDITION_LABELS`, `src/types.ts:52`) y el mensaje de W
 que usa esa jerga. **No es una inconsistencia y no se unifica.** Quien lo afirma sobre la misma
 página —único lugar donde los dos mapas se observan a la vez— es **M3b de `scripts/accept-s3.sh`**;
 los unit tests ven un mapa por vez y **seguirían verdes** si alguien los fusionara.
+
+### El copy público no compromete una acción futura nuestra
+
+Regla de la vidriera, y **vale para todo lo que se le muestre a un visitante anónimo** — incluido el
+chatbot de FASE 5, que todavía no existe. **Ningún texto público puede prometer que después vamos a
+hacer algo.** Puede describir el presente (*"otra persona lo reservó"*), puede describir cómo
+funciona el mundo (*"una reserva a veces se cae"*) y puede pedirle algo al visitante
+(*"decíselo"*). No puede decir *"avisamos"*, *"te escribimos"* ni *"quedás anotado"*.
+
+**No es tono, es capacidad:** la vidriera es anónima y cacheada, **no tiene DB propia** y no la va a
+tener; no hay lista de espera, no hay notificación y no se guarda un solo dato del visitante. Y el
+que queda mal cuando el aviso no llega no somos nosotros: es el reseller, en su propio dominio.
+
+Hasta S6 el texto de `reserved` decía *«si la reserva se cae, avisamos»* y el botón se degradaba a
+*«Preguntar por WhatsApp si se libera»*. Lo segundo rompía además `CLAUDE.md` §1: la ficha tiene
+**UN** `wa.me` y ese botón es el que vende — un CTA que se disculpa convierte la única conversación
+del producto en una consulta tibia.
+
+| estado | badge | CTA | mensaje de WhatsApp |
+|---|---|---|---|
+| `available` | `Disponible` | *Lo quiero — escribir por WhatsApp* | el string canónico de `CLAUDE.md` §1, **fijado byte a byte** |
+| `reserved` | `Reservado` | *Lo quiero igual — escribir por WhatsApp* | primer renglón afirmativo (`quiero el …`), el estado se **reconoce** y el aviso queda como consecuencia (*"si se cae, lo compro yo"*) — el favor se lo pide el visitante al vendedor, que **sí** puede cumplirlo |
+| `sold` | `Vendido` | *Preguntar por WhatsApp si entra otro igual* | pregunta por un equipo parecido; la ficha vieja sigue teniendo URL y el vendido es prueba social |
+
+**Los tres estados abren la conversación y eso lo decide el dominio, no la pantalla:**
+`buildWaMessage` tiene un texto propio para cada uno. Esconder el botón en `reserved` o en `sold`
+tira los dos leads más baratos del negocio — el que espera que se caiga una seña y el que quiere el
+mismo equipo que otro ya se llevó. Lo que cambia es **qué promete el botón**, no si existe.
+
+**Cero datos de la reserva en cualquiera de los dos lados.** Ni quién señó ni hasta cuándo:
+`WaListing` no los tiene y el DTO público tampoco, así que la prohibición es de tipos. Que la ficha
+diga que está reservado es todo lo que un visitante anónimo puede saber.
+
+_Verificado el 2026-08-28 contra `apps/web/app/(storefront)/_lib/status.ts` y
+`packages/domain/src/wa.ts`. La regla la afirma un test, no la prosa:
+`status.test.ts` *«NINGÚN estado promete una acción futura nuestra»* barre `label + detail +
+ctaLabel` de los tres estados contra ocho formas de promesa. **Las dos mitades están en el árbol de
+trabajo y todavía no pasaron por una corrida de gate del LEAD**; el string de `available` es el
+único fijado por un gate (`wa.test.ts` U14 + M3b de `accept-s3.sh`)._

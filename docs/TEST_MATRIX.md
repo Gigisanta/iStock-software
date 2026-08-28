@@ -127,7 +127,9 @@ commitear**; no cuentan acá hasta que estén en `main`.)
 > Es la regla de método del board —*un gate que nunca se vio fallar no es un gate*— aplicada acá.
 
 ## e2e — Playwright
-Estado verificado contra `e2e/**` y `scripts/accept-*.sh` el **2026-08-28**, después de **S6.2**.
+Estado verificado contra `e2e/**` y `scripts/accept-*.sh` el **2026-08-28**, después de **S6.2** y
+del barrido serial de los cinco `accept-*` sobre `68c0bd6` (`accept-s1 39` · `s2 21` · `s3 59` ·
+`s4 38` · `s6 22`, todos con `FAIL=0`).
 La suite corre **86 tests · 0 skip**, en **13 archivos**, y el censo del reporter dice **13/13
 ejecutados** (eran 73 en 11 archivos: los dos specs de S6 sumaron 13 tests). El censo lo emite el
 reporter de `qa-agent` y lo lee M4 de `accept-s2.sh`; **no se cuenta por nombre de archivo en la
@@ -141,7 +143,11 @@ salida**, porque Playwright imprime el nombre de un spec que no corrió.
 > 2. El radio de invalidación de **S6.2** se midió con **4 unidades**, no con 60. Lo que sostiene la
 >    fila **E17** son **3 fichas hermanas que sobrevivieron** a la purga, no una curva: es
 >    suficiente para distinguir *"purga una"* de *"purga todas"* —que era el defecto— e insuficiente
->    para afirmar nada sobre cómo escala.
+>    para afirmar nada sobre cómo escala. La línea completa de la corrida del LEAD sobre `68c0bd6`:
+>    `MEDIDO s6 radio · publicadas=4 · paginas=5 · rerender=2 · esperado=2 · sobrevivieron=[ficha-a,ficha-c,ficha-d] · frio=14`.
+>    **`frio=14` es el control que hace que el resto signifique algo**: son las sentencias que el
+>    espía vio contra Postgres, y en cero todas las páginas "sobrevivirían" porque nunca se sirvió
+>    nada.
 
 | # | escenario | aserción central | estado |
 |---|---|---|---|
@@ -161,7 +167,7 @@ salida**, porque Playwright imprime el nombre de un spec que no corrió.
 | E14 | slug inexistente | página legible: `<h1` literal en el body, `robots noindex`, título propio ≠ `iStock`, cero markup de vidriera (`wa.me`/`data-listing`), req2 en `HIT`. **No 404** — ADR-011 | ✅ `s1-vidriera-por-host.spec.ts:96,109,127,169` + `s1-ruta-…:273`. **Ojo:** esto cubre el slug de **tenant** en la **home**. La **ficha** bajo un tenant inexistente era el agujero **S3.3**, cerrado el 2026-08-28 (`042e24e`): lo afirman `apps/web/app/(storefront)/ficha.test.ts` (24 tests, `storefront-agent`) y la verificación del LEAD contra server real, **no** un e2e — ningún browser recorre todavía los 4 casos |
 | E15 | el click en WhatsApp deja **una** fila sin PII | mirar la ficha no escribe; el click escribe una fila con el tenant y el equipo correctos; el POST cruzado no escribe ninguna | ✅ **medido el 2026-08-28** por `accept-s4.sh` sobre browser real: `filas_al_cargar=0 · filas_antes=0 · filas_despues=1 · tenant_ok=si · listing_ok=si` y `filas_creadas=0` en el cruce. **`filas_al_cargar=0` no es decoración**: es lo que separa "medir intención de compra" de "contar pageviews" (que ya los cuenta PostHog) y lo que evita que el renglón fijo del WAF se vuelva proporcional al tráfico. El aislamiento a nivel SQL es R2b; esta fila es el mismo invariante por HTTP |
 | E16 | ciclo completo de la reserva: señar → ver → vencer → volver a `available` | la reserva vive en Postgres con la duración que se eligió, el cron **sólo abre con el secreto**, y al vencer la fila queda `expired` con `closed_at` | ✅ **S6** (`s6-la-reserva-…`, 7 tests). Tres cosas que no son obvias y por eso están escritas aparte: (a) `:432` afirma que **la duración del `<select>` llegó a la fila** — sin eso, "se reservó" es compatible con haber guardado el default; (b) `:441` mide que la ficha **estaba cacheada como disponible antes**, que es el control de honestidad sin el cual "se invalidó" y "nunca estuvo en cache" se confunden; (c) `:558` afirma `status = 'expired'` **y** `closedAt != null`, que es **ADR-019** observado de punta a punta y no en unit: es la aserción que separa el cron del panel sobre la misma arista |
-| E17 | **radio** de la invalidación al señar una unidad | re-renderizan exactamente **2** páginas de las medidas: la grilla y la ficha de ese equipo | ✅ **S6.2** (`s6-senar-…`, 6 tests, `EXPECTED_RADIUS = 2` en `e2e/_lib/s6-measure.ts:353`). **Es la única fila de esta tabla que mide un techo y no una presencia**, y está construida en los dos sentidos a propósito: `:425` exige que las hermanas **sobrevivan** y `:450`/`:476` exigen que la grilla y la ficha señada **NO** sobrevivan. Sin la segunda mitad, romper la invalidación entera bajaría el radio a 0 y **mejoraría el número** con la vidriera mintiéndole al visitante. Además `:404` exige `coldStatements > 0` (el espía de Postgres está en el camino) y que ninguna página medida viniera fría — **una página fría no sobrevive a una purga: aparece**. Ver la caveat de las 4 unidades arriba |
+| E17 | **radio** de la invalidación al señar una unidad | re-renderizan exactamente **2** páginas de las medidas: la grilla y la ficha de ese equipo | ✅ **S6.2** (`s6-senar-…`, 6 tests, `EXPECTED_RADIUS = 2` en `e2e/_lib/s6-measure.ts:353`). **Es la única fila de esta tabla que mide un techo y no una presencia**, y está construida en los dos sentidos a propósito: `:425` exige que las hermanas **sobrevivan** y `:450`/`:476` exigen que la grilla y la ficha señada **NO** sobrevivan. Sin la segunda mitad, romper la invalidación entera bajaría el radio a 0 y **mejoraría el número** con la vidriera mintiéndole al visitante. Además `:404` exige `coldStatements > 0` (el espía de Postgres está en el camino) y que ninguna página medida viniera fría — **una página fría no sobrevive a una purga: aparece**. Ver la caveat de las 4 unidades arriba. **Desde el 2026-08-28 esta fila dejó de ser evidencia huérfana**: `accept-s6.sh` corre el spec (`SPEC_RADIO`) y su **V9** lee `rerender` y `esperado` de la salida, con `paginas > 2` y `frio > 0` como controles y **ausencia de la línea = FAIL**. Antes se podían borrar el spec y su veredicto sin que nada se pusiera rojo (**ADR-020**) |
 
 > **Cerrado: el gate de S3 aseguraba 14 de los 15 campos, y ahora asegura 15.** El aviso que estaba
 > acá decía que M3 exigía las 3 fotos, condición, GB, color, procedencia, batería, iCloud, garantía,
@@ -221,8 +227,13 @@ Verde o no se mergea. Sin excepciones "porque es un fix chico".
 
 `.github/workflows/ci.yml` declara además, y son bloqueantes: `pnpm audit --audit-level=high`
 (`CLAUDE.md` §3, CVE-2026-64648 no tiene workaround), `scripts/_lib.test.sh` (polaridad de los
-helpers compartidos de los gates, `:88`), `guard-leaks.sh`, `guard-grants.sh`, `guard-r2.sh`,
-`accept-fase2.sh`, **`guard-firewall.sh`** (`:118`), **`guard-firewall.test.sh`** (`:126`),
+helpers compartidos de los gates, `:88`), **`guard-gates.sh` (`:101`) y su polaridad
+`guard-gates.test.sh` (`:105`)** —los dos con `if: always()`, agregados el 2026-08-28 con
+**ADR-020**: ningún gate puede invocar un helper que no tiene, ni redefinir uno que `_lib.sh` ya
+da—, `guard-leaks.sh`, `guard-grants.sh`, `guard-r2.sh`,
+**`accept-fase2.sh`** (`:137`, el único job con Postgres migrado y seedeado — desde el 2026-08-28
+trae adentro **D5 · G6**, `scripts/probes/el-grant-cubre-el-insert-de-drizzle.test.ts`: **ADR-021**),
+**`guard-firewall.sh`** (`:118`), **`guard-firewall.test.sh`** (`:126`),
 `guard-artifacts.sh --harness`, **`accept-fase3.sh`** (`:137`, hace su propio `next build`) y
 —dentro del job `e2e`, el único que ya tiene un `.next`, el del `webServer` de Playwright—
 `guard-routes.sh` (`:208`) más **cinco aceptaciones por slice**: `accept-s1.sh` (`:224`),
@@ -241,12 +252,14 @@ aceptación por slice no puede ver el invariante que la slice derogó.** `accept
 > ```
 > $ git ls-remote --heads origin      # (sin salida)
 > $ git rev-list --count HEAD
-> 103
+> 110
 > ```
 >
-> `origin` está configurado y **no tiene una sola rama**; `origin/main` figura `gone`. En **103** commits
-> locales **no hubo una corrida de GitHub Actions**. Decía 89 y se re-midió el 2026-08-28 después de
-> S6.2: **catorce commits más, y el número que importa sigue siendo cero.** Por lo tanto, en este doc y en todo `docs/**`:
+> `origin` está configurado y **no tiene una sola rama**; `origin/main` figura `gone`. En **110** commits
+> locales **no hubo una corrida de GitHub Actions**. Decía 89, después 103, y se re-midió sobre
+> `68c0bd6` el 2026-08-28 tras el barrido serial de los cinco `accept-*`: **veintiún commits más que
+> el primer conteo, y el número que importa sigue siendo cero.** Los dos steps nuevos de
+> `guard-gates` nacieron ya en esa condición. Por lo tanto, en este doc y en todo `docs/**`:
 >
 > | se lee | significa |
 > |---|---|
@@ -280,40 +293,145 @@ aceptación por slice no puede ver el invariante que la slice derogó.** `accept
 > 2. Un e2e que necesita un secret humano (R2 real, MP sandbox, LLM) se marca `skip` **con motivo**
 >    en el propio test. Un e2e verde por no haber corrido es peor que un e2e rojo.
 
-### La familia "gate vacuamente verde", tres entradas nuevas del 2026-08-28
+### La familia "gate vacuamente verde" — tres entradas del 2026-08-28, **las tres cerradas** (**ADR-020**)
 Este repo ya tenía catalogada una clase de defecto —reglas que no pueden fallar, gates satisfechos
 por un `import`, `guard-artifacts.sh` pasando con cero archivos— y ese mismo día sumó tres. Van acá y
-no en el board porque **las tres son sobre la evidencia, que es de lo que trata este doc.**
+no en el board porque **las tres son sobre la evidencia, que es de lo que trata este doc**. Se
+dejan escritas con su diagnóstico entero y con el arreglo al lado: **borrar el hallazgo cuando se
+cierra es cómo se pierde la única parte que no se vuelve a descubrir sola.**
 
-1. **Un gate afirmó una propiedad y verificó un nombre.** V5 de `scripts/accept-s6.sh:119-123` se
-   llama *"señar no purga la vidriera entera"* y lo que ejecuta es
+1. **Un gate afirmó una propiedad y verificó un nombre.** V5 de `scripts/accept-s6.sh` se llamaba
+   *"expirar una reserva invalida la unidad, no la vidriera entera"* y lo que ejecutaba era
    `grep -rqE 'invalidateStorefrontUnit'`. Durante todo el defecto de **S6.2** la función se llamaba
    así **y purgaba la vidriera entera**: el gate estuvo verde de punta a punta. Es la variante más
    difícil de ver de *"tres pruebas alrededor y ninguna encima"*, porque acá la prueba estaba
-   **encima del identificador correcto**. Regla que se deriva: si el nombre de la aserción tiene un
+   **encima del identificador correcto**. Regla que se derivó: si el nombre de la aserción tiene un
    verbo (*purga*, *invalida*, *rechaza*), el `grep` de un símbolo **no** es esa aserción.
-2. **Ningún `accept-*` nombra la evidencia de S6.2.** `accept-s6.sh:44` fija `SPEC=` en
-   `s6-la-reserva-…`, y la medición del radio vive en `s6-senar-…` y en
-   `tests/el-veredicto-del-radio-…`. Los dos **corren** (`pnpm e2e` y `pnpm test`), así que el nivel
-   1 está; lo que falta es que el **gate de la slice** los cite. Hoy se pueden borrar los dos y
-   **nada se pone rojo**: borrar un test nunca pone nada en rojo, ése es justamente el punto. Misma
-   forma que la deuda de proceso de **S5**; el precedente de cómo se cierra es W1 de `accept-s4.sh`.
-3. **Un gate que corre en CI puede saltearse once aserciones sin bajar de verde.** Lo encontró el
-   LEAD y está **sin commitear** al cerrar esta pasada (`scripts/guard-gates.sh`, `_lib.sh`):
-   `accept-s1.sh` llamaba `chk` diez veces y `have` una **sin tenerlas importadas** —vivían sueltas
-   dentro de `accept-fase3.sh`—; bash imprime `command not found` por **stderr**, devuelve 127 y
-   **sigue**. Como `no()` nunca se llama, el contador `fail` no se toca: el gate reportó
-   `25 PASS / 1 FAIL` con **once aserciones que no se ejecutaron**, entre ellas las cuatro que le
-   preguntan a Postgres si `anon` puede leer `listings.imei`. El único FAIL era ajeno; sin él, el
-   gate salía **verde**. **Lo que hay que llevarse no es "faltaba un `source`":** es que
-   `PASS + FAIL` no es el total de aserciones escritas, y ningún gate del repo verificaba esa
-   igualdad. La red que se agregó (`command_not_found_handle`) convierte *ausencia de medición* en
-   FAIL, que es la misma regla que `guard-artifacts.sh` aplica a los artefactos.
+   **→ CERRADO.** V5 quedó reducida a lo único estático que sí puede afirmar —que **nadie llama** a
+   `invalidateStorefront(` desde el camino de reservas; la **ausencia** de una llamada prohibida sí
+   es una propiedad del fuente— y el título de la sección ahora dice de qué tipo es su evidencia:
+   *"(estático; el radio se mide en V9)"*. El radio se **cuenta** en la **V9** nueva.
+
+2. **Ningún `accept-*` nombraba la evidencia de S6.2.** El spec del radio y su módulo de veredicto
+   corrían (`pnpm e2e`, `pnpm test`), así que el nivel 1 estaba; lo que faltaba era que el **gate de
+   la slice** los citara. Se podían borrar los dos y **nada se ponía rojo** — borrar un test nunca
+   pone nada en rojo, ése es justamente el punto.
+   **→ CERRADO.** `accept-s6.sh` fija `SPEC_RADIO=s6-senar-un-equipo-no-purga-la-vidriera-entera.spec.ts`
+   y lo corre junto con `$SPEC`; **V9** lee `MEDIDO s6 radio` **de la salida de esa corrida** y falla
+   si la línea no está. La auditoría de referencia del veredicto es
+   `tests/el-veredicto-del-radio-rechaza-la-purga-que-arrastra-fichas-ajenas.test.ts`, de
+   **`qa-agent`** — otra columna que la del código auditado, como exige `CLAUDE.md` §4.
+
+3. **Un gate que corre en CI podía saltearse once aserciones sin bajar de verde.** `accept-s1.sh`
+   llamaba `chk` diez veces y `have` una **sin tenerlas importadas** —vivían sueltas dentro de
+   `accept-fase3.sh`—; bash imprime `command not found` por **stderr**, devuelve 127 y **sigue**.
+   Como `no()` nunca se llama, el contador `fail` no se toca: el gate reportó `25 PASS / 1 FAIL` con
+   **once aserciones que no se ejecutaron**, entre ellas las cuatro que le preguntan a Postgres si
+   `anon` puede leer `listings.imei`. El único FAIL era ajeno; sin él, el gate salía **verde**. **Lo
+   que hay que llevarse no es "faltaba un `source`":** es que **`PASS + FAIL` no es el total de
+   aserciones escritas**, y ningún gate del repo verificaba esa igualdad.
+   **→ CERRADO, y es el único de los tres con gate propio.** `scripts/guard-gates.sh` falla si un
+   gate invoca una palabra que **no resuelve a nada** —ni función propia, ni de `_lib.sh` cuando lo
+   importa, ni builtin, ni binario en PATH— y si **redefine** un helper que `_lib.sh` ya da. Es
+   estático a propósito: el `command_not_found_handle` que también se puso es de **bash ≥ 4.0** y
+   macOS ships 3.2.57, o sea que agarraría en CI y sería inerte en la máquina donde más se corren
+   los gates a mano. `ci.yml:101`, con su polaridad de seis fixtures en `:105`, los dos con
+   `if: always()`.
 
 > **Las tres se leen mejor juntas que separadas.** La pregunta que este doc venía haciendo era
 > *¿existe la aserción?*; las tres dicen que no alcanza, y cada una agrega una pregunta distinta:
 > **¿la aserción mide el verbo de su nombre?** · **¿alguien la cita como evidencia?** ·
 > **¿se ejecutó?** Con la lista de cuatro preguntas del final de este doc, son siete.
+
+#### El cierre no es simétrico, y conviene saber cuál mitad quedó cubierta
+
+`guard-gates.sh` cubre **la tercera** y nada más: la aserción que se evapora. Es la única mecánica.
+Las otras dos —**el nombre que promete un cuerpo** y **el gate que nadie cita**— se revisan leyendo,
+contra **ADR-020**. Un `guard-gates` en verde dice *"ninguna línea se evaporó"*, **no** *"los gates
+miden lo que dicen"*, y son cosas muy distintas.
+
+**Cubría 20 de 21 y hoy cubre 21 de 21 (`T20` del board, cerrada el 2026-08-28).** El mensaje de
+éxito contaba `ls scripts/*.sh | wc -l` = **21** mientras los dos barridos salteaban `_lib.sh`, o sea
+que auditaba **20** — y el que quedaba afuera era la librería que importan los otros veinte, donde un
+helper inexistente se propaga a todos de una vez. Lo levantó `docs-keeper` verificando una frase de
+ADR-020; lo arregló el LEAD, dueño de `scripts/**` por §4. Ahora `_lib.sh` entra a **G1**; **G2 lo
+exceptúa con motivo escrito** (`:167`) porque ahí sería vacuo —G2 caza al que **redefine** un helper
+de la librería, y la librería es el original—; y el número impreso sale del barrido
+(`AUDITADOS`, `:173`), no de un `ls`, con **ausencia = FAIL** (`:184-187`). La polaridad pasó de seis
+a **nueve** casos.
+
+#### Un cuarto miembro que estaba en la misma familia y en la otra polaridad
+
+**M1 de `scripts/accept-s3.sh`** —*"ningún `srcset` sin `sizes` en la vidriera"*— escaneaba el
+archivo **crudo** y abría la ventana del tag en el primer `<` hacia atrás. Un docblock que nombraba
+`srcSet` en **prosa** unas líneas después de un `<` de comentario le hacía reconstruir un **tag
+fantasma** y reprobar `listings.ts`, un archivo que no renderiza una etiqueta. **El único arreglo
+disponible para quien lo chocaba era borrar la explicación**: el gate castigaba documentar la regla
+que defiende. Falla en la polaridad opuesta a los otros tres —de más, no de menos— y termina en el
+mismo lugar, porque **un gate ruidoso es un gate que se aprende a saltear**. Arreglado blanqueando
+comentarios y strings **por espacios** antes de escanear, para no mover un offset y que los números
+de línea que reporta sigan siendo los del archivo real (lo mismo que ya hacía `scan()` de
+`web-lint.mjs`). **Límite declarado en el propio gate:** no detecta literales de regex, así que un
+`//` adentro de uno podría blanquear de más — el modo de falla sería **omitir** una detección, no
+inventarla, y si aparece el fix es tokenizar, no aflojar la regla.
+
+**Dos cosas que este doc no redondea, porque medir bien incluye no cobrarse de más:**
+
+- **El arreglo de M1 no destapó ningún rojo del producto.** `listings.ts` ya no tiene `srcSet` y el
+  árbol entero pasaba también con el escáner viejo. Se **sacó una mina**, no se arregló una falla
+  viva. La cobertura real de la regla no cambió; lo que cambió es que ahora se puede documentar sin
+  que el gate muerda.
+- **El primer fixture con el que se intentó probar M1 no reproducía el defecto** (la prosa nombraba
+  `sizes` antes que `srcSet`, así que la ventana encontraba el `sizes`). Se detectó corriendo el
+  **escáner viejo** contra el fixture y viéndolo **pasar cuando tenía que encenderse**. Queda como
+  regla de método, hermana de *"un gate que nunca se vio fallar no es un gate"*: **un fix cuya
+  reproducción no se vio encender no está probado.**
+
+#### Un quinto caso, de la otra clase: cobertura que tranquiliza sobre el eje equivocado
+
+Los cuatro de arriba son gates que afirman de más. Éste es un **test** que afirma sobre el eje que no
+es, y por eso entra acá aunque no sea un gate. `apps/web/.../expire-reservations.test.ts` tiene el
+caso *«una fila podrida no frena el barrido → cuenta el fallo, loguea el id y sigue con la
+siguiente»*, y pasa. Afirma la resiliencia **dentro de una corrida**. El defecto que
+`cost-auditor` encontró (`COST.md` §2.5) es **entre corridas**: la fila que falla queda `active` con
+el mismo `expires_at` en el pasado y, por el `order by expires_at asc`, vuelve a ser la primera de la
+próxima corrida y de todas. **No hay un solo test que ejecute el barrido dos veces**, así que ningún
+verde de esta matriz contradice el hallazgo.
+
+La aserción que lo cierra es un entero, no un identificador —dos corridas, `EXPIRE_BATCH_SIZE` filas
+envenenadas más una sana, *cuántas sanas venció la corrida 2*: hoy **0**, tiene que valer **1**— y va
+en `scripts/probes/`, columna del LEAD, porque la auditoría de referencia no puede ser del writer que
+audita. Filas `T21`–`T25` del board; las cinco aserciones, en `COST.md` §2.5.5.
+
+#### Un sexto caso, y abre una familia nueva: el test medía bien, a un sujeto inventado — **ADR-021**
+
+**Éste no es de la familia de arriba y por eso tiene ADR propia.** Los cinco anteriores fallan por la
+**evidencia** (se afirma una conducta y se recoge un identificador, o se mide el eje equivocado).
+Éste midió el eje correcto, con la base real, en la capa correcta — y su sujeto no existe.
+
+`packages/db/src/reservations-sweep-attempts.test.ts` probaba que *el panel podía seguir insertando*
+después de que `0006` pasara el `GRANT INSERT` de `authenticated` a columna por columna. Lo probaba
+con una sentencia `INSERT` **escrita a mano en el test**, que nombraba tres columnas. Ningún caller
+del producto emite esa sentencia: **Drizzle, en `insert().values()`, nombra todas las columnas de la
+tabla** y pone `default` en las que no le pasaste, y Postgres exige privilegio sobre cada columna
+nombrada. Resultado: `packages/db` en verde y el alta de reservas del panel rota con `42501`.
+
+**Quién lo agarró:** e2e, o sea el gate más lento y más caro del repo — dentro de
+`scripts/accept-s6.sh`, en la re-ejecución del LEAD. **Quién NO lo agarró y no podía:**
+`guard-grants.sh`, que cuenta que el `GRANT` **exista**, y un `GRANT` parcial existe. Dijo PASS con
+el panel roto.
+
+**Cómo quedó cubierto:**
+
+| capa | qué afirma ahora |
+|---|---|
+| el test del paquete (`db-agent`) | el `INSERT` se construye con el **query builder de Drizzle** (`toSQL()`) y se ejecuta tal cual; la lista de columnas se **deriva del schema** y se compara contra la que la sentencia nombra de verdad. Y las dos negativas se separan por **mensaje**, no por código: el `UPDATE` de la columna tiene que decir `permission denied for table` (capa `GRANT`) y el `INSERT` con el contador forjado, `row-level security` (capa policy) |
+| el gate barato (LEAD) | **G6** · `scripts/probes/el-grant-cubre-el-insert-de-drizzle.test.ts`, sección **D5** de `accept-fase2.sh`: si `authenticated` tiene **algún** `INSERT` por columna sobre una tabla de negocio, lo tiene sobre **todas**. Le pregunta al catálogo; no ejecuta un solo `INSERT`. Cero privilegios = fuera de alcance (esa tabla la escribe `service_role`) |
+| la migración | el bloque `DO` de `0006` **aborta y no se registra** si el reparto de privilegios no es el declarado |
+
+**La sexta pregunta de este doc**, que ninguna de las cinco anteriores hace: *cuando el test pasa,
+**¿quién** emitió lo que se midió?* Si la respuesta es "lo escribí yo acá", lo medido es una
+hipótesis sobre el caller, no el caller.
 
 ## Cobertura de las prohibiciones de `CLAUDE.md` §2
 Verificado regla por regla contra el repo el **2026-08-28**. La tabla completa se cierra en FASE 7;
@@ -323,10 +441,11 @@ lo que hay acá es lo que ya está confirmado, incluidos los huecos.
 |---|---|---|
 | `tenant_id` en `user_metadata` | **estático:** `guard-leaks.sh:127` · `web-lint.mjs:123` (W008) · `accept-fase3.sh:61` — **y en runtime:** `tests/rls-cross-tenant.test.ts:535`, que **forja un claim** con el tenant en `user_metadata` contra Postgres real y verifica que **no abre nada** | ✅ (los dos primeros + el test) |
 | tabla nueva sin `GRANT` | `guard-grants.sh` (parsea por **sentencia**, no por línea: 5 de los 6 `GRANT` son multilínea) — **y en runtime:** R7a/R7b/R7c preguntan por el privilegio **efectivo** (`has_table_privilege`), así que también cae un `GRANT … TO PUBLIC` | ✅ desde `985c369` |
+| **`GRANT` de `INSERT` por columna incompleto** — la tabla **tiene** `GRANT` y el panel igual recibe `42501` | **`G6`** · `scripts/probes/el-grant-cubre-el-insert-de-drizzle.test.ts`, sección **D5** de `accept-fase2.sh`. Le pregunta al catálogo (`has_column_privilege`) tabla de negocio por tabla de negocio; **cero privilegios = fuera de alcance**, esa tabla la escribe `service_role`. Trae control de polaridad propio, siempre encendido | ✅ vía `accept-fase2.sh` (`ci.yml:137`, el único job con Postgres migrado). **Nace del primer fallo de T21, 2026-08-28:** `guard-grants.sh` dijo PASS con el alta de reservas rota, y el que lo agarró fue **e2e**. **ADR-021** |
 | borrado de un objeto de R2 por key | `guard-r2.sh` R1 + R2 (**T11**) — **y en runtime:** `packages/media/src/unlink.test.ts:131` (*"borrar el listing de A NO deja sin fotos a B"*) y `:162` (*"cuando el ÚLTIMO tenant lo suelta, ahí sí se recolecta"*) | 🟡 **T14.3, anotada el 2026-08-28.** El ✅ anterior sobrevaloraba la evidencia. R1 y R2 de `guard-r2.sh` son **greps del fuente** (`DeleteObjectCommand` fuera de `unlink.ts`; un nombre exportado en `index.ts`): afirman que *nadie escribió* un borrado por key, no que *borrar un listing deje el byte vivo*. Lo segundo sólo lo afirma `unlink.test.ts`, que es **del owner del paquete y corre contra un driver en memoria** — nunca contra R2. O sea: el invariante más caro de recuperar (un byte borrado no vuelve, y es de otro tenant) **no tiene auditoría de referencia en `tests/`**, que es justo lo que `CLAUDE.md` §4 pide para las dos puntas de un invariante. Lo único que hay en `tests/` sobre R2 es `la-url-de-r2-no-se-arma-fuera-de-media.test.ts`, que es otra cosa |
 | IMEI / costo / margen / notas en la vidriera | M4 de `accept-s3.sh` sobre los **bytes** de ficha **y** grilla, con los IMEI leídos del seed · `web-lint.mjs` W009 · `guard-leaks.sh` | ✅ nivel 1 desde `c854b99`: `accept-s3.sh` pasó a ser step de CI (`ci.yml:213`), así que M4 dejó de depender de que alguien lo corra a mano |
-| **query sin filtro de tenant *además* de RLS** | **`W015` de `apps/web/scripts/web-lint.mjs`, en `main` desde `9b3d7d2`.** Corregido el 2026-08-28: este doc decía *"todavía NO está commiteada"* citando `git log -S W015` en cero, y ya no es cierto — `git log --oneline -S W015 -- apps/web/scripts/web-lint.mjs` devuelve **un** commit, que trae además el párrafo de `CLAUDE.md` §2 con el contrato del marcador. Re-corrida: `cd apps/web && node ./scripts/web-lint.mjs` → `WEB-LINT: PASS (15 reglas)` · *"toda query sobre las **15 tablas de negocio** filtra por tenant ademas de RLS (builder y sql crudo)"*. Lo que la hace fuerte: **deriva la lista de tablas del schema real** (las que tienen `tenantId`), así que una tabla de negocio nueva queda cubierta el día que nace; **falla si no puede leer el schema** (ausencia de medición es FAIL, y una lista vacía dejaría pasar todas las queries diciendo PASS); ventana de sentencia **angosta a propósito**; mide **filtrado, no presencia** (proyectar `m.tenant_id` o nombrarlo en un `join … on` no filtra); y el escape es `web-lint:sin-tenant` con **30+ caracteres de motivo** — hoy **dos** marcas en todo el repo, `_lib/session.ts:94` y `_lib/tenants/create-tenant.ts:202`. **Dos huecos que no se redondean:** (a) el alcance es `apps/web/app` + `apps/web/lib` + `proxy.ts` (`web-lint.mjs:41`), así que **`packages/**` sigue sin gate** → **T16**; (b) **su polaridad no es un comando**: los 12 casos se ejercieron *"in a sandbox outside the repo"* (`9b3d7d2`), que es la misma situación en la que `guard-firewall` tenía **seis reglas que no fallaban nunca** hasta que la polaridad se volvió un archivo | ✅ nivel 1 (`pnpm -r lint`, `ci.yml:64`) · **T2 cerrada**, **T16 abierta** |
-| **rate limiting con contador en Postgres sobre la vidriera** | **nadie**. **T1 no la cubre**: `guard-firewall.sh` audita el techo del WAF (config + censo de rutas), que es otra cosa que prohibir un contador en Postgres — y que el gate del WAF **sí** corra en CI (`ci.yml:118`) no cambia esto, porque valida un JSON de configuración y no mira una sola query | 🔴 **T14.1** |
+| **query sin filtro de tenant *además* de RLS** | **`W015` de `apps/web/scripts/web-lint.mjs`, en `main` desde `9b3d7d2`.** Corregido el 2026-08-28: este doc decía *"todavía NO está commiteada"* citando `git log -S W015` en cero, y ya no es cierto — `git log --oneline -S W015 -- apps/web/scripts/web-lint.mjs` devuelve **un** commit, que trae además el párrafo de `CLAUDE.md` §2 con el contrato del marcador. Re-corrida: `cd apps/web && node ./scripts/web-lint.mjs` → `WEB-LINT: PASS (15 reglas)` · *"toda query sobre las **15 tablas de negocio** filtra por tenant ademas de RLS (builder y sql crudo)"* — **las `15 reglas` son de esa corrida y hoy son `16`** (entró `W016`); la línea de W015 no cambió, y el número viejo se fecha en vez de reescribirse porque una medición vieja con un número nuevo es el drift que este doc existe para evitar. Lo que la hace fuerte: **deriva la lista de tablas del schema real** (las que tienen `tenantId`), así que una tabla de negocio nueva queda cubierta el día que nace; **falla si no puede leer el schema** (ausencia de medición es FAIL, y una lista vacía dejaría pasar todas las queries diciendo PASS); ventana de sentencia **angosta a propósito**; mide **filtrado, no presencia** (proyectar `m.tenant_id` o nombrarlo en un `join … on` no filtra); y el escape es `web-lint:sin-tenant` con **30+ caracteres de motivo** — hoy **dos** marcas en todo el repo, `_lib/session.ts:94` y `_lib/tenants/create-tenant.ts:202`. **Dos huecos que no se redondean:** (a) el alcance es `apps/web/app` + `apps/web/lib` + `proxy.ts` (`web-lint.mjs:41`), así que **`packages/**` sigue sin gate** → **T16**; (b) **su polaridad ya es un comando, y esta celda decía lo contrario.** Hasta `a015437` los 12 casos se habían ejercido *"in a sandbox outside the repo"* (`9b3d7d2`) — la misma situación en la que `guard-firewall` tenía **seis reglas que no fallaban nunca** hasta que la polaridad se volvió un archivo. Hoy existe **`scripts/web-lint.test.sh`**, con step propio en `ci.yml:156`, y cierra en `POLARIDAD WEB-LINT: OK — las 16 reglas se vieron encender`. **W015 aporta 12 de esos casos** y los seis bordes que importan están adentro: *presencia no es filtro*, *proximidad no es alcance*, *el docblock del módulo no exime*, *un motivo de tres palabras no es un motivo*, el `insert` que se ata por el `values()` y no por un `where` que no puede tener, y **el schema ilegible = FAIL**. De los dos huecos, éste se cerró; **el que sigue abierto es (a)** | ✅ nivel 1 (`pnpm -r lint`, `ci.yml:64`) · **T2 cerrada**, **T16 abierta** |
+| **rate limiting con contador en Postgres sobre la vidriera** | **`W016` de `apps/web/scripts/web-lint.mjs`**, escrita por el LEAD el 2026-08-28. Hasta ese día decía **nadie**, y era **la última de las 14 prohibiciones de §2 sin gate ejecutable** — lo censó `qa-agent`. **`guard-firewall.sh` sigue sin cubrirla y no es un olvido:** audita el techo del WAF (config + censo de rutas), o sea **la mitad de afuera**; nada impedía escribir el contador igual y quedarse con las dos capas, pagando la cara. **Dos brazos, porque la infracción tiene dos formas y ninguna implica la otra:** (a) un archivo de `(storefront)` que **abre Postgres** *y* **nombra el concepto en código**; (b) la **forma** del contador (`onConflictDoUpdate`, `+ 1` dentro de un template de `sql`, `increment`, `count = count + …`) **aunque no se llame *rate limit***. El brazo (a) mira el **archivo entero** para la puerta y la **línea** para el concepto, y depende de que `scan()` saltee comentarios: `app/(storefront)/s/[slug]/api/track/route.ts:34` abre Postgres y **explica la prohibición en su docblock** — una regla que se encienda ahí es una regla que **castiga por documentarse**, el mismo modo de falla que el `TODO`/`TODOS` de la regla 3 de `guard-leaks.sh`. **No hay marcador de exención, a diferencia de W015, y el motivo está escrito en el código:** W015 lo tiene porque existen preguntas legítimamente cross-tenant; **no existe la vidriera que legítimamente cuente en Postgres**. **Falla cerrado:** si `(storefront)` está vacío, W016 sale **rojo**, no verde — medir cero no es aprobar. Veredicto real, verificado por `docs-keeper` el 2026-08-28: `ok W016 ninguno de los 23 archivos de (storefront) cuenta requests en Postgres (el techo es el WAF)` · `WEB-LINT: PASS (16 reglas)` | ✅ nivel 1 (`pnpm -r lint`, `ci.yml:64`) + polaridad propia en `ci.yml:156`. **`T14.1` cierra; abre `T26`** (la fila del gate, que todavía no está en `main`) |
 | **una key legítima rechazada por el guard de PII** (disponibilidad, no seguridad) | hoy `packages/media/src/keys.test.ts` — **y hasta el 2026-08-28 no lo cubría nadie**: los casos del gate eran keys elegidas a mano, todas sin 15 dígitos seguidos, así que el 0,63% de keys que el guard rechaza **nunca apareció en un test**. Es un hueco de *muestreo*, no de olvido: la forma que faltaba era **generar keys reales en masa** y afirmar sobre el efecto | 🔴 **S2.5, abierta** (arreglo sin commitear al cerrar esta pasada). **La lección que sí es de este doc:** un guard cuyos casos de prueba los escribe la misma persona que el regex sólo ve las entradas que esa persona imaginó; el defecto vivía en las que produce la máquina |
 | **imagen original (>500 KB) servida a la vidriera** | `scripts/probes/s2-media-measure.test.ts` (dentro de `accept-s2.sh`) · M2 de `accept-s3.sh` (ya midió: 51016 B) | 🟡 **T14.2 cambió de color el 2026-08-28**: los dos `accept-*` que la afirman entraron a CI en `c854b99` (`ci.yml:209` y `:213`), así que dejó de ser *"existe en dos lados y no corre en ninguno"*. Sigue **amarilla y no verde** por dos motivos distintos: nadie la afirma fuera de un `accept-*` (que es lo que T14 pedía), y ningún gate del repo llegó al **nivel 2** |
 
@@ -348,9 +467,12 @@ lo que hay acá es lo que ya está confirmado, incluidos los huecos.
 > El texto *"sin commitear · cero commits"* quedó **falso** con `9b3d7d2`, y este doc lo siguió
 > afirmando. Cambia una vez más la lista de preguntas, y ésta es la que ninguna de las anteriores
 > hacía: **¿el CI que lo corre corrió alguna vez?** Hoy la respuesta es **no** —
-> `git ls-remote --heads origin` vacío contra 103 commits — y por eso todo ✅ de arriba es nivel 1.
+> `git ls-remote --heads origin` vacío contra **110** commits — y por eso todo ✅ de arriba es nivel 1.
 > Las cuatro preguntas, en orden: *¿hay chequeo?* · *¿lo corre alguien?* · *¿está en `main`?* ·
-> *¿corrió el CI?*
+> *¿corrió el CI?* **Y desde ADR-020 hay una quinta, que no es sobre la corrida sino sobre el
+> contenido: *cuando pasa, ¿qué midió?*** **Desde ADR-021 hay una sexta, y es la que dejó pasar el
+> alta de reservas rota: *cuando pasa, ¿**quién** emitió lo que se midió?*** Un test que arma él
+> mismo la sentencia que dice estar probando mide una hipótesis sobre el caller, no al caller.
 
 ## Cómo se verifica esta tabla
 **Un "sin cubrir" se escribe acá sólo después de buscarlo en el repo**, no cuando un agente lo
@@ -373,3 +495,13 @@ devolvía **cinco líneas**, y las cinco eran **comentarios o mensajes de error*
 aserción, no la mención**, y si la cobertura está repartida entre varios archivos se pregunta cuál
 de ellos la afirma **sobre el artefacto que ve el usuario**. Tres pruebas que rodean un invariante
 no son una que lo afirme (`DECISIONS.md` §"Notas operativas").
+
+**Una pregunta más, la del 2026-08-28 (ADR-020): cuando el ✅ se apoya en un gate, ¿qué mide ese gate
+cuando pasa?** No *"¿existe la aserción?"* ni *"¿corrió?"* —esas ya están arriba— sino **de qué tipo
+es su evidencia**: un **conteo leído de una corrida** o un **`grep` del fuente**. Las dos son
+legítimas y afirman cosas distintas: el `grep` puede afirmar una **ausencia** (*"nadie llama a la
+purga del catálogo"*) o un invariante estructural (*"nadie construye su propia conexión"*), y **no
+puede** afirmar una conducta con verbo (*"no purga la vidriera entera"*), porque un nombre no tiene
+polaridad ni promete un cuerpo. Regla práctica al escribir una fila de esta tabla: **si el ✅ cita un
+gate cuyo nombre tiene un verbo, hay que poder decir de dónde sale el número.** Si no hay número, el
+✅ es sobre el fuente y la fila lo dice.

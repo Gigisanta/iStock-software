@@ -10,6 +10,18 @@
 > Una slice pasa a `done` **sólo** cuando el **LEAD re-ejecutó** su comando de aceptación y el
 > resultado fue verde. Que un agente diga "pasa" no alcanza. Que el código esté en `main` tampoco:
 > ya tuvo a S1 en `doing` y a S3.1/S3.2 en `todo` un día entero con el código entregado.
+>
+> **Dicho como regla y no como caso, porque ya se aplicó cuatro veces:** el reporte verde de un
+> agente **no mueve la fila**. La deja *esperando gate*, y esperando gate se escribe `doing` — no hay
+> un quinto estado y no lo va a haber, porque un estado "entregado pero sin correr" se lee como
+> `done` a los dos días. Lo que mueve la fila es la corrida del LEAD, y esa corrida puede volver en
+> rojo: el 2026-08-28 **T21 volvió en rojo después de haber sido reportada verde**, y el defecto que
+> encontró era el alta de reservas del panel, rota en producción.
+>
+> **Cuando vuelve en rojo, el fallo se anota en la fila, con número.** `CLAUDE.md` §0 regla 3 dice
+> que **dos fallos en la misma slice son STOP y re-plan**, así que el contador no es prosa: el que
+> toma la fila tiene que poder ver, sin reconstruir el histórico, si el próximo intento es el último.
+> Una fila que volvió de rojo y no lo dice gasta el segundo intento creyendo que es el primero.
 
 Estados: `todo` · `doing` · `blocked` · `done`
 **Regla:** máximo **una** slice en `doing` por directorio owner.
@@ -140,12 +152,12 @@ cuyo gate no pudo correr: las cinco quedan `todo` hasta que el gate corra **ente
 
 | id | slice | estado | owner | gate de aceptación |
 |---|---|---|---|---|
-| S1 | host → hello storefront | **done** | `storefront-agent` | `{slug}.local` resuelve al tenant; slug inexistente → página legible con `noindex` (**ADR-011**, el gate viejo "404 real en la primera request" era inalcanzable); se verifica con `bash scripts/accept-s1.sh`. **Re-ejecutado por el LEAD el 2026-08-28: EXIT=0 · 26 PASS · 0 FAIL · `S1: ACEPTADA`** |
-| S2 | listing unit + fotos R2 con variantes | **done** | `media-agent` → `app-agent` | 3 variantes generadas; `card` ≤150KB **medido sobre bytes** (`card=50692B`, techo `153600B`). **Re-ejecutado por el LEAD el 2026-08-28: EXIT=0 · 21 PASS · 0 FAIL · `S2: ACEPTADA`** |
-| S3 | grilla + ficha mínima | **done** | `storefront-agent` | `bash scripts/accept-s3.sh`: los **15 campos** de `CLAUDE.md` §1 —los 15 de verdad recién desde **M3b** (`0edb661`), que agregó el botón `wa.me`—; cero campos prohibidos en el HTML; el byte medido es el que **pide el browser** (P3). **Re-ejecutado entero por el LEAD el 2026-08-28: 58 PASS · 0 FAIL · `S3: ACEPTADA`** (la corrida que la aceptó dio 50; M3b sumó 8 aserciones) |
-| S4 | botón `wa.me` + tracking de eventos | **done** | `domain-agent` → `storefront-agent` | texto exacto byte a byte; evento registrado sin PII. **Re-ejecutado entero por el LEAD el 2026-08-28, sin fixture: `./scripts/accept-s4.sh` → 37 PASS · 0 FAIL**, con la suite e2e ejecutada de verdad (73 passed) y `pnpm typecheck && pnpm lint && pnpm test` en 1004 passed / 0 failed. Las dos mitades del *byte a byte* siguen afirmadas por separado y hacen falta las dos: `packages/domain/src/wa.test.ts` U14 fija el string (`toBe(CANONICAL_TEXT)`) y M3b de `accept-s3.sh` prueba que la página servida lo lleva — **W1 de `accept-s4.sh` nombra las dos aserciones, no los archivos**, así que borrar M3b pone roja también a S4. Lo nuevo es el evento: W2/W3 (no hay dónde poner PII; `anon` gana exactamente un privilegio de columna y ni uno más), W5 (con JS apagado el botón sigue abriendo WhatsApp), W6/W6b (medición viva, y el cruce de tenant escribe **cero** filas), W7 (el endpoint nace con techo declarado en `config/firewall-rules.json`). **Deja abierta S4.1**, defecto del texto en el camino real |
+| S1 | host → hello storefront | **done** | `storefront-agent` | `{slug}.local` resuelve al tenant; slug inexistente → página legible con `noindex` (**ADR-011**, el gate viejo "404 real en la primera request" era inalcanzable); se verifica con `bash scripts/accept-s1.sh`. **Re-ejecutado por el LEAD el 2026-08-28 en el barrido serial sobre `68c0bd6`: `PASS=39 · FAIL=0`.** El salto de 26 a 39 no es cobertura nueva de producto: **son las aserciones que antes se evaporaban.** A2 llamaba a `chk` y a `have` sin tenerlas importadas —vivían sueltas en `accept-fase3.sh`—, bash devolvía 127 por stderr y seguía, y `no()` nunca se llamaba. Ahora corren, y A2 además dejó de grepear el domicilio (`set local role` dentro de `tenant.ts`, un archivo del que el invariante ya se había mudado) para afirmar el invariante: **ningún archivo de la vidriera construye su propia conexión** — **ADR-020** |
+| S2 | listing unit + fotos R2 con variantes | **done** | `media-agent` → `app-agent` | 3 variantes generadas; `card` ≤150KB **medido sobre bytes** (`card=50692B`, techo `153600B`). **Re-ejecutado por el LEAD el 2026-08-28: EXIT=0 · 21 PASS · 0 FAIL · `S2: ACEPTADA`**, y **repetido idéntico en el barrido serial sobre `68c0bd6`: `PASS=21 · FAIL=0`** — el único de los cinco que no movió un número, porque ninguno de los tres gates que ADR-020 arregló vivía acá |
+| S3 | grilla + ficha mínima | **done** | `storefront-agent` | `bash scripts/accept-s3.sh`: los **15 campos** de `CLAUDE.md` §1 —los 15 de verdad recién desde **M3b** (`0edb661`), que agregó el botón `wa.me`—; cero campos prohibidos en el HTML; el byte medido es el que **pide el browser** (P3). **Re-ejecutado entero por el LEAD el 2026-08-28, barrido serial sobre `68c0bd6`: `PASS=59 · FAIL=0`** (la corrida que la aceptó dio 50; M3b sumó 8, y la novena salió de uno de los dos commits que tocaron el gate después —`7e40856` de S4.1 o `f691daf` de ADR-020—: **no se le adjudica a ninguno**). **M1 cambió de forma, no de vara** (**ADR-020**): escaneaba el archivo crudo y abría la ventana del tag en el primer `<` hacia atrás, así que un docblock que nombraba `srcSet` en **prosa** le hacía reconstruir un tag fantasma y reprobar `listings.ts`, que no renderiza una etiqueta. Ahora blanquea comentarios y strings **reemplazándolos por espacios**, para no mover un offset y que los números de línea reportados sigan siendo los del archivo real |
+| S4 | botón `wa.me` + tracking de eventos | **done** | `domain-agent` → `storefront-agent` | texto exacto byte a byte; evento registrado sin PII. **Re-ejecutado entero por el LEAD el 2026-08-28, sin fixture: `./scripts/accept-s4.sh` → `PASS=38 · FAIL=0`** en el barrido serial sobre `68c0bd6` (la corrida que la aceptó dio 37), con la suite e2e ejecutada de verdad (73 passed) y `pnpm typecheck && pnpm lint && pnpm test` en 1004 passed / 0 failed. Las dos mitades del *byte a byte* siguen afirmadas por separado y hacen falta las dos: `packages/domain/src/wa.test.ts` U14 fija el string (`toBe(CANONICAL_TEXT)`) y M3b de `accept-s3.sh` prueba que la página servida lo lleva — **W1 de `accept-s4.sh` nombra las dos aserciones, no los archivos**, así que borrar M3b pone roja también a S4. Lo nuevo es el evento: W2/W3 (no hay dónde poner PII; `anon` gana exactamente un privilegio de columna y ni uno más), W5 (con JS apagado el botón sigue abriendo WhatsApp), W6/W6b (medición viva, y el cruce de tenant escribe **cero** filas), W7 (el endpoint nace con techo declarado en `config/firewall-rules.json`). **Deja abierta S4.1**, defecto del texto en el camino real |
 | S5 | FX → precio en ARS | **done** | `domain-agent` → `app-agent` | TC del dueño; redondeo testeado; ARS visible en ficha. **Los tres tercios están afirmados y por comandos que el LEAD ya re-ejecutó**, aunque S5 nunca tuvo un `accept-s5.sh` propio: (1) el TC lo carga el dueño en el alta — campo `fxRate` en `create-tenant-form.tsx:192` → `fx_settings` por tenant (`create-tenant.ts:320` en `main`, sembrado por **S3.1**); (2) `applyFx` (`packages/domain/src/fx.ts:117`) con `DEFAULT_FX_ROUNDING = 'ceil_1000'` (`:35`) y los 4 modos testeados en `fx.test.ts` — `pnpm --filter @istock/domain test` → **187 passed / 12 archivos**; (3) el ARS sale en la ficha y lo exige **M3 de `accept-s3.sh`** con la forma de `formatArs`, en la corrida de **58 PASS · 0 FAIL** del LEAD. **El hueco que queda no es de S5: es T12** — el dueño no puede *editar* el TC después del alta. Ver §S5 abajo |
-| S6 | reserva + cron de expiración | **done** | `app-agent` | reserva 30–120min; cron libera; vidriera revalida. Entregado en `cbbfa2f`: Server Actions de **reservar** y **cancelar** en el panel, barrido detrás de `GET /api/cron/expire-reservations`, invalidación de la ficha pública **por unidad** (`invalidateStorefrontUnit`, no el catálogo entero — el defecto que cerró S3.2) y el `vercel.json` con `*/5 * * * *`, que lo escribió el LEAD porque el archivo es suyo (§4). **`adversary-reviewer` la rechazó primero**, y el bloqueante era una regresión de la propia slice — ver §S6 abajo, es lo único de esta fila que hay que leer entero. Aceptación: `bash scripts/accept-s6.sh` (V1…V8), con step en CI después de `accept-s4` (`ci.yml:236`, `10d31b6`). **Medición de la corrida real, citada en el mensaje de `cbbfa2f`:** `estado_tras_reservar=reserved · vidriera_dice="Reservado" · tras_expirar=available · publicar_estando_reservada=rechazado(listing=reserved; reserva=active)`. **El residuo se cerró el 2026-08-28 y queda una salvedad, no un pendiente:** el LEAD declara haber re-ejecutado `scripts/accept-s6.sh` **en su forma actual** (la V8 que mide una corrida, no la que grepeaba el fuente). **Sin conteo de PASS registrado** — mismo caso que la corrida que cerró S4.1: consta el veredicto, no el número. **S6.1 y S6.2 cerraron después** (`83bc673`, `f504d69`). **Lo que S6 dejó abierto y no es residuo de proceso sino de gate: la V5** — ver §S6.2 |
+| S6 | reserva + cron de expiración | **done** | `app-agent` | reserva 30–120min; cron libera; vidriera revalida. Entregado en `cbbfa2f`: Server Actions de **reservar** y **cancelar** en el panel, barrido detrás de `GET /api/cron/expire-reservations`, invalidación de la ficha pública **por unidad** (`invalidateStorefrontUnit`, no el catálogo entero — el defecto que cerró S3.2) y el `vercel.json` con `*/5 * * * *`, que lo escribió el LEAD porque el archivo es suyo (§4). **`adversary-reviewer` la rechazó primero**, y el bloqueante era una regresión de la propia slice — ver §S6 abajo, es lo único de esta fila que hay que leer entero. Aceptación: `bash scripts/accept-s6.sh` (**V1…V9** desde el 2026-08-28; eran V1…V8), con step en CI después de `accept-s4` (`ci.yml:236`, `10d31b6`). **Medición de la corrida real, citada en el mensaje de `cbbfa2f`:** `estado_tras_reservar=reserved · vidriera_dice="Reservado" · tras_expirar=available · publicar_estando_reservada=rechazado(listing=reserved; reserva=active)`. **El residuo se cerró el 2026-08-28 y queda una salvedad, no un pendiente:** el LEAD declara haber re-ejecutado `scripts/accept-s6.sh` **en su forma actual** (la V8 que mide una corrida, no la que grepeaba el fuente). **Sin conteo de PASS registrado** — mismo caso que la corrida que cerró S4.1: consta el veredicto, no el número. **Ese hueco quedó tapado el 2026-08-28**: el barrido serial del LEAD sobre `68c0bd6` da **`PASS=22 · FAIL=0`**, que es el primer número que este board puede citar para S6. **S6.1 y S6.2 cerraron después** (`83bc673`, `f504d69`), **y la V5 —lo único que S6 había dejado abierto del lado del gate— cerró con ellas**: quedó reducida a la prohibición estática que sí puede afirmar, y el radio ahora se **cuenta** en la **V9** nueva, que lee `MEDIDO s6 radio` de la corrida y falla si la línea no está. Ver §S6.2 y **ADR-020** |
 | S7 | venta manual | todo | `app-agent` | `→ sold`; sale de la grilla; URL directa no rompe |
 | S8 | canje: form + inbox + accept-to-stock | todo | `app-agent` | crea unidad en `draft` con costo; seller no ve el costo |
 | S9 | copy list para estados de IG/WA | todo | `app-agent` | export con precios y links; cero IMEI |
@@ -155,6 +167,56 @@ cuyo gate no pudo correr: las cinco quedan `todo` hasta que el gate corra **ente
 | S13 | `/demo` | todo | `storefront-agent` | tenant demo aislado; cero datos reales |
 
 **Cada slice suma al gate:** `adversary-reviewer PASS` + `cost-auditor PASS` ("no agrega costo tonto").
+
+> ### Barrido serial de los cinco gates · 2026-08-28 · HEAD `68c0bd6`
+>
+> Lo corrió el LEAD **en serie y sobre el árbol ya commiteado** (no sobre un working tree), con los
+> **21 chequeos en verde**. Estos son los números que mandan en la tabla de arriba:
+>
+> ```
+> accept-s1  PASS=39 FAIL=0
+> accept-s2  PASS=21 FAIL=0
+> accept-s3  PASS=59 FAIL=0
+> accept-s4  PASS=38 FAIL=0
+> accept-s6  PASS=22 FAIL=0
+> ```
+>
+> **Serial y no en paralelo, y eso no es prolijidad:** `accept-s3` y `accept-s6` levantan su propio
+> `next start` en `E2E_PORT` (3100 por default) y abortan con la causa nombrada si el puerto está
+> ocupado, en vez de prestarse un server ajeno sin el espía de Postgres — que es exactamente cómo
+> una medición ausente se disfraza de éxito (`e2e/playwright.config.ts`, `reuseExistingServer: false`).
+>
+> **Tres de los cinco números se movieron, y ninguno por código de producto nuevo.** La atribución,
+> hasta donde `git log` la sostiene y sin redondear lo que no:
+>
+> | gate | antes → ahora | de dónde sale el delta |
+> |---|---|---|
+> | `accept-s1` | 26 → **39** | **ADR-020.** `f691daf` tocó `accept-s1.sh`: A2 dejó de evaporarse (`chk`/`have` sin importar) y se reescribió sobre el invariante. El salto es *aserciones que antes no corrían*, no cobertura nueva |
+> | `accept-s3` | 58 → **59** | una aserción más. `accept-s3.sh` cambió **dos veces** después de la corrida de 58 (`7e40856`, de S4.1, y `f691daf`, de ADR-020): **el `+1` no se puede atribuir a una de las dos leyendo el board**, y no se le adjudica a ninguna |
+> | `accept-s4` | 37 → **38** | **no es de ADR-020.** `accept-s4.sh` no se toca desde `7e40856` —el commit de **S4.1** que hizo que W5 mire el mensaje de WhatsApp entero en vez de substrings—, o sea que el `+1` es de ahí |
+> | `accept-s6` | — → **22** | primer conteo registrado para S6. Incluye la **V9** nueva |
+>
+> La lectura correcta de un contador que sube sin código de producto nuevo es *"antes no se estaba
+> midiendo esto"*, no *"ahora hay más cobertura"*.
+>
+> **Y la medición que S6 no tenía hasta ese día**, emitida por el spec de `qa-agent` y consumida por
+> V9 de `accept-s6.sh`:
+>
+> ```
+> MEDIDO s6 radio · publicadas=4 · paginas=5 · rerender=2 · esperado=2
+>               · sobrevivieron=[ficha-a,ficha-c,ficha-d] · frio=14
+> ```
+>
+> `frio=14` son las sentencias que el espía vio contra Postgres: es el control que impide que un
+> radio de cero **sobre nada** se lea como éxito. `paginas=5` es el que impide afirmar un radio con
+> una sola ficha hermana. Los dos son parte de V9, y sin ellos `rerender=2` no significaría nada.
+>
+> **Los conteos viejos que aparecen más abajo en este board —`26 PASS` de S1, `58 PASS` de S3,
+> `37 PASS` de S4— no son errores y no se corrigen:** son el registro de corridas anteriores,
+> fechadas y atribuidas, y varias sostienen afirmaciones sobre *esa* corrida (que S3.3 no encareció
+> el camino feliz, que W5 de S4 imprimió el defecto y lo dejó pasar). **El número vigente de una
+> slice es el de este bloque y el de la tabla de arriba; el resto es historia y se lee como tal.**
+
 
 > **S1 y S2 ACEPTADAS — 2026-08-28.** El LEAD re-ejecutó los dos gates enteros:
 >
@@ -183,6 +245,8 @@ cuyo gate no pudo correr: las cinco quedan `todo` hasta que el gate corra **ente
 >   siete secciones (A1–A8) pegan HTTP en vivo (`primera request a noexiste-… -> HTTP 200 (19965
 >   bytes)`), consultan Postgres para el aislamiento, y **A6 corre la suite e2e entera con censo
 >   `10/10 archivos · 70/70 tests · 0 salteados · 0 skip declarado`**. No hay tier muerto.
+>   *(Ese censo es **de aquella corrida**. Creció después con los dos specs de S6; el número vigente
+>   lo lleva `TEST_MATRIX.md` §e2e, no esta cita.)*
 >
 > **La deuda de ADR-011 sigue viva, y el gate la imprime en vez de esconderla.** El miss contesta
 > `200/200`, no `404`: **deja de ser distinguible por status code en los logs de acceso.** No se
@@ -338,7 +402,9 @@ cuyo gate no pudo correr: las cinco quedan `todo` hasta que el gate corra **ente
 > siempre**, y ataca el *done cobrable*), **T17** (la reserva configurable por tenant que `PRODUCT.md`
 > promete y no existe), **T18** (el tercer call site que ADR-019 no alcanzó) y **T19**
 > (`packages/ai` **no está creado**: el hueco de cobertura más grande del repo). **T14 pasó de dos
-> prohibiciones sin gate a tres.**
+> prohibiciones sin gate a tres, y esa misma tarde volvió a dos**: `W016` cerró **T14.1** (rate
+> limiting con contador en Postgres sobre la vidriera), que era la **última de las 14 prohibiciones
+> de §2 sin gate ejecutable**. La fila del gate es **T26**.
 
 | id | título | estado | owner | bloqueo | gate de aceptación | artefacto |
 |---|---|---|---|---|---|---|
@@ -346,7 +412,7 @@ cuyo gate no pudo correr: las cinco quedan `todo` hasta que el gate corra **ente
 | P1 | `robots.txt` / `sitemap.xml` por tenant — **decisión de diseño** | **done** | `storefront-agent` + `qa-agent` | — | decisión escrita **antes** de arrancar S3 → **ADR-015**, verificada por el LEAD (30 URLs contra el `path-to-regexp` compilado) | `docs/DECISIONS.md` ADR-015 · `apps/web/proxy.ts` (`117c4f0`) |
 | P2 | metadata file conventions bajo host de tenant — **decisión de diseño** | **done** | `storefront-agent` + `qa-agent` | — | ídem P1: misma causa raíz, misma ADR, mismo commit | ADR-015 · `apps/web/proxy.ts` · `tests/proxy-matcher-no-deja-la-vidriera-sin-vigilar.test.ts` |
 | T1 | rate limiting en el edge: las 2 reglas de Vercel Firewall | **done** — nivel 1 | **LEAD** (`config/**` + `scripts/**`, §4) | — | **el gate original decía "2 reglas activas + prueba de que disparan" y eso NO se cumple entero**: las reglas están declaradas y validadas, y **no están aplicadas** (no hay proyecto Vercel — **B2**/**B5** —, y aplicar es un paso operativo aparte que `vercel deploy` **no** hace). Cerrado el **nivel 1**: el archivo existe, pasa las restricciones reales de Pro, **el censo de route handlers no deja entrar una ruta sin decidir**, y desde `3199a78` **el gate y su polaridad tienen step en CI** (`ci.yml:118` y `:126`) — *step declarado*, no ejecutado: `ci.yml` nunca corrió, ver §"Seis gates rojos o dormidos". `bash scripts/guard-firewall.sh` → `GUARD-FIREWALL: PASS` (re-corrido el 2026-08-28). **Cero** contador en Postgres sobre la vidriera. Con S4 (`c9611b1`) `storefront-track-rl` pasó de `planned` a **`active`**: el endpoint no nace sin techo. Ver §T1 abajo | `config/firewall-rules.json` + `scripts/guard-firewall.sh` + `scripts/guard-firewall.test.sh` (`4fce968`, `3199a78`) · **ADR-016** |
-| T2 | guard estático de "query sin filtro de tenant" | **done** — alcance `apps/web` | **LEAD** (`apps/web/scripts/*-lint.mjs` + `scripts/**`, §4) | — | el guard falla sobre una query sin `tenant_id` **y** pasa con la excepción declarada. **Está en `main` desde `9b3d7d2`**, junto con el párrafo de `CLAUDE.md` §2 que fija el contrato del marcador `web-lint:sin-tenant`; `git log --oneline -S W015 -- apps/web/scripts/web-lint.mjs` devuelve **un** commit, no cero. Verificado el 2026-08-28 por `docs-keeper`: `cd apps/web && node ./scripts/web-lint.mjs` → `ok W015 toda query sobre las 15 tablas de negocio filtra por tenant ademas de RLS (builder y sql crudo)` · `WEB-LINT: PASS (15 reglas)`, con las **2** excepciones declaradas del repo pasando. **El alcance es `apps/web` y nada más**: `packages/**` sigue sin gate → **T16**, abierta. **Residuo declarado:** la polaridad se ejerció **fuera del repo** y no es un comando — ver §T2 | `apps/web/scripts/web-lint.mjs` (W015, `9b3d7d2`) |
+| T2 | guard estático de "query sin filtro de tenant" | **done** — alcance `apps/web` | **LEAD** (`apps/web/scripts/*-lint.mjs` + `scripts/**`, §4) | — | el guard falla sobre una query sin `tenant_id` **y** pasa con la excepción declarada. **Está en `main` desde `9b3d7d2`**, junto con el párrafo de `CLAUDE.md` §2 que fija el contrato del marcador `web-lint:sin-tenant`; `git log --oneline -S W015 -- apps/web/scripts/web-lint.mjs` devuelve **un** commit, no cero. Verificado el 2026-08-28 por `docs-keeper`: `cd apps/web && node ./scripts/web-lint.mjs` → `ok W015 toda query sobre las 15 tablas de negocio filtra por tenant ademas de RLS (builder y sql crudo)` · `WEB-LINT: PASS (16 reglas)` (**decía `15` y era el número de la mañana del 2026-08-28: entró `W016`, fila `T26`; la línea de W015 no cambió**), con las **2** excepciones declaradas del repo pasando. **El alcance es `apps/web` y nada más**: `packages/**` sigue sin gate → **T16**, abierta. **Residuo CERRADO el 2026-08-28** (`a015437`): la polaridad se había ejercido *"in a sandbox outside the repo"* y hoy es un comando — `scripts/web-lint.test.sh`, step propio en `ci.yml:156`, `POLARIDAD WEB-LINT: OK — las 16 reglas se vieron encender`, con **12 casos de W015**. Ver §T2 | `apps/web/scripts/web-lint.mjs` (W015, `9b3d7d2`) |
 | T3 | mudar el test de RLS cruzado a `tests/` | **done** | `qa-agent` | — | los casos corren desde `tests/` contra Postgres real, verdes, sin perder ninguno; `packages/db/src/rls-cross-tenant.test.ts` deja de existir; **y en la misma mudanza se borra el encabezado que se declara `db-agent`**, derogado por la regla de desempate de `CLAUDE.md` §4. **Re-ejecutado por el LEAD desde la ubicación nueva: `rls-cross-tenant.test.ts (69 tests)` verdes** — no 59: ese número contaba `it()` literales y se comía el `it.each` sobre 10 columnas sensibles (`:625-630`). Total del repo: **919** | `tests/rls-cross-tenant.test.ts` + `tests/vitest.config.ts` (`d686923`) |
 | T4 | extraer los helpers de los gates a `scripts/_lib.sh` | **done** | **LEAD** | — | un solo juego de helpers en el repo; los gates que lo importan re-corridos con el mismo veredicto **y** el helper probado en las dos polaridades, en CI | `scripts/_lib.sh` + `scripts/_lib.test.sh` (`dc1d854`) |
 | S2.2 | `collectOrphanObjects` existe y no lo llama nadie | todo | `media-agent` (función) + `app-agent` (comentarios) | — | se elige **(a)** o **(b)** por escrito: si (a), el job corre y borra un huérfano sembrado; si (b), **ningún** comentario del repo la nombra en presente | `packages/media/src/unlink.ts`, `apps/web/app/(app)/_lib/listings/*.ts` |
@@ -358,8 +424,8 @@ cuyo gate no pudo correr: las cinco quedan `todo` hasta que el gate corra **ente
 | S3.2 | publicar un equipo purga el catálogo entero del tenant | **done** | `app-agent` | — | al mutar una unidad se emite además `updateTag(listingTag(id))`; los dos tags de tenant dejan de ser la única invalidación. **Cerrada por la misma corrida:** `MEDIDO s3 db-hits · primera=9 · cacheada=0` | `apps/web/app/(app)/_lib/tenants/storefront-cache.ts` (`eaccfee`) |
 | S3.3 | bajo un **tenant** inexistente la ficha dice que el equipo se vendió | **done** | `storefront-agent` | — | una ficha bajo un slug de tenant que no existe contesta el *tenant-miss* (`STOREFRONT_MISS_TITLE`, "No hay ninguna vidriera en esta dirección"), no el *listing-miss* ("Este equipo ya no está publicado"); el `null` del tenant se sigue cacheando con `STOREFRONT_MISS_LIFE`. **Verificado por el LEAD contra server real** (`next build` + `next start`, leyendo el HTML servido y no el fuente) y `accept-s3.sh` re-ejecutado: **58 PASS · 0 FAIL · S3 ACEPTADA**, con `MEDIDO s3 db-hits · primera=9 · cacheada=0` — el mismo número de antes del fix, o sea que **el camino feliz no se encareció**. Tabla de los 4 casos en §S3.3 abajo | `apps/web/app/(storefront)/s/[slug]/p/[listing]/page.tsx` + `apps/web/app/(storefront)/ficha.test.ts` (15 → 24 tests) (`042e24e`) |
 | S4.1 | el mensaje de WhatsApp repite storage y color cuando el listing no tiene `catalog_model` | **done** | `domain-agent` + `storefront-agent` | — | el `href` medido sobre la **ficha servida** de un listing **sin `catalog_model`** dice el string canónico de `CLAUDE.md` §1 **byte a byte** —no por substrings—, y el fix decide **qué significa `modelDisplayName` cuando no hay catálogo** en vez de parchear el `??`. **Gate primero, en rojo, `7e40856`** (M3b de `accept-s3.sh` + W5 de `accept-s4.sh`: *ningún token repetido en el equipo nombrado*); **fix en `07c42ff`**: `nameSource` es requerido en `WaListing` y `PublicListingSource`, `resolveModelName` es el único constructor, `isBlank` trata `''` como ausente. **Cerrada por la barrida completa del LEAD del 2026-08-28**, la que precede a `cbbfa2f`: `accept-s1..s4` + `accept-s6`, `accept-fase2`, `accept-fase3` y la suite e2e entera (80 tests, 0 skip), **todo verde** — o sea que los dos comandos que cierran la fila corrieron **después** de `07c42ff` y con la aserción de `7e40856` adentro. **Sin conteo de PASS registrado para esa corrida**, a diferencia del resto del board: lo que consta es el veredicto. Ver §S4.1 abajo | `apps/web/app/(storefront)/_lib/model-name.ts:54` (`resolveModelName`) · `packages/domain/src/wa.ts:51` (`nameSource`) · `packages/domain/src/text.ts:22` (`isBlank`) (`07c42ff`) |
-| S6.1 | la regla de en qué queda una reserva cerrada vive en `apps/web`, no en el dominio | **done** | `domain-agent` → `app-agent` | — | commiteada en `83bc673`. `grep -rn 'closingStatusFor' apps/web/app` → **cero**; la regla vive en `packages/domain/src/listing-status.ts` como función privada, y la única puerta es `transitionEffects()`. El campo dejó de ser booleano: `closesReservation: boolean` → **`closesReservationAs: ReservationClosingStatus \| null`**, y `transitionEffects()` toma un tercer parámetro **obligatorio** `intent: TransitionIntent \| null`. **El alcance creció de dos valores a tres** y el motivo es el defecto que la abrió: el panel escribía `cancelled` y el cron `expired` **sobre la misma arista** `reserved → available`. Escrito como **ADR-019**. Re-ejecutado por el LEAD: typecheck 0 · lint 0 (15 reglas) · test 0 · `guard-effects` OK (era RECHAZADO) · `guard-leaks` OK. **Deja abierta T18** | `packages/domain/src/listing-status.ts:216,246` · `packages/domain/src/reservation.ts:40` · `apps/web/app/(app)/_lib/listings/publish-listing.ts:321` · `apps/web/app/(app)/_lib/reservations/expire-reservations.ts:194` (`83bc673`) |
-| S6.2 | `invalidateStorefrontUnit()` purgaba la vidriera entera | **done** | `app-agent` + `storefront-agent` | — | reservar **una** unidad en un tenant de 60 equipos purgaba las **61** páginas: un tag es un OR y la ficha registraba los dos tags de tenant. Lo encontró `cost-auditor` auditando S6 (`e3f3703`); el cold-hit rate se iba a **~39%** contra una alarma de 5%. Cerrada en `f504d69`, y el arreglo **cruza tres columnas en un solo commit** porque por mitades deja el producto peor. **Medición del LEAD:** `MEDIDO s6 radio · publicadas=4 · paginas=5 · rerender=2 · esperado=2 · sobrevivieron=[ficha-a,ficha-c,ficha-d]` y `MEDIDO s6 alta-de-unidad · miss_cacheado=HIT · visita_que_la_muestra=1`; **antes del arreglo, en un clone desechable a `ea26a02`: `rerender=5` de 5, cero sobrevivientes.** Tres cosas contraintuitivas que hay que leer en §S6.2 antes de tocar un tag. **Residuo declarado: ningún `accept-*` nombra el spec que la mide** | `apps/web/app/(app)/_lib/tenants/storefront-cache.ts` · `apps/web/app/(storefront)/_lib/listings.ts:460,502,526` · `apps/web/app/(storefront)/s/[slug]/p/[listing]/page.tsx:158,174,182,230,241,253` · `e2e/s6-senar-un-equipo-no-purga-la-vidriera-entera.spec.ts` · `tests/el-veredicto-del-radio-…test.ts` (`f504d69`) |
+| S6.1 | la regla de en qué queda una reserva cerrada vive en `apps/web`, no en el dominio | **done** | `domain-agent` → `app-agent` | — | commiteada en `83bc673`. `grep -rn 'closingStatusFor' apps/web/app` → **cero**; la regla vive en `packages/domain/src/listing-status.ts` como función privada, y la única puerta es `transitionEffects()`. El campo dejó de ser booleano: `closesReservation: boolean` → **`closesReservationAs: ReservationClosingStatus \| null`**, y `transitionEffects()` toma un tercer parámetro **obligatorio** `intent: TransitionIntent \| null`. **El alcance creció de dos valores a tres** y el motivo es el defecto que la abrió: el panel escribía `cancelled` y el cron `expired` **sobre la misma arista** `reserved → available`. Escrito como **ADR-019**. Re-ejecutado por el LEAD: typecheck 0 · lint 0 (**15 reglas al momento de esa corrida; hoy son 16, entró `W016` — ver T26**) · test 0 · `guard-effects` OK (era RECHAZADO) · `guard-leaks` OK. **Deja abierta T18** | `packages/domain/src/listing-status.ts:216,246` · `packages/domain/src/reservation.ts:40` · `apps/web/app/(app)/_lib/listings/publish-listing.ts:321` · `apps/web/app/(app)/_lib/reservations/expire-reservations.ts:194` (`83bc673`) |
+| S6.2 | `invalidateStorefrontUnit()` purgaba la vidriera entera | **done** | `app-agent` + `storefront-agent` | — | reservar **una** unidad en un tenant de 60 equipos purgaba las **61** páginas: un tag es un OR y la ficha registraba los dos tags de tenant. Lo encontró `cost-auditor` auditando S6 (`e3f3703`); el cold-hit rate se iba a **~39%** contra una alarma de 5%. Cerrada en `f504d69`, y el arreglo **cruza tres columnas en un solo commit** porque por mitades deja el producto peor. **Medición del LEAD:** `MEDIDO s6 radio · publicadas=4 · paginas=5 · rerender=2 · esperado=2 · sobrevivieron=[ficha-a,ficha-c,ficha-d]` y `MEDIDO s6 alta-de-unidad · miss_cacheado=HIT · visita_que_la_muestra=1`; **antes del arreglo, en un clone desechable a `ea26a02`: `rerender=5` de 5, cero sobrevivientes.** Tres cosas contraintuitivas que hay que leer en §S6.2 antes de tocar un tag. **El residuo —ningún `accept-*` nombraba el spec que la mide— se cerró el 2026-08-28**: `accept-s6.sh` corre `SPEC_RADIO` y su **V9** lee el número de la corrida (`frio=14` es el control que impide que un radio de cero sobre nada pase por éxito). **ADR-020** | `apps/web/app/(app)/_lib/tenants/storefront-cache.ts` · `apps/web/app/(storefront)/_lib/listings.ts:460,502,526` · `apps/web/app/(storefront)/s/[slug]/p/[listing]/page.tsx:158,174,182,230,241,253` · `e2e/s6-senar-un-equipo-no-purga-la-vidriera-entera.spec.ts` · `tests/el-veredicto-del-radio-…test.ts` (`f504d69`) |
 | S2.5 | el guard de IMEI de `packages/media` rechaza keys legítimas | **todo** · **abierto** | `media-agent` | — | una key content-addressed es hexadecimal, así que cae sola en `IMEI_RE = /\d{15}/` (`packages/media/src/keys.ts:43`). **Medido por `qa-agent` y verificado por el LEAD con 2.000.000 de hashes: 0,631% de las variantes rechazadas (1 de cada 158), 1,88% de las fotos imposibles de subir para siempre** —la key es determinista, reintentar da el mismo rechazo— y **57% de los onboardings de 15 equipos** pegan al menos una. Ataca directo el *done cobrable* de `CLAUDE.md` §1. **Segundo orden, peor:** el mismo guard corre en el **render** (`packages/media/src/url.ts:31`, vía `variantUrl` en `(storefront)/_lib/listings.ts:244-245`), y bajo `cacheComponents` un throw dentro de un render cacheado **no es un 500: es un 200 que nunca cierra el stream** — la ficha cuelga. **El arreglo está en vuelo; esta fila no afirma que esté arreglado.** Ver §S2.5 | `packages/media/src/keys.ts:43` · `packages/media/src/url.ts:31` |
 | T8 | los dos specs que miden S3 no emiten ninguna medición | **done** | `qa-agent` | — | las dos líneas `MEDIDO` exactas (ver abajo); **la de imagen se mide sobre la grilla**, no sobre la ficha. **Emitidas y verificadas por el LEAD el 2026-08-28** (`transferSize=51016B` / `primera=9 · cacheada=0`) | `e2e/s3-la-grilla-en-un-telefono-no-baja-la-foto-grande.spec.ts`, `e2e/s3-la-ficha-cacheada-no-le-pega-a-postgres.spec.ts` (`09c9bc3`) |
 | T9 | forma de `listings.slug` en `domain` + en el motor | **done** | `domain-agent` + `db-agent` | resto en vuelo con `storefront-agent` | ver abajo | `packages/domain/src/slug.ts`, `packages/db/drizzle/0003_listing_slug_format.sql` |
@@ -372,9 +438,112 @@ cuyo gate no pudo correr: las cinco quedan `todo` hasta que el gate corra **ente
 | T18 | `cancelReservation()` sigue derivando el estado de cierre a mano | todo | `app-agent` | — | **anotado por el LEAD en el propio commit de S6.1** (`83bc673`, último párrafo) y verificado contra `main`: `reserve-unit.ts:277` escribe `status: 'cancelled'` hardcodeado teniendo el `intent: 'cancel'` ya armado, y el barrido del cron escribe la arista a mano teniendo `decision.listingTransition` en la mano. **Es el tercer call site de la familia que ADR-019 vino a cerrar**, y hoy acierta por casualidad: cancelar a mano **sí** es `cancelled`. Cerrada cuando los tres call sites toman el estado de `transitionEffects(...).closesReservationAs` y ninguno escribe un literal. **Al cerrar esta pasada el arreglo está en el árbol de trabajo, sin commitear** (`git status` marca `reserve-unit.ts` y su test como `M`; el archivo ya llama `transitionEffects(unit.status, 'available', 'cancel')` y trata `null` como *"esta arista no cierra ninguna reserva"* en vez de inventar un default). **La fila sigue `todo` igual**: el HEAD de `main` —`f504d69`— tiene el literal en `:277`, y `CLAUDE.md` §0 mide sobre lo commiteado y re-ejecutado, no sobre un árbol de trabajo | `apps/web/app/(app)/_lib/reservations/reserve-unit.ts:277` · `apps/web/app/(app)/_lib/reservations/expire-reservations.ts` |
 | T19 | **`packages/ai` no existe**: todo el lado chatbot del test matrix no tiene código ni test | todo | `ai-agent` (**FASE 5**) | **B4** | `ls packages/` devuelve `db domain media` y nada más — no es *"no tiene `src`"*, es que **el paquete no está creado**. Con él quedan sin cubrir E7, E8, E9 y S7 del `TEST_MATRIX.md`: el chat que no alucina sobre una unidad `reserved`, los jailbreaks de costo e IMEI en 3 fraseos, la dieta de contexto sin IMEI y la prompt injection escondida en la descripción del dueño. **Es el hueco de cobertura más grande del repo** y es de agenda, no de deuda: `CLAUDE.md` §Monorepo lo declara y FASE 5 lo construye. Se anota acá para que *"sin cubrir — FASE 5"* deje de leerse como una nota al pie | `packages/ai/` (no existe) · `docs/CHATBOT.md` |
 | T13 | `/_media` no manda `Timing-Allow-Origin` | todo | `app-agent` | — | la Performance API reporta el byte real del recurso cross-origin; el spec de S3 compara sus **dos** cuentas en vez de descartar una | `apps/web/app/(app)/%5Fmedia/[...key]/route.ts` |
-| T14 | **tres** prohibiciones de `CLAUDE.md` §2 que ningún gate afirma | todo | `qa-agent` (ver desempate abajo) | — | cada una tiene un chequeo **que se vio fallar** sobre una violación sembrada, y corre **en cada push**, no dentro de un `accept-*`. **T14.3 se agregó el 2026-08-28** (la levantó `qa-agent`): *"borrado de un objeto de R2 por key al borrar un listing → rechazo"*. `guard-r2.sh` lo cubre **estáticamente** (R1+R2, `T11`), y no hay ningún test que afirme el **efecto**: que borrar un listing borra **el mapeo** y **no el byte**. La trampa está escrita en `packages/media/src/keys.ts:26` —dos tenants que suben la misma foto comparten el objeto— y hoy **no la frena nada el día que alguien escriba el borrado** | `tests/` (o `scripts/**`, y entonces es del **LEAD**) |
+| T14 | **dos** prohibiciones de `CLAUDE.md` §2 que ningún gate afirma (**eran tres hasta el 2026-08-28**: `W016` cerró **T14.1**, ver **T26**) | todo | `qa-agent` (ver desempate abajo) | — | cada una tiene un chequeo **que se vio fallar** sobre una violación sembrada, y corre **en cada push**, no dentro de un `accept-*`. **T14.3 se agregó el 2026-08-28** (la levantó `qa-agent`): *"borrado de un objeto de R2 por key al borrar un listing → rechazo"*. `guard-r2.sh` lo cubre **estáticamente** (R1+R2, `T11`), y no hay ningún test que afirme el **efecto**: que borrar un listing borra **el mapeo** y **no el byte**. La trampa está escrita en `packages/media/src/keys.ts:26` —dos tenants que suben la misma foto comparten el objeto— y hoy **no la frena nada el día que alguien escriba el borrado** | `tests/` (o `scripts/**`, y entonces es del **LEAD**) |
 | T15 | el seed del demo dice un color en la URL y otro en la página | todo · **prioridad baja** | `db-agent` | — | **pregunta abierta, no diagnóstico** (ver abajo). Cerrada cuando el slug del listing y el color que muestra la ficha nombren lo mismo, y `bash scripts/accept-s3.sh` siga en verde | `packages/db/src/seed-data.ts:114-116` |
 | T16 | `packages/**` no tiene gate de "query sin filtro de tenant" | todo | **LEAD** (todo gate es del LEAD, §4) | — | una query sembrada sin `tenant_id` dentro de `packages/**` pone **rojo** un comando del repo, y la exención se declara con motivo escrito igual que en W015. **Nace de cerrar T2**, cuyo alcance medido es `apps/web/app` + `apps/web/lib` + `proxy.ts` (`web-lint.mjs:41`) y nada más | sin definir — `apps/web/scripts/web-lint.mjs` no puede ser (mira `apps/web`); candidato natural: un gate propio en `scripts/**` |
+| T20 | `guard-gates.sh` no se audita a sí mismo, y su mensaje de éxito cuenta de más | **done** · 2026-08-28 | **LEAD** (todo gate es del LEAD, §4) | — | **Levantado por `docs-keeper` el 2026-08-28 al verificar una frase de ADR-020, y confirmado leyendo cuatro líneas del gate.** Estaba así: el mensaje de éxito imprimía un conteo de `scripts/*.sh` hecho con `ls` → *"los **21** scripts resuelven todos los helpers que invocan"*, pero los dos barridos salteaban `_lib.sh`, así que **los auditados eran 20** — y el que quedaba afuera era la librería que importan los otros veinte, o sea donde un helper inexistente hace **más** daño y de una sola vez. **Arreglado por el LEAD el mismo día**, en tres partes y respetando que el diagnóstico valía para G1 y **no** para G2: (1) **`_lib.sh` entra a G1**; (2) **G2 lo sigue exceptuando, con el motivo escrito en el código** (`:167`) — G2 caza al gate que **redefine** un helper que la librería ya da, y `_lib.sh` es la librería: auditarlo ahí reportaría sus 12 definiciones como duplicadas de sí mismas; (3) el número impreso sale del barrido (`AUDITADOS`, `:173`) y no de un `ls`, y **su ausencia es FAIL** (`:184-187`), la misma convención que V9. Hoy imprime *"los **21** scripts auditados"*: 21 en la lista, 21 auditados. | `./scripts/guard-gates.sh` → `PASS  los 21 scripts auditados resuelven todos los helpers que invocan` · `GUARD-GATES: PASS`; `./scripts/guard-gates.test.sh` → **9 casos**, incluidos los tres de T20 (árbol sano con `_lib.sh` adentro → PASS; invocación rota **dentro** de `_lib.sh` → **FAIL**; G2 no acusa a `_lib.sh` de duplicar lo que él mismo define → PASS) |
+| T21 | `reservations` no tiene dónde anotar que una fila ya falló *(= `R1` de `COST.md` §2.5)* | **doing** · 2026-08-28 · **1 fallo de aceptación** (regla 3: al segundo, STOP) | `db-agent` | — | columna `sweep_attempts integer not null default 0` en `reservations`, **con su `GRANT` explícito para `service_role`** (§2 de `CLAUDE.md`: columna/tabla nueva sin GRANT no la lee nadie) y con la trampa del `created_at` de Drizzle a la vista —una migración editada después de aplicada nunca llega a la base de desarrollo y `migrate` dice `OK`—. **No** una tabla de dead-letter: una tabla nueva cuesta migración + GRANT + policy + un lector que nadie va a escribir; un contador sobre una fila que ya existe cuesta cero. **T21 habilita a T22, T23 y T24** | migración en `packages/db/**` + la fila del schema; el gate que lo mide es el de abajo, y **no** busca `sweep_attempts` en ningún archivo. **El fallo del 2026-08-28 y el gate nuevo que salió de él: §"T21 · el primer fallo"**, abajo |
+| T22 | la fila envenenada conserva su lugar en la fila, para siempre *(= `R2` de `COST.md` §2.5)* | todo | `app-agent` | — | `order by sweep_attempts asc, expires_at asc` y `where ... and sweep_attempts < MAX_SWEEP_ATTEMPTS`. El `+1` se escribe **en su propia transacción**, no dentro de la que falló: adentro se rollea con ella y el contador nunca avanza — es la forma más fácil de escribir este arreglo mal y de que el gate lo note igual. `MAX_SWEEP_ATTEMPTS = 5` `[EST]`: generoso para que una carrera perdida contra el dueño cancelando desde el panel (`40P01`) no llegue al tope, chico para que una fila determinista deje de costar 8.640 intentos/mes y pase a costar 5, una sola vez | `apps/web/app/api/cron/expire-reservations/**` |
+| T23 | una corrida donde fallan las 200 filas devuelve `200 OK` *(= `R3` de `COST.md` §2.5)* | todo | `app-agent` | — | el route deja de mentirle a Vercel Cron. **El predicado importa más que el código:** `failed > 0` a secas es el equivocado —a 0,12 expiraciones por corrida la mayoría trae **una** fila, así que una sola carrera perdida pintaría el cron de rojo permanente, que es enseñar a ignorar el rojo, el mismo error de los gates vacuamente verdes del otro lado—. El correcto es cross-run y T21 lo hace posible sin estado nuevo: **500 si alguna fila de esta corrida falló teniendo ya `sweep_attempts >= 1`.** Más `logEvent('reservation.expire.quarantined', ...)` **una** sola vez en la vida de la fila, que reemplaza 8.640 líneas idénticas por mes | `apps/web/app/api/cron/expire-reservations/**` |
+| T24 | el panel le dice al dueño que **no** haga lo único que arregla el problema *(= `R4` de `COST.md` §2.5)* | todo | `app-agent` | — | `reservationCountdown()` (`_lib/reservations/presentation.ts:60`) dice *«venció, se libera en unos minutos»* mirando **sólo** el reloj, y con la fila en cuarentena eso es falso para siempre. Con T21 puede mirar también el contador: en cuarentena el texto tiene que decir que **no** se liberó sola y que hay que soltarla a mano. El botón «Soltar» ya está en pantalla. **Sin T24, T21–T23 arreglan la métrica y no arreglan la unidad** | `apps/web/app/(app)/**` |
+| T25 | el gate que mide T21–T24 *(= las cinco aserciones de `COST.md` §2.5.5)* | todo | **LEAD** (`scripts/probes/**`, §4: la auditoría de referencia no puede ser del writer que audita) | — | **no busca `sweep_attempts` en ningún archivo** (ADR-020): corre el barrido **más de una vez** y cuenta filas. Cinco aserciones: **A** dos corridas con `EXPIRE_BATCH_SIZE` filas `23514` más una sana → *cuántas sanas venció la corrida 2*, hoy **0**, tiene que valer **1**; **B** el tope frena (`intentos == MAX_SWEEP_ATTEMPTS`, `líneas de log == tope + 1`); **C** polaridad — `23514` va a cuarentena, `40P01` **se reintenta**, y `sanas_vencidas == sanas` para que «cero intentos» no apruebe rompiendo el barrido entero; **D** status contado, no razonado (segundo fallo → **500**, primer fallo con otra vencida → **200**); **E** `skipped` sobre filas que el propio `where` declaró vencidas **== 0**. No necesita Postgres, ni build, ni el puerto 3100: alcanza el `tx` falso de `expire-reservations.test.ts` | `scripts/probes/` (junto a `s6-cron-fail-closed.test.ts`), emitiendo `MEDIDO cron barrido · corridas=… · envenenadas=… · sanas=… · sanas_vencidas_c2=… · intentos_23514=… · intentos_40P01=… · tope=… · lineas_log_por_envenenada=… · skipped_sobre_vencidas=… · status_segundo_fallo=… · status_primer_fallo=…`; **ausencia de la línea = FAIL** |
+| T26 | **`W016`** — el contador de rate limit en Postgres sobre la vidriera ya no pasa el lint | **doing** · verificado corriendo, **sin commitear** | **LEAD** (`apps/web/scripts/*-lint.mjs`, §4) | — | cierra **T14.1**, que era **la última de las 14 prohibiciones de `CLAUDE.md` §2 sin gate ejecutable** (lo censó `qa-agent`). El gate es la corrida, y la corrida ya está: `cd apps/web && node scripts/web-lint.mjs` imprime `ok W016 ninguno de los 23 archivos de (storefront) cuenta requests en Postgres (el techo es el WAF)` y cierra en `WEB-LINT: PASS (16 reglas)`; `bash scripts/web-lint.test.sh` cierra en `POLARIDAD WEB-LINT: OK — las 16 reglas se vieron encender`. **Lo que falta para `done` no es una medición, es un commit:** los tres archivos están modificados sin commitear, y este board ya aprendió en **T2** que después de *¿hay chequeo?* y *¿lo corre alguien?* viene **¿está en `main`?** | `apps/web/scripts/web-lint.mjs` (bloque W016, antes del veredicto) · `scripts/web-lint.test.sh` (**8 casos nuevos**) · `.github/workflows/ci.yml:156` |
+
+#### T21–T25 · el barrido de reservas se atraganta con la primera fila podrida
+
+**Origen:** `cost-auditor`, `docs/COST.md` §2.5, re-auditoría del 2026-08-28 sobre HEAD `68c0bd6`.
+**Dueños asignados por el LEAD**, no derivados por este board. **Los ids del board son `T21`–`T25`,
+no `R1`–`R4`**: en este mismo archivo `R1`–`R7` ya son los topics de research de FASE 1 (tabla de
+`:34`) y en `TEST_MATRIX.md` `R0`–`R8` son los casos de RLS cruzado. Cada fila lleva su alias de
+COST.md entre paréntesis para que la recomendación siga siendo rastreable; **reportado al LEAD**,
+que fue quien las nombró así. La explicación completa —aritmética, SQLSTATEs y las cinco
+aserciones— vive en COST.md; acá va sólo lo que hace falta para tomar la fila.
+
+El hallazgo no es «el barrido es lento». El `select` es
+`where status='active' and expires_at <= now order by expires_at asc limit 200`, y una fila que tira
+deja la transacción rolleada: sigue `active`, con el mismo `expires_at` en el pasado. Por `asc`,
+**es la primera de la próxima corrida, y de la siguiente, para siempre.** No hay columna donde anotar
+que ya falló, el `try/catch` es por fila y está dentro del loop, así que una corrida donde fallan las
+200 devuelve `{ ok: true, scanned: 200, expired: 0, failed: 200 }` y **`200 OK`** — para el dashboard
+de Vercel Cron es idéntica a una corrida perfecta.
+
+**Por qué no lo agarra nada de lo que ya existe.** `expire-reservations.test.ts` tiene el caso *«una
+fila podrida no frena el barrido»* y pasa: afirma la resiliencia **dentro** de una corrida. El
+hallazgo es **entre corridas**, y no hay un solo test que ejecute el barrido dos veces. Es el peor
+tipo de cobertura: la que tranquiliza sobre el eje equivocado. Y las causas que envenenan el 100% de
+las filas de una —tabla sin `GRANT` (`42501`), migración editada después de aplicada (`23514`), check
+nuevo en `listing_events` (`23502`)— son las tres **deterministas** y ninguna aparece en CI, porque
+en CI la base nace limpia.
+
+**Por qué prioriza.** A nosotros nos cuesta **USD 0,0015 por mes** por unidad trabada: haría falta
+que se trabaran 330 a la vez para igualar el chat de un tenant. Al reseller le cuesta
+**USD 15 – 22/mes** por unidad (0,30 de probabilidad de venta × USD 50–74 de margen), y el plan Base
+sale **USD 19**: una sola unidad trabada le come el abono entero. La asimetría es de ~10.000× y toda
+cae del lado del cliente. Un gate de dinero no puede ver esto — por eso la fila T25 cuenta filas y no
+dólares.
+
+**Lo que NO hay que hacer**, escrito acá para que no vuelva a proponerse: bajar `EXPIRE_BATCH_SIZE`
+(la capacidad es 1.745× la demanda; el problema es el orden, no el lote) · reintentar dentro de la
+misma corrida (contra un error determinista es una segunda transacción facturada con el mismo
+resultado) · un worker que vigile el cron (es el «worker 24/7» que `CLAUDE.md` §3 prohíbe) · subir la
+frecuencia del cron (una fila envenenada falla más rápido, nada más).
+
+#### T21 · el primer fallo  ·  2026-08-28  ·  **fallo 1 de 2**
+
+**Qué pasó, medido.** `db-agent` reportó T21 verde declarando que **no** había corrido e2e. El LEAD
+re-ejecutó `scripts/accept-s6.sh` **entero**, e2e incluido, y la slice pasó de verde a **RECHAZADA**:
+los dos specs e2e caen con `42501 permission denied for table reservations`. **Reservar un equipo
+desde el panel quedó roto**, que es la mitad del producto que S6 vende.
+
+**La causa, en una línea:** la migración `0006` revocó el `INSERT` de **tabla** a `authenticated` y
+lo re-otorgó **columna por columna** sobre las 11 que ya existían, dejando afuera la nueva
+`sweep_attempts` — y **Drizzle, en `insert().values()`, nombra todas las columnas de la tabla**
+aunque vayan con `default`, mientras Postgres exige privilegio sobre cada columna **nombrada**. Un
+`GRANT` por columna incompleto no es "más restrictivo": es un `INSERT` roto para todo el producto.
+El razonamiento de origen era correcto —que un seller no pueda forjar el contador— y el mecanismo
+era el equivocado: eso se ata en el `WITH CHECK` de la policy, que sabe decir *"sí, pero en cero"*,
+cosa que un `GRANT` no sabe decir. Para `UPDATE` el `GRANT` por columna **sí** sirve, porque el
+`.set()` de Drizzle nombra sólo las columnas que setea. Las dos mitades están escritas dentro de
+`packages/db/drizzle/0006_reservations_sweep_attempts.sql`, con un bloque `DO` que aborta la
+migración si el reparto no es el declarado.
+
+**Lo que este fallo dice del harness, y es más caro que el defecto.** `scripts/guard-grants.sh`
+dijo **PASS con el panel roto**, y no por descuido: cuenta que exista un `GRANT` por tabla, y un
+`GRANT` parcial existe. Quien agarró el defecto fue **e2e** — el gate más lento y más caro del repo.
+Una afirmación que sólo el gate más caro puede hacer se termina haciendo tarde.
+
+**Gate nuevo del LEAD, y su domicilio:** `scripts/probes/el-grant-cubre-el-insert-de-drizzle.test.ts`,
+regla **G6**, cableada en `scripts/accept-fase2.sh` como sección **D5**. Le pregunta al **catálogo de
+Postgres** —`has_column_privilege`, cero `INSERT` ejecutados— tabla de negocio por tabla de negocio
+(las que tienen `tenant_id`, derivadas de `information_schema`, no de una lista): si `authenticated`
+tiene **algún** privilegio de `INSERT` por columna, tiene que tenerlo sobre **todas**. **Cero
+privilegios = fuera de alcance**, y eso es deliberado: esa tabla la escribe `service_role` y es una
+decisión legítima, no un hallazgo.
+
+**No entró adentro de `guard-grants.sh` a propósito.** Ese guard declara en su encabezado que es
+100% estático para poder correr sin base en el pre-commit, y esta afirmación **sólo** se puede hacer
+contra el catálogo de una base migrada. Romperle el contrato para meterle una regla habría sido peor
+que la regla: un guard que a veces necesita Postgres deja de correr en el pre-commit, y un gate que
+deja de correr no protege nada.
+
+**Probado en las dos polaridades sobre el censo real, no sobre el predicado** (LEAD): una tabla con
+`tenant_id` y un `GRANT` de `INSERT` que cubría 2 de 3 columnas → **rojo, nombrando tabla y columna
+faltante**; borrada la tabla → **verde**; base verificada limpia después. Y la probe trae adentro un
+control de polaridad que **corre siempre**, sobre una tabla sembrada en una transacción que se
+rollea, para que *"no encontré tablas rotas"* y *"no sé buscar tablas rotas"* dejen de ser la misma
+salida verde.
+
+**Estado de la fila.** T21 sigue **`doing`**. El arreglo de `db-agent` está en el árbol de trabajo
+—la migración con el `REVOKE` reducido a `UPDATE`, y `packages/db/src/reservations-sweep-attempts.test.ts`
+reescrito para construir el `INSERT` **con el query builder de Drizzle** (`toSQL()`) y derivar la
+lista de columnas del schema— y **eso no la mueve**: la mueve la re-ejecución de
+`scripts/accept-s6.sh` entero, e2e incluido, por el LEAD. **Si vuelve a fallar es el segundo fallo y
+la regla 3 obliga a parar y re-planear.**
+
+**La lección general no se queda acá: es `DECISIONS.md` ADR-021** — *la aserción tiene la forma del
+caller, no la forma cómoda*. El test que "probó que el panel podía insertar" escribía él mismo una
+sentencia `INSERT` que **ningún caller del producto emite**. No era un gate vacuo: medía algo real,
+contra Postgres real. Medía a un **sujeto inventado**.
 
 > **Anti-drift, 2026-08-28 — el caso completo, de punta a punta, porque es el que enseña la regla.**
 > Durante un día **S3.1 y S3.2 estuvieron `todo` con el código ya en `main`** (`eaccfee`). Las filas
@@ -554,10 +723,12 @@ que **no existe todavía**: falta verificar qué scope de token permite el `publ
 (`docs/research/vercel-firewall-as-code.md` §UNVERIFIED). Mientras no exista, el apply es manual y el
 procedimiento mínimo son los dos comandos de `$apply` en el propio JSON.
 
-**El borde de `CLAUDE.md` §2 sigue en pie y esta fila no lo cubre:** *rate limiting con contador en
-Postgres sobre la vidriera es rechazo automático*. Que exista el WAF **no** pone un gate sobre esa
-prohibición —son dos cosas distintas: una configura un techo en el edge, la otra prohíbe una
-implementación en el código— y eso es **T14.1**, que sigue en 🔴.
+**El borde de `CLAUDE.md` §2 que esta fila no cubre —y ya lo cubre otro:** *rate limiting con
+contador en Postgres sobre la vidriera es rechazo automático*. Que exista el WAF **no** pone un gate
+sobre esa prohibición —son dos cosas distintas: una configura un techo en el edge, la otra prohíbe
+una implementación en el código—, y eso era **T14.1**. **Lo cierra `W016` el 2026-08-28**, fila
+**T26**: el WAF cubría la mitad de afuera y *nada impedía escribir el contador igual y quedarse con
+las dos capas, pagando la cara*. Esta fila (**T1**) no cambia: sigue siendo el techo del edge.
 
 ### T2 · el guard de "query sin filtro de tenant"  ·  **CERRADA el 2026-08-28** (`9b3d7d2`) · LEAD
 
@@ -583,9 +754,17 @@ tiene respuesta afirmativa, y el diagnóstico de arriba describe un estado que d
 **Estado verificado por `docs-keeper` el 2026-08-28, no reportado.** `node ./scripts/web-lint.mjs`
 desde `apps/web` imprime
 `ok W015 toda query sobre las 15 tablas de negocio filtra por tenant ademas de RLS (builder y sql crudo)`
-y cierra en `WEB-LINT: PASS (15 reglas)`. Corre en CI por `pnpm -r lint` (`ci.yml:64`, vía el script
+y cierra en **`WEB-LINT: PASS (16 reglas)`**. Corre en CI por `pnpm -r lint` (`ci.yml:64`, vía el script
 `lint` de `apps/web/package.json`) — con la salvedad de la sección *"«en CI» era una afirmación
 sobre intención"* de más abajo, que aplica a **todos** los gates de este repo.
+
+> **Este board decía `15 reglas` acá y era el número de la mañana.** Al cierre del 2026-08-28 el
+> linter tiene **16**: entró **`W016`**, que cierra la última prohibición de §2 sin gate ejecutable
+> (**T14.1**) y tiene fila propia, **T26**. La línea de W015 **no cambió** —sigue diciendo `15
+> tablas de negocio`, que es otra cosa que `16 reglas` y conviene no confundir— y las dos filas de
+> este board que citan `lint 0 (15 reglas)` como evidencia re-ejecutada (**S6.1** y el §"Cómo se
+> cerró" de más abajo) **quedan con su número**, fechado: eran ciertas el día que se midieron.
+> Reescribir una medición vieja con un número nuevo es exactamente el drift que este board evita.
 
 **Las dos excepciones declaradas del repo, y son exactamente dos:**
 
@@ -594,20 +773,26 @@ sobre intención"* de más abajo, que aplica a **todos** los gates de este repo.
 | `apps/web/app/(app)/_lib/session.ts:94` | *resolver a qué tenant pertenece una sesión es anterior a que exista el tenant* |
 | `apps/web/app/(app)/_lib/tenants/create-tenant.ts:202` | *pregunta existencial sobre todos los tenants, hecha antes de que exista el primero* |
 
-**Residuo declarado, y es el motivo por el que este `done` se lee entero: la polaridad de W015 no es
-un comando.** El commit dice *"twelve constructed cases, each seen to break in its own direction,
-**run in a sandbox outside the repo**"*. Es literalmente la situación anterior de `guard-firewall`,
+**Residuo declarado y CERRADO el 2026-08-28 (`a015437`): la polaridad de W015 ya es un comando.**
+El commit de W015 decía *"twelve constructed cases, each seen to break in its own direction,
+**run in a sandbox outside the repo**"*. Era literalmente la situación anterior de `guard-firewall`,
 donde *"14 fixtures, 14 rompen"* también se había ejercido a mano y fuera del repo — y el día que se
 volvió un comando (`scripts/guard-firewall.test.sh`, `3199a78`) encontró que **seis reglas no
-fallaban nunca** (`DECISIONS.md` ADR-016 §Verificación). No hay hoy nada que diga que eso no le pasó
-a W015: ejercer la polaridad afuera prueba lo que hacía el archivo esa tarde, no lo que hace el de
-`main`. **`apps/web/scripts/` es del LEAD**, así que la fila queda anotada acá y no se abre sola.
+fallaban nunca** (`DECISIONS.md` ADR-016 §Verificación). Lo cierra **`scripts/web-lint.test.sh`**,
+del LEAD, con step propio en `ci.yml:156`.
 
-> **Pregunta abierta para el LEAD (no la contesta este board).** ¿W015 lleva arnés de polaridad
-> versionado, como `guard-firewall.test.sh` y `scripts/_lib.test.sh`? Hoy `ls apps/web/scripts/`
-> devuelve **un solo archivo**, `web-lint.mjs`. Comando que la contestaría en la dirección útil:
-> sembrar una query sin `tenant_id` en `apps/web/app/(app)/_lib/` y correr
-> `cd apps/web && node ./scripts/web-lint.mjs; echo "exit=$?"` esperando `exit=1`.
+> **La pregunta abierta que este board le dejaba al LEAD está contestada, y la respuesta es sí.**
+> Decía: *"¿W015 lleva arnés de polaridad versionado? Hoy `ls apps/web/scripts/` devuelve un solo
+> archivo"*. La observación era cierta y **miraba el directorio equivocado**: el arnés no vive al
+> lado del linter sino en `scripts/`, con los otros arneses del LEAD. Verificado por `docs-keeper`
+> el 2026-08-28: `bash scripts/web-lint.test.sh` cierra en
+> `POLARIDAD WEB-LINT: OK — las 16 reglas se vieron encender`, **45 casos**, y **W015 aporta 12** —
+> los seis bordes que importan están adentro (*presencia no es filtro*, *proximidad no es alcance*,
+> *el docblock del módulo no exime*, *un motivo de tres palabras no es un motivo*, el `insert` que se
+> ata por el `values()` y no por un `where` que no puede tener, y **schema ilegible = FAIL**).
+> El arnés mide **contra el ID de la regla, no contra el exit code**, y el motivo está escrito en
+> `ci.yml:153-155`: con 16 reglas sobre un mismo árbol, un fixture puede salir rojo **por la regla
+> equivocada** y eso reportaría cobertura sin haber ejercido nada.
 
 **Por qué la implementación es de las buenas.** Deriva la lista de tablas del
 **schema real** (las que tienen `tenantId`), así que una tabla de negocio nueva queda cubierta el día
@@ -788,6 +973,15 @@ operativas": la regla R5 de `guard-r2.sh` se satisfacía con un `import` (verifi
 del símbolo**, no la **invocación**), y `scripts/guard-artifacts.sh` sin argumentos daba
 `GUARD: PASS` habiendo chequeado cero archivos. Los dos ya fallan. **T11** registra el gate nuevo.
 
+**Corolario agregado el 2026-08-28, y es sobre el fixture, no sobre el gate:** *un fix cuya
+reproducción no se vio encender no está probado.* El LEAD escribió un fixture para ver fallar a la
+**M1** vieja de `accept-s3.sh` y el fixture **no reproducía el defecto** —su prosa nombraba `sizes`
+antes que `srcSet`, así que la ventana del tag encontraba el `sizes` y el escáner pasaba—. Lo detectó
+corriendo el **escáner viejo** contra él y viéndolo **pasar cuando tenía que encenderse**. La regla
+de arriba dice que hay que ver fallar al gate; ésta agrega que **hay que ver fallar al gate *con este
+fixture***: un fixture mudo se disfraza de "ya estaba arreglado", que es el único modo de falla peor
+que un gate verde, porque además cierra la investigación. Detalle en **ADR-020** §Verificación.
+
 ### El harness de CI también estaba verde por vacío  ·  corregido el 2026-08-28 (`fe4e5dc`)
 
 Tres defectos en `.github/workflows/ci.yml`, la misma enfermedad de la sección de arriba pero un
@@ -854,10 +1048,12 @@ $ git branch -avv
 **`origin` está configurado y no tiene una sola rama.** 89 commits locales, `origin/main` marcado
 `gone`. `.github/workflows/ci.yml` **nunca se ejecutó**, ni una vez, en ninguno de los 89.
 
-_Re-medido el 2026-08-28 después de S6.2: **103 commits**, `git ls-remote --heads origin` sigue sin
-salida. El bloque de arriba queda como el snapshot que originó la nota. **Que el denominador crezca
-y el numerador no es el dato**: catorce commits más de trabajo apoyados en gates que nadie ejecutó
-en un runner limpio._
+_Re-medido el 2026-08-28 sobre `68c0bd6`, después del barrido serial de los cinco `accept-*`:
+**110 commits**, `git ls-remote --heads origin` sigue sin salida (exit 0, cero ramas). El bloque de
+arriba queda como el snapshot que originó la nota. **Que el denominador crezca y el numerador no es
+el dato**: veintiún commits más de trabajo apoyados en gates que nadie ejecutó en un runner limpio —
+y entre ellos, los tres arreglos de **ADR-020** y el gate nuevo `guard-gates.sh`, que entró a
+`ci.yml:101` sin haber corrido ahí ni una vez._
 
 Entonces cada *"corre en CI"* de este board y de `DECISIONS.md` significa, con precisión: **el repo
 declara que el step existe en `ci.yml`**. No significa que haya corrido. Es exactamente la misma
@@ -877,13 +1073,65 @@ llegó al 2 no está probado en la plataforma donde va a correr, y el modo de fa
 verde.
 
 **La lección, en una línea:** *"¿hay chequeo?"* → *"¿lo corre alguien?"* → *"¿está en `main`?"*
-(la pregunta que abrió **T2**) → y ahora **"¿el CI que lo corre corrió alguna vez?"**.
+(la pregunta que abrió **T2**) → **"¿el CI que lo corre corrió alguna vez?"** → y desde **ADR-020**,
+la que faltaba y no es sobre la corrida sino sobre el contenido: **"cuando pasa, ¿qué midió?"**.
 
 > **Lo que destraba el nivel 2 es un `git push`, y no es una fila de este board:** no hay slice que
 > lo cubra y no hay blocker que lo nombre. Se anota acá para que la próxima lectura de un *"corre en
 > CI"* sepa qué está leyendo. **Comando que lo contesta en cualquier momento:**
 > `git ls-remote --heads origin` — vacío significa nivel 1 para todos los gates del repo, sin
 > excepción.
+
+#### Tres más el mismo día — y esta vez la clase quedó cerrada por un gate  ·  **ADR-020**
+
+Los seis de arriba son sobre **si el gate corre**. Los tres de abajo son sobre **qué mide cuando
+pasa**, que es la pregunta que faltaba. Los tres estaban en la columna del **LEAD** (§4: todo gate
+es del LEAD, porque el gate no puede ser del mismo writer que el código que audita), los tres están
+arreglados, y los números del barrido serial de arriba ya son los de después.
+
+| gate | la aserción escrita | lo que recogía | arreglo |
+|---|---|---|---|
+| `accept-s6.sh` **V5** | *"invalida la unidad, **no la vidriera entera**"* | `grep 'invalidateStorefrontUnit'` | reducida a la prohibición estática (`invalidateStorefront(` no se llama desde el camino de reservas), **y el radio se cuenta en V9** |
+| `accept-s1.sh` **A2** | *"la vidriera baja de rol antes de consultar"* | `grep 'set local role'` en `tenant.ts` — **un archivo del que el invariante ya se había mudado**, y encima con `chk` sin importar, así que la línea se evaporaba | afirma el invariante que sobrevive al refactor: **el único `createDb(` de la vidriera vive en `storefront-db.ts`, y ese lugar abre transacción y baja a `anon`** |
+| `accept-s3.sh` **M1** | *"ningún `srcset` sin `sizes`"* | escaneo del archivo **crudo**: un `srcSet` nombrado en **prosa** hacía abrir la ventana del tag en un `<` de comentario y reprobar `listings.ts` | blanquea comentarios y strings **por espacios** antes de escanear, para no mover un offset y que los números de línea sigan siendo los reales |
+
+**La parte mecánica la cierra `scripts/guard-gates.sh`**, que corre sobre todo `scripts/*.sh` y falla
+si un gate invoca una palabra que **no resuelve a nada** —ni función propia, ni de `_lib.sh` cuando
+lo importa, ni builtin, ni binario en PATH— y también si **redefine** un helper que `_lib.sh` ya da.
+Tiene step en `ci.yml:101` con `if: always()`, y su polaridad `guard-gates.test.sh` en `:105` con
+**nueve** fixtures: se lo ve **encender** contra el árbol de ayer (`chk`/`have` prestados), contra la
+redefinición y contra una invocación rota **dentro** de `_lib.sh`, y se lo ve **callar** ante un `chk`
+propio legítimo, el árbol sano con `_lib.sh` adentro del barrido, G2 no acusando a `_lib.sh` de
+duplicar lo que él mismo define, un `;` adentro de un string y un cuerpo de heredoc.
+
+**Lo que ese gate NO cierra, dicho acá para que su verde no se lea de más:** cubre **una** de las
+tres formas —la aserción que se evapora—. *"El nombre promete un cuerpo"* (V5) y *"el escáner
+reconstruye un tag fantasma"* (M1) **no tienen gate y no lo van a tener**: hay que leer la aserción.
+Se revisa contra ADR-020.
+
+**No se auditaba a sí mismo: `T20`, abierta y cerrada el mismo día.** Su mensaje de éxito contaba 21
+archivos con un `ls` y los dos barridos salteaban `_lib.sh`, así que auditaba 20 — y el que quedaba
+afuera era la librería que importan los otros veinte. Lo levantó `docs-keeper` verificando una frase
+de la propia ADR-020; lo arregló el LEAD, que es el dueño de `scripts/**`. Hoy `_lib.sh` entra a G1,
+**G2 lo exceptúa con el motivo escrito en el código** (sus definiciones son el original, no una copia
+que derive), y el número impreso sale del barrido (`AUDITADOS`), no de un `ls`, con la ausencia de
+la línea contando como **FAIL**. Que el gate de los gates tuviera la forma que la ADR describe no es
+irónico: es el motivo por el que la regla se escribió como una pregunta que se le hace a **todo**
+gate, incluido el último. Y lo que la cerró no fue acordar una redacción —hubo dos, opuestas, las
+dos leyendo media implementación— sino abrir el archivo y **medir los dos polos por separado**:
+medidos, el diagnóstico valía para G1 y no para G2, y ninguna de las dos prosas contenía esa
+asimetría.
+
+**Dos cosas que se dejan escritas sin maquillar, porque el registro sirve para eso:**
+
+- **El arreglo de M1 no destapó ningún rojo del producto.** `listings.ts` ya no tiene `srcSet` y el
+  árbol entero pasaba también con el escáner viejo. **Se sacó una mina, no se arregló una falla
+  viva**, y contarlo como bug encontrado inflaría el valor del arreglo.
+- **El primer fixture con el que el LEAD intentó probar M1 no reproducía el defecto**: su prosa
+  nombraba `sizes` antes que `srcSet`, así que la ventana del tag encontraba un `sizes` y el escáner
+  viejo pasaba. Lo detectó corriendo el **escáner viejo** contra el fixture y viéndolo **pasar cuando
+  tenía que encenderse**. Es el corolario que le faltaba a la regla de método de este board: **un fix
+  cuya reproducción no se vio encender no está probado.**
 
 ### S2.4 · el docblock de `page.tsx` afirma un 404 que la medición desmiente  ·  deuda de S2
 
@@ -1432,16 +1680,21 @@ O sea que el agujero está **tapado y anotado**, que es distinto de cerrado.
 ### T14 · dos prohibiciones de `CLAUDE.md` §2 que ningún gate afirma  ·  `qa-agent`
 
 Verificado una por una el 2026-08-28 contra los gates del repo. **De la lista de §2 quedan dos sin
-nadie que las chequee:**
+nadie que las chequee.** El número se movió dos veces el mismo día y las dos quedan escritas, porque
+el recorrido es el contenido: el título decía *dos* mientras la fila ya decía *tres* (se había
+anotado **T14.3**), y esa tarde `W016` cerró la **1** y lo devolvió a dos. La numeración de los
+puntos **no se corre**: `T14.2` y `T14.3` se citan por número desde `TEST_MATRIX.md`, así que la 1
+se queda en su lugar, tachada.
 
-1. **Rate limiting con contador en Postgres sobre la vidriera.** **No es lo mismo que T1, y T1
-   cerrando no cierra esto.** T1 puso el techo del lado del edge (`config/firewall-rules.json` +
+1. ~~**Rate limiting con contador en Postgres sobre la vidriera.**~~ **CERRADA el 2026-08-28 por
+   `W016`** (`apps/web/scripts/web-lint.mjs`, LEAD). Fila del gate: **T26**. Lo que decía esta fila y
+   ahora tiene dueño: *"T1 puso el techo del lado del edge (`config/firewall-rules.json` +
    `scripts/guard-firewall.sh`, `4fce968`); esta fila es que **nada detecta la violación del lado
-   del código**. Son dos cosas distintas: una configura un límite, la otra prohíbe una
-   implementación. Re-verificado el 2026-08-28 **después** de T1: las menciones de *rate limit* en
-   `scripts/**` son las del gate del WAF, que valida un JSON de configuración y **no mira una sola
-   query**. Mañana alguien mete un `insert into rate_limit_hits` en el render de la vidriera y
-   todo el pipeline sale verde — rompiendo el 95% de hits sin Postgres, que es el objetivo entero.
+   del código** … mañana alguien mete un `insert into rate_limit_hits` en el render de la vidriera y
+   todo el pipeline sale verde"*. Es exactamente lo que W016 rompe, y por los dos caminos: nombrar
+   el concepto en un archivo que abre Postgres, **y** la forma del contador aunque no se nombre.
+   **El desempate de columna de más abajo se resolvió al revés de lo que este board prefería** — ver
+   la nota que sigue a los tres puntos.
 2. **Imagen original (>500 KB) servida a la vidriera.** Hay dos chequeos y **ninguno corre en cada
    push**: el probe `scripts/probes/s2-media-measure.test.ts:47` fija
    `MASTER_MAX_BYTES = 800 * 1024` pero sólo se ejecuta **dentro de `accept-s2.sh`** (`:32`), que no
@@ -1451,6 +1704,12 @@ nadie que las chequee:**
    **Actualizado el 2026-08-28:** M2 ya no está bloqueado —corrió y midió `transferSize=51016B`—
    pero eso **no cierra esta fila**: `accept-s3.sh` sigue sin ser un job de CI, así que la regla se
    afirma cuando el LEAD corre el gate a mano, no en cada push. Que es justo lo que T14 pide.
+3. **Borrado de un objeto de R2 por key al borrar un listing** (**T14.3**, anotada el 2026-08-28 por
+   `qa-agent`). `guard-r2.sh` la cubre **estáticamente** (R1+R2, T11) y `packages/media/src/unlink.test.ts`
+   afirma el efecto **desde el paquete que la implementa**. Lo que falta es la auditoría de
+   referencia del **efecto** en la columna de `qa-agent`: que borrar un listing borre **el mapeo** y
+   **no el byte**. La trampa está escrita en `packages/media/src/keys.ts:26` —dos tenants que suben
+   la misma foto comparten el objeto— y hoy nada la frena el día que alguien escriba el borrado.
 
 **Desempate de columna, para que no se trabe cuando se agende.** Si la forma que se elige es un
 grep-guard en `scripts/**`, el dueño es el **LEAD** —un gate no puede ser del mismo writer que el
@@ -1458,17 +1717,115 @@ código que audita, igual que **T2**—. `qa-agent` es el dueño si la forma es 
 violación** en `tests/`. La segunda es preferible para la 1: un grep de *"rate limit"* es fácil de
 esquivar sin querer.
 
+> **Y para la 1 se eligió la primera. Vale anotar por qué el reparo de arriba no se cumplió**, que
+> es lo único que este board puede aportar sobre una decisión que ya se tomó. El reparo era que *"un
+> grep de «rate limit» es fácil de esquivar sin querer"* — y es cierto de un grep de una sola forma.
+> `W016` **no** es eso: tiene **dos brazos que no se implican**, y el segundo no busca el nombre sino
+> **la forma del contador** (`onConflictDoUpdate`, `+ 1` adentro de un template de `sql`,
+> `increment`, `count = count + …`). El caso *"esquivar sin querer"* tiene fixture propio en el
+> arnés: *"upsert en la vidriera sin nombrar el concepto: el contador que no se declara"*, y **FIRES**.
+> El brazo del nombre sólo se enciende si además el archivo **abre Postgres**, que es lo que evita
+> que la regla castigue al que documenta la prohibición. La 2 y la 3 siguen sin decidir columna.
+
 **Lo que sí tiene gate y este board no vuelve a pedir** (verificado, para que nadie lo reabra):
 
 | prohibición de §2 | quién la afirma hoy | ¿tiene step en CI? |
 |---|---|---|
 | `tenant_id` fuera de `app_metadata` | `guard-leaks.sh:127` (§7) · `apps/web/scripts/web-lint.mjs:123` (W008) · `accept-fase3.sh:61` | sí, **los tres** desde `c854b99` — `accept-fase3.sh` entró ese día (`ci.yml:137`) |
 | tabla nueva sin `GRANT` | `scripts/guard-grants.sh` | sí, desde `985c369` — antes **sólo** corría dentro de `accept-s1.sh`, que **tampoco** estaba en CI hasta `c854b99` (`ci.yml:205`) |
+| **`GRANT` de `INSERT` por columna incompleto** (la tabla tiene `GRANT`, y el panel igual recibe `42501`) | **`G6`**, `scripts/probes/el-grant-cubre-el-insert-de-drizzle.test.ts`, dentro de `accept-fase2.sh` §**D5**. Pregunta al catálogo, no ejecuta `INSERT` | sí, vía `accept-fase2.sh` (`ci.yml:137`, el único job con Postgres migrado y seedeado). **Nace del fallo de T21**: `guard-grants.sh` dijo PASS con el alta de reservas rota, porque cuenta que el `GRANT` **exista** y uno parcial existe. Ver §"T21 · el primer fallo" |
 | borrado de un objeto de R2 por key | `scripts/guard-r2.sh` R1 + R2 (**T11**, `done`) | sí |
 | **query sin filtro de tenant** | `W015` de `apps/web/scripts/web-lint.mjs` (**T2**, `done`) | sí, vía `pnpm -r lint` (`ci.yml:64`). **Alcance `apps/web` → `packages/**` sigue descubierto: T16** |
+| **rate limiting con contador en Postgres sobre la vidriera** | **`W016`** de `apps/web/scripts/web-lint.mjs` (**T26**, LEAD). **Dos brazos que no se implican:** (a) archivo de `(storefront)` que **abre Postgres** *y* **nombra el concepto en código** — puerta por archivo, concepto por **línea**, saltando comentarios; (b) la **forma** del contador (`onConflictDoUpdate`, `+ 1` en un template de `sql`, `increment`, `count = count + …`) **aunque no se llame *rate limit***. **Sin marcador de exención, a diferencia de W015**, y por un motivo escrito: no existe la vidriera que legítimamente cuente en Postgres. **Falla cerrado**: `(storefront)` vacío = rojo | sí, vía `pnpm -r lint` (`ci.yml:64`), + polaridad propia en `ci.yml:156`. **Cierra T14.1**, la última de las 14 prohibiciones de §2 sin gate ejecutable. `guard-firewall.sh` cubría **la mitad de afuera**: nada impedía escribir el contador igual y quedarse con las dos capas |
 
 **Los "sí" de esta columna son de nivel 1.** `ci.yml` nunca corrió (§"Seis gates rojos o dormidos"):
 significan *"el repo declara el step"*, no *"se ejecutó"*.
+
+### T26 · `W016` — el techo de abuso de la vidriera es el WAF, no una query  ·  **LEAD**
+
+**Qué cierra.** La última de las **14 prohibiciones de `CLAUDE.md` §2 sin gate ejecutable** (el censo
+es de `qa-agent`): *"rate limiting con contador en Postgres sobre la **vidriera** → rechazo"*. Era
+**T14.1**. Lo que la hacía la más barata de violar sin darse cuenta es que **anda**: un contador de
+requests en Postgres son tres líneas de Drizzle. Lo que rompe no es la query, es la premisa —§3 fija
+que **el 95% de los hits de vidriera no tocan Postgres**, y un contador los hace tocar el 100%.
+
+**Por qué `guard-firewall.sh` no alcanzaba, aunque exista y esté verde.** Cubre **la mitad de
+afuera**: que la regla de WAF exista en `config/firewall-rules.json` y que ninguna ruta quede sin
+decidir. Nada impedía escribir el contador **igual** y quedarse con las dos capas, pagando la cara.
+Es la misma distinción que ya estaba escrita en la fila de **T1** y que este board dejaba en 🔴:
+*una configura un límite, la otra prohíbe una implementación.*
+
+**Dos brazos, porque la infracción tiene dos formas y ninguna implica la otra.**
+
+| brazo | qué busca | granularidad |
+|---|---|---|
+| (a) **el concepto, con la puerta abierta** | archivo de `(storefront)` que **abre Postgres** (`withStorefrontDb`, `createDb`, un import de `@istock/db` o de `drizzle-orm`) **y** nombra el concepto en código (`rate limit`, `throttle`, `leaky bucket`, `token bucket`, `sliding/fixed window`) | **archivo entero** para la puerta, **línea** para el concepto |
+| (b) **la forma del contador** | `onConflictDoUpdate`, `+ 1` adentro de un template de `sql`, `increment`, `count = count + …` — **aunque no se llame *rate limit*** | línea |
+
+El (b) es el que hace que el reparo que este board tenía anotado —*"un grep de «rate limit» es fácil
+de esquivar sin querer"*— no se cumpla: el contador que **no se declara** tiene fixture propio y
+**FIRES**.
+
+**El detalle que decide si la regla sirve o estorba: el brazo (a) mira la línea, no el archivo.**
+`app/(storefront)/s/[slug]/api/track/route.ts:34` **abre Postgres** y **explica la prohibición en su
+docblock** (*"Tampoco hay contador de abuso propio: `CLAUDE.md` §2 prohíbe rate limiting con contador
+en Postgres sobre la vidriera"*). Una regla que se encienda ahí es una regla que **castiga por
+documentarse**, y el repo ya pagó ese modo de falla una vez: es el `TODO`/`TODOS` de la regla 3 de
+`guard-leaks.sh`. Funciona porque `scan()` saltea comentarios, así que **W016 depende de `scan()`**
+y no de su propio regex — vale saberlo el día que alguien toque `scan()`.
+
+**No hay marcador de exención, a diferencia de W015, y el motivo está escrito en el código.** W015
+tiene marcador porque **existen** preguntas legítimamente cross-tenant (resolver a qué tenant
+pertenece una sesión es anterior a tener tenant). Acá **no existe la vidriera que legítimamente
+cuente en Postgres**: §2 dice *rechazo*, sin condición. Si algún día existe, la excepción la escribe
+el LEAD **en la regla**, con nombre y motivo — no una marca que se copia y se pega.
+
+**Falla cerrado.** Si `(storefront)` está vacío, W016 sale **rojo**, no verde: *medir cero no es
+aprobar*. Es la misma forma que ya tienen W015 (schema ilegible = FAIL) y `guard-artifacts.sh` sin
+argumentos, y tiene fixture: *"sin un solo archivo de (storefront), W016 FALLA"*.
+
+**Lo medido, verificado por `docs-keeper` el 2026-08-28** (re-corrida, no citada de un reporte):
+
+```
+$ cd apps/web && node scripts/web-lint.mjs
+ok    W016 ninguno de los 23 archivos de (storefront) cuenta requests en Postgres (el techo es el WAF)
+WEB-LINT: PASS (16 reglas)
+
+$ bash scripts/web-lint.test.sh
+POLARIDAD WEB-LINT: OK — las 16 reglas se vieron encender.
+```
+
+**La polaridad.** 8 casos nuevos en `scripts/web-lint.test.sh`, y la
+forma importa: **tres pares FIRES/SILENT sobre el mismo path** —que es la regla del arnés, porque un
+par sobre paths distintos prueba el path y no la regla— más dos FIRES sueltos.
+
+| par / caso | FIRES | SILENT |
+|---|---|---|
+| el concepto en código vs. en un comentario | *"gemelo: el mismo archivo, el mismo concepto, pero en codigo"* | *"abre Postgres y NOMBRA la prohibicion en un comentario: documentarse no es violarla"* |
+| el concepto con y sin la puerta a Postgres | *"gemelo: el mismo concepto, ahora con la puerta a Postgres abierta"* | *"nombra rate limit pero no abre Postgres: leer el veredicto del WAF es lo correcto"* |
+| `+ 1` de aritmética vs. `+ 1` adentro de `sql` | *"gemelo: el mismo `+ 1`, adentro de un template de sql"* | *"aritmetica de strings con `+ 1` no es un contador: el shape real de `_lib/host.ts`"* |
+| el contador que no se declara | *"upsert en la vidriera sin nombrar el concepto"* | — |
+| la lista vacía | *"sin un solo archivo de (storefront), W016 FALLA (medir cero no es aprobar)"* | — |
+
+El arnés mide **contra el ID de la regla, no contra el exit code**, y el motivo está en
+`ci.yml:153-155`: con 16 reglas sobre un mismo árbol, un fixture puede salir rojo **por la regla
+equivocada** y eso reportaría cobertura sin haber ejercido nada.
+
+**Por qué esta fila es propia y no un residuo de T2.** Es la pregunta que el LEAD dejó abierta al
+despachar el registro, y la respuesta de este board es **fila propia**, por tres razones que valen
+más juntas que separadas: **(1)** cierra una **prohibición distinta** de §2 —T2/W015 cierra *query
+sin filtro de tenant*, ésta cierra *rate limiting con contador*— y el board indexa por prohibición,
+no por archivo; **(2)** tiene **arnés propio y step de CI propio**, así que puede estar roja mientras
+W015 está verde, y una fila que puede fallar sola necesita estado propio; **(3)** `TEST_MATRIX.md`
+las lista en **filas separadas de la tabla de §2**, así que meterla como residuo dejaría la
+prohibición de rate limiting sin fila que la sostenga y con un ✅ apuntando a la de otra regla — el
+mismo hueco que este board acaba de cerrar en la tabla. Compartir archivo (`web-lint.mjs`) no es
+compartir invariante.
+
+**Lo que falta para `done`, y no es una medición.** Los tres archivos —`web-lint.mjs`,
+`web-lint.test.sh`, `ci.yml`— están **modificados sin commitear**. La regla que este board aprendió
+en T2 aplica igual acá y no se relaja porque el autor sea el LEAD: *un gate en el árbol de trabajo de
+una sola máquina no protege a nadie más que a quien lo tiene abierto.*
 
 ### T15 · el seed del demo dice un color en la URL y otro en la página  ·  `db-agent`
 
@@ -1764,7 +2121,7 @@ equipo y lo mandó a service.
    pedir el estado de cierre sin pedir también el resto de los efectos.
 
 **Cómo se cerró.** Commiteada en `83bc673` y re-ejecutada por el LEAD: `pnpm typecheck` 0 · `pnpm
-lint` 0 (15 reglas) · `pnpm test` 0 · `bash scripts/guard-effects.sh` **OK, y venía RECHAZADO** ·
+lint` 0 (**15 reglas al momento de esa corrida; hoy son 16, entró `W016` — ver T26**) · `pnpm test` 0 · `bash scripts/guard-effects.sh` **OK, y venía RECHAZADO** ·
 `bash scripts/guard-leaks.sh` OK. El gate escrito de la fila se cumple: `grep -rn 'closingStatusFor'
 apps/web/app` → **cero**. El dominio sumó 11 tests (199 en total), con E5/E5b recorriendo el
 **producto cartesiano** de aristas en vez de listas a mano y E3b cruzando la tabla contra
@@ -1851,13 +2208,18 @@ Controles anti-vacuidad: la request fría tiene que producir `statements > 0`, t
 haber estado en HIT **antes** de la mutación, y exactamente **una** request por página después (la
 segunda vuelve HIT y borra la evidencia).
 
-**Medición del LEAD, después:**
+**Medición del LEAD, después** (la línea completa, tal como la emite el spec y la lee **V9** de
+`accept-s6.sh` desde el 2026-08-28):
 
 ```
 MEDIDO s6 radio · publicadas=4 · paginas=5 · rerender=2 · esperado=2
- · sobrevivieron=[ficha-a,ficha-c,ficha-d]
+              · sobrevivieron=[ficha-a,ficha-c,ficha-d] · frio=14
 MEDIDO s6 alta-de-unidad · miss_cacheado=HIT · visita_que_la_muestra=1
 ```
+
+`frio=14` no es decorativo y por eso está en la línea: son las **sentencias que el espía vio contra
+Postgres**. En cero, todas las páginas "sobrevivirían" porque nunca se sirvió nada — la medición
+vacía disfrazada de éxito. V9 lo exige `> 0` igual que exige `paginas > 2`.
 
 **Antes**, en un clone desechable a `ea26a02`: **`rerender=5` de 5, cero sobrevivientes.**
 
@@ -1875,29 +2237,53 @@ invalidación, y otro que prueba el camino de miss del punto 1.
   equipos"* está sostenido por **3 hermanas sobrevivientes**, no por una curva. La afirmación es
   estructural (un tag por unidad no puede alcanzar a otra), pero lo **medido** son 3 fichas.
 
-#### Residuo declarado: ningún `accept-*` nombra el spec que mide el radio
+#### Residuo declarado — **CERRADO el 2026-08-28**: ahora el gate nombra el spec que mide el radio
 
-`grep -rn 's6-senar\|MEDIDO s6 radio' scripts/ .github/workflows/ci.yml` → **cero**. El spec corre
-—entra por `pnpm e2e`, que es step del job `e2e`— pero **ningún comando de aceptación lo cita como
-evidencia**, así que borrarlo le saca a S6.2 su medición sin poner nada en rojo. **Es la misma forma
-que la deuda de proceso de S5**, y el repo ya tiene la solución escrita: **W1 de `accept-s4.sh`
-nombra las aserciones que sostienen S4**, no los archivos. Los gates son del LEAD por §4, así que
-esto se anota, no se arregla acá.
+Decía, y era cierto cuando se escribió: `grep -rn 's6-senar\|MEDIDO s6 radio' scripts/ .github/workflows/ci.yml`
+→ **cero**. El spec corría —entra por `pnpm e2e`— pero **ningún comando de aceptación lo citaba como
+evidencia**, así que borrarlo le sacaba a S6.2 su medición **sin poner nada en rojo**. Evidencia
+escrita, medida, con su módulo de veredicto testeado, y sosteniendo nada.
 
-#### Y la V5 de `accept-s6.sh`, que estuvo verde todo el tiempo — quinto caso de la familia
+**Lo cerró el LEAD** (§4, los gates son suyos): `accept-s6.sh` fija `SPEC_RADIO=` en
+`s6-senar-un-equipo-no-purga-la-vidriera-entera.spec.ts` y lo corre **en la misma invocación que
+`$SPEC`**, y **V9** lee `MEDIDO s6 radio` de esa salida. La auditoría de referencia del veredicto es
+`tests/el-veredicto-del-radio-rechaza-la-purga-que-arrastra-fichas-ajenas.test.ts`, de **`qa-agent`**
+— otra columna que la del código auditado, que es lo que `CLAUDE.md` §4 exige para que el gate pueda
+citarla sin que el writer firme su propio certificado.
+
+**La deuda de proceso de S5 sigue abierta y es la misma forma**, así que el precedente ya no es sólo
+W1 de `accept-s4.sh`: es también esto.
+
+#### Y la V5 de `accept-s6.sh`, que estuvo verde todo el tiempo — **ARREGLADA el 2026-08-28** (**ADR-020**)
+
+Así estaba:
 
 ```
 V5 · expirar una reserva invalida la unidad, no la vidriera entera
    grep -rqE 'invalidateStorefrontUnit' ...
 ```
 
-La aserción **afirma una propiedad** (*"invalida la unidad, no la vidriera entera"*) y **verifica un
-nombre**. Mientras `invalidateStorefrontUnit()` emitía los tres tags, la propiedad era **falsa** y el
-gate estaba **verde**. No es el caso conocido de *"verificar la presencia del símbolo en vez de la
-invocación"* —acá la invocación **existe**—: es el escalón siguiente, **verificar la invocación de
-una función cuyo cuerpo hace lo contrario de lo que su nombre promete**. Un gate no puede delegar su
-aserción en la honestidad de un identificador. Lo que hoy sostiene la propiedad es el e2e del radio,
-que la V5 **no cita**. Fila del LEAD por §4.
+La aserción **afirmaba una propiedad** (*"invalida la unidad, no la vidriera entera"*) y **verificaba
+un nombre**. Mientras `invalidateStorefrontUnit()` emitía los tres tags, la propiedad era **falsa** y
+el gate estaba **verde**: acompañó el defecto de punta a punta. No es el caso conocido de *"verificar
+la presencia del símbolo en vez de la invocación"* —acá la invocación **existía**—: es el escalón
+siguiente, **verificar la invocación de una función cuyo cuerpo hace lo contrario de lo que su nombre
+promete**. Un gate no puede delegar su aserción en la honestidad de un identificador.
+
+**El arreglo del LEAD fue más ancho que reescribir la línea, y así queda:**
+
+| | qué afirma | tipo |
+|---|---|---|
+| **V5**, ahora | *nadie llama a la purga del catálogo (`invalidateStorefront(`) desde el camino de reservas ni desde su UI*. La **ausencia** de una llamada prohibida **sí** es una propiedad del fuente | estático, **y el título de la sección lo dice**: *"(estático; el radio se mide en V9)"* |
+| **V9**, nueva | lee `MEDIDO s6 radio` de la corrida y compara `rerender` contra `esperado`, con `paginas > 2` y `frio > 0` como controles anti-vacuidad y **ausencia de la línea = FAIL** | contado |
+
+Que el título de V5 diga de qué tipo es su evidencia no es cosmética: **el defecto original era
+justamente que el nombre prometía más que el método.** La regla vinculante que salió de acá —*un
+gate afirma una conducta medida, nunca un identificador grepeado*— es **ADR-020**, y V5 es uno de
+sus tres casos; los otros dos son **A2 de `accept-s1.sh`** (grepeaba un archivo del que el invariante
+se había mudado, y encima no fallaba porque `chk` no estaba importado) y **M1 de `accept-s3.sh`**
+(escaneaba comentarios y reconstruía un tag fantasma, o sea castigaba documentar la regla que
+defiende). La parte mecánica de la clase la cierra `scripts/guard-gates.sh`.
 
 
 ### S5 quedó `done` sin comando de aceptación propio  ·  **deuda de proceso**, no de producto

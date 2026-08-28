@@ -1,6 +1,19 @@
 # CHATBOT — capa 2
 
-_Owner: `ai-agent`. **Se diseña en FASE 1, se codea después de S4/S8.** Ver skill `chatbot-diet`._
+_**Qué es:** el diseño del chatbot de vidriera — dieta de contexto, tools, handoff, evals y costo
+por 1000 mensajes. **Para quién:** `ai-agent` antes de escribir `packages/ai`, y el LEAD al aceptar
+FASE 5. **Cuándo se actualiza:** cuando cambia la dieta, una tool, o el costo medido._
+
+_Lo escribe **`docs-keeper`** (`CLAUDE.md` §4: `docs/**` menos `research/` y `COST.md`); el
+contenido lo aporta `ai-agent`, cuyo propio contrato dice *"documentá el costo medido … en
+`docs/CHATBOT.md` (vía `docs-keeper`)"*. **El header decía `Owner: ai-agent` y era la misma línea
+que ya se corrigió en `PRODUCT.md`, `DOMAIN.md`, `ARCHITECTURE.md`, `DECISIONS.md` y
+`TEST_MATRIX.md`**: `ai-agent` es dueño de `packages/ai`, no de este archivo. **Se diseña en
+FASE 1, se codea después de S4/S8.** Ver skill `chatbot-diet`._
+
+> **Este doc está sin revisar desde FASE 1 y `packages/ai` no existe (fila `T19` del board).**
+> Lo único que se tocó desde entonces es el ID de modelo muerto de acá abajo. Todo lo demás es
+> diseño de FASE 1 y hay que releerlo contra `docs/research/llm-pricing.md` antes de codear.
 
 ## Qué es y qué no es
 El chatbot **no es el producto**. El producto es que el visitante llegue **informado** al WhatsApp
@@ -26,8 +39,18 @@ system corto (cacheado)
 Nada más. Ni el catálogo completo, ni los otros listings, ni el historial entero.
 
 ## Modelos
-Primario **Gemini 2.5 Flash-Lite** · fallback **Groq** (`llama-3.1-8b-instant` / `gpt-oss-20b`).
+Primario **Gemini 2.5 Flash-Lite** · fallback **Groq `openai/gpt-oss-20b`**.
+**Los IDs van por env var** (`LLM_PRIMARY_MODEL` / `LLM_FALLBACK_MODEL`), no por constante:
+hubo dos deprecaciones en tres meses (`CLAUDE.md` §3).
 IDs y precios exactos: `docs/research/llm-pricing.md` `[R3]`.
+
+_Corregido el 2026-08-28 (drift). Esta línea ofrecía `llama-3.1-8b-instant` como fallback y ese
+modelo **está retirado desde el 16/08/2026** para free y developer tier —lo dice la deprecations
+page de Groq, con `openai/gpt-oss-20b` como reemplazo recomendado (`llm-pricing.md:151-159`)—.
+`CLAUDE.md` §3 ya lo había corregido en FASE 1 (R3) y este doc quedó apuntando a un modelo
+muerto. **El fallback está en el camino de ejecución y se testea**, porque el primario tiene
+riesgo de apagado en octubre 2026._
+
 **Claude/GPT en hot path = fallo.** Embeddings sólo en el seed del catálogo.
 
 ## Tools (tres)

@@ -1050,6 +1050,318 @@ obligatorio y que no ejecuta nadie es FAIL.** Pasó de RECHAZADO a OK con este c
 board, y se deja nombrada acá porque una ADR que se lee como "ya está resuelto en todo el repo"
 produce justamente el tercer call site que la contradice.
 
+## ADR-020 — Un gate afirma una **conducta medida**, nunca un identificador grepeado
+- **Estado:** aceptada · **Fecha:** 2026-08-28 · **Autor:** LEAD (ratificada al cerrar el barrido serial de los cinco `accept-*` sobre `68c0bd6`) · redactada por `docs-keeper`
+- **Implementó:** LEAD, que es dueño de `scripts/**` por `CLAUDE.md` §4 — `scripts/accept-s1.sh` (A2), `scripts/accept-s3.sh` (M1), `scripts/accept-s6.sh` (V5 reducida + **V9 nueva**), `scripts/guard-gates.sh` y su polaridad `scripts/guard-gates.test.sh`, con step propio en `.github/workflows/ci.yml:101` y `:105`.
+
+### Contexto — la misma falla, tres veces, el mismo día, en la misma columna
+
+No es un caso con dos parientes: es **una familia con tres miembros vivos**, encontrada de a uno y
+recién nombrada cuando se los puso en fila.
+
+| gate | la aserción **escrita** | la evidencia que **recogía** | cuánto tiempo estuvo verde mintiendo |
+|---|---|---|---|
+| `accept-s6.sh` **V5** | *"expirar una reserva invalida la unidad, **no la vidriera entera**"* | `grep -rqE 'invalidateStorefrontUnit'` | **todo S6.2**: la función se llamaba así **y purgaba la vidriera entera**. El gate acompañó el defecto de punta a punta |
+| `accept-s1.sh` **A2** | *"la vidriera baja de rol antes de consultar"* | `grep 'set local role'` **dentro de `tenant.ts`** | desde que `storefront-agent` centralizó la bajada de rol en `_lib/storefront-db.ts` — o sea desde que el código **mejoró**. Y encima no fallaba: la línea usaba `chk`, que no estaba definido |
+| `accept-s3.sh` **M1** | *"ningún `srcset` sin `sizes` en la vidriera"* | escaneo del archivo **crudo**, con la ventana del tag abierta en el primer `<` hacia atrás | reportó FAIL sobre `listings.ts`, que no renderiza una etiqueta: la ventana se abrió en un `<` de **prosa**, y el gate reconstruyó un tag fantasma a partir de un docblock |
+
+Las tres tienen la misma forma y por eso hay una regla y no tres parches: **la aserción es una
+propiedad del comportamiento y la evidencia es la presencia —o la ausencia— de un identificador.**
+Entre las dos hay un supuesto que nadie declaró: *que el nombre dice lo que el cuerpo hace, y que
+está donde estaba ayer*. Es un supuesto razonable, y es exactamente el que rompe un refactor sin
+renombrar nada.
+
+M1 agrega la variante que más cuesta ver, porque falla en la polaridad opuesta: **castigaba
+documentar la regla que defiende.** El único arreglo disponible para quien lo chocaba era borrar la
+explicación. Un gate que empuja a borrar prosa correcta está roto aunque su intención sea buena, y
+además se vuelve el gate que todos aprenden a saltear.
+
+### Decisión
+
+**Un gate afirma una conducta medida, nunca un identificador grepeado.** Operacionalizada en cuatro
+reglas de escritura, que son lo que hay que chequear al aceptar un gate nuevo:
+
+1. **Si el nombre de la aserción tiene un verbo** —*purga*, *invalida*, *baja de rol*, *rechaza*— **o
+   contiene un "no"**, la evidencia **no puede ser la presencia de un nombre**. Un nombre no tiene
+   polaridad y no promete un cuerpo. Tiene que ser una medición del efecto, tomada del lado donde el
+   "no" se rompería.
+2. **El `grep` sigue siendo legítimo, y para algo preciso:** la **ausencia** de una llamada prohibida
+   sobre un conjunto de archivos acotado (`none()`), y los invariantes estructurales que sí son
+   propiedades del fuente (*"ningún archivo de la vidriera construye su propia conexión"*). Lo que no
+   puede es **sustituir a un conteo**. Cuando las dos cosas conviven, se separan en dos secciones y
+   **el nombre de cada una dice cuál es cuál** — por eso V5 hoy se llama *"el camino de reservas no
+   purga el catálogo entero (**estático**; el radio se mide en V9)"*.
+3. **Lo que se cuenta se lee de la salida de una corrida, no del fuente, y la ausencia de la línea es
+   FAIL.** Ya era la convención de S3 y S4; con V9 lo es también la de S6. Un gate que grepea el
+   fuente buscando la cadena `MEDIDO` encuentra el docblock del spec y pasa con **cero corridas** —
+   eso es exactamente lo que hacía V8 hasta el 2026-08-28.
+4. **Cuando un gate se rompe porque el archivo se movió, el arreglo no es repuntar el path.** Es
+   subir la aserción al invariante que sobrevive al refactor. Repuntar el `grep` de A2 a
+   `storefront-db.ts` habría repuesto la misma fragilidad con otro domicilio.
+
+### Cómo quedó cada caso
+
+| gate | qué afirma ahora | tipo |
+|---|---|---|
+| **V5** de `accept-s6.sh` | *nadie llama a la purga del catálogo (`invalidateStorefront(`) desde el camino de reservas*. La **ausencia** sí es una propiedad del fuente | estático, y el nombre lo dice |
+| **V9** de `accept-s6.sh` (nueva) | lee `MEDIDO s6 radio` de la corrida y **compara `rerender` contra `esperado`**, con tres controles anti-vacuidad: `paginas > 2` (sin fichas hermanas el radio no se puede afirmar), `frio > 0` (si el espía de Postgres no vio una sentencia, nadie midió nada) y **ausencia de la línea = FAIL** | contado |
+| **A2** de `accept-s1.sh` | *ningún archivo de la vidriera construye su propia conexión: el único `createDb(` vive en `storefront-db.ts`, y ese lugar abre transacción y baja a `anon`* | estático, pero sobre el invariante y no sobre el domicilio |
+| **M1** de `accept-s3.sh` | el mismo techo de siempre, escaneando el fuente **con comentarios y strings blanqueados** —reemplazados por espacios, para no mover un offset y que los números de línea sigan siendo los reales—, igual que `scan()` de `web-lint.mjs` | estático, con la ventana del tag bien delimitada |
+
+### Por qué es una ADR y no otra nota operativa
+
+Las notas operativas del 2026-08-28 registran **hechos**: cuatro formas de gate vacío, y V5 como
+quinta. Esta es distinta en dos cosas, y las dos la hacen vinculante:
+
+1. **Cambia lo que se le exige a un gate antes de aceptarlo**, no lo que se sabe sobre uno viejo. La
+   regla de método del board pregunta *¿se lo vio fallar?*; ésta pregunta **¿qué mide cuando pasa?**
+   Un gate puede haberse visto fallar por el motivo equivocado — M1 se vio fallar contra
+   `listings.ts` y ese rojo era falso.
+2. **Por primera vez la clase tiene un chequeo automático.** `scripts/guard-gates.sh` corre sobre
+   todo `scripts/*.sh` y falla si un gate invoca una palabra que **no resuelve a nada** —ni función
+   propia, ni de `_lib.sh` cuando lo importa, ni builtin, ni binario en PATH— y también si
+   **redefine** un helper que `_lib.sh` ya da (dos copias derivan). Es estático a propósito y no un
+   `command_not_found_handle`: ese gancho es de bash ≥ 4.0 y macOS ships 3.2.57, o sea que agarraría
+   en CI y sería inerte en la máquina donde más se corren los gates a mano.
+
+### Lo que esta ADR **no** puede cerrar automáticamente, y no se va a poder
+
+`guard-gates.sh` cierra **una sola** de las tres formas: la aserción que se evapora porque su helper
+no existe. Es la única que es mecánica. Las otras dos —**el nombre que promete un cuerpo** y **el
+escáner que reconstruye un tag fantasma**— no tienen gate y no lo van a tener: decidir si *"no purga
+la vidriera entera"* está **medido** o **grepeado** exige leer la aserción y entender qué promete.
+Se hace en review, contra esta ADR. Escribirlo importa porque la alternativa es que alguien lea
+`guard-gates.sh` en verde como si dijera *"los gates están bien"*, y dice mucho menos que eso.
+
+### Alternativas descartadas
+
+| alternativa | por qué no |
+|---|---|
+| **arreglar los tres greps sin escribir la regla** | los tres se arreglaban en veinte minutos; lo que se pierde es la pregunta. La familia ya había sumado cinco miembros en un día — sin regla escrita, el sexto se descubre igual de tarde |
+| **prohibir el `grep` en los gates** | mata la mitad útil. La **ausencia** de una llamada prohibida *sí* es una propiedad del fuente, y es como se afirman la mitad de las prohibiciones de `CLAUDE.md` §2. La regla no es *"no grepear"*, es *"no grepear un nombre cuando lo que se afirma es una conducta"* |
+| **hacer que `guard-gates.sh` también detecte "aserción con verbo + evidencia de grep"** | requeriría entender qué mide cada aserción. Un gate heurístico sobre esto produce falsos positivos, y un gate ruidoso es un gate que se aprende a ignorar — que es el modo de falla de M1 antes del arreglo, otra vez |
+| **dejar V5 midiendo el radio en vez de partirla en V5 + V9** | el radio necesita un browser, un espía de Postgres y un fixture de varias fichas: es e2e, y el arnés es de otra columna. Partirla deja cada mitad con la evidencia que su tipo admite, y el nombre de cada sección dice cuál es |
+
+### Verificación
+
+**Barrido serial del LEAD sobre el árbol commiteado (HEAD `68c0bd6`), 2026-08-28, los 21 chequeos en
+verde:**
+
+```
+accept-s1  PASS=39 FAIL=0
+accept-s2  PASS=21 FAIL=0
+accept-s3  PASS=59 FAIL=0
+accept-s4  PASS=38 FAIL=0
+accept-s6  PASS=22 FAIL=0
+```
+
+**La medición que S6 no tenía hasta ese día, emitida por el spec de `qa-agent` y consumida por V9:**
+
+```
+MEDIDO s6 radio · publicadas=4 · paginas=5 · rerender=2 · esperado=2
+              · sobrevivieron=[ficha-a,ficha-c,ficha-d] · frio=14
+```
+
+`scripts/guard-gates.sh` pasa sobre los **21** `scripts/*.sh` (`:48`, `glob` sin exclusión) y
+**el número que imprime es el de los archivos que efectivamente auditó**: sale del barrido
+(`AUDITADOS`, `:173`), no de un `ls`, y **su ausencia es FAIL** (`:184-187`) — *"sin `AUDITADOS` no
+se sabe sobre qué se está afirmando"*, que es la misma convención de V9 aplicada al gate de gates.
+Hoy dice *"los **21** scripts auditados resuelven todos los helpers que invocan"*: 21 en la lista,
+21 auditados. **`_lib.sh` entra a G1**, que es donde importa: la librería también puede invocar algo
+que no resuelve, y es el único archivo donde eso se propaga a los otros veinte de una vez.
+**G2 sí lo exceptúa, con el motivo escrito en el código** (`:167`): G2 caza al gate que **redefine**
+un helper que la librería ya da, y `_lib.sh` es la librería — sus definiciones son el original y no
+una copia que derive, así que auditarlo ahí reportaría las 12 como duplicadas de sí mismas. La
+excepción es de un barrido, no del archivo, y está declarada donde ocurre.
+
+Su polaridad `scripts/guard-gates.test.sh` se ve **encender y callar** con **nueve** fixtures: el bug
+real (`chk`/`have` prestados de otro gate), la redefinición de un helper de `_lib.sh`, una invocación
+rota **dentro** de `_lib.sh`, y los que tienen que quedarse callados —un gate con su propio `chk`
+legítimo, el árbol sano con `_lib.sh` adentro del barrido, G2 no acusando a `_lib.sh` de duplicar lo
+que él mismo define, un `;` adentro de un string, un cuerpo de heredoc—. Los dos tienen step en
+`ci.yml` (`:101` y `:105`) con `if: always()`, que en este repo significa **nivel 1** y nada más:
+`ci.yml` sigue sin haber corrido nunca (ver §Notas operativas).
+
+**Y la evidencia que estaba huérfana ahora sostiene algo.**
+`e2e/s6-senar-un-equipo-no-purga-la-vidriera-entera.spec.ts` estaba en disco, medido, con su módulo
+de veredicto testeado, y **ningún gate lo citaba**: borrar los dos archivos no ponía nada en rojo.
+`accept-s6.sh` los corre desde el 2026-08-28 (`SPEC_RADIO`, en la misma invocación que V8). La
+auditoría de referencia del veredicto es
+`tests/el-veredicto-del-radio-rechaza-la-purga-que-arrastra-fichas-ajenas.test.ts`, de **`qa-agent`**
+— otra columna que la del código auditado, como exige `CLAUDE.md` §4: si el gate citara el test del
+mismo writer, el writer estaría firmando su propio certificado.
+
+#### Dos honestidades que se dejan sin maquillar, porque son la mitad del valor de esta ADR
+
+1. **El arreglo de M1 no destapó ningún rojo del producto.** `listings.ts` ya no tiene `srcSet`, y el
+   árbol entero pasaba también con el escáner viejo. Se **sacó una mina**, no se arregló una falla
+   viva. Queda escrito porque la próxima lectura del diff podría contarlo como un bug encontrado, y
+   eso inflaría el valor de un arreglo que vale por lo que evita, no por lo que curó.
+2. **El primer fixture con el que el LEAD intentó probar M1 no reproducía el defecto.** La prosa del
+   fixture nombraba `sizes` **antes** que `srcSet`, así que la ventana del tag encontraba un `sizes`
+   y el escáner viejo pasaba sin encenderse. Lo detectó corriendo el escáner **viejo** contra el
+   fixture y viéndolo **pasar cuando tenía que fallar**. Regla de método que se suma a la del board
+   —*un gate que nunca se vio fallar no es un gate*—: **un fix cuya reproducción no se vio encender
+   no está probado.** El fixture es tan código como el gate y falla igual de silencioso; la
+   diferencia es que su falla se disfraza de "ya estaba arreglado".
+
+#### Y una tercera, sobre este documento — la ADR se aplicó a sí misma y se encontró en falta
+
+La primera redacción de la sección de arriba decía que el barrido son *"21 archivos, `_lib.sh`
+excluido porque es la librería y no un gate"*. **Eso afirmaba una conducta del gate leyendo su
+diseño, no su código** — exactamente la forma que esta ADR prohíbe, sólo que escrita en prosa en vez
+de en bash. Nadie la inventó: es plausible por analogía con el resto del repo, y así es como entran
+estas afirmaciones.
+
+**Y la primera corrección tampoco estaba medida.** Se propuso al revés —que `_lib.sh` **entra** al
+barrido y que los 21 lo incluyen— leyendo el `glob.glob('scripts/*.sh')` de `:48`, que efectivamente
+no excluye nada. Pero el `glob` arma la **lista**; quien decide el **alcance** son los dos `for` que saltean
+`_lib.sh` — **`:122` y `:158` del archivo tal como quedó en `f691daf`**, o sea el de esa mañana,
+antes del arreglo de T20. Las dos versiones leyeron **media** implementación y las dos sonaban
+bien. Lo que las separó no fue discutirlo: fue abrir el archivo y mirar esas dos líneas más el
+`glob` y la que imprime el número.
+
+> **Los cuatro números de este párrafo describen un archivo que ya no existe, y por eso se citan
+> contra un commit.** `guard-gates.sh` sigue vivo y sigue moviéndose: T20 mismo le corrió las
+> líneas —hoy `_lib.sh` **entra** a G1, así que el `for` de `:122` ni siquiera dice lo que decía—.
+> Un número de línea suelto es una afirmación sobre un archivo que cambia sin que nadie toque el
+> doc: **se vuelve falsa sin dejar diff**, que es la peor forma de drift porque no hay nada que
+> revisar. La forma que se usa acá, y que vale para todo `docs/**`: **si el número describe el
+> pasado, va anclado al commit** (`git show f691daf:scripts/guard-gates.sh`); si describe el
+> presente, va con fecha de verificación y se relee cuando el archivo se toca. Las citas vigentes
+> de esta misma ADR —`:48`, `:167`, `:173`, `:184-187`— son de la segunda clase y están releídas
+> el 2026-08-28.
+
+**La moraleja es la de la ADR, con el documento adentro del alcance:** *"pasa sobre los scripts del
+repo"* es una afirmación con verbo, y una afirmación con verbo se verifica contando, incluso cuando
+el que la escribe es un doc y no un `grep`. Una regla sobre no dar por buenas las afirmaciones sin
+medir vale bastante menos si el texto que la enuncia se exceptúa a sí mismo.
+
+**Desenlace, el mismo día.** Lo que cerró la discusión no fue acordar una redacción: fue **abrir el
+archivo y medir los dos polos por separado**. Medidos, no coincidían con ninguna de las dos
+versiones enteras — el diagnóstico valía para G1 y **no** para G2, y esa asimetría no la contenía
+ninguna de las dos prosas. El LEAD arregló `scripts/guard-gates.sh` (T20, cerrada): `_lib.sh` entró
+a G1, G2 lo sigue exceptuando **con el motivo escrito en el código**, y el número impreso pasó de un
+`ls` a `AUDITADOS`, con la ausencia de la línea contando como FAIL. La cláusula de §Verificación de
+arriba dice lo que el código hace hoy. Los dos párrafos de esta subsección **no** se corrigieron ni
+se suavizaron: describen dos afirmaciones que estuvieron mal, y ése —no la versión final— es el
+ejemplo. Lo barato acá fue el arreglo; lo caro fue las dos veces que se afirmó sin abrir el archivo.
+
+## ADR-021 — La aserción tiene la forma del **caller**, no la forma cómoda
+- **Estado:** aceptada · **Fecha:** 2026-08-28 · **Autor:** LEAD (la formuló al despachar el primer fallo de T21) · redactada por `docs-keeper`
+- **Implementó:** LEAD — `scripts/probes/el-grant-cubre-el-insert-de-drizzle.test.ts` (**G6**), cableado en `scripts/accept-fase2.sh` §**D5**. Del lado del código auditado, `db-agent` reescribió `packages/db/src/reservations-sweep-attempts.test.ts` y `packages/db/drizzle/0006_reservations_sweep_attempts.sql`.
+- **Relación con ADR-020:** hermanas, y **ninguna contiene a la otra**. Ver §"Por qué es ADR propia".
+
+### Contexto — un test que midió de verdad, contra alguien que no existe
+
+La migración `0006` agregó `reservations.sweep_attempts` (fila **T21**). Para que un seller no
+pudiera forjar el contador, revocó el `INSERT` de **tabla** a `authenticated` y lo re-otorgó
+**columna por columna** sobre las 11 que ya existían. `db-agent` lo acompañó con un test que probaba
+que *el panel podía seguir insertando*: contra Postgres real, con sesión de `authenticated`, con
+claim y todo. **Verde.**
+
+El panel estaba roto. Los dos specs e2e de S6 caen con `42501 permission denied for table
+reservations`, y **reservar un equipo desde el panel** —la mitad que S6 vende— dejó de funcionar.
+
+La grieta no está en el schema ni en el método de medición: está en **quién emite la sentencia**.
+
+| | lo que hacía el test | lo que hace el producto |
+|---|---|---|
+| quién arma el `INSERT` | una cadena escrita a mano en el propio test | `db.insert(reservations).values({…})` |
+| columnas nombradas | las 3 que el autor eligió | **todas las de la tabla**, con `default` en las que no le pasaste |
+| resultado | pasa | `42501`: Postgres exige privilegio sobre cada columna **nombrada**, aunque el valor sea `DEFAULT` |
+
+Ningún caller del producto emite la sentencia que el test ejecutó. El test **no era vacuo** —medía
+un efecto real, en la capa correcta, con la base real— y aun así su verde no decía nada sobre el
+producto: **medía a un sujeto inventado.**
+
+### Decisión
+
+**Cuando una aserción es sobre lo que le pasa a un caller, el sujeto de la medición tiene que ser
+el caller — no una reconstrucción a mano de lo que uno cree que el caller emite.** Operacionalizada
+en tres reglas, que son lo que hay que preguntarle a un test nuevo antes de creerle:
+
+1. **Si la aserción nombra a un actor del producto** —*el panel*, *la vidriera*, *el cron*, *el
+   seller*— **el input se construye con el mismo código que ese actor usa.** Acá eso es el query
+   builder de Drizzle (`toSQL()`), ejecutado tal cual con sus `$n`. La reescritura de `db-agent` lo
+   hace así y además **deriva la lista de columnas del schema**, con lo cual la próxima columna
+   entra sola en vez de desactualizar el test en silencio.
+2. **Si hay una lista escrita a mano en el test, esa lista es la hipótesis, no la evidencia.** Una
+   enumeración de columnas, de headers, de campos o de parámetros tecleada en el test es una
+   afirmación sobre lo que la librería hace — y esa afirmación se verifica **contra la librería**,
+   no se asume. Cuando la lista tiene que existir igual, se compara contra la derivada: el test
+   nuevo afirma `columnasNombradas(sql) === columnasDelSchema()` **y** que `sweep_attempts` está
+   adentro, que es la premisa entera del defecto.
+3. **La capa que se está probando se nombra en la aserción, porque el mismo síntoma tiene dos
+   causas.** `42501` tapa *"nunca tuviste el privilegio"* (`permission denied for table`) y *"la
+   policy miró la fila y la rechazó"* (`new row violates row-level security policy`). Confundirlas
+   es cómo un test verde convive con un panel roto: si la negativa del `INSERT` forjado dijera
+   `permission denied for table` en vez de `row-level security`, estaríamos de vuelta en el bug y
+   el test seguiría en verde. Se afirma el **mensaje**, no el código.
+
+**Corolario de diseño que sale de este caso y vale más allá del test** (está escrito adentro de la
+migración): **no se usa `GRANT` por columna para `INSERT`.** El `GRANT` sólo sabe decir *sí* o *no*;
+el candado *"esta columna se inserta sólo en cero"* lo sabe expresar la `WITH CHECK` de la policy,
+que es la capa que mira el valor. Para `UPDATE` el `GRANT` por columna **sí** sirve, porque el
+`.set()` de Drizzle nombra únicamente lo que estás seteando. Las dos capas se evalúan las dos
+(`CLAUDE.md` §3) y cada una va donde la otra no llega.
+
+### Por qué es ADR propia y no una sección de ADR-020
+
+Porque **las cuatro reglas de ADR-020 dan verde a este defecto.** ADR-020 separa *aserción con
+verbo* de *evidencia por presencia de un identificador*: prohíbe grepear un nombre donde hay que
+contar un efecto. El test de T21 **contaba un efecto**, contra Postgres real, y una revisión que
+aplicara ADR-020 al pie de la letra lo habría aprobado. Son dos ejes distintos:
+
+| | ADR-020 | ADR-021 |
+|---|---|---|
+| qué falla | la **evidencia**: se afirma una conducta y se ejecuta un `grep` | el **sujeto**: se ejecuta de verdad, contra alguien que no existe |
+| cómo se ve el gate roto | verde sin haber medido | verde habiendo medido lo que no era |
+| la pregunta que lo caza | *cuando pasa, ¿qué midió?* | *cuando pasa, **¿quién** emitió eso?* |
+
+Meterlo adentro de ADR-020 obligaría a ensanchar su decisión hasta que deje de cortar —"un gate
+tiene que estar bien hecho" no es una regla— y a tocar una sección que el LEAD dejó explícitamente
+congelada como ejemplo. Y hay una razón práctica: las ADRs se citan por número desde los gates y
+desde el board (T25 ya cita ADR-020 para *"no busca `sweep_attempts` en ningún archivo"*). Un
+número propio le da a esta regla un lugar que citar cuando el reviewer de turno pregunte quién
+emite la sentencia.
+
+### Verificación
+
+- **El gate barato existe y es del LEAD:** **G6**, `scripts/probes/el-grant-cubre-el-insert-de-drizzle.test.ts`,
+  sección **D5** de `scripts/accept-fase2.sh` (`ci.yml:137`, el único job con Postgres migrado —
+  **nivel 1**, ver el recuadro rojo de `TEST_MATRIX.md`). Recorre las tablas de negocio derivadas de
+  `information_schema` (las que tienen `tenant_id`) y exige: si `authenticated` tiene **algún**
+  privilegio de `INSERT` por columna, lo tiene sobre **todas**. Cero privilegios = fuera de alcance,
+  porque esa tabla la escribe `service_role` y es legítimo.
+- **No vive adentro de `guard-grants.sh`, y es a propósito.** Ese guard declara en su encabezado ser
+  100% estático para poder correr sin base en el pre-commit; esta afirmación **sólo** se puede hacer
+  contra el catálogo de una base migrada. `guard-grants.sh` **dijo PASS con el panel roto** y eso no
+  es un descuido suyo: cuenta que el `GRANT` **exista**, y un `GRANT` parcial existe. Romperle el
+  contrato para meterle esta regla habría sido peor que la regla.
+- **Probado en las dos polaridades sobre el censo real**, no sobre el predicado (LEAD, 2026-08-28):
+  tabla sembrada con `tenant_id` y `GRANT` de `INSERT` sobre 2 de 3 columnas → **rojo, nombrando
+  tabla y columna faltante**; borrada → **verde**; base verificada limpia después. La probe además
+  lleva adentro un control de polaridad que corre **siempre**, sobre una tabla creada dentro de una
+  transacción que se rollea, para que *"no encontré tablas rotas"* y *"no sé buscar tablas rotas"*
+  dejen de ser la misma salida verde.
+- **La migración se defiende sola:** el bloque `DO` de `0006` aborta —y por lo tanto **no se
+  registra**— si el reparto de privilegios no es el declarado, incluida la mitad que costó el fallo
+  (`authenticated` tiene `INSERT` a nivel de **tabla**; el contador lo ata la policy).
+- **Lo que esta ADR no cierra:** el fallo de T21 lo agarró **e2e**, el gate más caro y más lento del
+  repo. G6 pone la misma afirmación en un lugar barato, pero la clase general —*una aserción cuyo
+  sujeto no es el caller*— no tiene guard mecánico y probablemente no pueda tenerlo. Se sostiene en
+  revisión, con la pregunta de la tabla de arriba.
+
+### Alternativa descartada
+
+**Que el test del paquete siguiera escribiendo el `INSERT` a mano, "pero con todas las columnas".**
+Arregla este caso y deja el mecanismo intacto: la lista tecleada envejece con la próxima columna y
+vuelve a divergir del caller **en silencio**, que es exactamente lo que pasó. La lista se deriva del
+schema o no se escribe.
+
+---
+
 ## Notas operativas — hallazgos que no son ADR
 
 > **Qué es:** hechos verificados que cambian cómo se escribe o se lee algo del repo, pero que **no
@@ -1059,6 +1371,13 @@ produce justamente el tercer call site que la contradice.
 > **Cuándo se actualiza:** cuando aparece un hallazgo de esta clase. Lo escribe `docs-keeper`.
 
 ### 2026-08-28 · Un gate puede verificar la invocación correcta y aun así afirmar algo falso — quinto caso
+
+> **CERRADO el mismo día, y dejó de ser sólo un hallazgo: es la primera evidencia de ADR-020.** V5
+> quedó reducida a lo único estático que sí puede afirmar y el radio se **cuenta** en la **V9** nueva
+> de `scripts/accept-s6.sh`. Esta nota se conserva entera porque es el caso que hizo visible la
+> familia; **la regla vinculante que salió de él vive en ADR-020**, junto con los otros dos miembros
+> (A2 de `accept-s1.sh`, M1 de `accept-s3.sh`) y con el gate que cierra la parte mecánica de la
+> clase, `scripts/guard-gates.sh`.
 
 **Hallazgo verificado, no abre decisión.** Este repo ya tenía escritas cuatro formas de gate vacío:
 la regla que no puede disparar nunca; el gate satisfecho por un `import` (*"verificar la invocación,
@@ -1089,7 +1408,10 @@ refactor rompe sin renombrar nada.
 *"no"* —*"no la vidriera entera"*, *"no el catálogo"*, *"sin PII"*— la evidencia **no puede ser un
 nombre**, porque un nombre no tiene polaridad. Tiene que ser una medición del efecto, y del lado
 donde el "no" se rompería. Acá esa medición existe hoy (`e2e/s6-senar-un-equipo-no-purga-la-vidriera-entera.spec.ts`)
-y **la V5 no la cita**: la fila queda anotada en §S6.2 y es del LEAD por §4.
+y **la V5 no la citaba**: era evidencia escrita que no sostenía nada. **Corregido el 2026-08-28**:
+`accept-s6.sh` corre ese spec (`SPEC_RADIO`) y **V9 lee el número de la corrida**
+(`rerender=2 · esperado=2`, con `paginas=5` y `frio=14` como controles anti-vacuidad). Detalle en
+ADR-020 §Verificación y en `SLICE_BOARD.md` §S6.2.
 
 ### 2026-08-28 · Un gate tiene dos niveles, igual que una regla del WAF — y hasta hoy nadie los separaba
 
@@ -1105,9 +1427,11 @@ $ git rev-list --count HEAD
 
 `origin` está configurado (`github.com/Gigisanta/iStock-software.git`), `origin/main` figura `gone`,
 y **`.github/workflows/ci.yml` no se ejecutó ni una vez en 89 commits.** _Re-medido el 2026-08-28
-después de S6.2: **103 commits, `git ls-remote --heads origin` sigue vacío.** El snapshot de arriba
-se deja como estaba porque es la corrida que motivó esta nota; lo que cambió es sólo el
-denominador._ Por lo tanto toda frase de
+sobre `68c0bd6`, después del barrido serial de los cinco `accept-*`: **110 commits,
+`git ls-remote --heads origin` sigue vacío (exit 0, sin salida).** El snapshot de arriba se deja como
+estaba porque es la corrida que motivó esta nota; lo que cambió es sólo el denominador — **21 commits
+más de trabajo apoyados en gates que ningún runner limpio ejecutó**, incluidos los tres arreglos de
+ADR-020 y `guard-gates.sh`, que entró a `ci.yml:101` sin haber corrido ahí nunca._ Por lo tanto toda frase de
 la forma *"corre en CI"* / *"corre en cada push"* en este repo significa, literalmente, **"`ci.yml`
 declara el step"**.
 
