@@ -26,7 +26,13 @@ describe('LEAD · el seed emite masters con la forma que packages/media exige', 
   });
 
   it('la key emitida matchea el MASTER_KEY_RE real, no una copia', () => {
-    const re = new RegExp(RE_LINE![1].slice(1, -1), 'u');
+    // El `!` de antes tapaba dos cosas distintas: que la linea no matcheara y que el grupo 1 no
+    // existiera. Con `noUncheckedIndexedAccess` lo segundo es un error de tipo, y `tsc` no llegaba
+    // hasta aca (ver `G5` de `guard-gates.sh`). Un `undefined` silencioso habria construido un
+    // `RegExp` sobre "undefined" y la probe habria medido otra cosa.
+    const crudo = RE_LINE?.[1];
+    if (crudo === undefined) throw new Error('no se pudo extraer MASTER_KEY_RE de la fuente');
+    const re = new RegExp(crudo.slice(1, -1), 'u');
     const key = seedMasterKey({
       tenantId: SEED_TENANT_ID,
       listingId: LISTING_ID,

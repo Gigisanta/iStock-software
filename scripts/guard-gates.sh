@@ -406,6 +406,96 @@ else
   echo "$SALIDA4" | grep -v '^CENSADOS' | sed 's/^/        /'
 fi
 
+sec "G5 · toda probe de scripts/probes/ la corre alguien, y tsc la alcanza"
+
+# ── Por que existe, LEAD 2026-08-28 (`T31` del board) ───────────────────────────────────────────
+# `scripts/probes/**` son los tests mas caros del repo: los que miden contra Postgres de verdad,
+# los que sostienen la linea MEDIDO de cada `accept-*.sh`. Y no los alcanza NINGUNA de las dos
+# redes que el repo cree tener. `pnpm typecheck` y `pnpm test` son `pnpm -r` sobre los workspaces
+# de `pnpm-workspace.yaml` —`apps/*`, `packages/*`, `tests`, `e2e`— y `scripts/` no esta en
+# ninguno. O sea: una probe puede quedar sin ejecutor, o dejar de compilar, y el veredicto entero
+# sigue verde.
+#
+# G5 son dos preguntas distintas y por eso son dos mitades:
+#
+# a · **¿la corre alguien?** Es G4 aplicado a las probes: alli el censo es de gates y la respuesta
+#     vive en `ci.yml`; aca el censo es de probes y la respuesta vive en los `accept-*.sh`. Hoy
+#     las ocho estan nombradas — lo medi antes de escribir esto, cero huerfanas — asi que este
+#     medio gate nace verde y cubre una clase LATENTE. Se escribe igual, por el mismo motivo que
+#     G4: las cuatro instancias de "un gate quedo afuera de CI" tambien fueron latentes hasta que
+#     dejaron de serlo, y las cuatro las encontro un humano mirando.
+#
+# b · **¿compila?** Esta NO nacio verde, y es la mitad que justifica la fecha. La primera corrida
+#     de `tsc` sobre `scripts/tsconfig.json` encontro CUATRO errores reales en tres probes, uno de
+#     ellos en la probe de S7 escrita ese mismo dia: `TS2367`, una comparacion que el compilador
+#     puede probar imposible. Era la segunda mitad de la medicion `costo_del_form_ignorado`, o sea
+#     una asercion que no podia fallar adentro del campo que afirma que el costo del form se
+#     ignora. Tirando de ese hilo aparecio lo de fondo: el valor contra el que la probe decia
+#     comparar NI SIQUIERA era el que el form mandaba. Una probe que no compila es una probe que
+#     miente en silencio, y esa clase estaba entera afuera del veredicto.
+#
+# La exencion se declara, no se omite —`probe-huerfana: <motivo>`, 30+ caracteres, en las primeras
+# 40 lineas— y es el mismo idioma que `ci-exento` de G4 y `web-lint:sin-tenant`.
+
+PROBES_DIR="$RAIZ/scripts/probes"
+CEN5=0
+HALL5=0
+if [ -d "$PROBES_DIR" ]; then
+  for probe in "$PROBES_DIR"/*.test.ts; do
+    [ -e "$probe" ] || continue
+    CEN5=$((CEN5 + 1))
+    base=$(basename "$probe")
+    # Quien puede correrla: un `accept-*.sh`, un `guard-*.sh`, o `ci.yml` directamente. El filtro
+    # de comentarios es la leccion de la segunda mitad de G4 y de `guard-effects` en S7: un gate
+    # que lee texto contesta "¿esta escrito?" cuando la pregunta es "¿se ejecuta?".
+    corredores=$(grep -l "$base" "$RAIZ"/scripts/accept-*.sh "$RAIZ"/scripts/guard-*.sh \
+                   "$RAIZ/.github/workflows/ci.yml" 2>/dev/null | while IFS= read -r f; do
+                     grep -vE '^[[:space:]]*#' "$f" | grep -q "$base" && echo "$f"
+                   done)
+    if [ -n "$corredores" ]; then
+      ok "$base la corre $(printf '%s' "$corredores" | tr '\n' ' ' | sed 's/ $//')"
+      continue
+    fi
+    motivo=$(head -40 "$probe" | sed -nE 's/.*probe-huerfana:[[:space:]]*(.*)/\1/p' | head -1)
+    largo=${#motivo}
+    if [ "$largo" -ge 30 ]; then
+      ok "$base no la corre nadie, y esta declarado"
+      inf "$motivo"
+    elif [ -n "$motivo" ]; then
+      no "$base declara \`probe-huerfana\` con un motivo de $largo caracteres: hacen falta 30+. Un motivo de una palabra es la exencion invisible con otro nombre"
+      HALL5=$((HALL5 + 1))
+    else
+      no "$base no la nombra ningun accept-*.sh ni guard-*.sh ni ci.yml: es una probe huerfana. \`pnpm test\` NO la alcanza (scripts/ no es workspace), asi que puede estar rota desde hace meses y el veredicto sigue verde. Dale un corredor, o escribile \`probe-huerfana: <motivo>\` de 30+ caracteres"
+      HALL5=$((HALL5 + 1))
+    fi
+  done
+fi
+
+if [ "$CEN5" -eq 0 ]; then
+  no "cero probes censadas en $PROBES_DIR: o el censo se rompio o el directorio desaparecio. Ausencia de medicion es FAIL, nunca PASS"
+elif [ "$HALL5" -eq 0 ]; then
+  ok "las $CEN5 probes de scripts/probes/ tienen quien las corra"
+fi
+
+# ── b · que `tsc` las alcance ───────────────────────────────────────────────────────────────────
+# Corre solo contra el arbol REAL. Bajo `GATES_ROOT` no puede correr y la razon no es pereza:
+# `tsc` necesita `tsconfig.base.json`, `node_modules` y los paths del monorepo, o sea todo lo que
+# un arbol de fixtures sintetico justamente no tiene. Un chequeo que ahi fallara siempre pondria
+# rojo cada fixture de G1–G4 por un motivo ajeno, que es el defecto que este arnes vino a evitar.
+# La mitad `a` si respeta la escotilla y es la que el arnes ejerce.
+if [ "$RAIZ" = "." ]; then
+  if [ ! -f scripts/tsconfig.json ]; then
+    no "falta scripts/tsconfig.json: sin el, ningun \`tsc\` mira las probes y una que no compile pasa desapercibida. \`pnpm typecheck\` no las cubre — \`scripts/\` no es un workspace"
+  elif SALIDA5=$(./node_modules/.bin/tsc -p scripts/tsconfig.json --noEmit 2>&1); then
+    ok "las $CEN5 probes compilan bajo scripts/tsconfig.json"
+  else
+    no "las probes no compilan. Una probe que no compila no es un test que falla: es un test que mide otra cosa y lo dice en verde"
+    printf '%s\n' "$SALIDA5" | sed 's/^/        /' | head -8
+  fi
+else
+  inf "G5b (tsc) no corre bajo GATES_ROOT: pide tsconfig.base.json, node_modules y los paths del monorepo"
+fi
+
 echo
 if [ "$fail" -eq 0 ]; then printf '\033[32mGUARD-GATES: PASS\033[0m\n'; else printf '\033[31mGUARD-GATES: FAIL\033[0m\n'; fi
 exit "$fail"

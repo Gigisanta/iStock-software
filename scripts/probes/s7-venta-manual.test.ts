@@ -121,6 +121,16 @@ const MARGEN = '120.00';
 const COSTO_FALSO = '1.00';
 const TC = '1487.50';
 
+// El fixture tiene que discriminar, y eso es una propiedad de los literales, no de una fila. Si
+// alguien iguala `COSTO` y `COSTO_FALSO` editando uno de los dos, el caso A sale verde sin haber
+// medido nada: "el costo salió de la columna y no del form" se cumple trivialmente cuando los dos
+// números son el mismo. Se afirma acá, una vez. El `readonly string[]` es para que la comparación
+// se haga en runtime: con los tipos literales, `tsc` la considera imposible y no compila.
+const COSTOS_DEL_FIXTURE: readonly string[] = [COSTO, COSTO_FALSO];
+if (new Set(COSTOS_DEL_FIXTURE).size !== COSTOS_DEL_FIXTURE.length) {
+  throw new Error('COSTO y COSTO_FALSO son el mismo valor: el caso A dejó de discriminar');
+}
+
 let tenantA = '';
 let tenantSinTc = '';
 
@@ -182,7 +192,7 @@ function formDeVenta(listingId: string, conCostoFalso: boolean): FormData {
   if (conCostoFalso) {
     // Los cuatro nombres plausibles. Si alguno se leyera, `sales.cost_usd` dejaría de ser el de
     // `listings` y `margin_usd` —que Postgres deriva del costo— quedaría escrito desde el request.
-    for (const k of ['costUsd', 'cost_usd', 'cost', 'costoUsd']) fd.set(k, '1');
+    for (const k of ['costUsd', 'cost_usd', 'cost', 'costoUsd']) fd.set(k, COSTO_FALSO);
   }
   return fd;
 }
@@ -264,8 +274,20 @@ describe('S7 · la venta manual escribe una fila y congela lo que tiene que cong
     if (venta === undefined) throw new Error('sin fila de venta');
 
     // D2 · el costo salió de la columna, no del request.
+    //
+    // El orden de las dos mitades NO es estilo. Escritas al revés —`=== COSTO` primero— `tsc` las
+    // declara imposibles (TS2367): después de comparar contra un literal el tipo queda angostado a
+    // ese literal, así que la segunda comparación es una tautología y la medición chequea una sola
+    // cosa mientras aparenta chequear dos. Así estaba, y nadie lo vio porque `scripts/probes/**`
+    // no lo alcanzaba ningún `tsc`. Es el hallazgo que abrió `G5` de `guard-gates.sh`.
+    //
+    // Tirando de ese hilo apareció lo de fondo, que era peor que el orden: `COSTO_FALSO` no lo
+    // usaba nadie. El form inyectaba un `'1'` escrito a mano, o sea que el valor contra el que la
+    // probe decía comparar ni siquiera era el que el form mandaba. Ahora el fixture y la
+    // aserción son el mismo literal, y son distintos entre sí por construcción (ver el guard de
+    // arriba): si alguien los iguala editando uno, la probe lo dice en vez de salir verde.
     medido.costo_del_form_ignorado =
-      venta.cost_usd === COSTO && venta.cost_usd !== COSTO_FALSO ? 1 : 0;
+      venta.cost_usd !== COSTO_FALSO && venta.cost_usd === COSTO ? 1 : 0;
     expect(venta.cost_usd).toBe(COSTO);
     expect(venta.price_usd).toBe(PRECIO);
 

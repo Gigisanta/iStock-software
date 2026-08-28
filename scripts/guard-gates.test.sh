@@ -27,6 +27,18 @@ mkdir -p "$T/.github/workflows"
 printf 'jobs:\n  x:\n    steps:\n      - run: ./scripts/guard-baseline.sh\n' > "$T/.github/workflows/ci.yml"
 printf '#!/usr/bin/env bash\necho baseline\n' > "$T/scripts/guard-baseline.sh"
 
+# G5 censa `scripts/probes/`. Mismo razonamiento que las dos veces de arriba: sin probes el censo
+# mide cero, reporta FAIL —bien— y pondria rojo cada fixture de G1..G4 por un motivo ajeno. El
+# arbol arranca con UNA probe sana.
+#
+# La probe del baseline se declara EXENTA en vez de darle un corredor, y eso es a proposito: seis
+# fixtures de G4 reescriben `ci.yml` entero, asi que un corredor anclado ahi se evaporaria en la
+# mitad de los casos y G5 encenderia por un motivo que no es el que ese fixture prueba. La
+# exencion no depende de nada que los otros casos toquen.
+mkdir -p "$T/scripts/probes"
+printf '// probe-huerfana: la probe del baseline del arnes, no la corre nadie a proposito\n' \
+  > "$T/scripts/probes/baseline.test.ts"
+
 tfail=0
 caso() { # caso <que> <esperado:PASS|FAIL>
   local que="$1" esperado="$2" visto salida
@@ -180,7 +192,44 @@ caso "el mismo nombre, citado: parsea y el gate se calla" PASS
 # dejado el censo verde sobre el mismo defecto que la historia narra.
 printf 'jobs:\n  x:\n    steps:\n      # ./scripts/guard-baseline.sh quedo afuera a proposito\n      - run: echo nada\n' > "$T/.github/workflows/ci.yml"
 caso "ATRAPA el gate nombrado SOLO en un comentario del workflow" FAIL
+
+# El ultimo fixture de G4 deja `ci.yml` SIN nombrar a `guard-baseline.sh` —es justo lo que ese
+# caso prueba—, asi que sin esta linea cada caso de G5 heredaria un G4 rojo y mediria la
+# polaridad equivocada: el arnes diria MAL sobre G5 por un defecto de G4 que era intencional.
 printf 'jobs:\n  x:\n    steps:\n      - run: ./scripts/guard-baseline.sh\n' > "$T/.github/workflows/ci.yml"
+
+printf '\n\033[1m── G5 · el censo de probes ──\033[0m\n'
+
+# La huerfana pura: existe, no la corre nadie, no dice por que. Es la clase entera.
+printf 'import { it } from "vitest";\n' > "$T/scripts/probes/huerfana.test.ts"
+caso "ATRAPA la probe que no corre nadie y no declara por que" FAIL
+rm -f "$T/scripts/probes/huerfana.test.ts"
+
+# La exencion de una palabra. Un motivo corto es la exencion invisible con otro nombre, y el gate
+# tiene que tratarla como lo que es: peor que no declarar nada, porque encima aparenta.
+printf '// probe-huerfana: porque si\n' > "$T/scripts/probes/corta.test.ts"
+caso "ATRAPA la exencion con motivo de menos de 30 caracteres" FAIL
+rm -f "$T/scripts/probes/corta.test.ts"
+
+# Con corredor real se calla. Es la mitad que evita el gate que grita siempre.
+printf 'import { it } from "vitest";\n' > "$T/scripts/probes/con-duenio.test.ts"
+printf '#!/usr/bin/env bash\necho baseline\npnpm vitest run scripts/probes/con-duenio.test.ts\n' \
+  > "$T/scripts/guard-baseline.sh"
+caso "la probe nombrada por un gate real: se calla" PASS
+
+# Y el mismo nombre, degradado a comentario. Es el defecto que G4 y `guard-effects` ya pagaron dos
+# veces: un gate que lee texto contesta "¿esta escrito?" cuando la pregunta es "¿se ejecuta?".
+printf '#!/usr/bin/env bash\necho baseline\n# pnpm vitest run scripts/probes/con-duenio.test.ts\n' \
+  > "$T/scripts/guard-baseline.sh"
+caso "ATRAPA la probe nombrada SOLO en un comentario de un gate" FAIL
+printf '#!/usr/bin/env bash\necho baseline\n' > "$T/scripts/guard-baseline.sh"
+rm -f "$T/scripts/probes/con-duenio.test.ts"
+
+# Cero probes no es "cero problemas": es que el censo dejo de medir.
+mv "$T/scripts/probes/baseline.test.ts" "$T/baseline.guardado"
+caso "ATRAPA el arbol sin ninguna probe: ausencia de medicion es FAIL" FAIL
+mv "$T/baseline.guardado" "$T/scripts/probes/baseline.test.ts"
+caso "restaurada la probe del baseline, vuelve a callarse" PASS
 
 if [ "$tfail" = "0" ]; then printf '\n\033[1;32mguard-gates.sh: OK (se vio encender y se vio callar)\033[0m\n'
 else printf '\n\033[1;31mguard-gates.sh: ROTO\033[0m\n'; fi

@@ -46,7 +46,12 @@ const ROL = 'authenticated';
 type Privilegio = { columna: string; puede: boolean };
 
 /** La conexion o una transaccion: las dos saben `unsafe`, y el control necesita la segunda. */
-type Ejecutor = { unsafe: (q: string, p?: unknown[]) => Promise<unknown> };
+// `p?: string[]` y no `unknown[]`, y no es cosmetico: `unknown[]` hace que ni `Sql` ni
+// `TransactionSql` del driver sean asignables a `Ejecutor` (el parametro es contravariante y el
+// driver acepta un tipo mas angosto), asi que las dos llamadas de abajo eran errores de tipo. No
+// se veian porque `scripts/probes/**` no lo alcanzaba ningun `tsc` hasta `G5`. Los parametros que
+// esta probe manda son todos strings.
+type Ejecutor = { unsafe: (q: string, p?: string[]) => Promise<unknown> };
 
 /**
  * El predicado, en un solo lugar, para que el censo y el control de polaridad midan
