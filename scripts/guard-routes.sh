@@ -58,6 +58,19 @@ const ESPERADO = {
   "/s/[slug]":              "blocking/empty",
   "/s/not-a-tenant":        "static/complete",
 
+  // Ficha pública (S3). Mismo par que la grilla, y por el mismo motivo: la ruta con segmento
+  // dinámico es ISR clásico (`blocking/empty` = se computa en el miss y después sale del CDN), y la
+  // fila semilla se hornea en un archivo. Las tres filas se agregan el 2026-08-28, tarde: entraron
+  // con el commit de S3 y el guard quedó en rojo tres commits porque NO ESTÁ EN CI y nadie lo corrió.
+  // Ese es el hallazgo, no las rutas.
+  //
+  // `blocking` y no `resuming` es lo correcto acá y conviene dejarlo escrito: un shell de PPR para
+  // una ficha significa mandar HTML antes de saber si el equipo existe, y entonces el 404 de un slug
+  // inventado sale con `200` y cuerpo vacío. Es el mismo problema que ADR-011 resolvió en la raíz.
+  "/s/[slug]/p/[listing]":              "blocking/empty",
+  "/s/not-a-tenant/p/[listing]":        "blocking/empty",
+  "/s/not-a-tenant/p/not-a-listing":    "static/complete",
+
   // Panel autenticado. NINGUNA puede ser `static`: ver el docblock.
   "/app":                   "resuming/initial",
   "/app/ajustes":           "resuming/initial",

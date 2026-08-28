@@ -9,8 +9,7 @@
     "start": "next start",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "node ./scripts/web-lint.mjs",
-    "test": "vitest run --passWithNoTests",
-    "e2e": "playwright test"
+    "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
     "@istock/db": "workspace:*",

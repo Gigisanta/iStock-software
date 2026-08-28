@@ -136,20 +136,36 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: ./scripts/pg-local.sh && pnpm --filter @istock/db migrate && pnpm --filter @istock/db seed
 
+      # `@istock/e2e`, NO `@istock/web`. La suite vive en `e2e/`, con su `playwright.config.ts` y su
+      # devDependency de `@playwright/test`. `apps/web` no tiene ninguna de las dos cosas: hasta el
+      # 2026-08-28 estas dos lineas decian `@istock/web` y el resultado era
+      # `Total: 0 tests in 0 files`, exit 0. CI reportaba e2e verde sin haber corrido un solo test.
       - name: playwright
-        run: pnpm --filter @istock/web exec playwright install --with-deps chromium
+        run: pnpm --filter @istock/e2e exec playwright install --with-deps chromium
 
       # Los e2e que necesitan un secret humano (R2 real, MP sandbox, LLM) se marcan skip CON MOTIVO
       # en el propio test. Un e2e verde por no haber corrido es peor que un e2e rojo.
       - name: e2e
-        run: pnpm --filter @istock/web e2e
+        run: pnpm --filter @istock/e2e e2e
         env:
           MEDIA_DRIVER: local
           BILLING_DRIVER: mock
 
+      # El `.next` lo dejo el `webServer` del config de Playwright (buildea antes de levantar).
+      # Este guard no buildea: lee ese manifest. Es el unico job que puede correrlo.
+      - name: modo de servido de las rutas
+        if: always()
+        run: ./scripts/guard-routes.sh
+
+      # `test-results/`, no `playwright-report/`: el config no tiene reporter `html`, tiene
+      # `list` + el censo de specs. Lo unico que queda en disco tras una falla son los traces de
+      # `trace: 'retain-on-failure'`, y van a `e2e/test-results/`. La ruta anterior
+      # (`apps/web/playwright-report/`) no existio nunca: el paso subia cero bytes y avisaba en un
+      # warning que nadie lee.
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
-          name: playwright-report
-          path: apps/web/playwright-report/
+          name: playwright-traces
+          path: e2e/test-results/
+          if-no-files-found: ignore
           retention-days: 7
