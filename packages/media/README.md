@@ -27,6 +27,39 @@ const { releasedKeys } = await unlinkListingPhotos({ tenantId, listingId }, { st
 
 Nadie fuera de este paquete conoce el bucket, la base del CDN ni el formato de las keys.
 
+### `@istock/media/incidents` — el subpath liviano del bootstrap
+
+El paquete tiene **dos** entrypoints, y el segundo existe por un motivo de costo, no de estilo:
+
+```ts
+// bootstrap del server (instrumentation.ts): NO carga sharp.
+import { setMediaIncidentReporter, isVariant } from '@istock/media/incidents';
+```
+
+`apps/web` enchufa el canal de incidentes en `register()`, o sea antes de la primera request y en
+**toda** instancia — también en las que nunca van a servir una foto. Llegar a
+`setMediaIncidentReporter` por el barrel costaba `./upload → ./pipeline → sharp`: el binario nativo
+de libvips más `zod`. Medido en `src/subpath-isolation.test.ts`, que corre en cada `pnpm test`:
+
+| entrypoint | módulos resueltos | objetos nativos | import en frío |
+|---|---|---|---|
+| `@istock/media` | 265 | 171 (incluye `sharp-*.node` + `libvips-cpp.dylib`) | ~150 ms |
+| `@istock/media/incidents` | **3** | **0** | ~7–20 ms |
+
+Exporta `setMediaIncidentReporter` · `resetMediaIncidentReporter` · `reportMediaIncident` ·
+`VARIANTS` · `isVariant` y los tipos `MediaIncident` / `MediaIncidentCode` /
+`MediaIncidentReporter` / `Variant`. Nada más: ni keys, ni URLs, ni storage, ni env.
+
+El aislamiento se **mide** de dos formas independientes y cada una viene con su control positivo
+sobre el barrel — un medidor de arrastre que se rompe deja de ver `sharp` y pasa en verde, que es
+el modo de falla que ADR-020 persigue. Ver el docblock del test. La regla derivada, para el que
+edite este paquete: **`incidents-entry.ts`, `incidents.ts` y `types.ts` no pueden importar nada
+fuera de sí mismos.** Un `import` nuevo en cualquiera de los tres pone el test en rojo.
+
+Dato que corrige una creencia previa: **`@aws-sdk/client-s3` nunca estuvo en el camino del
+bootstrap.** `storage/r2.ts` lo carga con `await import()` dentro de cada método desde antes de
+esta slice, así que el barrel tampoco lo traía. El costo eager del barrel es `sharp` + `zod`.
+
 ### Por qué `variantUrl(photo, variant)` y no `variantUrl(key, variant)`
 
 Con la key opaca de ADR-006 **no se puede derivar** la key de una variante desde otra. Esa

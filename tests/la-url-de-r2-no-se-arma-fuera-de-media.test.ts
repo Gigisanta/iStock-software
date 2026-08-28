@@ -44,6 +44,11 @@
  * que poder setear `NEXT_PUBLIC_MEDIA_BASE_URL` para que el server bajo prueba sepa a qué host
  * servir. Confundir "config del banco de pruebas" con "producto" haría el guard inaplicable.
  *
+ * ## Qué NO es una infracción
+ * Un subpath que `packages/media/package.json` **declara** en su `exports` es superficie pública,
+ * decidida por el owner del paquete, igual que `.`. La lista de permitidos se deriva de ahí y no se
+ * escribe acá; el detalle y sus dos modos de falla están sobre `deepImportPattern`.
+ *
  * `qa-agent` no arregla el código bajo test. Si esto se pone rojo, el defecto es de la impl.
  */
 
@@ -106,6 +111,140 @@ function isExempt(relPath: string): boolean {
   return EXEMPT.some((e) => e.path === relPath);
 }
 
+// ── la superficie pública de `@istock/media`, derivada y no escrita a mano ────────────────────
+
+/**
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *  Qué es un import profundo, y qué NO lo es
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * Hasta el 2026-08-28 este archivo trataba **cualquier** `@istock/media/<algo>` como infracción.
+ * Era correcto mientras el paquete tuvo un solo entrypoint, y dejó de serlo el día que
+ * `media-agent` declaró `"./incidents"` en el `exports` de `packages/media/package.json`: un
+ * entrypoint propio (`src/incidents-entry.ts`), de superficie elegida a mano, que arrastra 3
+ * módulos y **cero** objetos nativos contra los 265 módulos y el `sharp` + `libvips` del barrel.
+ * Existe para que el cableado de observabilidad no cargue `sharp` durante `register()`. Con la
+ * regla vieja, el import correcto ponía el guard en rojo: el gate le habría cobrado peaje a la
+ * corrección, que es la forma más rápida de que alguien lo apague.
+ *
+ * La distinción que hace falta no es "con barra / sin barra", es **quién decidió el path**:
+ *
+ * - `@istock/media/incidents` → el `package.json` del paquete lo declara. Es superficie pública,
+ *   decidida por el owner, igual que `.`. **Permitido.**
+ * - `@istock/media/src/storage/r2`, `../../packages/media/src/keys` → nadie lo declaró; se alcanza
+ *   el interior por la forma del filesystem. **Prohibido**, y es de lo que la regla vino a
+ *   defender: la key de R2 se arma en un solo lugar y ese lugar tiene una puerta.
+ *
+ * Por eso los subpaths permitidos **se derivan del `exports`** en vez de escribirse acá. Una lista
+ * a mano se desactualiza con el próximo subpath y devuelve el problema a esta línea; derivada, la
+ * regla dice literalmente *"lo que el owner declaró está bien, lo demás no"*.
+ *
+ * **Dos cosas que la derivación NO delega**, porque si no el gate terminaría siendo del mismo
+ * writer que el código que audita (`CLAUDE.md` §4):
+ *
+ * 1. Si el `exports` no se puede leer, parsear, o no es un objeto, la lista de permitidos queda
+ *    **vacía**, y con la lista vacía `deepImportPattern` rechaza *todo* subpath. O sea: el modo de
+ *    falla de la derivación es **más estricto**, nunca más permisivo. Ausencia de medición no es
+ *    PASS — y además hay un test dedicado que se pone rojo con el motivo.
+ * 2. Un subpath declarado que apunta al **interior** (`./src/…`, `./dist/…`) no se honra. Si se
+ *    honrara, este guard se apagaría con una línea de `package.json`, que es un archivo de otra
+ *    columna. Qué es superficie pública lo decide `media-agent`; que el guard exista, no.
+ */
+const MEDIA_MANIFEST = join('packages', 'media', 'package.json');
+
+/** Un subpath declarado que apunta al interior del paquete no cuenta como superficie pública. */
+const INTERNAL_SUBPATH = /^(?:src|dist|build|node_modules|internal)(?:\/|$)/u;
+
+interface MediaSurface {
+  /** Subpaths públicos, sin el `./` (p. ej. `incidents`). Vacío si no se pudo derivar. */
+  readonly subpaths: readonly string[];
+  /** Subpaths declarados que apuntan al interior y por eso **no** se honran. */
+  readonly internal: readonly string[];
+  /** `null` si se derivó bien; el motivo si no. */
+  readonly failure: string | null;
+}
+
+/** Lee la superficie pública del paquete desde su `package.json`. Nunca inventa: falla y avisa. */
+function readMediaSurface(): MediaSurface {
+  const empty = { subpaths: [] as readonly string[], internal: [] as readonly string[] };
+  let raw: string;
+  try {
+    raw = readFileSync(join(REPO, MEDIA_MANIFEST), 'utf8');
+  } catch {
+    return { ...empty, failure: `no se pudo leer ${MEDIA_MANIFEST}` };
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw) as unknown;
+  } catch {
+    return { ...empty, failure: `${MEDIA_MANIFEST} no es JSON válido` };
+  }
+  const field = (parsed as { readonly exports?: unknown }).exports;
+  if (typeof field !== 'object' || field === null || Array.isArray(field)) {
+    return { ...empty, failure: `${MEDIA_MANIFEST} no declara un objeto \`exports\`` };
+  }
+  const keys = Object.keys(field);
+  if (!keys.includes('.')) {
+    return {
+      ...empty,
+      failure: `el \`exports\` de ${MEDIA_MANIFEST} no declara el entrypoint "."`,
+    };
+  }
+  const declared = keys.filter((key) => key.startsWith('./')).map((key) => key.slice(2));
+  return {
+    subpaths: declared.filter((sub) => !INTERNAL_SUBPATH.test(sub)),
+    internal: declared.filter((sub) => INTERNAL_SUBPATH.test(sub)),
+    failure: null,
+  };
+}
+
+const MEDIA_SURFACE = readMediaSurface();
+
+function escapeRegExp(literal: string): string {
+  return literal.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+}
+
+/**
+ * Un `./variantes/*` en el `exports` se traduce a un comodín **dentro del specifier**, no a "todo
+ * pasa": el `*` no cruza la comilla, así que sigue siendo un subpath y no una licencia.
+ */
+function subpathPattern(subpath: string): string {
+  return subpath.split('*').map(escapeRegExp).join("[^'\"]*");
+}
+
+/**
+ * El specifier de un import, en cualquiera de sus formas: `from '…'`, el `import '…'` de efecto
+ * secundario, `await import('…')` y `require('…')`. Las formas dinámicas importan acá y no son
+ * teóricas: el cableado de incidentes de `apps/web/instrumentation.ts` es un `await import(...)`
+ * justamente para no cargar `sharp` en el bootstrap, así que un detector que sólo mirara `from`
+ * sería ciego en el único archivo donde este subpath se usa de verdad.
+ */
+const IMPORT_SPECIFIER = String.raw`(?:\bfrom\s*|\bimport\s*\(?\s*|\brequire\s*\(\s*)['"]`;
+
+/**
+ * El detector de import profundo, construido a partir de los subpaths que el paquete declara.
+ *
+ * Se exporta con la lista como parámetro —en vez de cerrarse sobre `MEDIA_SURFACE`— para poder
+ * probar **los dos extremos de la derivación**: que con `['incidents']` deja pasar el subpath, y
+ * que con `[]` no deja pasar ninguno. Sin ese segundo caso, "derivo del `exports`" podría estar
+ * derivando de un objeto vacío y nadie se enteraría.
+ */
+export function deepImportPattern(allowedSubpaths: readonly string[]): RegExp {
+  const allowed = allowedSubpaths.map(subpathPattern).join('|');
+  return new RegExp(
+    `${IMPORT_SPECIFIER}(?:@istock/media/(?!(?:${allowed})['"])|[^'"]*packages/media/src/)`,
+    'u',
+  );
+}
+
+/** Cómo se le nombra la superficie al que leyó el error, sin que tenga que abrir el package.json. */
+function surfaceLabel(): string {
+  if (MEDIA_SURFACE.failure !== null) {
+    return `NO SE PUDO DERIVAR (${MEDIA_SURFACE.failure}), así que no hay subpath permitido`;
+  }
+  return ['@istock/media', ...MEDIA_SURFACE.subpaths.map((s) => `@istock/media/${s}`)].join(', ');
+}
+
 // ── los detectores ────────────────────────────────────────────────────────────────────────────
 
 interface Rule {
@@ -156,9 +295,11 @@ const RULES: readonly Rule[] = [
   {
     id: 'import-profundo-a-media',
     why:
-      'entra a `packages/media` por un path interno y se saltea la superficie pública del paquete. ' +
-      'Lo que el índice no exporta, no existe para el resto del monorepo.',
-    re: /from\s*['"]@istock\/media\/(?!['"])|from\s*['"][^'"]*packages\/media\/src\//u,
+      'entra a `packages/media` por un path que el paquete NO declara en su `exports`, o directo ' +
+      'por el filesystem (`packages/media/src/...`). Lo que el paquete no declara público no ' +
+      'existe para el resto del monorepo: es por ahí por donde vuelve a haber un camino a la key ' +
+      `de R2 que no pasa por la puerta. Superficie pública declarada hoy: ${surfaceLabel()}.`,
+    re: deepImportPattern(MEDIA_SURFACE.subpaths),
   },
 ];
 
@@ -325,6 +466,17 @@ describe('el conocimiento de R2 no se escapa de packages/media', () => {
   });
 });
 
+/**
+ * El **control contra el gate vacuo**. Un subpath plausible —alguien que quiere `buildVariants` sin
+ * pasar por `uploadListingPhoto`— que `packages/media` **no** declara. Tiene que dar rojo.
+ *
+ * Sin este caso, "los permitidos se derivan del `exports`" podría estar derivando de un objeto
+ * vacío o de una lectura fallida y dejando pasar todo, y el verde diría lo contrario de la verdad.
+ * Su pareja es el fixture inocente de `@istock/media/incidents`: uno prueba que la derivación no
+ * es permisiva de más, el otro que no es estricta de más. Los dos hacen falta; ninguno solo alcanza.
+ */
+const UNDECLARED_SUBPATH = '@istock/media/pipeline';
+
 // ── el guard probado contra casos plantados ───────────────────────────────────────────────────
 
 /**
@@ -386,6 +538,30 @@ const PLANTED: ReadonlyArray<{
     source: "import { publicVariantKey } from '@istock/media/src/keys';",
     rule: 'import-profundo-a-media',
   },
+  {
+    label: 'un route handler alcanza el cliente de R2 por el interior del paquete',
+    file: 'apps/web/app/api/fotos/route.ts',
+    source: "import { r2 } from '@istock/media/src/storage/r2';",
+    rule: 'import-profundo-a-media',
+  },
+  {
+    label: 'un script entra al interior del paquete por path relativo, sin pasar por el nombre',
+    file: 'apps/web/app/(app)/_lib/listings/keys.ts',
+    source: "import { publicVariantKey } from '../../packages/media/src/keys';",
+    rule: 'import-profundo-a-media',
+  },
+  {
+    label: 'alguien inventa un subpath que el package.json de media nunca declaró',
+    file: 'apps/web/app/(app)/_lib/listings/variants.ts',
+    source: `import { buildVariants } from '${UNDECLARED_SUBPATH}';`,
+    rule: 'import-profundo-a-media',
+  },
+  {
+    label: 'el import profundo se disfraza de import dinámico',
+    file: 'apps/web/instrumentation.ts',
+    source: "const { publicVariantKey } = await import('@istock/media/src/keys');",
+    rule: 'import-profundo-a-media',
+  },
 ];
 
 /** Lo que tiene que quedar limpio. Un guard que rechaza esto es un guard que se termina apagando. */
@@ -426,6 +602,22 @@ const INNOCENT: ReadonlyArray<{ readonly label: string; readonly source: string 
       'const { releasedKeys } = await unlinkListingPhotos({ tenantId, listingId }, { store });',
     ].join('\n'),
   },
+  {
+    // Si esto se pone rojo, lo primero a mirar NO es este archivo: es si `packages/media` todavía
+    // declara `"./incidents"` en su `exports`. El subpath existe para que el cableado de
+    // observabilidad no cargue `sharp` (265 módulos + libvips) durante `register()`; si el paquete
+    // lo retiró, el que tiene que cambiar es el import de `apps/web`, no este guard.
+    label: 'el cableado de incidentes usa el subpath liviano que el paquete declara público',
+    source: [
+      "import { setMediaIncidentReporter } from '@istock/media/incidents';",
+      "import type { MediaIncident } from '@istock/media/incidents';",
+      'setMediaIncidentReporter(reportToSentry);',
+    ].join('\n'),
+  },
+  {
+    label: 'el bootstrap difiere el subpath público con un import dinámico',
+    source: "const { setMediaIncidentReporter } = await import('@istock/media/incidents');",
+  },
 ];
 
 describe('el guard dispara con el caso plantado y se queda quieto con el caso correcto', () => {
@@ -443,5 +635,69 @@ describe('el guard dispara con el caso plantado y se queda quieto con el caso co
       findings,
       `el guard rechaza código legítimo y va a terminar apagado:\n${report(findings)}`,
     ).toEqual([]);
+  });
+});
+
+// ── la derivación de la superficie pública, probada por los dos lados ─────────────────────────
+
+describe('la superficie pública de @istock/media la declara el paquete, no una lista en este test', () => {
+  it('el exports de packages/media se lee y se parsea, o el guard se declara ciego y falla', () => {
+    expect(
+      MEDIA_SURFACE.failure,
+      'sin poder derivar el `exports` de packages/media, este guard no sabe qué subpath es ' +
+        'superficie pública y cuál es un import profundo. Ausencia de medición no es PASS.',
+    ).toBeNull();
+  });
+
+  it('un subpath declarado que apunta al interior del paquete no se honra como público', () => {
+    expect(
+      MEDIA_SURFACE.internal,
+      'un `exports` con `./src/...` apagaría este guard desde `package.json`, que es un archivo ' +
+        'de otra columna. La superficie pública la decide `media-agent`; que el guard exista, no.',
+    ).toEqual([]);
+  });
+
+  it.each(MEDIA_SURFACE.subpaths)(
+    'importar el subpath público @istock/media/%s no cuenta como entrar por el interior',
+    (subpath) => {
+      const source = `import { algo } from '@istock/media/${subpath}';`;
+      expect(
+        inspect('apps/web/app/(app)/_lib/consumidor.ts', source),
+        `el guard rechaza \`@istock/media/${subpath}\`, que el paquete declara público. Un gate ` +
+          'que le cobra peaje al import correcto es un gate que alguien va a apagar.',
+      ).toEqual([]);
+    },
+  );
+
+  it('el subpath del control sigue sin estar declarado, o el control dejó de controlar algo', () => {
+    expect(
+      MEDIA_SURFACE.subpaths.map((sub) => `@istock/media/${sub}`),
+      `${UNDECLARED_SUBPATH} pasó a ser superficie pública de packages/media. El fixture de ` +
+        'control necesita un subpath que NO esté declarado: elegí otro, no lo borres.',
+    ).not.toContain(UNDECLARED_SUBPATH);
+  });
+
+  it('con la lista de permitidos vacía no pasa ningún subpath, ni el que hoy es público', () => {
+    // El modo de falla de la derivación tiene que ser MÁS estricto, nunca más permisivo. Si el
+    // `package.json` desapareciera, `subpaths` queda `[]` y esto es lo que rige.
+    const ciego = deepImportPattern([]);
+    for (const subpath of ['incidents', 'pipeline', 'src/keys']) {
+      expect(
+        ciego.test(`import { x } from '@istock/media/${subpath}';`),
+        `sin poder leer el \`exports\`, \`@istock/media/${subpath}\` tiene que quedar prohibido: ` +
+          'un guard que no midió nada no puede estar absolviendo.',
+      ).toBe(true);
+    }
+  });
+
+  it('un subpath con comodín en el exports abre ese subpath y no el paquete entero', () => {
+    // `./variantes/*` es una forma legítima del `exports`. Que el `*` no cruce la comilla es lo
+    // que evita que un comodín se convierta en "cualquier import a media pasa".
+    const conComodin = deepImportPattern(['variantes/*']);
+    expect(conComodin.test("import { a } from '@istock/media/variantes/card';")).toBe(false);
+    expect(
+      conComodin.test("import { a } from '@istock/media/src/keys';"),
+      'un comodín en un subpath no puede volverse una licencia para entrar al interior',
+    ).toBe(true);
   });
 });
