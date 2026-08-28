@@ -57,6 +57,7 @@ const sec = (s) => out.push('== ' + s);
 
 // ── F1 · restricciones del plan Pro. Verificadas contra docs oficiales el 2026-08-28.
 sec('F1 · cada regla cabe en lo que Vercel Pro realmente permite');
+const porVerificar = [];
 const KEYS_PRO = new Set(['ip', 'ja4']);          // header:<name> y UA son Enterprise
 const ACTIONS  = new Set(['deny', 'challenge']);
 const rules = Array.isArray(cfg.rules) ? cfg.rules : [];
@@ -88,6 +89,9 @@ for (const r of rules) {
     no(`la regla ${n} declara status=${JSON.stringify(r.status)}; se espera active o planned`);
   if (r.status === 'planned' && !r.lands_with)
     no(`la regla ${n} esta planned y no dice con que slice aterriza: es una regla huerfana`);
+  // `covers` se audita contra el arbol real recien cuando la regla esta activa: una regla planned
+  // nombra a proposito un handler que todavia no existe (es el que trae su slice).
+  if (r.status === 'active') porVerificar.push(r);
 }
 if (rules.length && !out.some((l) => l.startsWith('NO ')))
   ok('todas las reglas respetan keys/algo/window/limit/action de Pro');
@@ -114,25 +118,44 @@ for (const r of rules) {
 if (!anchoDeMas) ok('las reglas apuntan a escrituras y al chatbot, no al HTML cacheado');
 
 // ── F3 · censo de rutas. Esto es lo que impide que el gate envejezca en silencio.
-sec('F3 · censo: toda ruta de app/api esta cubierta por una regla o justificada en la allowlist');
-const API = 'apps/web/app/api';
+sec('F3 · censo: todo route handler de la app esta cubierto por una regla o justificado en la allowlist');
+// Se camina apps/web/app ENTERO, no apps/web/app/api. La primera version de este gate censaba
+// solo app/api y por eso no veia `/_media/[...key]`, que vive en el route group (app) y es el
+// endpoint que sirve los BYTES de las fotos — o sea el de mayor egress del producto. Un censo que
+// no ve el endpoint mas caro es peor que no tener censo, porque da tranquilidad.
+const APP = 'apps/web/app';
 const rutas = [];
 (function walk(dir) {
   if (!fs.existsSync(dir)) return;
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
     const p = path.join(dir, e.name);
     if (e.isDirectory()) walk(p);
-    else if (e.name === 'route.ts' || e.name === 'route.tsx')
-      rutas.push('/' + path.relative('apps/web/app', path.dirname(p)));
+    else if (e.name === 'route.ts' || e.name === 'route.tsx') rutas.push(rutaPublica(p));
   }
-})(API);
+})(APP);
 
-if (!fs.existsSync(API))
-  no(`no existe ${API}. Si el panel se movio, este gate dejo de mirar donde estan las rutas y hay que actualizarlo — no darlo por bueno`);
-inf(`rutas HTTP censadas en ${API}: ${rutas.length}`);
+// De archivo a path publico: los route groups `(app)` / `(storefront)` no son segmentos de URL, y
+// `%5F` es como Next escribe un `_` inicial que si es segmento (`/_media`). Los segmentos dinamicos
+// se dejan como estan: lo que se censa es la RUTA, no una instancia.
+function rutaPublica(file) {
+  return '/' + path.relative(APP, path.dirname(file))
+    .split(path.sep)
+    .filter((seg) => !(seg.startsWith('(') && seg.endsWith(')')))
+    .map((seg) => seg.replace(/%5F/gi, '_'))
+    .join('/');
+}
+
+if (!fs.existsSync(APP))
+  no(`no existe ${APP}. Si la app se movio, este gate dejo de mirar donde estan las rutas y hay que actualizarlo — no darlo por bueno`);
+if (rutas.length === 0)
+  no(`cero route handlers encontrados bajo ${APP}. O el censo se rompio o la app no tiene rutas: las dos cosas son FAIL, no PASS`);
+inf(`route handlers censados en ${APP}: ${rutas.length}`);
 for (const r of rutas.sort()) inf(`  · ${r}`);
 
-const cubiertas = rules.map((r) => String(r.route || ''));
+// El WAF matchea el path ENTRANTE (`/api/track` sobre `{slug}.maat.work`); el censo enumera
+// HANDLERS (`/s/[slug]/api/track`, que es el destino del rewrite de proxy.ts). No son el mismo
+// string y no tienen por que serlo: `covers` es el puente, declarado a mano y auditado abajo.
+const cubiertas = rules.flatMap((r) => [String(r.route || ''), ...(Array.isArray(r.covers) ? r.covers.map(String) : [])].filter(Boolean));
 const allow = Array.isArray(cfg.allowlist) ? cfg.allowlist : [];
 const allowByRoute = new Map(allow.map((a) => [a.route, a]));
 let huerfanas = 0;
@@ -146,9 +169,20 @@ for (const ruta of rutas) {
   }
   if (exc) { huerfanas++; no(`${ruta} esta en la allowlist con un motivo vacio o de una linea. La allowlist es para decidir, no para silenciar`); continue; }
   huerfanas++;
-  no(`${ruta} no tiene regla de rate limit ni excepcion justificada. Toda ruta nueva de app/api decide una de las dos cosas, y la decide quien la crea`);
+  no(`${ruta} no tiene regla de rate limit ni excepcion justificada. Todo route handler nuevo de apps/web/app decide una de las dos cosas, y la decide quien lo crea`);
 }
 if (rutas.length && !huerfanas) ok(`las ${rutas.length} rutas censadas estan decididas`);
+
+let coversRotos = 0;
+for (const r of porVerificar) {
+  for (const c of Array.isArray(r.covers) ? r.covers : []) {
+    if (!rutas.includes(String(c))) {
+      coversRotos++;
+      no(`la regla ${r.name} esta ACTIVA y dice cubrir ${c}, que no es un handler que exista. O el handler se movio y la regla quedo protegiendo aire, o el nombre esta mal escrito: en los dos casos hay un endpoint sin techo`);
+    }
+  }
+}
+if (porVerificar.length && !coversRotos) ok('las reglas activas cubren handlers que existen');
 
 // ── F4 · la allowlist no puede apuntar a fantasmas
 sec('F4 · la allowlist no exceptua rutas que ya no existen');
@@ -156,7 +190,7 @@ let fantasmas = 0;
 for (const a of allow) {
   if (!rutas.includes(a.route)) {
     fantasmas++;
-    no(`la allowlist exceptua ${a.route}, que no existe en ${API}. Una excepcion a una ruta borrada es una excepcion que se va a reciclar sin leer`);
+    no(`la allowlist exceptua ${a.route}, que no existe bajo ${APP}. Una excepcion a una ruta borrada es una excepcion que se va a reciclar sin leer`);
   }
 }
 if (allow.length && !fantasmas) ok(`las ${allow.length} excepciones apuntan a rutas que existen`);
