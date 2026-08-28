@@ -29,7 +29,15 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+/**
+ * `RLS_LINT_ROOT` existe para que el arnés de polaridad pueda apuntar el linter a un árbol de
+ * fixtures en vez de a `packages/db`. Es la misma escotilla que `AI_LINT_ROOT` y `WEB_LINT_ROOT`,
+ * y está acá por el mismo motivo: sin ella la única forma de ver ENCENDER a este gate sería
+ * romper el repo de verdad, y una regla que nadie vio encender es un comentario.
+ */
+const ROOT = process.env.RLS_LINT_ROOT
+  ? resolve(process.env.RLS_LINT_ROOT)
+  : resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const problems = [];
 const fail = (rule, detail) => problems.push(`${rule}  ${detail}`);
 
@@ -54,6 +62,14 @@ const STOREFRONT_TABLES = new Set([
  */
 const STOREFRONT_WRITE = {
   wa_click_events: ['tenant_id', 'listing_id', 'source'],
+  // S8, `drizzle/0008_storefront_tradein_lead_insert.sql`. Segunda escritura sin autenticar, y
+  // la primera que trae **texto libre del visitante**. Entra acá con las nueve columnas exactas
+  // y ni una más; lo que quedó afuera (`status`, `offer_usd`, `internal_notes`,
+  // `created_listing_id`, `handled_by`) está enumerado con su motivo en el `.sql`.
+  tradein_leads: [
+    'tenant_id', 'customer_name', 'customer_wa_phone', 'model_text', 'storage_gb',
+    'color', 'declared_condition', 'battery_pct', 'notes',
+  ],
 };
 const STOREFRONT_WRITE_TABLES = new Set(Object.keys(STOREFRONT_WRITE));
 /** Columnas que jamás pueden entrar en un privilegio de escritura de `anon` (regla 0026). */
@@ -68,6 +84,32 @@ const NEVER_TO_ANON = new Set([
   'imei_check_source', 'imei_check_note', 'cost_usd', 'margin_usd', 'margen', 'supplier',
   'internal_notes', 'master_key', 'offer_usd', 'customer_name', 'customer_wa_phone',
   'created_by', 'updated_by',
+]);
+/**
+ * La excepción de S8, y es la mitad delicada de la regla 0020. Hasta acá `NEVER_TO_ANON` era una
+ * prohibición **de aparecer en cualquier GRANT**, y con el formulario de canje eso deja de ser
+ * correcto: el visitante **escribe su propio nombre y su propio teléfono**, que ya tiene. Lo que
+ * no puede es leerlos de vuelta — ni los suyos ni, sobre todo, los de otro.
+ *
+ * Así que la prohibición pasa de *escritura* a *lectura*, y la excepción se declara con las tres
+ * llaves puestas, porque cada una tapa una forma distinta de que esto se vuelva un agujero:
+ *
+ *  1. Es por `tabla.columna`, no por nombre de columna. Un `customer_name` que aparezca en el
+ *     GRANT de OTRA tabla sigue siendo un hallazgo: la doctrina de "se chequea por nombre, no
+ *     por tabla" se conserva entera para todo lo que no esté acá.
+ *  2. Es sólo para INSERT. En un `GRANT SELECT` estas dos columnas siguen prohibidas por las
+ *     dos ramas (0020 prohibida y 0020 SENSITIVE), que es exactamente el rojo que no queremos
+ *     perder al aflojar.
+ *  3. No afloja nada más: `offer_usd` e `internal_notes` de la misma tabla siguen en
+ *     `NEVER_TO_ANON` **y** en `SENSITIVE_COLUMNS`, y no están acá. Son el costo y las notas del
+ *     dueño (`CLAUDE.md` §0.9), y el visitante no los escribe ni los lee.
+ *
+ * La cuarta llave no vive en esta constante y es la que hace que las otras tres alcancen: la
+ * regla 0026 exige que ninguna tabla de `STOREFRONT_WRITE` tenga GRANT de SELECT a `anon`. Sin
+ * eso, "prohibido de leer" sería una promesa de este archivo; con eso, es una que se chequea.
+ */
+const PII_ESCRIBIBLE_POR_EL_VISITANTE = new Set([
+  'tradein_leads.customer_name', 'tradein_leads.customer_wa_phone',
 ]);
 const SENSITIVE_COLUMNS = [
   ['listings', 'imei'], ['listings', 'cost_usd'], ['listings', 'margin_usd'],
@@ -345,10 +387,13 @@ for (const [, head, roles] of sqlNoComments.matchAll(/\bGRANT\b([^;]*?)\bTO\b([^
   }
 
   for (const column of columnas) {
-    if (NEVER_TO_ANON.has(column)) {
+    // La excepción es de ESCRITURA y de `tabla.columna`: en un `GRANT SELECT` las dos ramas de
+    // abajo siguen encendiendo, y en otra tabla también. Ver `PII_ESCRIBIBLE_POR_EL_VISITANTE`.
+    const laEscribeElVisitante = esEscritura && PII_ESCRIBIBLE_POR_EL_VISITANTE.has(`${table}.${column}`);
+    if (NEVER_TO_ANON.has(column) && !laEscribeElVisitante) {
       fail('0020', `columna prohibida en un GRANT a anon: ${table}.${column}`);
     }
-    if (SENSITIVE_COLUMNS.some(([t, c]) => t === table && c === column)) {
+    if (SENSITIVE_COLUMNS.some(([t, c]) => t === table && c === column) && !laEscribeElVisitante) {
       fail('0020', `columna SENSITIVE en un GRANT a anon: ${table}.${column}`);
     }
   }

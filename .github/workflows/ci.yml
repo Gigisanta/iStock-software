@@ -178,6 +178,19 @@ jobs:
         if: always()
         run: ./scripts/ai-lint.test.sh
 
+      # El tercero de la familia, y el que mas caro sale si esta ausente: `rls-lint` es el gate
+      # detras de "sin RLS no hay merge", y hasta S8 era el unico de los cinco lints SIN arnes de
+      # polaridad. Se escribio el dia que el LEAD **aflojo** la regla 0020 — `customer_name` /
+      # `customer_wa_phone` pasaron de prohibidas en cualquier GRANT a anon a prohibidas de LEER,
+      # porque el visitante del formulario de canje escribe su propio nombre y su propio telefono.
+      # Aflojar sin arnes habria dado `rls-lint OK` exactamente igual si la excepcion tapaba de
+      # mas y se llevaba puesta tambien la lectura. Los dos casos que mandan son el `GRANT SELECT
+      # (customer_name)`, que tiene que seguir rojo, y el mismo nombre de columna en OTRA tabla,
+      # que prueba que la excepcion es por `tabla.columna` y no por nombre.
+      - name: 'polaridad de rls-lint (la PII del visitante se escribe y NO se lee)'
+        if: always()
+        run: ./scripts/rls-lint.test.sh
+
       # El board es el estado de la verdad de este repo —quien es dueno de que, que slice esta
       # abierta, que gate corrio— y se corrompe de UNA forma repetida: un `|` sin escapar adentro
       # de codigo inline. Markdown parte la fila por el pipe antes de mirar los backticks, asi que
