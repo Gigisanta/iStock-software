@@ -70,6 +70,11 @@
     {
       "route": "/api/tenants/slug-check",
       "reason": "Exige getPanelSession() no-nulo ANTES de tocar la tabla. El abuso esta acotado por la sesion, no por la IP, asi que el bucket por IP del WAF no es la capa correcta. Verificado en apps/web/app/api/tenants/slug-check/route.ts."
+    },
+    {
+      "route": "/api/cron/expire-reservations",
+      "reason": "Es la unica puerta HTTP sin sesion que ESCRIBE, y aun asi no lleva regla, porque un rate limit aca no compraria ninguna de las dos cosas que parece comprar. No protege Postgres: sin `Authorization: Bearer <CRON_SECRET>` valido el handler devuelve 401 ANTES de llamar al barrido, y sin `CRON_SECRET` en el entorno tambien (`cronSecret()` devuelve null para ausente y para vacio), o sea que falla cerrado y un flood no abre una sola conexion. Y no protege el secreto: son 32 bytes comparados con `timingSafeEqual` sobre el SHA-256 de cada lado, con un minimo de 24 caracteres exigido por el schema del env — adivinarlo online no es una amenaza que un bucket por IP mueva. Lo unico que un techo acotaria son Edge Requests, que es literalmente lo que `$scoping` de este archivo decide NO defender con reglas facturadas: para un flood la palanca es Attack Challenge Mode, que es gratis. Del otro lado, una regla mal calibrada sobre esta ruta apaga el cron y las reservas no vencen NUNCA, en silencio, hasta que un cliente pregunta por que su equipo sigue reservado. La falla de la excepcion cuesta Edge Requests; la falla de la regla cuesta el producto.",
+      "revisit": "Deja de valer si el handler alguna vez trabaja antes de autorizar (hoy el orden esta testeado en route.test.ts), si `CRON_SECRET` deja de ser de alta entropia, o si la ruta suma un verbo ademas de GET. Hoy exporta GET y solo GET: cualquier otro verbo lo contesta Next con 405 sin entrar al handler."
     }
   ],
   "$per_region": "Los contadores del WAF son POR REGION. El limite efectivo es N x requests, no requests. Los numeros de arriba estan elegidos sabiendo esto: 60/min de tracking y 12/min de chat siguen siendo un techo util aunque se multipliquen por las regiones desde las que llegue el trafico.",

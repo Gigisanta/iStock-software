@@ -98,6 +98,14 @@ const ESPERADO = {
 
   "/_media/[...key]":       "dynamic",
   "/api/tenants/slug-check":"dynamic",
+
+  // S6. `dynamic` es el unico valor aceptable acá y no es una medicion, es un requisito: la ruta
+  // decide segun `Authorization`, asi que si alguna vez apareciera como `static/complete` querria
+  // decir que Next horneo una respuesta y la sirve del CDN sin mirar el header — o sea el barrido
+  // de reservas disparable por cualquiera, o el 401 cacheado que apaga el cron para siempre. Se
+  // sostiene sin `export const dynamic` (removido en Next 16 bajo Cache Components) porque el
+  // handler lee `request.headers`; esta fila es lo que avisa el dia que eso deje de ser cierto.
+  "/api/cron/expire-reservations": "dynamic",
 };
 
 const m = JSON.parse(readFileSync("apps/web/.next/prerender-manifest.json", "utf8"));

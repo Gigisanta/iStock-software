@@ -14,8 +14,8 @@
 #  verificado — ver docs/research/vercel-firewall-as-code.md §UNVERIFIED.
 #
 #  Lo que hace fuerte a un gate estatico acá no es validar el JSON: es el **censo de rutas**. Cada
-#  ruta de apps/web/app/api tiene que estar cubierta por una regla o estar en la allowlist **con
-#  motivo escrito**. Una ruta nueva sin ninguna de las dos cosas rompe el gate el dia que se crea,
+#  ruta de apps/web/app —ENTERO, no solo app/api; ver F3— tiene que estar cubierta por una regla o
+#  estar en la allowlist **con motivo escrito**. Una ruta nueva sin ninguna de las dos cosas rompe el gate el dia que se crea,
 #  no el dia que la floodean.
 #
 #  Doctrina del repo: ausencia de medicion = FAIL, nunca PASS. Por eso F0 exige que el archivo
