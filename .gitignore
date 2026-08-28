@@ -19,9 +19,22 @@ test-results/
 # siga bloqueado: son bytes de prueba, no fuente. Se llena sola al correr el panel o los e2e.
 .media-local/
 
-# Directorios temporales de los arneses de polaridad de los gates (`scripts/_lib.test.sh`,
-# `scripts/guard-firewall.test.sh`). Los borra un `trap ... EXIT`, pero un Ctrl-C en el momento
-# justo los deja, y son fixtures con reglas de WAF deliberadamente rotas: commitearlas seria
-# sembrar el repo de config invalida que despues alguien lee como si fuera un ejemplo.
-scripts/.libtest-tmp/
+# Directorio temporal del arnes de polaridad del WAF (`scripts/guard-firewall.test.sh`). Lo borra
+# un `trap ... EXIT`, pero un Ctrl-C en el momento justo lo deja, y son fixtures con reglas de WAF
+# deliberadamente rotas: commitearlas seria sembrar el repo de config invalida que despues alguien
+# lee como si fuera un ejemplo.
 scripts/.wafpol-tmp/
+
+# `scripts/.libtest-tmp/` NO va aca, y la ausencia es la regla. Estuvo ignorado hasta el
+# 2026-08-28 por el mismo argumento de arriba, y el resultado fue un lazo cerrado: es el
+# directorio de fixtures de `scripts/_lib.test.sh`, que prueba `none()`/`noneraw()`, y esos
+# helpers **saltean a proposito lo que git ignora** (`_buscar`, por el `tsconfig.tsbuildinfo`).
+# O sea que el arnes volvia invisibles sus propias agujas: los 3 casos que afirman "el helper
+# ATRAPA la aguja" no podian pasar nunca, y el que afirma "el helper saltea lo ignorado" pasaba
+# por el motivo equivocado, porque estaba TODO ignorado.
+#
+# El riesgo que compraba la linea no existe: ningun gate del repo busca dentro de `scripts/`
+# (todos apuntan a `apps/web/app`, `apps/web/proxy.ts` y `packages`), asi que un fixture olvidado
+# tras un Ctrl-C no puede ensuciar ninguna otra medicion. Y aunque pudiera: un fixture visible
+# que pone algo en rojo es ruidoso y se borra; un fixture invisible que apaga una polaridad no
+# avisa nunca.

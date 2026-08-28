@@ -50,6 +50,43 @@ fail=0; no "x"   >/dev/null; [ "$fail" = "1" ] \
   && printf '  \033[32mok\033[0m    no() pone fail=1\n' \
   || { printf '  \033[31mMAL\033[0m   no() dejo fail=%s\n' "$fail"; tfail=1; }
 
+printf '\n\033[1m── mtime() / lstart_a_epoch(): portables, y probados en la plataforma donde corren\033[0m\n'
+# La razon de existir de este bloque: `accept-s1.sh` uso `stat -f %m` y `date -j -f` hasta el
+# 2026-08-28. Los dos son BSD. En `ubuntu-latest` el segundo falla y el PRIMERO NO: `stat -f` es
+# `--file-system` en GNU, asi que devuelve un numero que no es un mtime y el guard de frescura
+# del build compara basura sin quejarse. El bug no era invisible en CI: era VERDE en CI.
+#
+# Por eso el test no compara contra un valor fijo — compara contra el reloj. Un mtime que no es
+# un mtime no cae en la ventana, cualquiera sea la plataforma.
+ahora=$(date +%s)
+: > "$T/recien.txt"
+m=$(mtime "$T/recien.txt")
+if [ -n "$m" ] && [ "$m" -ge "$((ahora - 120))" ] && [ "$m" -le "$((ahora + 120))" ]; then
+  printf '  \033[32mok\033[0m    mtime de un archivo recien creado cae en la ventana del reloj\n'
+else
+  printf '  \033[31mMAL\033[0m   mtime dio "%s" y ahora es %s (no es un mtime)\n' "$m" "$ahora"; tfail=1
+fi
+
+if mtime "$T/no-existe-jamas.txt" >/dev/null 2>&1; then
+  printf '  \033[31mMAL\033[0m   mtime de un archivo inexistente salio con exito\n'; tfail=1
+else
+  printf '  \033[32mok\033[0m    mtime de un archivo inexistente sale distinto de cero\n'
+fi
+
+ls=$(ps -p $$ -o lstart= 2>/dev/null | sed 's/^ *//;s/ *$//')
+e=$(lstart_a_epoch "$ls")
+if [ -n "$e" ] && [ "$e" -le "$((ahora + 120))" ] && [ "$e" -ge "$((ahora - 86400))" ]; then
+  printf '  \033[32mok\033[0m    lstart_a_epoch parsea el lstart de este mismo proceso\n'
+else
+  printf '  \033[31mMAL\033[0m   lstart_a_epoch("%s") dio "%s"\n' "$ls" "$e"; tfail=1
+fi
+
+if lstart_a_epoch "esto no es una fecha" >/dev/null 2>&1; then
+  printf '  \033[31mMAL\033[0m   lstart_a_epoch acepto una cadena que no es fecha\n'; tfail=1
+else
+  printf '  \033[32mok\033[0m    lstart_a_epoch rechaza lo que no es una fecha\n'
+fi
+
 printf '\n\033[1m── la libreria no se ejecuta, se importa\033[0m\n'
 if bash scripts/_lib.sh >/dev/null 2>&1; then
   printf '  \033[31mMAL\033[0m   scripts/_lib.sh se dejo ejecutar directo\n'; tfail=1

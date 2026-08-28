@@ -23,7 +23,7 @@ jobs:
   build:
     name: typecheck · lint · test · rls
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 35
 
     services:
       postgres:
@@ -129,10 +129,17 @@ jobs:
         if: always()
         run: ./scripts/guard-artifacts.sh --harness
 
+      # Va ultimo del job y hace su propio `next build`, que es lo que valida `cacheComponents` y
+      # los `'use cache'`. Existia desde FASE 3 y no corria en ningun push: sexto gate de la misma
+      # familia encontrado el 2026-08-28. Aca y no en `e2e` porque no depende del `.next` ajeno.
+      - name: aceptacion de FASE 3 (build, cacheComponents, 'use cache')
+        if: always()
+        run: ./scripts/accept-fase3.sh
+
   e2e:
     name: e2e
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 45
     needs: build
 
     services:
@@ -180,6 +187,34 @@ jobs:
       - name: modo de servido de las rutas
         if: always()
         run: ./scripts/guard-routes.sh
+
+      # ── Las aceptaciones por slice, que hasta hoy no corrian en ningun push ─────────────────
+      # El 2026-08-28 aparecieron DOS gates rojos desde el mismo commit (`c9611b1`, S4):
+      # `guard-routes` y `accept-fase2`. `accept-s4.sh` estuvo verde todo ese tiempo, y no por
+      # error: una aceptacion por slice corre SUS aserciones, asi que estructuralmente no puede
+      # ver el invariante que la slice derogo. Lo unico que cruza slices es esto.
+      #
+      # Van en el job de e2e y no en `build` porque tres de las cuatro necesitan un `.next`, y
+      # aca ya existe: lo dejo el `webServer` de Playwright. Van DESPUES de `guard-routes`,
+      # que lee ese mismo manifest — `accept-s2`/`accept-s3` levantan su propio `next start` y
+      # pueden rebuildearlo. `accept-s1` ademas toca la base, y este job la tiene migrada.
+      #
+      # `if: always()`: si una falla quiero ver las otras tres, no la primera y nada mas.
+      - name: aceptacion de S1 (vidriera por host, tenant nunca por header)
+        if: always()
+        run: ./scripts/accept-s1.sh
+
+      - name: aceptacion de S2 (pipeline de fotos; card <=150KB medido)
+        if: always()
+        run: ./scripts/accept-s2.sh
+
+      - name: aceptacion de S3 (ficha minima, 15 campos)
+        if: always()
+        run: ./scripts/accept-s3.sh
+
+      - name: aceptacion de S4 (click de WA sin PII, con techo)
+        if: always()
+        run: ./scripts/accept-s4.sh
 
       # `test-results/`, no `playwright-report/`: el config no tiene reporter `html`, tiene
       # `list` + el censo de specs. Lo unico que queda en disco tras una falla son los traces de

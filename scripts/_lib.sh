@@ -40,6 +40,33 @@ ok()   { printf '  \033[32mPASS\033[0m  %s\n' "$1"; }
 no()   { printf '  \033[31mFAIL\033[0m  %s\n' "$1"; fail=1; }
 inf()  { printf '  \033[36m····\033[0m  %s\n' "$1"; }
 
+
+# ── mtime / lstart portables ────────────────────────────────────────────────────────────────
+# `stat -f %m` es BSD y `stat -c %Y` es GNU, pero el problema no es que uno falte en la otra
+# plataforma: es que **`stat -f` EXISTE en GNU y significa otra cosa** (`--file-system`). Un
+# fallback `stat -f %m "$f" || stat -c %Y "$f"` no se cae en Linux — se queda con la primera
+# rama y devuelve un numero que no es un mtime. El gate que lo use sale verde comparando
+# basura, que es exactamente el modo de falla que este repo trata como el peor.
+#
+# Lo mismo con `date`: `-j -f` es BSD, `-d` es GNU, y ninguno degrada a error legible.
+#
+# Por eso se decide por `uname` una sola vez, y no hay rama por defecto: una plataforma que no
+# sea Darwin ni Linux tiene que fallar al cargar la libreria, no elegir la rama equivocada.
+case "$(uname -s)" in
+  Darwin)
+    mtime()   { stat -f %m "$1" 2>/dev/null; }
+    # `ps -o lstart=` da "Thu Aug 28 06:41:00 2026" en las dos plataformas; cambia quien lo parsea.
+    lstart_a_epoch() { date -j -f "%a %b %d %T %Y" "$1" +%s 2>/dev/null; }
+    ;;
+  Linux)
+    mtime()   { stat -c %Y "$1" 2>/dev/null; }
+    lstart_a_epoch() { date -d "$1" +%s 2>/dev/null; }
+    ;;
+  *)
+    echo "scripts/_lib.sh: plataforma no soportada ($(uname -s)): mtime/lstart_a_epoch no tienen rama." >&2
+    exit 2
+    ;;
+esac
 # `_buscar <regex> <path>...` — el grep comun a `none()` y `noneraw()`.
 #
 # `git check-ignore`: lo que git ignora es artefacto de build; lo que no, es codigo nuestro AUNQUE no

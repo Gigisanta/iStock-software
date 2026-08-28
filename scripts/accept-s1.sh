@@ -143,9 +143,9 @@ server_es_de_este_build() {
   pid=$(lsof -nP -iTCP:"$port" -sTCP:LISTEN -t 2>/dev/null | head -1) || return 1
   [ -n "$pid" ] || return 1
   ls=$(ps -p "$pid" -o lstart= 2>/dev/null | sed 's/^ *//;s/ *$//') || return 1
-  start=$(date -j -f "%a %b %d %T %Y" "$ls" +%s 2>/dev/null) || return 1
+  start=$(lstart_a_epoch "$ls") || return 1
   [ -n "$start" ] || return 1
-  bid=$(stat -f %m apps/web/.next/BUILD_ID 2>/dev/null) || return 1
+  bid=$(mtime apps/web/.next/BUILD_ID) || return 1
   [ "$start" -ge "$bid" ]
 }
 
@@ -165,13 +165,13 @@ server_es_de_este_build() {
 # edicion de un test seria un impuesto de minutos por ronda.
 build_es_del_arbol_actual() {
   local bid nuevas
-  bid=$(stat -f %m apps/web/.next/BUILD_ID 2>/dev/null) || return 1
+  bid=$(mtime apps/web/.next/BUILD_ID) || return 1
   nuevas=$(git ls-files --cached --others --exclude-standard -- 'apps/web' 'packages' \
     | grep -E '\.(ts|tsx|js|mjs|cjs|json|css)$' \
     | grep -vE '\.test\.(ts|tsx)$' \
     | while IFS= read -r f; do
         [ -f "$f" ] || continue
-        m=$(stat -f %m "$f" 2>/dev/null) || continue
+        m=$(mtime "$f") || continue
         [ "$m" -gt "$bid" ] && printf '%s\n' "$f"
       done)
   if [ -n "$nuevas" ]; then
