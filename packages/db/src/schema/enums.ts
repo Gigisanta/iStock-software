@@ -76,6 +76,35 @@ export const tradeinStatusEnum = pgEnum('tradein_status', [
 
 export const tradeinCheckResultEnum = pgEnum('tradein_check_result', ['ok', 'fail', 'na']);
 
+/**
+ * De dónde salió una unidad de stock. **Es el reverso interno de `listings.provenance_text`**, que
+ * es el texto que el dueño escribe para la ficha pública ("Compra a particular en Neuquén"); esto
+ * es el hecho, en tres valores, para poder contarlo y filtrarlo.
+ *
+ * Lo pidió `app-agent` por escrito en el §6 de `accept-to-stock.ts`: hasta S8 la procedencia de una
+ * unidad nacida de un canje se deducía de DOS lugares y ninguno declarativo — el vínculo duro
+ * (`tradein_leads.created_listing_id`) y la bitácora (`listing_events.metadata.source = 'tradein'`).
+ * Un `join` a la tabla de leads y un `->>` sobre un `jsonb` no son un canal: son dos rastros.
+ *
+ * Tres valores y no más, a propósito. `consignment`, `import`, `warranty_swap` y compañía son
+ * vocabulario que el producto **todavía no tiene** (no aparecen en `PRODUCT.md` ni en `DOMAIN.md`),
+ * y un valor de enum no se borra: se hereda. Agregar el cuarto el día que exista el flujo es una
+ * migración de una línea; sacar uno que se publicó no lo es.
+ *
+ * Vive acá y no en `@istock/domain` porque hoy no hay ninguna regla de negocio pura que lo consuma
+ * —no entra en `publicListingDTO`, no cambia el `wa.me`, no cambia la máquina de estados—. El día
+ * que la UI necesite un mapa de etiquetas en rioplatense, eso es de `domain-agent` y este enum pasa
+ * a reflejarlo, igual que `listing_condition`.
+ */
+export const acquisitionChannelEnum = pgEnum('acquisition_channel', [
+  /** Compra: el default de cargar una unidad a mano. Es lo que hace el dueño el 95% del tiempo. */
+  'purchase',
+  /** Canje presencial. Lo escribe `accept-to-stock` al aceptar un `tradein_lead`. */
+  'trade_in',
+  /** Ni compra ni canje. Existe para no forzar una mentira cuando el caso no es ninguno de los dos. */
+  'other',
+]);
+
 /** Sin PII: de dónde salió el click, no quién lo hizo. */
 export const waClickSourceEnum = pgEnum('wa_click_source', [
   'storefront_card',

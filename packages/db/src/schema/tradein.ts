@@ -78,7 +78,35 @@ export const tradeinLeads = pgTable(
     // El `tenant_id` sale del claim del slug (`proxy.ts` → host), NUNCA del body.
     // El privilegio de columna que la acompaña está en `drizzle/0008_*`: nueve columnas, y
     // `offer_usd` / `internal_notes` / `status` NO son ninguna de ellas.
-    storefrontAnonInsertPolicy('tradein_leads', sql`tenant_id = ${storefrontTenantId()}`),
+    // ── Y `accepts_trade_in`, que hasta S9 lo sostenía SÓLO el handler ──────────────────────
+    // Medido contra Postgres: con el `with check` de 0008 —`tenant_id = storefront_tenant_id()` y
+    // nada más—, un `insert` como `anon` con el claim del slug y las nueve columnas del GRANT
+    // entraba `INSERT 0 1` **en un tenant con `accepts_trade_in = false`**. La única defensa viva
+    // era el `and t.accepts_trade_in` del `from tenants t` del handler de la vidriera.
+    //
+    // Eso contradice la doctrina que este mismo archivo invoca doce líneas más arriba para
+    // justificar los siete CHECK de tamaño: una afirmación que vive sólo en el borde se pierde el
+    // día que aparece un segundo caller. Se aplicó a los largos de texto y no a la regla de
+    // negocio, que es la que tiene consecuencia — un tenant que apagó el canje recibiendo PII de
+    // visitantes en un inbox que no mira.
+    //
+    // Forma: `exists` correlacionado por `tenant_id` de la fila, no un `(select …)` atado al claim.
+    // Las dos son equivalentes mientras el primer conjunto esté (y está), pero el `exists` dice
+    // "el tenant DE ESTA FILA toma canje" sin depender de que el otro conjunto siga ahí, y además
+    // salió más barato al medirlo: la variante por claim llama `storefront_tenant_id()` una tercera
+    // vez (0.61 ms/insert contra 0.56 ms).
+    //
+    // El subselect corre **como `anon`**, y por eso funciona: `0002` le da a `anon` GRANT de
+    // COLUMNA sobre `tenants(id, …, accepts_trade_in, …)` y la policy `tenants_storefront_anon_select`
+    // le deja ver justo esa fila. Medido: `has_column_privilege('anon','tenants','accepts_trade_in',
+    // 'SELECT')` = `t`, y el plan del insert muestra que la RLS de `tenants` se aplica adentro del
+    // subplan (`Filter: accepts_trade_in AND status = 'active' AND id = tradein_leads.tenant_id`).
+    // Si el GRANT no estuviera, la policy fallaría CERRADO y rompería el canje entero — por eso se
+    // midió antes de escribirla en vez de suponerlo (`GRANT` y RLS son dos capas, CLAUDE.md §2).
+    storefrontAnonInsertPolicy(
+      'tradein_leads',
+      sql`tenant_id = ${storefrontTenantId()} and exists (select 1 from tenants t where t.id = tradein_leads.tenant_id and t.accepts_trade_in)`,
+    ),
   ],
 ).enableRLS();
 

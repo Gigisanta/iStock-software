@@ -32,7 +32,13 @@ import { moneyCents } from '../money';
 import { createdAt, pk, updatedAt } from './columns';
 import { tenantId } from './tenants';
 import { catalogModels } from './catalog';
-import { imeiCheckStatusEnum, listingConditionEnum, listingKindEnum, listingStatusEnum } from './enums';
+import {
+  acquisitionChannelEnum,
+  imeiCheckStatusEnum,
+  listingConditionEnum,
+  listingKindEnum,
+  listingStatusEnum,
+} from './enums';
 import { PUBLIC_STATUS_SQL, storefrontAnonSelectPolicy, storefrontTenantId, tenantPolicies } from './rls';
 
 export const listings = pgTable(
@@ -93,6 +99,29 @@ export const listings = pgTable(
     imeiCheckedBy: uuid('imei_checked_by').references(() => authUsers.id, { onDelete: 'set null' }),
     imeiCheckSource: text('imei_check_source'),
     imeiCheckNote: text('imei_check_note'),
+
+    /**
+     * De dónde salió esta unidad. **No es `provenance_text`**: eso es el texto que va a la ficha
+     * pública, esto es el hecho, en un enum, para contarlo y filtrarlo.
+     *
+     * `not null default 'purchase'` y no anulable, por lo que cuesta cada opción:
+     *   · Anulable dejaría `null` en toda unidad cargada antes de S9 y en toda unidad que el panel
+     *     dé de alta sin tocar el campo, o sea en casi todas. Una columna que casi siempre es
+     *     `null` no responde "¿cuántas unidades entraron por canje este mes?" sin un `coalesce`
+     *     que reintroduce la suposición que la columna venía a hacer explícita.
+     *   · `'purchase'` como default es la suposición correcta y la barata: cargar una unidad a
+     *     mano en el panel **es** haberla comprado. El único otro canal que el producto tiene hoy
+     *     es el canje, y el canje entra por `accept-to-stock`, que escribe `'trade_in'` explícito.
+     *
+     * La migración 0009 hace el backfill con el único dato duro que existía hasta ahora
+     * (`tradein_leads.created_listing_id`), así que las unidades que ya venían de un canje quedan
+     * en `'trade_in'` y no en el default.
+     *
+     * **NO está en el GRANT de columna de `anon`** (`0002`), y eso no es un olvido: un GRANT de
+     * columna no alcanza a las columnas futuras, así que la columna nace invisible para la vidriera
+     * por construcción. Publicarla es una migración y una decisión, igual que `qty` y `kind`.
+     */
+    acquisitionChannel: acquisitionChannelEnum('acquisition_channel').notNull().default('purchase'),
 
     /** `lot`: cuántas unidades quedan. `unit`: siempre 1. */
     qty: integer('qty').notNull().default(1),

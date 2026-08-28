@@ -64,6 +64,13 @@
       "when": 1787946498759,
       "tag": "0008_storefront_tradein_lead_insert",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1787951205256,
+      "tag": "0009_tradein_accepts_and_acquisition_channel",
+      "breakpoints": true
     }
   ]
 }
