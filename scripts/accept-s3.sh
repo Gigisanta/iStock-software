@@ -343,6 +343,84 @@ done
 rm -f "$HTML" "$GRID" "$EOUT"
 
 # ─────────────────────────────────────────────────────────────────────────────
+# ── M7 · la ficha que NO existe le tiene que hablar a una persona en la PRIMERA request ──────
+# Agregado por el LEAD el 2026-08-28 despues de medir, que es lo que pedia el comentario de
+# `s/[slug]/p/[listing]/not-found.tsx`. Medicion sobre el build de `eaccfee`, host de tenant:
+#
+#   ficha real       req1 200 / req2 200 · texto visible 974 · robots index,follow
+#   slug inventado   req1 200 / req2 404 · texto visible   0 · robots noindex
+#
+# O sea: **exactamente el mismo patologico de ADR-011, un nivel mas abajo**. Bajo `cacheComponents`
+# + PPR el `notFound()` de la ficha no pinta nada en el primer hit y recien es 404 en el segundo.
+# El primer hit es justo el que importa: el link que el dueno pego en un estado de WhatsApp hace
+# tres semanas, abierto por alguien que nunca entro. Esa persona recibe 200 y pantalla en blanco.
+#
+# La regla mide TEXTO VISIBLE, no bytes: el HTML de un miss pesa 20KB de `<script>` de RSC y
+# "hay bytes" no prueba que haya una palabra. Y mide la ficha real en la misma corrida como
+# control: si el extractor se rompiera y devolviera 0 para todo, la regla tiene que caer por ahi
+# y no dar un falso verde.
+#
+# El slug del miss lleva un timestamp a proposito. Un slug fijo lo deja cacheado de la corrida
+# anterior y entonces el gate mediria el req2 creyendo que mide el req1 — que es exactamente el
+# unico caso que hoy funciona.
+sec "M7 · el miss de la ficha (primera request, ADR-011 un nivel mas abajo)"
+if [ "$FIXTURE" = "1" ]; then
+  inf "MODO FIXTURE: M7 necesita HTTP vivo, no aplica"
+elif ! curl -sf -m 5 "http://127.0.0.1:${SPORT}/api/health" >/dev/null 2>&1; then
+  no "sin server vivo: M7 no pudo medir el miss de la ficha"
+else
+  # Imprime el TEXTO que un humano ve: sin <script>/<style>/<head>, sin comentarios, sin tags.
+  # No cuenta: imprime. La diferencia importa — la primera version de M7 contaba caracteres y
+  # despues buscaba la frase con `grep` sobre el archivo CRUDO, y esa segunda regla daba verde
+  # con 0 chars visibles porque la frase estaba en el payload RSC de un <script>. Un `grep` que
+  # encuentra la frase adentro de un <script> esta midiendo bytes, no lectura.
+  vtext() {
+    python3 - "$1" <<'PYVIS'
+import re, sys, io
+h = io.open(sys.argv[1], encoding='utf-8', errors='replace').read()
+h = re.sub(r'(?is)<(script|style|template|head)\b.*?</\1>', ' ', h)
+h = re.sub(r'(?s)<!--.*?-->', ' ', h)
+t = re.sub(r'(?s)<[^>]+>', ' ', h)
+sys.stdout.write(re.sub(r'\s+', ' ', t).strip())
+PYVIS
+  }
+  MISS=$(mktemp)
+  MISS_SLUG="no-existe-$(date +%s)-$$"
+  MCODE=$(curl -s -o "$MISS" -w '%{http_code}' -m 15 -H "Host: $H" \
+            "http://127.0.0.1:${SPORT}/p/${MISS_SLUG}" || echo 000)
+  T_MISS=$(mktemp); T_OK=$(mktemp)
+  vtext "$MISS" >"$T_MISS"; vtext "$HTML" >"$T_OK"
+  V_MISS=$(wc -c <"$T_MISS" | tr -d ' '); V_OK=$(wc -c <"$T_OK" | tr -d ' ')
+  inf "miss: /p/${MISS_SLUG} -> $MCODE, texto visible ${V_MISS} chars (ficha real: ${V_OK})"
+
+  if [ "${V_OK:-0}" -lt 200 ]; then
+    no "control roto: la ficha REAL mide ${V_OK} chars de texto visible. M7 no puede afirmar nada"
+  else
+    ok "control: la ficha real tiene ${V_OK} chars de texto visible"
+    if [ "${V_MISS:-0}" -lt 80 ]; then
+      no "el miss de la ficha sale con ${V_MISS} chars visibles: pantalla en blanco en el primer hit"
+      inf "salida: devolver el contenido de not-found.tsx como render normal, no lanzar notFound()"
+    else
+      ok "el miss de la ficha trae texto en la PRIMERA request (${V_MISS} chars)"
+    fi
+  fi
+
+  # Sobre el texto VISIBLE, no sobre el HTML crudo. Ver el comentario de `vtext`.
+  grep -qF "Ver el resto de la vidriera" "$T_MISS" \
+    && ok "el miss ofrece volver a la vidriera (el camino de vuelta al stock)" \
+    || no "el miss no ofrece volver a la vidriera EN TEXTO VISIBLE: la persona cierra la pestana"
+
+  grep -aqiE 'name="robots" content="[^"]*noindex' "$MISS" \
+    && ok "el miss va noindex (no se indexa un equipo que no existe)" \
+    || no "el miss NO va noindex"
+
+  grep -aqiE 'name="robots" content="[^"]*noindex' "$HTML" \
+    && no "la ficha REAL va noindex: la vidriera no la puede encontrar nadie desde Google" \
+    || ok "la ficha real es indexable (y el miss no): son dos robots distintos, a proposito"
+
+  rm -f "$MISS" "$T_MISS" "$T_OK"
+fi
+
 sec "M6 · prohibiciones de siempre sobre lo que toco S3"
 none "cero imei/cost/margin/notas internas en (storefront)" \
      '\b(imei|cost_?[uU]sd[A-Za-z_]*|margin[A-Za-z_]*|internal_?[nN]otes|supplier)\b' "$SF"
