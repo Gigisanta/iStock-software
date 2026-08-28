@@ -5,7 +5,11 @@ import { STOREFRONT_DOMAIN } from '@istock/domain';
 import { listingTag, storefrontTag, tenantConfigTag } from '../../../../_lib/cache-tags';
 import { cacheStorefrontMiss } from '../../../../_lib/cache-life';
 import { PRERENDER_SEED_SLUG, isSlugShaped } from '../../../../_lib/host';
-import { PRERENDER_SEED_LISTING, STOREFRONT_HOME_PATH } from '../../../../_lib/routes';
+import {
+  PRERENDER_SEED_LISTING,
+  STOREFRONT_HOME_PATH,
+  TRADEIN_PATH,
+} from '../../../../_lib/routes';
 import { getStorefrontListing } from '../../../../_lib/listings';
 import { getStorefrontTenant } from '../../../../_lib/tenant';
 import { SECONDARY_PHOTO_SIZES } from '../../../../_lib/photo';
@@ -539,6 +543,24 @@ function PickupAndPayment({ listing }: { readonly listing: PublicListingDTO }) {
               ? 'Sí, toman tu equipo usado como parte de pago'
               : 'No toman canje por este equipo'}
           </dd>
+          {/*
+            El link a `/canje` sólo cuando el negocio lo tiene prendido: mandarlo a un formulario
+            que va a decirle que no toman canje es peor que no ofrecerlo. Es un `<a>` y no un
+            `<Link>` por lo mismo que la grilla (W005: el prefetch cuesta una invocación por link),
+            y el path es relativo al host del tenant — el slug ya está en la barra.
+
+            **No es un segundo llamado a la acción compitiendo con el botón de WhatsApp.** Vive
+            adentro de la fila que ya decía "sí toman canje", en la sección de retiro y pago, muy
+            por debajo del `wa.me`. Quien está decidido a comprar ya apretó el botón; esto es para
+            quien está haciendo la cuenta de cuánto le sale entregando el suyo.
+          */}
+          {listing.acceptsTradeIn ? (
+            <p className="mt-2">
+              <a href={TRADEIN_PATH} className="font-medium underline underline-offset-4">
+                Contales qué equipo entregás →
+              </a>
+            </p>
+          ) : null}
         </div>
       </dl>
     </section>

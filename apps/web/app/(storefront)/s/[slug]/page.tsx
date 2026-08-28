@@ -6,6 +6,7 @@ import { cacheStorefrontMiss } from '../../_lib/cache-life';
 import { PRERENDER_SEED_SLUG, isSlugShaped } from '../../_lib/host';
 import { getStorefrontTenant } from '../../_lib/tenant';
 import { getStorefrontCatalog } from '../../_lib/listings';
+import { TRADEIN_PATH } from '../../_lib/routes';
 import { ListingGrid } from '../../_components/listing-grid';
 import { STOREFRONT_MISS_METADATA, StorefrontMiss } from '../../_components/storefront-miss';
 
@@ -270,7 +271,46 @@ export default async function StorefrontHomePage({ params }: StorefrontPageProps
       ) : (
         <EmptyStorefront tenantName={tenant.name} publishedCount={catalog.publishedCount} />
       )}
+
+      {tenant.acceptsTradeIn ? <TradeinInvite tenantName={tenant.name} /> : null}
     </main>
+  );
+}
+
+/**
+ * La entrada al canje desde la home, y va **debajo de la grilla** a propósito.
+ *
+ * El visitante llegó por un link de un estado de WhatsApp a mirar equipos: lo primero de la
+ * pantalla son los equipos. El canje es la pregunta que aparece después —"¿y si entrego el mío?"—
+ * y por eso está donde termina de mirar, no compitiendo con lo que vino a ver.
+ *
+ * Se muestra **también cuando la vidriera está vacía**, y no es un descuido: un negocio que
+ * todavía no publicó stock igual compra equipos usados, y ese visitante es el único que esa
+ * pantalla podía convertir en algo.
+ *
+ * `<a>` y no `<Link>`: W005 de `web-lint` — con `partialPrefetching`, cada link prefetchable cuesta
+ * una invocación de función, en la única página cuya economía depende de no invocar nada. El path
+ * es relativo al host del tenant, igual que los de la grilla.
+ */
+function TradeinInvite({ tenantName }: { readonly tenantName: string }) {
+  return (
+    <section
+      aria-labelledby="canje"
+      className="mt-8 rounded-xl border border-neutral-200 p-4 dark:border-neutral-800"
+    >
+      <h2 id="canje" className="text-base font-semibold">
+        ¿Entregás el tuyo como parte de pago?
+      </h2>
+      <p className="mt-2 text-sm leading-relaxed text-neutral-600 dark:text-neutral-400">
+        {tenantName} toma equipos usados en canje. Contales qué tenés y te escriben por WhatsApp
+        para que pases a que lo vean.
+      </p>
+      <p className="mt-3 text-sm">
+        <a href={TRADEIN_PATH} className="font-medium underline underline-offset-4">
+          Ofrecer mi equipo en canje →
+        </a>
+      </p>
+    </section>
   );
 }
 
