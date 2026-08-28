@@ -1,6 +1,7 @@
 import 'server-only';
 import { eq } from 'drizzle-orm';
-import { tenants } from '@istock/db';
+import { fxSettings, tenants } from '@istock/db';
+import type { FxRoundingMode } from '@istock/domain';
 import { withTenantDb, type TenantContext } from '../db/session';
 
 /**
@@ -50,6 +51,37 @@ export async function loadTenantSettings(ctx: TenantContext): Promise<TenantSett
       })
       .from(tenants)
       .where(eq(tenants.id, ctx.tenantId))
+      .limit(1),
+  );
+
+  return rows[0] ?? null;
+}
+
+/**
+ * El TC del tenant, tal como está guardado. `null` = todavía no cargó ninguno.
+ *
+ * **`null` no se rellena con un default**, y es la misma decisión que toma la vidriera en
+ * `fxContext()`: publicar pesos calculados con un TC inventado por nosotros es peor que no
+ * publicarlos. `CLAUDE.md` §1: *"el TC lo setea el DUEÑO, manualmente, por tenant"*.
+ *
+ * Es una lectura suelta y **no** reemplaza al `freezeFx()` de `_lib/sales/record-sale.ts`: aquel
+ * corre adentro de la transacción de la venta porque congela el TC del instante en que se movió el
+ * listing. Este es para mostrar y para armar texto; no archiva nada.
+ *
+ * Las dos capas de siempre: RLS por `withTenantDb` más el `eq(fxSettings.tenantId, …)` explícito.
+ */
+export interface TenantFxSettings {
+  /** Centavos de ARS por 1 USD (`148750` = TC 1487,50). Sin validar: lo hace `@istock/domain`. */
+  readonly arsCentsPerUsd: number;
+  readonly rounding: FxRoundingMode;
+}
+
+export async function loadFxSettings(ctx: TenantContext): Promise<TenantFxSettings | null> {
+  const rows = await withTenantDb(ctx, async (tx) =>
+    tx
+      .select({ arsCentsPerUsd: fxSettings.arsPerUsd, rounding: fxSettings.rounding })
+      .from(fxSettings)
+      .where(eq(fxSettings.tenantId, ctx.tenantId))
       .limit(1),
   );
 
