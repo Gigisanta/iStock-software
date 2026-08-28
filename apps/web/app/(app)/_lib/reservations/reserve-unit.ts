@@ -1,7 +1,7 @@
 import 'server-only';
 import { randomUUID } from 'node:crypto';
 import { and, eq, sql } from 'drizzle-orm';
-import { checkTransition, createReservation } from '@istock/domain';
+import { checkTransition, createReservation, transitionEffects } from '@istock/domain';
 import { listingEvents, listings, reservations } from '@istock/db';
 import { DEADLOCK, isDeadlock, uniqueViolationConstraint } from '../db/pg-error';
 import { withTenantDb } from '../db/session';
@@ -74,6 +74,12 @@ export type CancelOutcome = { readonly ok: true } | { readonly ok: false; readon
 
 /** El índice único parcial de `commerce.ts`. El nombre es DDL: se puede loguear y se puede mapear. */
 const ONE_ACTIVE_PER_LISTING = 'reservations_one_active_per_listing';
+
+/**
+ * No es un SQLSTATE —los otros `logError` de este módulo sí lo son— porque no lo dijo Postgres: lo
+ * dijo el dominio. Se nombra aparte para que la línea sea grepeable y no se confunda con un `40P01`.
+ */
+const NO_CLOSING_STATUS = 'domain_no_closing_status';
 
 /**
  * `available → reserved`, con la reserva escrita en la misma transacción.
@@ -224,6 +230,15 @@ export async function reserveUnit(
  * Sin eso, `checkRelease()` del dominio exige que la reserva ya haya vencido
  * (`reservation_not_expired`), que es la regla correcta para el cron y la equivocada para un
  * botón. La intención se declara; no se deduce de la hora.
+ *
+ * ── Y el estado de cierre también sale del dominio ──────────────────────────────────────────
+ * Declarar la intención y después escribir `'cancelled'` a mano era declarar la mitad. La otra
+ * mitad —con qué estado queda la reserva que esta arista cierra— la contesta
+ * `transitionEffects(from, to, intent).closesReservationAs`, que es exactamente lo que ya consume
+ * el cron hermano (`expire-reservations.ts`) y `transitionUnit()`. Con el literal acá, el panel y
+ * el barrido volvían a ser dos derivaciones de la misma regla sobre la MISMA arista
+ * `reserved → available`, que es el fallo que S6.1 cerró del otro lado: la tabla del dominio decide
+ * o no decide, y decidir en la mitad del producto es no decidir.
  */
 export async function cancelReservation(
   actor: ReservationActor,
@@ -250,6 +265,29 @@ export async function cancelReservation(
   );
   if (!check.ok) return { ok: false, message: denyReasonText(check.reason) };
 
+  /**
+   * El `from` es el que salió de Postgres, no el `'reserved'` que este módulo espera: preguntarle
+   * al dominio por una arista distinta de la que se chequeó sería inventarle la respuesta.
+   *
+   * `null` = **el dominio dice que esta arista no cierra ninguna reserva**, y hoy eso pasa
+   * exactamente cuando `from !== 'reserved'`: una tab vieja apretando "Soltar" sobre una unidad que
+   * mientras tanto se fue a service, o a `unavailable`. No se inventa un default —escribir
+   * `'cancelled'` acá sería registrar el cierre de una reserva que esta arista no cierra— y no se
+   * escribe nada: el `update` de abajo va guardado por `status = 'reserved'`, así que igual habría
+   * afectado 0 filas, y el `listing_events` con `fromStatus: 'reserved'` habría sido una mentira.
+   * Para quien está en el mostrador es la misma carrera perdida de siempre; queda logueado porque
+   * el día que aparezca por otro motivo hay que verlo.
+   */
+  const closesAs = transitionEffects(unit.status, 'available', 'cancel').closesReservationAs;
+  if (closesAs === null) {
+    logError('reservation.cancel.no_closing_status', NO_CLOSING_STATUS, {
+      tenantId: ctx.tenantId,
+      listingId,
+      fromStatus: unit.status,
+    });
+    return { ok: false, message: LOST_RACE };
+  }
+
   let released: boolean;
   try {
     released = await withTenantDb(ctx, async (tx) => {
@@ -270,11 +308,12 @@ export async function cancelReservation(
       /**
        * Cierra **la** reserva activa de esta unidad, sin nombrarla por id: el id que teníamos es de
        * antes de la transacción y el índice único garantiza que hay a lo sumo una. El guard
-       * `status = 'active'` la hace idempotente contra el cron corriendo al mismo tiempo.
+       * `status = 'active'` la hace idempotente contra el cron corriendo al mismo tiempo, y
+       * `closesAs` es el estado que dijo el dominio arriba, no una constante de este archivo.
        */
       await tx
         .update(reservations)
-        .set({ status: 'cancelled', closedAt: sql`now()`, updatedAt: sql`now()` })
+        .set({ status: closesAs, closedAt: sql`now()`, updatedAt: sql`now()` })
         .where(
           and(
             eq(reservations.tenantId, ctx.tenantId),

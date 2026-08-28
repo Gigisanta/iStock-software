@@ -45,6 +45,25 @@ vi.mock('../tenants/storefront-cache', () => ({
   invalidateListing: vi.fn(),
 }));
 
+/**
+ * El dominio **real**, con una sola función interceptable.
+ *
+ * `checkTransition` y `createReservation` siguen siendo los de verdad: mockear la máquina de
+ * estados entera dejaría a este archivo probando su propio mock. Lo único que se envuelve es
+ * `transitionEffects`, y sólo para poder hacer una pregunta que de otra forma no se puede hacer:
+ * *si el dominio cambiara de opinión sobre esta arista, ¿el panel la sigue?* Con el status
+ * hardcodeado la respuesta es no, y ninguna aserción contra el literal `'cancelled'` lo detecta.
+ */
+const transitionEffects = vi.fn();
+vi.mock('@istock/domain', async (importOriginal) => {
+  const domain = await importOriginal<typeof import('@istock/domain')>();
+  return {
+    ...domain,
+    transitionEffects: (...args: Parameters<typeof domain.transitionEffects>) =>
+      transitionEffects(...args) as ReturnType<typeof domain.transitionEffects>,
+  };
+});
+
 const logEvent = vi.fn();
 const logError = vi.fn();
 vi.mock('../log', () => ({
@@ -112,6 +131,9 @@ vi.mock('../db/session', () => ({
 
 const { cancelReservation, reserveUnit } = await import('./reserve-unit');
 const { listingEvents, listings, reservations } = await import('@istock/db');
+/** La tabla de efectos sin envolver: es el oráculo, no una copia de la regla. */
+const { transitionEffects: realTransitionEffects } =
+  await vi.importActual<typeof import('@istock/domain')>('@istock/domain');
 
 const LISTING_ID = '3f2b1a90-7c4d-4e21-9b8a-0c1d2e3f4a5b';
 const TENANT_ID = '11111111-2222-4333-8444-555555555555';
@@ -162,6 +184,7 @@ beforeEach(() => {
   db.listingUpdateError = null;
   featureAccess.mockResolvedValue({ ok: true });
   loadActiveReservation.mockResolvedValue(null);
+  transitionEffects.mockImplementation(realTransitionEffects);
   givenUnit('available');
 });
 
@@ -332,7 +355,10 @@ describe('cancelReservation', () => {
     expect(result.ok).toBe(true);
     expect(rowsOf(listings)[0]?.row['status']).toBe('available');
     expect(rowsOf(reservations)[0]?.op).toBe('update');
-    expect(rowsOf(reservations)[0]?.row['status']).toBe('cancelled');
+    // El oráculo es el dominio, no el string: ver el bloque de más abajo.
+    expect(rowsOf(reservations)[0]?.row['status']).toBe(
+      realTransitionEffects('reserved', 'available', 'cancel').closesReservationAs,
+    );
     expect(rowsOf(listingEvents)[0]?.row).toMatchObject({
       fromStatus: 'reserved',
       toStatus: 'available',
@@ -388,5 +414,75 @@ describe('cancelReservation', () => {
 
     expect(result).toEqual({ ok: true });
     expect(rowsOf(listings)[0]?.row['status']).toBe('available');
+  });
+});
+
+/**
+ * S6.1, la mitad que faltaba. El cron ya derivaba el estado de cierre de
+ * `transitionEffects(from, to, 'expire').closesReservationAs`; el panel seguía escribiendo
+ * `'cancelled'` a mano sobre la MISMA arista `reserved → available`. Con una sola punta consumiendo
+ * la tabla, la tabla es decorativa en la otra mitad del producto.
+ *
+ * Ninguno de estos casos compara contra un literal: un test que dice `toBe('cancelled')` pasa
+ * idéntico con el hardcodeo, o sea que no mide lo único que hay que medir.
+ */
+describe('cancelReservation · el estado de cierre lo decide el dominio', () => {
+  beforeEach(() => {
+    givenUnit('reserved');
+    loadActiveReservation.mockResolvedValue({
+      id: 'r1',
+      tenantId: TENANT_ID,
+      expiresAt: new Date(NOW.getTime() + 30 * 60_000),
+    });
+  });
+
+  it('le pregunta por la arista que chequeó, con la intención declarada', async () => {
+    await cancelReservation(actor, LISTING_ID, NOW);
+    expect(transitionEffects).toHaveBeenCalledWith('reserved', 'available', 'cancel');
+  });
+
+  /**
+   * La pregunta que el literal no puede contestar: si la tabla del dominio cambiara de opinión
+   * sobre esta arista, ¿el panel la sigue? Se simula haciéndola devolver otro estado de cierre
+   * válido. Con `'cancelled'` escrito en el `.set()`, esto falla.
+   */
+  it('escribe el estado que devuelve el dominio, aunque no sea el de hoy', async () => {
+    transitionEffects.mockImplementation((from: string, to: string, intent: string | null) => ({
+      ...(realTransitionEffects as unknown as (f: string, t: string, i: string | null) => object)(
+        from,
+        to,
+        intent,
+      ),
+      closesReservationAs: 'confirmed',
+    }));
+
+    const result = await cancelReservation(actor, LISTING_ID, NOW);
+
+    expect(result).toEqual({ ok: true });
+    expect(rowsOf(reservations)[0]?.row['status']).toBe('confirmed');
+  });
+
+  /**
+   * `closesReservationAs: null` es alcanzable de verdad y sin mock: una tab vieja aprieta "Soltar"
+   * sobre una unidad que mientras tanto se fue a service. El dominio dice que esa arista no cierra
+   * ninguna reserva, así que no hay default que inventar — y sobre todo no se escribe un
+   * `listing_events` que afirme `fromStatus: 'reserved'` sobre algo que no lo está.
+   */
+  it('si la arista no cierra ninguna reserva, no escribe nada y lo deja logueado', async () => {
+    givenUnit('in_service');
+
+    const result = await cancelReservation(actor, LISTING_ID, NOW);
+
+    expect(result).toEqual({
+      ok: false,
+      message: 'Alguien cambió este equipo mientras lo mirabas. Recargá la pantalla.',
+    });
+    expect(db.writes).toHaveLength(0);
+    expect(invalidateStorefrontUnit).not.toHaveBeenCalled();
+    expect(logError).toHaveBeenCalledWith(
+      'reservation.cancel.no_closing_status',
+      'domain_no_closing_status',
+      { tenantId: TENANT_ID, listingId: LISTING_ID, fromStatus: 'in_service' },
+    );
   });
 });
