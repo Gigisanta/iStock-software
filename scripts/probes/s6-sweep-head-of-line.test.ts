@@ -196,6 +196,7 @@ const medido: Record<string, number> = {
   status_primer_fallo: -1,
   status_segundo_fallo: -1,
   lineas_log_por_envenenada: -1,
+  lineas_cuarentena_por_envenenada: -1,
 };
 
 /**
@@ -532,6 +533,18 @@ describe('S6 · el barrido no se traba detrás de una fila rota', () => {
         (l) => l.event === 'reservation.expire.failed' && l.fields['listingId'] === rota.listingId,
       ).length;
 
+    // T31. Sobre el MISMO `slice(desde)` y en el mismo fixture, a proposito: las dos lineas cuentan
+    // el mismo tramo de vida de la misma fila, asi que el par `5 y 1` es una afirmacion sola —
+    // "fallo cinco veces y se anuncio una". Medidas en corridas distintas serian dos numeros que
+    // no se pueden comparar.
+    medido.lineas_cuarentena_por_envenenada = registroLogs
+      .slice(desde)
+      .filter(
+        (l) =>
+          l.event === 'reservation.expire.quarantined' &&
+          l.fields['listingId'] === rota.listingId,
+      ).length;
+
     expect(
       (await estado(sana.reservationId)).status,
       'la corrida 1 no vencio la reserva sana: el fixture no separa "tolero la carrera" de "no hizo nada"',
@@ -563,5 +576,47 @@ describe('S6 · el barrido no se traba detrás de una fila rota', () => {
         '. Si es mas, el techo no la saca del lote y son 8.640 lineas identicas por mes, para ' +
         'siempre; si es menos, dejo de entrar antes de tiempo y el reintento legitimo tampoco pasa.',
     ).toBe(MAX_SWEEP_ATTEMPTS);
+
+    /**
+     * T31. `abandoned` dice CUANTAS; esta linea dice CUALES, y es lo unico que deja los ids
+     * escritos antes de que la fila desaparezca de los logs para siempre.
+     *
+     * ── Lo que este numero SI discrimina, medido, no razonado ──────────────────────────────────
+     * Con `MAX_SWEEP_ATTEMPTS + 2` corridas sobre la misma fila envenenada:
+     *   · no emitir el evento         → 0   (el 500 vuelve a traer un numero y ningun id)
+     *   · emitir por intento          → 5   (la economia de logs que el techo vino a comprar,
+     *                                        gastada de nuevo: una linea por corrida, para siempre)
+     *   · emitir por vida de la fila  → 1   ← lo correcto
+     *
+     * ── Lo que NO discrimina, y se dice porque callarlo seria peor ─────────────────────────────
+     * El modulo argumenta dos cosas que este fixture **no puede** ver, y las medi antes de
+     * afirmarlo: cambiar el `===` por `>=` da 1, y decidir el cruce contra `row.sweepAttempts + 1`
+     * —el valor que trajo el `select`, o sea el de hace una transaccion— tambien da 1. Las dos
+     * pasan en verde.
+     *
+     * El motivo es estructural y no se arregla afinando la asercion: las dos solo son observables
+     * con **dos corridas del cron pisandose**, porque hace falta que dos transacciones lean la
+     * misma fila antes de que cualquiera escriba. Este fixture es de una sola corrida a la vez, y
+     * el `where sweep_attempts < MAX_SWEEP_ATTEMPTS` del lote garantiza que el `RETURNING` nunca
+     * pase de `MAX`: con un solo escritor, `>=` y `===` son la misma condicion.
+     *
+     * No se agrega el caso concurrente a proposito. Habria que lanzar dos `GET` en paralelo y
+     * esperar que los dos `select` caigan antes del primer `update`, que depende del scheduler: un
+     * rojo que aparece a veces se termina marcando `it.skip`, y este repo ya sabe lo que cuesta un
+     * gate que se ignora. La cobertura de esas dos ramas queda escrita como hueco —que es lo que
+     * `ci-exento` y `web-lint:sin-tenant` hacen en otros lados— en vez de simulada.
+     */
+    expect(
+      medido.lineas_cuarentena_por_envenenada,
+      'la fila envenenada se anuncio ' +
+        String(medido.lineas_cuarentena_por_envenenada) +
+        ' veces en ' +
+        String(MAX_SWEEP_ATTEMPTS + 2) +
+        ' corridas, y tiene que anunciarse UNA. 0 = el evento no se emite y el 500 trae un numero ' +
+        'sin ids; ' +
+        String(MAX_SWEEP_ATTEMPTS) +
+        ' = se emite por intento y no por vida de la fila, que es la economia de logs del techo ' +
+        'gastada de nuevo.',
+    ).toBe(1);
   });
 });
