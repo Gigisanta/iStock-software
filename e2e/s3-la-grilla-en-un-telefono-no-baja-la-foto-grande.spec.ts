@@ -132,6 +132,12 @@ function seen(): Observed {
  * Se serializa como expresión y se ejecuta en el browser. Va en forma de string porque el tsconfig
  * de los e2e declara `types: ["node"]` **sin la lib del DOM**: tipar `PerformanceResourceTiming`
  * acá adentro traería los tipos del navegador a un proceso de Node para leer cuatro números.
+ *
+ * **Es una expresión, no una función, y esa diferencia es la que importa.** Un string que *parece*
+ * una flecha (`'el => …'`) no se ejecuta: Playwright evalúa la expresión, obtiene un objeto función
+ * y lo serializa como `undefined`, sin tirar nada. Este probe funciona porque su valor final es el
+ * array; si alguna vez necesita un argumento, se convierte en función de verdad y no en un string
+ * con `=>` adentro. Ver el comentario de `currentSrc` más abajo: costó una corrida entera.
  */
 const PERF_PROBE = `
   performance.getEntriesByType('resource').map((entry) => ({

@@ -130,7 +130,31 @@ export default defineConfig({
       `NODE_ENV=test pnpm --filter @istock/web exec next start -p ${String(E2E_PORT)}`,
     cwd: '..',
     url: `http://127.0.0.1:${String(E2E_PORT)}/api/health`,
-    reuseExistingServer: process.env['CI'] === undefined,
+    /**
+     * ══════════════════════════════════════════════════════════════════════════════════════════
+     *  `false`, SIEMPRE. No es cuestión de higiene: bajo reuso, `MEDIDO s3 db-hits` es vacuo.
+     * ══════════════════════════════════════════════════════════════════════════════════════════
+     *
+     * `SPIED_DATABASE_URL` —la URL del proxy TCP que cuenta sentencias— le llega al server bajo
+     * prueba **por este `env` y por ningún otro lado**. Si Playwright engancha un `next start` que
+     * ya estaba escuchando, ese server se conectó a Postgres **directo**: el espía queda fuera del
+     * cable, la cuenta es la de nadie, y el spec de la ficha puede publicar `primera=0 ·
+     * cacheada=0` como si fuera el éxito que promete `CLAUDE.md` §3. Es el mismo agujero que M2 ya
+     * tapa con `transferSize=0`: **ausencia de medición no es un número chico, es ausencia** —
+     * sólo que acá venía disfrazada de configuración cómoda.
+     *
+     * Lo mismo pasa con `NEXT_PUBLIC_MEDIA_BASE_URL`, que se inlinea en el `next build` de este
+     * `command`: con un server prestado las fotos apuntan al default `localhost:3000` y la suite
+     * acusa a `packages/media` por un defecto del arnés. **Un arnés que puede acusar a la columna
+     * equivocada es peor que uno lento.**
+     *
+     * Con `false`, un puerto ocupado hace fallar la corrida de entrada y fuerte, que es el
+     * resultado correcto. El costo es un `next build` por corrida local, y está pago.
+     *
+     * Decidido por el LEAD el 2026-08-28, después de que un server viejo en el 3100 produjera dos
+     * rojos fantasma. Si alguien la "optimiza" para ahorrarse el build, vuelve el bug silencioso.
+     */
+    reuseExistingServer: false,
     timeout: 300_000,
     stdout: 'pipe',
     stderr: 'pipe',
