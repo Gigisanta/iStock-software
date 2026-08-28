@@ -92,7 +92,8 @@ vi.mock('../../(app)/_lib/db/session', () => ({
 
 const { EntitlementRequiredError, hasEntitlement, isEntitled, requireEntitlement, setFeatureFlag } =
   await import('./entitlements');
-const { FEATURE_CHATBOT, FEATURE_PICKUP_POINTS, FEATURE_RESERVATIONS } = await import('./plans');
+const { BILLABLE_FEATURES, FEATURE_CHATBOT, FEATURE_PICKUP_POINTS, FEATURE_RESERVATIONS } =
+  await import('./plans');
 const { featureAccess } = await import('../../(app)/_lib/entitlements');
 
 const TENANT_ID = '11111111-2222-4333-8444-555555555555';
@@ -228,13 +229,22 @@ describe('las dos capas de tenant', () => {
 
 /**
  * ══════════════════════════════════════════════════════════════════════════════════════════════
- *  Coherencia con el OTRO resolver que hoy existe
+ *  Coherencia con `featureAccess()`, y el único desacuerdo que queda — fijado, no escondido
  * ══════════════════════════════════════════════════════════════════════════════════════════════
  *
- * `app/(app)/_lib/entitlements.ts` (de `app-agent`) tiene su propio `featureAccess()` con su propio
- * mapa de planes. Es una colisión de ownership reportada al LEAD, no un descuido. Lo que no se
- * puede permitir mientras las dos convivan es que **difieran en silencio**, así que se manejan las
- * dos sobre la feature que ambas declaran y se exige el mismo veredicto.
+ * `app/(app)/_lib/entitlements.ts` (de `app-agent`) resuelve la misma pregunta y es quien hoy
+ * autoriza de verdad. Desde el 2026-08-28 los dos leen **el mismo catálogo**, así que el desacuerdo
+ * por plan tiene que ser cero: el primer test lo maneja sobre los cuatro snapshots por todas las
+ * `BILLABLE_FEATURES`, y compara **también el motivo**, no sólo el `ok`. La versión anterior corría
+ * una sola feature (`reservations`) porque era la única que los dos mapas declaraban.
+ *
+ * Lo que **no** es cero es el vocabulario de motivos, y por eso hay un segundo test. Con la misma
+ * fila apagada, `featureAccess()` contesta `plan` y `hasEntitlement()` contesta `flag_off`. Este
+ * módulo tiene razón —`plan` le diría *"eso viene con el plan Negocio"* a un tenant que **tiene**
+ * el plan Negocio—, pero el arreglo vive en el archivo de `app-agent` y no es mío. Así que la
+ * diferencia se **fija**: el día que allá se agregue `flag_off`, este test se pone rojo y lo borra
+ * quien hizo el cambio, sabiendo qué borra. Una divergencia medida es una decisión; una que ningún
+ * test toca es la que aparece en producción, en el copy que lee el dueño del negocio.
  */
 describe('coherencia con featureAccess() de app-agent', () => {
   it.each([
@@ -242,10 +252,31 @@ describe('coherencia con featureAccess() de app-agent', () => {
     ['negocio', negocio],
     ['trial vivo', trialVivo],
     ['trial vencido', trialVencido],
-  ])('reservations: los dos resolvers dicen lo mismo para %s', async (_caso, snapshot) => {
-    const mio = await hasEntitlement(ctx, snapshot, FEATURE_RESERVATIONS, NOW);
-    const suyo = await featureAccess(ctx, snapshot, FEATURE_RESERVATIONS, NOW);
+  ])('sin fila: los dos resolvers dicen lo mismo, motivo incluido, para %s', async (caso, snapshot) => {
+    for (const feature of BILLABLE_FEATURES) {
+      const mio = await hasEntitlement(ctx, snapshot, feature, NOW);
+      const suyo = await featureAccess(ctx, snapshot, feature, NOW);
+      expect(mio.ok, `${caso} / ${feature}`).toBe(suyo.ok);
+      if (!mio.ok && !suyo.ok) expect(mio.reason, `${caso} / ${feature}`).toBe(suyo.reason);
+    }
+  });
+
+  /**
+   * El desacuerdo, con nombre y apellido. Se afirman los dos veredictos por igualdad —y no
+   * "distintos entre sí"— para que el test no pueda quedar verde si alguno de los dos se mueve a
+   * un tercer valor.
+   */
+  it('la fila apagada: `flag_off` acá, `plan` allá — es el único desacuerdo, y está medido', async () => {
+    db.row = { enabled: false, limitValue: null };
+
+    const mio = await hasEntitlement(ctx, negocio, FEATURE_CHATBOT, NOW);
+    const suyo = await featureAccess(ctx, negocio, FEATURE_CHATBOT, NOW);
+
+    expect(mio).toEqual({ ok: false, reason: 'flag_off' });
+    expect(suyo).toEqual({ ok: false, reason: 'plan' });
+
+    // Lo que NO puede diferir nunca: la palanca apaga la feature en los dos. El desacuerdo es de
+    // explicación, no de autorización — si algún día lo fuera, sería un incidente.
     expect(mio.ok).toBe(suyo.ok);
-    if (!mio.ok && !suyo.ok) expect(mio.reason).toBe(suyo.reason);
   });
 });

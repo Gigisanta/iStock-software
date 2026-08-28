@@ -29,33 +29,52 @@ import { BILLABLE_FEATURES, planIncludes, planLimit } from './plans';
  * mientras se cierra una venta, es un `update` — no un release.
  *
  * ══════════════════════════════════════════════════════════════════════════════════════════════
- *  Por qué esta función existe además de `featureAccess()`, y qué la haría desaparecer
+ *  Por qué sigue existiendo además de `featureAccess()`, y por qué NO se borró el 2026-08-28
  * ══════════════════════════════════════════════════════════════════════════════════════════════
  *
- * **Esto es una colisión de ownership conocida y está reportada al LEAD; no la resolví solo.**
+ * La versión anterior de este bloque prometía: *"el día que `app-agent` derive su `PLAN_FEATURES`
+ * de `planFeatures()`, este módulo se vuelve un alias de `featureAccess()` y se borra"*. Ese día
+ * llegó —hoy `(app)/_lib/entitlements.ts` importa `planFeatures()` de `plans.ts` y ya no declara
+ * planes— y **la promesa estaba mal escrita**: daba por sentado que la única diferencia entre los
+ * dos resolvers era el catálogo. Medido, no lo era. Lo que se borra es la promesa, no el módulo.
  *
- * `apps/web/app/(app)/_lib/entitlements.ts` es de `app-agent` y trae su propio mapa
- * `PLAN_FEATURES`, que declara **una sola** feature (`reservations`) porque —dice su propio
- * comentario, y tiene razón— *"declarar `chatbot`, `margin` o `pickup_points` acá antes de que
- * exista su slice sería escribir el precio de algo que todavía no se puede prender"*. Ese mapa es
- * correcto para lo que `app-agent` necesitaba y **es incompleto como catálogo comercial**: contra
- * él, `hasEntitlement(negocio, 'chatbot')` daría `false`, que es lo contrario de lo que se vende.
+ * Tres cosas tiene esto que `featureAccess()` no tiene, y ninguna es cosmética:
  *
- * No puedo editar ese archivo (`CLAUDE.md` §4: un writer por directorio), así que la resolución
- * completa vive acá, con la **misma** semántica de precedencia y la **misma** `trialIsAlive()`
- * importada de allá — la vigencia del trial no se reimplementa, se reusa.
+ * 1. **El techo (`limit`).** El veredicto positivo de allá es `{ ok: true }`; el de acá trae el
+ *    número. `planLimit()` no tiene otro lector en el repo (medido con `grep`: este archivo y su
+ *    test). Los **3** puntos de retiro de Negocio contra **1** de Base son producto (`CLAUDE.md`
+ *    §1), y hoy este es el único código capaz de contestar cuántos le tocan a un tenant. Un
+ *    booleano no puede: `pickup_points` no se prende ni se apaga, se cuenta.
+ * 2. **`flag_off` como motivo.** Con la **misma** fila apagada, `featureAccess()` contesta `plan` y
+ *    esto contesta `flag_off`, y no es un empate de gustos: `plan` renderiza *"eso viene con el
+ *    plan Negocio"* a un tenant que **tiene** el plan Negocio y al que un operador le apagó el
+ *    chatbot a mano. Es el mismo defecto de copy que el docblock de `FeatureAccess` denuncia para
+ *    `trial_expired`. La diferencia está **fijada en `entitlements.test.ts`**, no comentada; el
+ *    arreglo vive en el archivo de `app-agent`, así que se reporta y no se toca.
+ * 3. **`setFeatureFlag()`.** `featureAccess()` sólo lee. Este es el único escritor de la tabla
+ *    `entitlements` en toda la app (el otro es el seed), o sea **el feature flag sin deploy** que
+ *    pide el contrato de este agente. Borrar el módulo lo borraba a él también.
  *
- * La divergencia no se documenta: **se mide**. `entitlements.test.ts` maneja los dos resolvers
- * sobre las features que los dos declaran y falla si difieren, y `plans.test.ts` cuenta el hueco
- * exacto. El día que `app-agent` derive su `PLAN_FEATURES` de `planFeatures()` —un cambio de una
- * línea, en su archivo— este módulo se vuelve un alias de `featureAccess()` y se borra. Mientras
- * tanto hay dos funciones y **cero** desacuerdos silenciosos.
+ * ── Lo que hay que decir en voz alta: hoy nadie llama a este módulo ───────────────────────────
+ * Cero call sites de producción para `hasEntitlement` / `isEntitled` / `requireEntitlement` /
+ * `setFeatureFlag`. Los tres consumidores vivos —`publish-listing.ts`, `reserve-unit.ts` y
+ * `stock/page.tsx`— usan `featureAccess()` / `isFeatureEnabled()`, y hacen bien: `reservations` es
+ * booleana y no necesita techo. Esto es la mitad que se cablea cuando llegue la primera feature con
+ * techo o la primera pantalla de soporte que apague algo. **No está muerto: está sin cablear** — se
+ * escribe acá para que nadie lo descubra con un `grep` y saque la conclusión contraria.
+ *
+ * ── Qué lo haría desaparecer de verdad ────────────────────────────────────────────────────────
+ * Que `featureAccess()` devuelva el techo, distinga `flag_off` y tenga camino de escritura. Es el
+ * archivo de `app-agent` y son tres cambios de semántica, no una línea: **es una decisión del LEAD,
+ * no un refactor que yo pueda prometer con fecha.** Por eso este bloque ya no promete un borrado.
  */
 
 /**
- * Motivo del rechazo. Se conserva el vocabulario de `FeatureAccess` de `app-agent` a propósito:
- * las pantallas ya saben traducir `plan` y `trial_expired` a español, y un tercer vocabulario
- * obligaría a un `switch` nuevo en cada call site.
+ * Motivo del rechazo. **Superconjunto** del vocabulario de `FeatureAccess` de `app-agent`, a
+ * propósito: `plan` y `trial_expired` se conservan con el mismo nombre y el mismo significado
+ * —las pantallas ya los saben traducir y un vocabulario paralelo obligaría a un `switch` nuevo en
+ * cada call site—, y `flag_off` se agrega porque allá no existe y hace falta. Ver el encabezado:
+ * sin él, una fila apagada a mano se le explica al dueño como si fuera su plan.
  */
 export type EntitlementDenial = 'plan' | 'trial_expired' | 'flag_off';
 

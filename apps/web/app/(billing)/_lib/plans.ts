@@ -14,13 +14,16 @@
  * hay `if` de autorización y no puede haberlo: un catálogo que además autoriza es el segundo lugar
  * donde alguien se olvida de mirar `trial_ends_at`.
  *
- * **Colisión conocida y declarada, para el LEAD** (no la resuelvo yo, `CLAUDE.md` §4): el mapa
- * `PLAN_FEATURES` de `app/(app)/_lib/entitlements.ts` es hoy un **subconjunto** de esto —declara
- * `reservations` y nada más, porque ADR-018 decidió que cada slice agrega su feature cuando la
- * implementa—. Mientras los dos existan hay dos fuentes para la misma pregunta. La consistencia
- * entre ambos **está medida**, no comentada: `plans.test.ts` compara los dos mapas feature por
- * feature y falla si divergen en una que los dos declaran. El cierre es de una línea y es de
- * `app-agent`: derivar `PLAN_FEATURES` de `planFeatures()`.
+ * **La colisión cerró el 2026-08-28.** `app/(app)/_lib/entitlements.ts` traía su propio mapa
+ * `PLAN_FEATURES` con una sola feature y era un **subconjunto** de esto; hoy importa
+ * `planFeatures()` de acá y no declara ningún plan. Este archivo es el catálogo de `apps/web`: ya
+ * no hay una segunda respuesta a "¿qué incluye Negocio?".
+ *
+ * Que siga habiendo una sola **está medido desde los dos lados, y la duplicación es deliberada**:
+ * `plans.test.ts` (acá) y `(app)/_lib/entitlements.test.ts` (allá) corren la misma matriz de los
+ * tres planes por todas las `BILLABLE_FEATURES` contra `featureAccess()`. No es cobertura repetida,
+ * es independencia — ninguno de los dos writers puede sacar el chequeo del otro sin que el suyo lo
+ * delate.
  */
 
 export const PLAN_TIERS = ['trial', 'base', 'negocio'] as const;

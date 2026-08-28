@@ -25,11 +25,12 @@ import {
  * 1. El primero afirma el contenido del plan (ADR-018, `PRODUCT.md` §Planes). Es un catálogo:
  *    afirmarlo por igualdad es correcto, no es "grepear un identificador" — acá el identificador
  *    **es** el hecho que se vende.
- * 2. El segundo **mide la coherencia entre dos fuentes vivas** que hoy conviven: este catálogo y
- *    el `PLAN_FEATURES` de `app/(app)/_lib/entitlements.ts`, que es quien autoriza de verdad. Si
- *    alguien cambia uno solo, esto se pone rojo. Es la mitad que ADR-020 pide: la aserción es
- *    "los dos mapas dicen lo mismo", y la evidencia es la comparación de los dos mapas, no la
- *    presencia de un nombre en uno.
+ * 2. El segundo **maneja el resolver que autoriza de verdad** —`featureAccess()`, de `app-agent`—
+ *    y le exige la conducta exacta de este catálogo, plan por plan y feature por feature. Desde el
+ *    2026-08-28 ese resolver deriva de `planFeatures()`, así que esto ya no mide un hueco: mide
+ *    que la derivación siga existiendo. Es la mitad que ADR-020 pide: la aserción es "el resolver
+ *    y el catálogo dicen lo mismo", y la evidencia es haber **corrido** el resolver, no haber
+ *    encontrado un nombre en un archivo.
  */
 
 vi.mock('server-only', () => ({}));
@@ -92,31 +93,56 @@ describe('catálogo de planes', () => {
 });
 
 /**
- * ── La medición que importa: dos fuentes, una respuesta ──────────────────────────────────────
+ * ── La medición que importa: una sola fuente, y que siga siendo una ──────────────────────────
  *
- * `app/(app)/_lib/entitlements.ts` tiene su propio mapa plan → features y **es el que autoriza**.
- * Este catálogo es un superconjunto declarado (trae `chatbot`, `margin` y `pickup_points`, que
- * todavía no tienen slice). Lo que no puede pasar es que se **contradigan** en una feature que los
- * dos nombran: ahí habría un plan que vende algo que el resolver apaga, o al revés.
+ * `app/(app)/_lib/entitlements.ts` es quien autoriza, y desde el 2026-08-28 saca el contenido de
+ * cada plan de `planFeatures()`, o sea de acá. Este test corre **los tres planes por todas las
+ * `BILLABLE_FEATURES`** y exige acuerdo exacto.
  *
- * El test no exige que sean iguales —hoy no lo son y está decidido que no lo sean (ADR-018)—:
- * exige que **coincidan en la intersección**, y deja escrito cuál es el hueco, contado. El día que
- * `app-agent` agregue `chatbot` a su mapa, el número de huecos baja y este test lo dice.
+ * La versión anterior recorría una sola feature (`reservations`) y contaba el hueco entre dos
+ * mapas. El hueco es cero, así que la matriz se ensanchó a lo que el árbol ya permite medir: hoy
+ * `chatbot`, `margin` y `pickup_points` también están adentro, y `chatbot` en particular es el que
+ * hacía falta — el bug que cerró la derivación era `featureAccess(negocio, 'chatbot') === false`.
+ *
+ * **Esto se parece al test de `(app)/_lib/entitlements.test.ts`, y la duplicación es deliberada.**
+ * No está para cubrir más código: está para que el chequeo no sea propiedad del writer al que
+ * audita. Si mañana `app-agent` vuelve a forkear el mapa y se lleva puesta su mitad de la medición,
+ * esta queda parada. Es la misma razón por la que un gate no pertenece al código que mide.
+ *
+ * ── Qué mide exactamente, y qué NO ───────────────────────────────────────────────────────────
+ * Ahora que el resolver deriva de este catálogo, los dos lados de la comparación salen del mismo
+ * `PLAN_CATALOG` y **el contenido se cancela**: esto NO afirma que Negocio traiga chatbot. Está
+ * medido — sacarle `chatbot` a `negocio` en `plans.ts` pone rojos los cuatro tests de contenido
+ * (arriba, y `lo que se vende` en `entitlements.test.ts`) y deja este **verde**. Lo que este
+ * test afirma es lo otro: que la derivación siga existiendo, que el resolver no vuelva a tener
+ * mapa propio, y que el camino completo —fila ausente → catálogo → vigencia— dé `ok` donde el
+ * catálogo dice que sí. El contenido lo afirma el primer bloque, por igualdad, y ahí es donde
+ * tiene que fallar un cambio de producto no querido. Escrito acá para que nadie lea este bloque
+ * como la garantía de que el catálogo es correcto: garantiza que es **uno**.
+ *
+ * ── No convertir `FEATURE_RESERVATIONS` en un re-export ──────────────────────────────────────
+ * El literal está declarado **dos veces**, acá y en el resolver, y la primera línea del test
+ * compara las dos declaraciones. Es lo único que ata los dos archivos al mismo valor de la columna
+ * `entitlements.feature`, que es `text` y no un enum. Si alguien "limpia" el duplicado
+ * re-exportando el de acá, esa línea pasa a compararse consigo misma: queda verde para siempre y
+ * deja de medir. **No hay forma de detectarlo en runtime** —dos strings iguales son iguales, se
+ * hayan escrito una vez o dos—, así que la propiedad se sostiene con este párrafo y con el
+ * comentario de abajo, y no con una aserción.
  */
 describe('coherencia con el resolver de entitlements (app-agent)', () => {
-  it('los dos mapas coinciden en toda feature que ambos declaran', async () => {
+  it('los tres planes por TODAS las features facturables: el resolver coincide con el catálogo', async () => {
     const resolver = await import('../../(app)/_lib/entitlements');
 
-    // El literal tiene que ser EL MISMO string: son la misma columna `entitlements.feature`.
+    // Dos declaraciones independientes del mismo string, comparadas. NO convertir en re-export:
+    // ver el docblock de arriba, esta línea es la única que ata los dos archivos.
     expect(resolver.FEATURE_RESERVATIONS).toBe(FEATURE_RESERVATIONS);
 
-    // El mapa del resolver no se exporta. Lo que sí se puede observar es su efecto sobre cada
-    // plan, que es lo único que importa: se mide la conducta, no el objeto.
-    const declaradasPorElResolver = new Set([resolver.FEATURE_RESERVATIONS]);
-
+    // El resolver no exporta su tabla —ya no tiene—. Lo que sí se puede observar es su efecto
+    // sobre cada plan, que es lo único que importa: se mide la conducta, no el objeto.
     for (const tier of PLAN_TIERS) {
-      for (const feature of declaradasPorElResolver) {
-        // Trial vivo: el resolver debe dar lo mismo que el catálogo para las features que conoce.
+      for (const feature of BILLABLE_FEATURES) {
+        // Trial VIVO a propósito: así se compara contra el plan de lista y no contra la vigencia,
+        // que es la otra decisión del resolver y no es asunto de un catálogo.
         const vivo = { plan: tier, trialEndsAt: new Date('2099-01-01T00:00:00.000Z') };
         const access = await resolver.featureAccess(
           { userId: 'u', tenantId: 't', role: 'owner' },
