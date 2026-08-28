@@ -435,6 +435,35 @@ stack no es delegable. Cerrada la FASE 1, esos tres archivos vuelven a `docs-kee
 - Nada de secrets al browser (`NEXT_PUBLIC_*` se audita a mano).
 - Tests: `pnpm typecheck && pnpm lint && pnpm test` verde antes de cualquier commit.
 
+### Una alarma se verifica en las dos polaridades, igual que un gate
+**Agregado por el LEAD el 2026-08-28, y lo pagó una alarma que todavía no existe.** `C10` iba a
+alarmar con `calls > 2` sobre el turno de chat. Falla **en las dos direcciones a la vez**, que es
+lo que la vuelve un caso y no un número mal elegido:
+
+- **Por arriba enciende con tráfico legal.** `T50` bajó el techo a 3, así que el turno degradado
+  normal —primario cobra un 200 vacío, contesta el fallback— factura 3 y cruza el umbral. Alarma
+  sobre exactamente lo que el diseño contempla.
+- **Por abajo no ve el caso patológico.** Lo midió `cost-auditor` y lo verifiqué en el árbol: cuando
+  los dos proveedores contestan vacío, el turno pagó dos llamadas y reporta **`calls: 0`**, porque
+  `generateWithFallback` acumula en locales y el `throw` las descarta. **Un umbral por arriba no
+  puede detectar una medición que se pierde.**
+
+Y el par de instrumentos se mueve en direcciones **opuestas** sobre el mismo evento: el visitante
+cuyo turno falló reintenta, así que *mensajes/tenant/día* sube mientras `billed.calls` baja. El
+dashboard lee *"más tráfico, menos costo por mensaje"* justo cuando el proveedor se degrada.
+
+**Veredicto: tres condiciones con tres trabajos, no un umbral haciendo tres mal.**
+`billed.primaryServedEmpty` es la señal de **degradación** (*el primario cobró y no dio nada*).
+`handoff === 'provider_down'` es la señal de **turno quemado**. `calls > MAX_BILLED_CALLS_PER_TURN`
+se queda, pero como aserción de **control de flujo** y no como alarma de costo — el docblock de
+`chat.ts` ya dice que un turno por encima de ese número *"es un bug de control de flujo, no
+tráfico"*. `calls > 2` no mide ninguna de las tres.
+
+La regla general, que es lo que se lleva el que lea esto sin conocer el caso: **una alarma se
+prueba encendiéndola con el caso patológico y callándola con el tráfico legal**, igual que
+`guard-leaks.test.sh` hace con su gate. Una alarma verificada en una sola polaridad no es una
+alarma débil: es independiente de lo que dice medir.
+
 ## 6. Respuesta al humano (formato del LEAD)
 
 Sin dumps de código. Siempre: **path del workflow · FASE · agentes · artefactos · blockers · próxima acción humana.**
