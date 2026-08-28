@@ -41,6 +41,7 @@ fail=0
 RES='apps/web/app/(app)/_lib/reservations'
 PANEL='apps/web/app/(app)/app/(panel)/stock'
 RUTA='apps/web/app/api/cron/expire-reservations'
+SPEC='s6-la-reserva-se-ve-en-la-vidriera-y-el-cron-la-libera.spec.ts'
 
 # Los archivos que S6 AGREGA O TOCA en el panel, uno por uno y no el directorio.
 #
@@ -153,8 +154,19 @@ fi
 # ── V8 · la medicion e2e la emite `qa-agent`, y su ausencia es FAIL ──────────────────────────
 #
 # Misma convencion que S3/S4: hace falta un browser real y un contador de filas contra Postgres, o
-# sea el arnes de e2e, que es de otra columna. Este script SOLO lee la linea y **falla si no esta**:
-# ausencia de medicion es FAIL, nunca PASS. La linea que se espera, textual:
+# sea el arnes de e2e, que es de otra columna. Se corre el spec y se leen los campos DEL LOG DE LA
+# CORRIDA; ausencia de medicion es FAIL, nunca PASS.
+#
+# **Esta verificacion grepeaba el FUENTE hasta el 2026-08-28, y por eso no podia fallar**: la cadena
+# `MEDIDO s6 reserva` aparece en el docblock del spec y en el del helper que la arma, asi que el
+# gate daba PASS con dos comentarios y cero corridas. Lo marco `qa-agent` en su propio reporte, con
+# el gate ya en verde y a su favor — o sea que reporto lo que le habria convenido callar.
+# `accept-s3.sh` y `accept-s4.sh` siempre leyeron el log de la corrida; el desalineado era este.
+# Es la tercera vez en este repo que una regla no puede fallar (antes: `none()` filtrando el
+# comentario que ERA el hallazgo, y la regla del `TODO: despues el RLS`). Ya no se acepta presencia
+# de una cadena como evidencia de una medicion.
+#
+# La linea que se espera, textual:
 #
 #   MEDIDO s6 reserva · unidad=<id> · estado_tras_reservar=<estado> · vidriera_dice=<texto> · tras_expirar=<estado> · publicar_estando_reservada=<resultado>
 #
@@ -166,12 +178,75 @@ fi
 # afirmacion no es sobre que texto tiene un archivo, es sobre que hace el sistema cuando el dueno
 # toca un boton que la UI todavia le ofrece. Un `extras` que se vuelve a olvidar reaparece aca.
 sec 'V8 · medicion e2e del ciclo reserva -> vidriera -> expiracion (la emite qa-agent)'
-MED=$(_buscar 'MEDIDO s6 reserva' e2e tests 2>/dev/null)
-if [ -n "${MED//[$'\n\t ']/}" ]; then
-  ok 'la medicion e2e de S6 existe y la emite el arnes de qa-agent'
-  echo "$MED" | sed 's/^/        /' | cut -c1-200 | head -3
+EOUT=$(mktemp)
+if node -e "process.exit(require('./e2e/package.json').scripts?.e2e?0:1)" 2>/dev/null; then
+  # Sin --reporter: en la CLI REEMPLAZA los reporters del config y apaga el censo de qa-agent.
+  # `E2E_ALLOW_PARTIAL=1` porque aca se corre UN spec y el reporter de censo de `qa-agent` —que
+  # existe para que nadie shippee un spec que nunca corre— falla, con razon, ante un filtro de
+  # archivos. La escotilla la documenta el propio reporter para este caso exacto. El censo completo
+  # no se pierde: lo corre el job de e2e de CI y lo corre `accept-s3.sh`, que si ejecuta la suite
+  # entera. Lo que este gate necesita es la medicion de S6, no una segunda pasada de 80 tests.
+  if E2E_ALLOW_PARTIAL=1 pnpm --filter @istock/e2e e2e "$SPEC" >"$EOUT" 2>&1; then
+    ok 'el spec de S6 termino en verde'
+  else
+    no 'el spec e2e de S6 fallo'
+    grep -aE '^[[:space:]]+[0-9]+\) .*spec\.ts' "$EOUT" | cut -c1-200 | head -6 | sed 's/^/        /'
+    KEEP="${TMPDIR:-/tmp}/accept-s6-e2e-$$.log"; cp "$EOUT" "$KEEP" 2>/dev/null && inf "salida completa: $KEEP"
+  fi
 else
+  no "e2e/package.json no expone el script 'e2e'"
+fi
+
+MED=$(grep -aoE 'MEDIDO s6 reserva · .*' "$EOUT" | head -1 || true)
+if [ -z "$MED" ]; then
   no 'no existe la medicion e2e de S6. S6 no se cierra con tests unitarios: el gate del board dice "cron libera; vidriera revalida", y eso es un ciclo, no una funcion'
+  inf "Formato: MEDIDO s6 reserva · unidad=<id> · estado_tras_reservar=<estado> · vidriera_dice=<texto> · tras_expirar=<estado> · publicar_estando_reservada=<resultado>"
+else
+  ok 'la medicion e2e de S6 salio de una corrida'
+  inf "$MED"
+
+  campo() { printf '%s' "$MED" | sed -nE "s/.*$1=([^·]*).*/\1/p" | sed 's/[[:space:]]*$//'; }
+  TRAS_RESERVAR=$(campo 'estado_tras_reservar')
+  TRAS_EXPIRAR=$(campo 'tras_expirar')
+  VIDRIERA=$(campo 'vidriera_dice')
+  PUBLICAR=$(campo 'publicar_estando_reservada')
+
+  if [ -z "$TRAS_RESERVAR$TRAS_EXPIRAR$VIDRIERA$PUBLICAR" ]; then
+    no 'la linea MEDIDO s6 reserva cambio de formato y no puedo leer los campos — arreglar el gate, no la linea'
+  fi
+
+  [ "$TRAS_RESERVAR" = 'reserved' ] \
+    && ok "tras reservar, Postgres dice $TRAS_RESERVAR" \
+    || no "tras reservar, Postgres dice '$TRAS_RESERVAR' y no 'reserved'"
+
+  [ "$TRAS_EXPIRAR" = 'available' ] \
+    && ok "tras el barrido del cron, la unidad volvio a $TRAS_EXPIRAR" \
+    || no "tras el barrido, la unidad quedo en '$TRAS_EXPIRAR' y no en 'available': el cron no libera"
+
+  case "$VIDRIERA" in
+    *[Dd]isponible*|'') no "la vidriera dice '$VIDRIERA' con la unidad reservada. Un equipo con sena puesta que se publica como disponible es la mentira del estado de Instagram, servida por nosotros" ;;
+    *) ok "el visitante anonimo ve $VIDRIERA en la ficha" ;;
+  esac
+
+  # El campo que este gate agrego DESPUES del adversary de S6, y el unico que mira el bug que casi
+  # se commitea: `transitionUnit()` evaluaba toda transicion con `activeReservation: null`
+  # hardcodeado, asi que "Publicar" sobre una unidad RESERVADA devolvia ok, la republicaba en la
+  # vidriera como Disponible con la sena puesta, y la dejaba irreservable hasta que el cron la
+  # venciera. Se exigen las DOS mitades: que rechace, y que el rechazo no haya escrito igual.
+  # Un rechazo que dejo basura escrita no es un rechazo.
+  case "$PUBLICAR" in
+    rechazado*) ok 'publicar una unidad reservada se rechaza' ;;
+    '')         no 'la linea no trae `publicar_estando_reservada`: nadie probo el caso del adversary' ;;
+    *)          no "publicar una unidad reservada dio '$PUBLICAR'. Es el bloqueante de S6 de vuelta" ;;
+  esac
+  case "$PUBLICAR" in
+    *listing=reserved*) ok 'tras el rechazo la unidad sigue reservada' ;;
+    *) no "tras el rechazo la unidad no quedo en reserved: $PUBLICAR" ;;
+  esac
+  case "$PUBLICAR" in
+    *reserva=active*) ok 'tras el rechazo la reserva sigue viva' ;;
+    *) no "tras el rechazo la reserva no quedo active: un rechazo que igual escribio no es un rechazo ($PUBLICAR)" ;;
+  esac
 fi
 
 # ══════════════════════════════════════════════════════════════════════════════════════════════

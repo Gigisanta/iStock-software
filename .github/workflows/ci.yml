@@ -226,6 +226,15 @@ jobs:
         if: always()
         run: ./scripts/accept-s4.sh
 
+      # `accept-s6.sh` vuelve a correr SU spec, con la suite entera ya corrida dos pasos mas
+      # arriba. No es redundancia: su V8 no mira el exit code de la suite, lee de la salida la
+      # linea `MEDIDO s6 reserva` y le exige seis campos. Grepeaba el FUENTE hasta hoy, y por eso
+      # no podia fallar — la cadena aparece en dos docblocks. Un gate que no puede encenderse es
+      # un adorno, y los adornos ensenian a ignorar los gates de al lado.
+      - name: aceptacion de S6 (reserva -> vidriera -> cron, medido de una corrida)
+        if: always()
+        run: ./scripts/accept-s6.sh
+
       # `test-results/`, no `playwright-report/`: el config no tiene reporter `html`, tiene
       # `list` + el censo de specs. Lo unico que queda en disco tras una falla son los traces de
       # `trace: 'retain-on-failure'`, y van a `e2e/test-results/`. La ruta anterior
