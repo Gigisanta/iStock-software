@@ -2,8 +2,11 @@
  * Seed demo **determinista**: 8 iPhones + 2 accesorios + exactamente 1 `reserved` (gate D4).
  *
  * Reglas que cumple y por qué:
- * - **Cero `Math.random`, cero `Date.now`.** Los IDs son constantes; el "ahora" es `SEED_NOW`.
+ * - **Cero `Math.random`.** Los IDs son constantes; los hechos pasados se fechan con `SEED_NOW`.
  *   Un seed con azar hace que el gate pase o falle según la corrida.
+ * - **Una sola lectura del reloj real** (`runNow`, abajo), y sólo para los **plazos**: los tres
+ *   vencimientos que no significan nada si se los congela (`LIVE_DEADLINES` en `seed-data.ts`).
+ *   El resto de la corrida es determinista dado `runNow`.
  * - **Idempotente**: borra el tenant demo y lo vuelve a crear. Correrlo dos veces deja la base
  *   exactamente igual, que es lo que uno espera de un seed y casi nunca se cumple.
  * - Corre con un rol que **bypassea RLS**: en local, el usuario del SO que creó la base (es
@@ -38,6 +41,9 @@ import {
   waClickEvents,
 } from './schema';
 import {
+  DEMO_RESERVATION_FUSE_HOURS,
+  DEMO_RESERVATION_MINUTES,
+  DEMO_TRIAL_DAYS,
   SEED_DEMO_WA_PHONE_FALLBACK,
   SEED_LISTINGS,
   SEED_MODELS,
@@ -46,7 +52,7 @@ import {
   SEED_SELLER_ID,
   SEED_TENANT_ID,
   daysAfter,
-  minutesAfter,
+  hoursAfter,
   seedMasterKey,
   seedMediaKey,
 } from './seed-data';
@@ -57,6 +63,13 @@ const SOLD_LISTING_SLUG = 'iphone-14-128-azul';
 async function main(): Promise<void> {
   const { db, close } = createDb({ url: databaseUrl() });
   const waPhone = process.env['SEED_DEMO_WA_PHONE'] ?? SEED_DEMO_WA_PHONE_FALLBACK;
+
+  /**
+   * El reloj real, leído **una sola vez** y sólo para los plazos (`LIVE_DEADLINES` en
+   * `seed-data.ts`). Una sola lectura y no tres: si el seed tarda, tres `new Date()` dejarían tres
+   * "ahoras" distintos y la corrida dejaría de ser reproducible incluso dentro de sí misma.
+   */
+  const runNow = new Date();
 
   try {
     // ── auth.users: la identidad la emite Supabase Auth. En local la emula scripts/pg-local.sh.
@@ -121,7 +134,9 @@ async function main(): Promise<void> {
       plan: 'negocio',
       status: 'active',
       isDemo: true,
-      trialEndsAt: daysAfter(SEED_NOW, 14),
+      // PLAZO → reloj de la corrida. Congelado, el trial del demo se termina solo un día
+      // cualquiera y apaga entitlements (`trialIsAlive`) sin que nadie haya tocado nada.
+      trialEndsAt: daysAfter(runNow, DEMO_TRIAL_DAYS),
       createdAt: SEED_NOW,
       updatedAt: SEED_NOW,
     });
@@ -182,7 +197,9 @@ async function main(): Promise<void> {
       plan: 'negocio',
       status: 'trialing',
       amountArs: 52_000_00,
-      trialEndsAt: daysAfter(SEED_NOW, 14),
+      // PLAZO → reloj de la corrida. `status: 'trialing'` con un `trial_ends_at` pasado es una
+      // suscripción que dice estar en prueba y no lo está.
+      trialEndsAt: daysAfter(runNow, DEMO_TRIAL_DAYS),
       createdAt: SEED_NOW,
       updatedAt: SEED_NOW,
     });
@@ -277,7 +294,19 @@ async function main(): Promise<void> {
       }
     }
 
-    // ── Reserva activa: exactamente una, sobre el listing `reserved`.
+    /**
+     * ── Reserva activa: exactamente una, sobre el listing `reserved` (gate D4).
+     *
+     * **La fila más frágil del seed.** Es la única cuyo significado depende de estar viva *ahora*:
+     * desde S6 el cron `/api/cron/expire-reservations` barre `status = 'active' and
+     * expires_at <= now()` cada 5 minutos, mueve el listing a `available` y la unidad no vuelve a
+     * estar reservada nunca. Con `expires_at` fechado desde `SEED_NOW` eso pasaba en la primera
+     * corrida del cron: el `/demo` perdía el badge "Reservado" en silencio y con retraso.
+     *
+     * Por eso `expires_at` y `created_at` van contra `runNow`, y la mecha es
+     * `DEMO_RESERVATION_FUSE_HOURS` — el porqué de las 72 h, y el precio de que no coincidan con
+     * `minutes`, están escritos junto a esa constante en `seed-data.ts`.
+     */
     const reservedListing = SEED_LISTINGS.find((l) => l.slug === RESERVED_LISTING_SLUG);
     if (reservedListing === undefined) throw new Error('seed inconsistente: falta el listing reservado');
     await db.insert(reservations).values({
@@ -285,12 +314,15 @@ async function main(): Promise<void> {
       tenantId: SEED_TENANT_ID,
       listingId: reservedListing.id,
       status: 'active',
-      minutes: 60,
-      expiresAt: minutesAfter(SEED_NOW, 60),
+      minutes: DEMO_RESERVATION_MINUTES,
+      // PLAZO → reloj de la corrida.
+      expiresAt: hoursAfter(runNow, DEMO_RESERVATION_FUSE_HOURS),
       customerLabel: 'Juan de Cipolletti',
       createdBy: SEED_SELLER_ID,
-      createdAt: SEED_NOW,
-      updatedAt: SEED_NOW,
+      // La reserva se muestra **recién hecha**: un `created_at` de `SEED_NOW` con vencimiento en
+      // `runNow + 72 h` sería una reserva "creada hace meses y todavía viva", que no existe.
+      createdAt: runNow,
+      updatedAt: runNow,
     });
 
     // ── Venta del listing `sold`, con el costo congelado (SENSITIVE).

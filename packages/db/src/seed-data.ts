@@ -1,11 +1,13 @@
 /**
- * Datos del seed demo. **Determinista**: cero `Math.random`, cero `Date.now`.
+ * Datos del seed demo. **Determinista**: cero `Math.random`, cero `Date.now`. Este archivo no lee
+ * el reloj; la única lectura del reloj real vive en `seed.ts` (`runNow`) y alcanza a los tres
+ * **plazos** que se documentan más abajo, no a los datos.
  *
  * Por qué importa: un seed con azar hace que el gate de aceptación ("8 iPhones + 2 accesorios +
  * 1 `reserved`") pase o falle según el humor de la corrida, y hace que un test de vidriera no
- * pueda afirmar nada sobre lo que ve. Los UUID son constantes escritas a mano; el "ahora" es una
- * constante; las keys de R2 se derivan por SHA-256 del slug (una función, no un dado) y respetan
- * la forma de ADR-006 (`v1/{ab}/{32hex}.webp` la pública, `originals/{tenant}/{listing}/{32hex}.webp`
+ * pueda afirmar nada sobre lo que ve. Los UUID son constantes escritas a mano; el "ahora" de todo
+ * hecho pasado es una constante; las keys de R2 se derivan por SHA-256 del slug (una función, no
+ * un dado) y respetan la forma de ADR-006 (`v1/{ab}/{32hex}.webp` la pública, `originals/{tenant}/{listing}/{32hex}.webp`
  * el master), porque un dato de demo con forma inválida es un bug esperando a que alguien lo lea.
  *
  * Modelos y colores salen de `docs/research/apple-catalog-ar.md` (R6, PASS): nombres de color tal
@@ -16,8 +18,80 @@
 import { createHash } from 'node:crypto';
 import { CENTS_PER_UNIT, type Cents, type Condition, type ListingStatus } from '@istock/domain';
 
-/** Instante fijo del seed. Todo lo que dependa del tiempo se calcula desde acá. */
+/**
+ * Instante fijo del seed. **Todo HECHO PASADO se fecha desde acá**: `created_at`, `published_at`,
+ * `sold_at`, `accepted_at`, `last_message_at`. Un hecho pasado congelado es exactamente lo que
+ * hace determinista al seed y no se degrada nunca: que la venta demo haya sido el 27/08/2026 sigue
+ * siendo verdad mañana.
+ *
+ * **Un PLAZO no se fecha desde acá.** Ver `LIVE_DEADLINES` abajo: es la distinción que faltaba y
+ * la que rompió la reserva del demo.
+ */
 export const SEED_NOW = new Date('2026-08-27T15:00:00.000Z');
+
+/**
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *  `LIVE_DEADLINES` — las tres columnas del seed que NO se fechan contra `SEED_NOW`
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * Un `created_at` es un **hecho**: congelarlo es correcto y es lo que hace determinista al seed.
+ * Un `expires_at` es un **plazo**: sólo significa algo comparado con el reloj de quien lo lee, así
+ * que congelarlo no lo hace determinista, lo hace **falso con retraso**.
+ *
+ * Las tres columnas del seed que son plazos:
+ *
+ *   · `reservations.expires_at`   → la reserva del demo
+ *   · `tenants.trial_ends_at`     → el trial del tenant demo
+ *   · `subscriptions.trial_ends_at`
+ *
+ * Las tres se calculan en `seed.ts` desde **el reloj de la corrida** (`runNow`), no desde
+ * `SEED_NOW`. El resto del seed —ids, textos, precios, keys de R2 y todos los hechos pasados—
+ * sigue siendo constante: la corrida es determinista *dado* `runNow`, que es el máximo
+ * determinismo que un dato con vencimiento admite.
+ *
+ * ── Qué costaba no distinguirlas ──────────────────────────────────────────────────────────────
+ * La reserva del demo nacía vencida (S6 trajo el cron cada 5 min que barre `expires_at <= now()`),
+ * así que la primera corrida real del cron liberaba la única unidad `reserved` del demo y no volvía
+ * nunca. En silencio: el seed OK, los tests verdes, y el badge "Reservado" del `/demo` desaparecido
+ * minutos después. Los dos `trial_ends_at` tenían la misma enfermedad en estado latente: apagan
+ * entitlements (`trialIsAlive`) el día que `SEED_NOW + 14d` queda atrás.
+ */
+
+/**
+ * Cuánto vive la reserva del demo desde que corre el seed. **72 h**, y el número tiene dos límites
+ * que lo aprietan por arriba y por abajo:
+ *
+ * · **Por abajo**: tiene que sobrevivir una sesión de demo entera y a alguien que sembró ayer y
+ *   vuelve hoy. Un margen de minutos —lo que había— es justamente el bug. 72 h es el mínimo que
+ *   además cubre el caso "sembré el viernes, muestro el lunes", que es el patrón real de trabajo.
+ *
+ * · **Por arriba**: el producto reserva 30–120 min (`CHECK reservations_minutes_range`). Un
+ *   vencimiento a semanas o meses deja de parecer una reserva y le miente al que mira sobre cómo
+ *   funciona la feature. 72 h es el más corto que cumple lo de arriba, y "el más corto que sirve"
+ *   es la única forma no arbitraria de elegir acá.
+ *
+ * ── El precio que sí se paga, escrito para que nadie lo descubra solo ─────────────────────────
+ * La fila de la reserva demo es **la única del producto donde `expires_at ≠ created_at + minutes`**:
+ * dice `minutes = 120` (el máximo legal, así que la fila pasa el CHECK y sigue siendo una reserva
+ * válida) pero la mecha dura 72 h. Consecuencia visible: el panel del demo muestra la cuenta
+ * regresiva de `reservationCountdown()`, o sea "quedan 72 h" en vez de "quedan 2 h". Es un número
+ * raro y es a propósito; la alternativa —una fila coherente de 120 min— es la que se apaga sola
+ * antes del final del día y vuelve a traer el bug que este comentario documenta.
+ *
+ * **Salida de esta deuda, y es concreta**: el día que S13 (`/demo`) tenga un re-seed programado,
+ * este valor baja a `RESERVATION_MAX_MINUTES` y la fila queda coherente. Ahí el que refresca la
+ * reserva es el job, que es su trabajo, y no la mecha, que es un parche honesto mientras tanto.
+ */
+export const DEMO_RESERVATION_FUSE_HOURS = 72;
+
+/**
+ * Minutos declarados de la reserva demo. El máximo que permite el producto: entre las cuatro
+ * opciones legales, la más larga es la que menos contradice la mecha de 72 h de arriba.
+ */
+export const DEMO_RESERVATION_MINUTES = 120;
+
+/** Días de trial del tenant demo. Es el mismo número que usa `createTenant()` en el panel. */
+export const DEMO_TRIAL_DAYS = 14;
 
 export const SEED_TENANT_ID = '00000000-0000-4000-8000-000000000001';
 export const SEED_OWNER_ID = '00000000-0000-4000-8000-000000000010';
@@ -260,8 +334,8 @@ export function seedMasterKey(params: {
   return `originals/${tenantId}/${listingId}/${hash.slice(0, 32)}.webp`;
 }
 
-export function minutesAfter(base: Date, minutes: number): Date {
-  return new Date(base.getTime() + minutes * 60_000);
+export function hoursAfter(base: Date, hours: number): Date {
+  return new Date(base.getTime() + hours * 3_600_000);
 }
 
 export function daysAfter(base: Date, days: number): Date {
