@@ -1653,6 +1653,158 @@ la aserción por literal, y escribí arriba cuál es cuál.
 
 ---
 
+## ADR-024 — Cuando la probe contradice midiendo a la spec del gate que la pidió, **gana la probe** y la spec se corrige
+- **Estado:** **aceptada** · **Fecha:** 2026-08-28 · redactada por `docs-keeper`, **ratificada por el LEAD**, que corrigió la evidencia (ver §"Contexto") y agregó el límite de §"Lo que la medición NO puede ganar"
+- **Origen:** el LEAD, cerrando **T25**: *"el ADR no es sobre el cron: es sobre que una spec de gate escrita antes que la probe puede estar equivocada, y cuando la probe la contradice midiendo, gana la probe y la spec se corrige."*
+- **La evidencia se corrigió antes de aceptar, y en las dos direcciones.** `docs-keeper` objetó que los tres casos que podía documentar eran **los tres puntos de la spec de T25**, o sea **una** celda, no tres slices, y dejó la objeción escrita en vez de rellenarla. El LEAD la aceptó —*"mi frase «tercera vez en esta fase» era imprecisa y tu objeción es correcta"*— y aportó los hashes de los tres casos reales, **más uno que pidió explícitamente NO citar**. Los tres se verificaron contra el mensaje de cada commit antes de entrar acá.
+- **Relación con ADR-020 / 021 / 023:** las tres dicen **cómo tiene que estar hecha una aserción**. Ésta dice **quién gana cuando la aserción y su encargo no coinciden**. Ninguna de las tres contesta eso, y es la pregunta que aparece cada vez.
+- **`docs-keeper` no la decide.** Se redacta acá lo que el LEAD ya ejecutó tres veces; lo que queda abierto está marcado como pregunta al final.
+
+### Contexto — tres slices, la misma forma, ningún nombre
+
+Una spec de gate se escribe **antes** que el gate, en la celda del board, y describe qué se va a
+medir. Eso está bien: es lo que impide que el gate se escriba a medida del código que audita. Pero
+la spec es una **hipótesis sobre el código**, y el que la escribe todavía no lo midió.
+
+**Los tres casos de la clase, en tres slices distintas.** Verificados por `docs-keeper` contra el
+mensaje de cada commit y contra `git merge-base --is-ancestor`, no tomados de palabra:
+
+| # | commit | la hipótesis | lo que devolvió la medición |
+|---|---|---|---|
+| 1 | **`4fd230e`** · `[test] plans.test.ts: the clock was never the lever` | un **pool de conexiones muriéndose de hambre** bajo doce transacciones secuenciales de `withTenantDb` | **no hay pool.** El archivo mockea `(app)/_lib/db/session` y ningún test de esa suite toca una base. Los 3489 ms eran `await import('…/entitlements')`, o sea **instanciar el grafo de módulos**; las doce llamadas a `featureAccess()` costaban **10 ms**. Textual del commit: *"my own diagnosis was the thing the measurement killed"* |
+| 2 | **`a0e5fde`** · `[test] G6: assert the GRANT covers the INSERT Drizzle emits, not one written by hand` | la spec del gate afirmaba sobre un `INSERT` **escrito a mano** en el test | el `42501` de e2e mostró **qué emite Drizzle en realidad** (todas las columnas de la tabla). La spec perdió contra la medición, y el gate se reescribió alrededor del `INSERT` real |
+| 3 | **`10d31b6`**, **sólo su mitad de V3** | el predicado de V3 buscaba un **clamp de duración** de reserva | matcheaba el `Math.max(0, expiresAt - now)` de `presentation.ts`, que es un **piso de cuenta regresiva**, no un clamp — **tercer falso positivo de esa regla**. Lo corrigió *mirar qué era esa línea*, no razonarla |
+
+**El caso 1 es el más limpio de los tres y es contra el LEAD**, que fue quien había hecho el
+diagnóstico. Eso importa para la regla: si la única forma de que una spec se corrija fuera que la
+escribiera otro, la ADR sería una regla de jerarquía. No lo es. Es una regla sobre **qué clase de
+evidencia gana**.
+
+**`10d31b6` entra por mitades, y la otra mitad NO es de esta clase.** Su V8 —el gate que grepeaba
+`MEDIDO s6 reserva` en el **fuente** y daba PASS con dos comentarios y cero corridas— es la familia
+de **ADR-020**, la del gate que no mide. V3 sí es ésta: el gate medía, y medía la línea equivocada.
+
+**`f691daf` NO se cita acá, y el LEAD lo pidió explícitamente.** Ahí el defecto es que **la aserción
+no correspondía a su propio nombre** (`accept-s6` V5 se llamaba *"no purga la vidriera entera"* y
+ejecutaba un grep de un identificador). Es primo, no hermano: meterlo diluye la clase, porque
+convierte *"la spec era una hipótesis equivocada"* en *"el gate estaba mal escrito"*, que ya tiene
+tres ADRs.
+
+**T25 es el caso que la disparó, no su única evidencia.** Sus tres puntos son de **una sola celda**,
+así que valen como el detalle que hizo visible la clase, no como tres instancias de ella:
+
+| # | la spec de T25 decía | lo que la medición devolvió | quién ganó |
+|---|---|---|---|
+| 1 | **A** — *"no necesita Postgres: alcanza el `tx` falso de `expire-reservations.test.ts`"* | la primera pieza del arreglo es `order by sweep_attempts asc, expires_at asc`, y **un `tx` de mentira devuelve las filas en el orden en que se las metieron**: no hay nada del ordenamiento que pueda medir | la probe. Usa Postgres real, y **sin base es FAIL, no `skip`** |
+| 2 | **C** — medir `intentos_23514` e `intentos_40P01`, o sea partir por SQLSTATE | **el barrido no ramifica por código de error**, ni debería: lo que importa no es qué error fue, es si una fila que dejó de fallar **vuelve a entrar al lote** | la probe. Los campos son `intentos_tras_fallo` y `reintento_tras_recuperarse` |
+| 3 | **B** — `lineas_log_por_envenenada == tope + 1` | vale `tope`. **El `+1` era un evento que nadie escribió** | la probe. El evento salió a fila propia (**T31**) |
+
+**El caso 2 es el que mejor muestra el costo de no tener esta regla.** Si el gate hubiera cumplido
+la spec, habría medido `intentos_23514` / `intentos_40P01` contra un barrido que **no distingue
+SQLSTATEs**. Para poder afirmarlo habría hecho falta o bien inventarle al código una taxonomía de
+errores que no tiene —cambiar el producto para satisfacer al gate—, o bien que el gate contara algo
+que él mismo se fabrica. Las dos salidas son peores que el defecto que el gate iba a cazar: la
+primera hace que el gate diseñe, la segunda es **ADR-023** en estado puro.
+
+### Decisión
+
+**Una spec de gate es una hipótesis, no un contrato.** Cuando la probe la contradice **midiendo**, la
+que se corrige es **la spec**, y la corrección se escribe en la celda del board con el número que la
+desmintió al lado.
+
+Tres condiciones, porque sin ellas esto se vuelve la excusa universal para escribir un gate más
+débil que el que se pidió:
+
+1. **La contradicción es una medición, no una opinión.** *"Con Postgres real es más lento"* no
+   corrige nada. *"Un `tx` falso devuelve las filas en el orden de inserción, así que el `order by`
+   no se puede medir ahí"* sí: es una afirmación falsable sobre el código, y se puede ver.
+2. **La aserción de fondo no se afloja.** Lo que cambia es **cómo** se mide, nunca **qué** se
+   afirma. En T25 la aserción de fondo —*correr el barrido más de una vez y contar filas, sin
+   grepear `sweep_attempts` en ningún archivo*— quedó intacta en los tres casos. Un cambio de spec
+   que baja la vara no es esta ADR: es una slice que se está rindiendo, y va al LEAD como tal.
+3. **La corrección queda escrita, con las dos versiones.** La spec vieja no se borra: se deja al
+   lado de la nueva. Una celda que sólo muestra la versión que sobrevivió le enseña al próximo que
+   las specs salen bien de primera, que es lo contrario de lo que pasó tres veces.
+
+**Y una consecuencia que va contra el instinto: cumplir la spec al pie de la letra puede ser el
+error.** Un gate que satisface una spec equivocada es **exactamente igual de verde** que uno que
+mide bien, y encima trae la firma de la aprobación del que la escribió. Es la misma familia de
+ADR-020, ADR-021 y ADR-023 —un verde que no afirma nada— con una vuelta más: acá el verde **está
+autorizado por escrito**.
+
+### Lo que la medición NO puede ganar — el límite que hace a esta ADR no-circular
+
+**Agregado por el LEAD al ratificar, y es la mitad sin la cual la regla se da vuelta.**
+
+La medición gana **sobre la spec del gate**. Nunca sobre el **invariante de producto que esa spec
+sirve**. Son dos cosas distintas y esta ADR sólo habla de la primera:
+
+| | qué es | quién gana si la medición lo contradice |
+|---|---|---|
+| **la spec** | *cómo* se va a medir: `intentos_23514` / `intentos_40P01`, partir por SQLSTATE | **la medición.** El código no ramifica por SQLSTATE, así que la spec se corrige a `intentos_tras_fallo` / `reintento_tras_recuperarse` |
+| **el invariante** | *qué* se afirma: **una fila envenenada no bloquea a las sanas** | **nadie.** Si una probe "contradice" esto, **el que está roto es el código**, no la spec |
+
+**Sin esta línea, ADR-024 se lee como permiso para reescribir la expectativa hasta que dé verde**, que
+es la falla más cara que un documento de método puede tener: convertiría el mecanismo que corrige
+gates en el mecanismo que los ablanda, con la firma de una ADR arriba.
+
+La prueba de que el límite se respetó en el caso que la disparó: en T25 los tres puntos cambiaron
+**cómo** se mide y **ninguno** tocó el qué. La aserción de fondo —*correr el barrido más de una vez y
+contar filas, sin grepear `sweep_attempts` en ningún archivo*— salió idéntica de los tres, y es la que
+sigue parada entre el head-of-line y un merge.
+
+**La pregunta operativa, para el que tenga la duda en vivo:** *¿el cambio que estoy por hacerle a la
+spec deja el defecto original detectable?* Si la respuesta es no, no es esta ADR — es una slice
+rindiéndose, y va al LEAD como tal (condición 2 de arriba).
+
+### Por qué no es ADR-020, ADR-021 ni ADR-023
+
+- **ADR-020** ataca *aserción sobre conducta / evidencia sobre un identificador*. Los tres casos de
+  la tabla miden conducta.
+- **ADR-021** ataca *el sujeto no es el caller*. En los tres el sujeto es el barrido real.
+- **ADR-023** ataca *el esperado y el observado tienen el mismo origen*. En los tres el esperado es
+  un literal escrito en el shell, en otro archivo y en otro lenguaje.
+- Lo que ninguna nombra es **el conflicto entre la aserción y su encargo**. Las tres dan por buena
+  la spec y auditan la implementación; acá la que está mal es la spec.
+
+### Lo que esta ADR NO habilita
+
+- **No habilita que el writer del código auditado corrija la spec de su propio gate.** La spec y el
+  gate son del LEAD (`CLAUDE.md` §4); quien mide puede **reportar** la contradicción, y en T25 la
+  corrección la ejecutó el LEAD.
+- **No habilita ablandar el gate por costo de implementación.** Ver la condición 2.
+- **No habilita corregir la spec en silencio.** Ver la condición 3.
+- **No habilita tocar el invariante de producto que la spec sirve.** Ver §"Lo que la medición NO
+  puede ganar". Es el límite que el LEAD agregó al ratificar y el que impide que esta ADR sea
+  circular.
+
+### Verificación
+
+`docs/SLICE_BOARD.md` §*"T25 · la spec de la celda estaba equivocada en tres puntos"* y
+`docs/TEST_MATRIX.md` §*"Un quinto caso"* llevan la tabla de las dos versiones. La medición que la
+sostiene es la línea `MEDIDO cron barrido` y su parseo campo por campo en **V10b** de
+`scripts/accept-s6.sh`.
+
+Los tres casos de la clase se releen con `git log -1 4fd230e a0e5fde 10d31b6`: **el mensaje de cada
+commit trae la medición que mató a la hipótesis**, que es de dónde salió esta ADR y por qué se puede
+auditar sin creerle a este archivo.
+
+### La pregunta que quedaba abierta, contestada por el LEAD
+
+**Estaba escrita acá como pregunta y se resolvió con hashes, no con prosa.** `docs-keeper` objetó que
+los tres casos documentados eran de **una sola slice** —los tres puntos de la spec de T25— y que
+*"tres casos en tres slices es una clase; tres puntos en una celda puede leerse como una celda mal
+escrita"*. El LEAD dio la razón (*"mi frase era imprecisa y tu objeción es correcta"*) y aportó
+`4fd230e`, `a0e5fde` y la mitad de V3 de `10d31b6`, más el que **no** hay que citar (`f691daf`).
+Están en §"Contexto", verificados uno por uno contra el mensaje de su commit.
+
+**Se deja escrito el intercambio y no sólo el resultado**, porque es el que muestra cómo se usa la
+regla de este repo sobre sí misma: la objeción *"no me consta"* de un agente contra una afirmación
+del LEAD **valió**, y lo que la cerró fue evidencia verificable, no autoridad. Es la condición 1 de
+esta misma ADR aplicada a la ADR.
+
+---
+
 ## Notas operativas — hallazgos que no son ADR
 
 > **Qué es:** hechos verificados que cambian cómo se escribe o se lee algo del repo, pero que **no
