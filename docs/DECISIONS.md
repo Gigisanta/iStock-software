@@ -18,6 +18,15 @@ el LEAD (`CLAUDE.md` §4 — el rol `architect` era de FASE 1 y está dormido)._
   test de tenant corre contra Postgres real.
 - **Verificación:** `pnpm --filter @istock/db test -- rls` + query de `pg_class` con `relrowsecurity=false` → 0 filas.
 
+> **El "< USD 0,50" que aparece en el contexto de esta ADR y en dos más (ADR-006, ADR-011) es el
+> objetivo tal como estaba escrito cuando se decidió, y desde `ea26a02` **el objetivo es por plan**:
+> **Base ≤ 0,50 · Negocio ≤ 1,50**, donde el 1,50 es *0,50 + hasta 1,00 atribuible al chat*. El
+> texto de las ADRs **no se reescribe** —una ADR es lo que se decidió y con qué información—, pero
+> ninguna de las tres es la fuente del número: la fuente es **`COST.md`** (`cost-auditor`), y la
+> regla de cómo se aplica está en `ARCHITECTURE.md` §"objetivo de costo marginal". Lo que importa
+> operativamente y no se ve en el número solo: **una slice de vidriera, panel o media se mide contra
+> 0,50 aunque el tenant esté en Negocio.** El margen del chat es del chat.
+
 ## ADR-002 — Fotos en Cloudflare R2, nunca Vercel ni Supabase Storage
 - **Estado:** aceptada · **Fecha:** 2026-08-27 · **Autor:** LEAD (FASE 0)
 - **Contexto:** las fotos son el 95%+ de los bytes de la vidriera. El egress es el vector que puede
@@ -939,6 +948,108 @@ FASE 5, con el modo de falla más caro que hay: no falla nada, funciona gratis.
 `bash scripts/accept-s6.sh` **V4** (el entitlement se chequea **adentro** de la Server Action) +
 `apps/web/app/(app)/_lib/entitlements.test.ts`.
 
+## ADR-019 — En qué queda una reserva cerrada lo decide **la tabla del dominio**; el call site sólo declara su intención
+- **Estado:** aceptada · **Fecha:** 2026-08-28 · **Autor:** LEAD (ratificada al despachar S6.1) · redactada por `docs-keeper`
+- **Implementó:** `domain-agent` + `app-agent` — `packages/domain/src/listing-status.ts`, `packages/domain/src/reservation.ts`, `apps/web/app/(app)/_lib/listings/publish-listing.ts`, `apps/web/app/(app)/_lib/reservations/expire-reservations.ts` (`83bc673`).
+
+### Contexto — dos historias del mismo hecho, y ninguna estaba mal escrita
+
+`TransitionEffects` declaraba `closesReservation: boolean`: decía **que** había que cerrar la reserva
+y callaba **cómo**. La consecuencia no fue que alguien se olvidara de cerrarla, fue peor: **cada call
+site contestó la pregunta por su cuenta y contestó distinto.**
+
+| call site | qué escribía sobre `reserved → available` |
+|---|---|
+| el panel (`publish-listing.ts`, con un `closingStatusFor(to)` local y privado) | `cancelled` |
+| el barrido del cron (`expire-reservations.ts`, con la definición de "vencida" de `expireReservation()`) | `expired` |
+
+**La misma arista, dos estados de cierre, y el que ganaba dependía de quién llegara primero.** Una
+reserva que se venció sola quedaba registrada como cancelada por una persona. Los dos códigos eran
+correctos leídos de a uno: el helper del panel tenía su justificación escrita al lado, y el cron
+tenía razón en llamar `expired` a lo que su propia función acababa de declarar vencido.
+
+Es la clase de defecto que ningún test de un solo lado encuentra, porque **de un solo lado no hay
+contradicción**.
+
+### Decisión
+
+**La tabla del dominio decide el estado de cierre. El call site declara su intención, no el
+resultado.**
+
+```
+closesReservation: boolean            ->  closesReservationAs: ReservationClosingStatus | null
+transitionEffects(from, to)           ->  transitionEffects(from, to, intent)
+```
+
+- `intent: TransitionIntent | null` es **obligatorio**, y `TransitionIntent` es el **motivo humano**
+  de la transición (`'expire'` | `'cancel'`), no su resultado.
+- La tabla que lo resuelve (`closingStatusFor`) es **privada**: la única puerta es
+  `transitionEffects`.
+- `ReservationClosingStatus` se define **por exclusión** de `'active'` sobre
+  `RESERVATION_STATUSES`, así que agregar un estado de reserva **obliga a decidir** si es un cierre y
+  rompe la compilación de las tablas exhaustivas que lo consumen.
+
+| arista | estado de cierre | por qué |
+|---|---|---|
+| `reserved → sold` | `confirmed` (sin importar el `intent`) | no existe una venta que venció |
+| `reserved → available` con `intent: 'expire'` | `expired` | es el mismo valor que ya devuelve `expireReservation()` para la misma reserva, y ésa es **la única transición que esa función produce** |
+| `reserved → cualquier otro destino` | `cancelled`, **aunque la reserva ya estuviera vencida** | `expired` significa *"se venció sola"*, y quién tiene la definición de vencida es `expireReservation()` |
+
+`intent: 'expire'` sólo pesa sobre `to === 'available'` porque ése es su alcance declarado. Un
+`reserved → in_service` no lo produce un reloj: lo produce alguien que agarró el equipo y lo mandó a
+service, y ahí `'expire'` no significa nada y no se lo deja teñir el registro.
+
+### Por qué esto es una ADR y no un refactor
+
+Tres cosas que se pierden si esto queda sólo como diff:
+
+1. **Es un contrato entre paquetes**, no una preferencia. `CLAUDE.md` §Monorepo pone la máquina de
+   estados en `packages/domain` — *"TS puro, cero I/O"*. Mapear una arista del listing a un estado de
+   reserva **es** máquina de estados. Dejarlo en `apps/web` lo dejaba fuera de la suite del dominio,
+   que es donde se prueban las aristas.
+2. **La forma del tipo es la decisión.** `closesReservationAs` **reemplaza** al booleano, no lo
+   acompaña. Un `boolean` con un `ReservationClosingStatus` al lado deja representable el estado
+   ilegal `true` + `null` y —lo que importa— **deja abierta la puerta de leer "cierra" y elegir el
+   estado por fuera**, que es exactamente el bug que esta ADR cierra. Al ser el mismo valor, es
+   **imposible consumir el efecto sin recibir el estado de cierre**.
+3. **`intent` es obligatorio y admite `null`, en vez de opcional**, y eso es la lección de S6
+   codificada en una firma. Un parámetro opcional cuyo default es un valor válido **no distingue "no
+   me lo pasaron" de "me pasaron que no hay"**, y `strict` no puede ayudar. El bloqueante que
+   `adversary-reviewer` encontró en S6 sobrevivió exactamente por eso. `null` significa *"no hay una
+   intención humana declarada"*, que es lo que dice el panel cuando publica un borrador.
+
+### Alternativas descartadas
+
+| alternativa | por qué no |
+|---|---|
+| **dejar el `boolean` y mudar `closingStatusFor` al dominio como función exportada** | resuelve la ubicación y no el acoplamiento: siguen siendo dos llamadas, y nada obliga a que el call site use la segunda. El segundo consumidor que aparezca (venta manual, canje) la vuelve a derivar a mano |
+| **`closesReservation: boolean` + `closingStatus: ReservationClosingStatus`** | deja representable `true` + `null` y `false` + `'expired'`. Un estado ilegal representable es una rama que alguien va a escribir |
+| **`intent` opcional con default `null`** | es la firma que produjo el bloqueante de S6. El compilador deja de ver al caller olvidado, y el cron se lleva `'cancelled'` en silencio |
+| **que el cron mande el estado final en vez del motivo** | invierte la dirección del acoplamiento: el dominio pasaría a obedecer a la capa de aplicación, que es de dónde venimos |
+
+### Verificación
+
+`packages/domain`: 11 tests nuevos (**199** en total), con **E5/E5b recorriendo el producto
+cartesiano** de aristas en vez de listas escritas a mano, y **E3b cruzando la tabla contra
+`expireReservation()`** — que es la aserción que impide que las dos definiciones de "vencida" se
+separen otra vez.
+
+`apps/web`: los tests nuevos **no fijan el string `'expired'`**. Fijan que la arista del cron **con**
+`intent` da lo que el cron escribe, y **sin** `intent` da `cancelled` — o sea, **lo que no tiene que
+escribir**. Esa segunda mitad es la que atrapa la regresión el día que alguien pase `null` porque
+compila.
+
+`bash scripts/guard-effects.sh` mira lo mismo desde el otro lado: **un efecto que el dominio declara
+obligatorio y que no ejecuta nadie es FAIL.** Pasó de RECHAZADO a OK con este commit.
+
+### Lo que esta ADR NO cerró
+
+**`cancelReservation()` (`reserve-unit.ts:277`) sigue escribiendo `'cancelled'` hardcodeado**, con el
+`intent: 'cancel'` ya armado al lado, y el barrido escribe la arista a mano teniendo
+`decision.listingTransition` disponible. Hoy **acierta por casualidad**. Es la fila **T18** del
+board, y se deja nombrada acá porque una ADR que se lee como "ya está resuelto en todo el repo"
+produce justamente el tercer call site que la contradice.
+
 ## Notas operativas — hallazgos que no son ADR
 
 > **Qué es:** hechos verificados que cambian cómo se escribe o se lee algo del repo, pero que **no
@@ -946,6 +1057,39 @@ FASE 5, con el modo de falla más caro que hay: no falla nada, funciona gratis.
 > los volvería reabribles, y no hay nada que reabrir.
 > **Para quién:** el que va a escribir o auditar un gate.
 > **Cuándo se actualiza:** cuando aparece un hallazgo de esta clase. Lo escribe `docs-keeper`.
+
+### 2026-08-28 · Un gate puede verificar la invocación correcta y aun así afirmar algo falso — quinto caso
+
+**Hallazgo verificado, no abre decisión.** Este repo ya tenía escritas cuatro formas de gate vacío:
+la regla que no puede disparar nunca; el gate satisfecho por un `import` (*"verificar la invocación,
+nunca la presencia del símbolo"*); `guard-artifacts.sh` dando `PASS` con cero archivos; y la V8 de
+`accept-s6.sh` grepeando el **fuente** y contando dos comentarios como corrida. **Falta una, y es la
+más difícil de ver porque el gate hace todo lo que las cuatro reglas anteriores piden.**
+
+`scripts/accept-s6.sh:119-123`:
+
+```
+V5 · expirar una reserva invalida la unidad, no la vidriera entera
+   grep -rqE 'invalidateStorefrontUnit' "$RES" "${S6_UI[@]}"
+```
+
+Verifica una **invocación** —no un import, no un símbolo—, y la invocación **existe**. Y sin embargo,
+mientras `invalidateStorefrontUnit()` emitía sus tres tags, **la propiedad que la línea afirma era
+falsa**: la función invalidaba la vidriera entera. El gate estuvo verde durante la corrida que aceptó
+S6. Lo encontró `cost-auditor` mirando el **cold-hit rate** (~39% contra una alarma de 5%), no un
+gate; el detalle está en `SLICE_BOARD.md` §S6.2.
+
+**La forma del error, para reconocerla en otro gate:** la aserción escrita es una propiedad del
+**comportamiento** (*"invalida la unidad, no la vidriera entera"*) y la evidencia recogida es la
+presencia de un **identificador**. Entre las dos hay un supuesto que nadie declaró: *que el cuerpo de
+la función hace lo que su nombre promete.* Es un supuesto razonable y es exactamente el que un
+refactor rompe sin renombrar nada.
+
+**Regla práctica que se suma a la de método del board:** cuando la aserción de un gate contiene un
+*"no"* —*"no la vidriera entera"*, *"no el catálogo"*, *"sin PII"*— la evidencia **no puede ser un
+nombre**, porque un nombre no tiene polaridad. Tiene que ser una medición del efecto, y del lado
+donde el "no" se rompería. Acá esa medición existe hoy (`e2e/s6-senar-un-equipo-no-purga-la-vidriera-entera.spec.ts`)
+y **la V5 no la cita**: la fila queda anotada en §S6.2 y es del LEAD por §4.
 
 ### 2026-08-28 · Un gate tiene dos niveles, igual que una regla del WAF — y hasta hoy nadie los separaba
 
@@ -960,7 +1104,10 @@ $ git rev-list --count HEAD
 ```
 
 `origin` está configurado (`github.com/Gigisanta/iStock-software.git`), `origin/main` figura `gone`,
-y **`.github/workflows/ci.yml` no se ejecutó ni una vez en 89 commits.** Por lo tanto toda frase de
+y **`.github/workflows/ci.yml` no se ejecutó ni una vez en 89 commits.** _Re-medido el 2026-08-28
+después de S6.2: **103 commits, `git ls-remote --heads origin` sigue vacío.** El snapshot de arriba
+se deja como estaba porque es la corrida que motivó esta nota; lo que cambió es sólo el
+denominador._ Por lo tanto toda frase de
 la forma *"corre en CI"* / *"corre en cada push"* en este repo significa, literalmente, **"`ci.yml`
 declara el step"**.
 

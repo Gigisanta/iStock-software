@@ -105,9 +105,57 @@ Tags: `storefront:{slug}` · `listing:{unit_id}` · `tenant-config:{slug}`.
 Los tags están scopeados a **proyecto + environment, no a dominio** → **un tag sin slug purga a
 todos los tenants**. Límites: 128 tags/respuesta, 256 bytes/tag, 16 tags por bulk REST.
 
+### Quién registra qué tag  ·  **fijado en S6.2 (`f504d69`, 2026-08-28)**
+
+**Un tag es un OR: una entrada cacheada muere si se purga *cualquiera* de los tags que registró.** De
+ahí que el radio de una invalidación no se lea en el emisor sino en el cruce entre lo que se emite y
+lo que cada página registró. Esta tabla es ese cruce, y **es contraintuitiva en dos filas**:
+
+| entrada de cache | tags que registra |
+|---|---|
+| **grilla** (`(storefront)/_lib/listings.ts:330`) | `storefront:{slug}` + `tenant-config:{slug}` |
+| **ficha, camino de HIT** (`:460` + `:502`) | `tenant-config:{slug}` + `listing:{uuid}` |
+| **ficha, camino de MISS** (`:460` + `:526`, vía `listingMiss()`) | `tenant-config:{slug}` + `storefront:{slug}` |
+| **`page.tsx` de la ficha**, sus **dos** entradas (`generateMetadata` y el cuerpo) | los mismos, registrados **explícitamente** en cada rama |
+
+| emisor (panel) | tags que emite | cuándo |
+|---|---|---|
+| `invalidateStorefront(slug)` | `storefront` + `tenant-config` | cambió **el tenant**: alta, TC, punto de retiro, medios de pago, teléfono |
+| `invalidateStorefrontUnit(slug, id)` | `storefront` + `listing:{uuid}` | cambió **una unidad y la grilla**: publicar, despublicar, reservar, vender, la 1ª foto |
+| `invalidateListing(slug, id)` | `listing:{uuid}` | cambió **sólo la ficha**: la 2ª y 3ª foto de una unidad ya publicada |
+
+**Las tres cosas que hay que saber antes de tocar cualquiera de esas líneas:**
+
+1. **El camino de MISS de la ficha conserva `storefront:{slug}` a propósito.** La ficha registra
+   `listing:{uuid}` **después del `await`** y sólo si la unidad es públicamente visible, así que una
+   ficha cacheada como miss —el equipo todavía en `draft`, el link ya circulando— no quedaría bajo
+   ningún tag que el panel emita al publicarla. Sin ese tag, publicar la deja mostrando *"este equipo
+   ya no está publicado"* **hasta 15 minutos, sin error y sin log**.
+2. **`page.tsx` es un cuarto registrante, y es el que decide la métrica.** Los tags de un `'use cache'`
+   interno propagan **hacia afuera**, nunca al revés. Arreglar el loader sin tocar las dos entradas
+   de `page.tsx` mata el amplificador de Postgres y **no mueve el cold-hit rate**.
+3. **Las dos ramas de `page.tsx` registran su tag explícitamente en vez de heredarlo.** La propagación
+   funciona, pero sale de un interno de Next sin contrato público (`use-cache-wrapper.js`), y §3 nos
+   obliga a subir Next. Un `pnpm up` que cambie el orden **no rompería ningún test nuestro**.
+
+> **Trampa con dueño, que hay que leer antes de escribir la pantalla de ajustes (T12).**
+> Desde S6.2, `tenant-config:{slug}` es el **único** tag de alcance tenant que le queda a la ficha en
+> su camino de HIT, y `invalidateStorefront()` tiene **un solo caller en todo el repo**
+> (`create-tenant.ts:378`). El día que exista el editor de TC, **emitir `storefront:{slug}` a mano en
+> vez de llamar `invalidateStorefront()` actualiza la grilla y deja cada ficha del tenant con el TC
+> viejo hasta un año** (`cacheLife('max')`), sin error y sin log.
+
 **`cacheLife` es una decisión de costo, no de UX:** `'max'` + invalidación por evento ≈
 USD 0.012/tenant/mes en ISR Writes; `revalidate: 60` ≈ USD 2.59/tenant/mes — 13% del plan Base,
-solo eso ya revienta el objetivo de < USD 0.50.
+solo eso ya revienta el objetivo de costo marginal.
+
+> **El objetivo es por plan y no es un número único** (LEAD, `ea26a02`, `.claude/agents/cost-auditor.md`):
+> **Base ≤ USD 0,50 · Negocio ≤ USD 1,50**, donde el 1,50 es *0,50 + hasta 1,00 atribuible al chat*.
+> Una slice de **vidriera, panel o media se mide contra 0,50 aunque el tenant esté en Negocio** — si
+> no, "Negocio ≤ 1,50" licencia en silencio una vidriera de 1,40 y el chat se queda sin lugar el día
+> que exista. Corolario operativo: **un número por tenant que no dice qué parte es chat no se puede
+> comparar contra ninguno de los dos techos.** Los números vivos los mantiene `cost-auditor` en
+> `docs/COST.md`; este doc no los duplica.
 
 **Un `set-cookie` server-side en la vidriera desactiva el cache del CDN entero** y manda el 100%
 de los pageviews a la función y a Postgres. Grep de `set-cookie` en `(storefront)` = cero.

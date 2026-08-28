@@ -9,11 +9,11 @@ Lo escribe `docs-keeper` (`CLAUDE.md` §4).
 
 | doc | qué contiene | lo escribe | cuándo se actualiza |
 |---|---|---|---|
-| [PRODUCT.md](PRODUCT.md) | producto ejecutable: ICP, recorrido que factura, planes, fuera de alcance | `product-scribe` | cambio de producto (raro — no se reabre) |
-| [DOMAIN.md](DOMAIN.md) | glosario, entidades, máquina de estados, FX, visibilidad por rol, `publicListingDTO` | `product-scribe` + `domain-agent` | cada slice que toca reglas de negocio |
+| [PRODUCT.md](PRODUCT.md) | producto ejecutable: ICP, recorrido que factura, planes, fuera de alcance, **preguntas abiertas P1–P… con su fila de board** | `docs-keeper` por `CLAUDE.md` §4 — **conflicto abierto**: `.claude/agents/product-scribe.md:11` reclama este archivo. Lo resuelve el LEAD | cambio de producto (raro — no se reabre) |
+| [DOMAIN.md](DOMAIN.md) | glosario, entidades, máquina de estados **con sus efectos**, FX, visibilidad por rol, allowlist del `publicListingDTO` | `docs-keeper` por `CLAUDE.md` §4 (`domain-agent` es dueño de la **implementación**, no del doc) — **mismo conflicto abierto que `PRODUCT.md`** | cada slice que toca reglas de negocio |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | monorepo, host→tenant, cache, camino de una foto, RLS, límites de confianza, **qué NO reescribe el proxy** | LEAD en FASE 1, después `docs-keeper` | FASE 1 + §"Qué NO se reescribe" agregada en **S2** |
-| [DECISIONS.md](DECISIONS.md) | ADRs numeradas con alternativas descartadas y verificación + **§"Notas operativas"** (hallazgos verificados que no abren ADR) | LEAD en FASE 1, después `docs-keeper`; **el LEAD ratifica** cada ADR nueva | **ADR-001..018; 008 y 010 abiertas.** ADR-011 supersede el corolario 4 de ADR-007; ADR-012 lo precisa con el polo negativo; **013** (indistinguibilidad en el panel) y **014** (`instant = false`, **enmendada el 2026-08-28 con la medición del status**) salieron de S2; **015** (el matcher excluye por nombre, no por sufijo) cierra P1+P2; **016** (el rate limit del WAF vive en `config/firewall-rules.json` y no en `vercel.json`) cierra el nivel 1 de T1 — **enmendada el 2026-08-28 en dos puntos que habían driftado**: `vercel.json` ya existe (lo creó S6 y declara sólo el `crons`) y el censo de `guard-firewall.sh` camina `apps/web/app` **entero**, no `app/api`; **017** (los jobs son Vercel Cron, no Inngest) y **018** (el trial vencido no conserva features) salieron de **S6**. **Notas operativas abiertas el 2026-08-28**: los dos gates que daban verde por ausencia, el `head()` que pisaba el comando `head`, **"un invariante puede tener tres pruebas alrededor y ninguna encima"** (el botón `wa.me`, cerrado con M3b), la **consulta duplicada del tenant en el miss frío** (deuda aceptada de S3.3, con su número), el **`noindex` del flight** que no es un `<meta>` y —2026-08-28— **"un gate tiene dos niveles"**: `ci.yml` nunca corrió, así que *"corre en CI"* significa *"el repo declara el step"* |
-| [SLICE_BOARD.md](SLICE_BOARD.md) | **estado de la verdad del avance** + blockers + **FASE 4 bis** (trabajo que salió de una slice) + §**"Seis gates rojos o dormidos"** (el día que se separó *gate declarado* de *gate ejecutado*) | `docs-keeper` | cada slice, y cada vez que el LEAD re-ejecuta un gate |
+| [DECISIONS.md](DECISIONS.md) | ADRs numeradas con alternativas descartadas y verificación + **§"Notas operativas"** (hallazgos verificados que no abren ADR) | LEAD en FASE 1, después `docs-keeper`; **el LEAD ratifica** cada ADR nueva | **ADR-001..019; 008 y 010 abiertas.** ADR-011 supersede el corolario 4 de ADR-007; ADR-012 lo precisa con el polo negativo; **013** (indistinguibilidad en el panel) y **014** (`instant = false`, **enmendada el 2026-08-28 con la medición del status**) salieron de S2; **015** (el matcher excluye por nombre, no por sufijo) cierra P1+P2; **016** (el rate limit del WAF vive en `config/firewall-rules.json` y no en `vercel.json`) cierra el nivel 1 de T1 — **enmendada el 2026-08-28 en dos puntos que habían driftado**: `vercel.json` ya existe (lo creó S6 y declara sólo el `crons`) y el censo de `guard-firewall.sh` camina `apps/web/app` **entero**, no `app/api`; **017** (los jobs son Vercel Cron, no Inngest) y **018** (el trial vencido no conserva features) salieron de **S6**; **019** (*en qué queda una reserva cerrada lo decide la tabla del dominio; el call site sólo declara su intención*) salió de **S6.1** y es la que convirtió un booleano en un enum de tres valores. **Notas operativas abiertas el 2026-08-28**: los dos gates que daban verde por ausencia, el `head()` que pisaba el comando `head`, **"un invariante puede tener tres pruebas alrededor y ninguna encima"** (el botón `wa.me`, cerrado con M3b), la **consulta duplicada del tenant en el miss frío** (deuda aceptada de S3.3, con su número), el **`noindex` del flight** que no es un `<meta>` y —2026-08-28— **"un gate tiene dos niveles"**: `ci.yml` nunca corrió, así que *"corre en CI"* significa *"el repo declara el step"* |
+| [SLICE_BOARD.md](SLICE_BOARD.md) | **estado de la verdad del avance** + blockers + **FASE 4 bis** (trabajo que salió de una slice) + §**"Seis gates rojos o dormidos"** (el día que se separó *gate declarado* de *gate ejecutado*) + §**S6.1** y §**S6.2** (las dos correcciones de reservas) + §**S2.5** (el guard de IMEI que rechaza fotos legítimas, **abierta**) | `docs-keeper` | cada slice, y cada vez que el LEAD re-ejecuta un gate |
 | [TEST_MATRIX.md](TEST_MATRIX.md) | unit / RLS / e2e / seguridad + **qué regla no prueba nadie todavía**, verificado contra el repo | `docs-keeper` (era `qa-agent`; **corregido por el LEAD el 2026-08-28**: quien escribe los tests que cruzan no puede escribir también el doc que declara la cobertura) | cada test nuevo, y cada corrida de gate que cambie lo cubierto |
 | [COST.md](COST.md) | piso de plataforma, marginal por tenant, estrés, métrica a vigilar | LEAD en FASE 1, después `cost-auditor` | **con fuente desde FASE 1** |
 | [CHATBOT.md](CHATBOT.md) | dieta, contexto, tools, handoff, evals, costo por 1000 msgs | `ai-agent` | FASE 5 |
@@ -42,7 +42,8 @@ Lo escribe `docs-keeper` (`CLAUDE.md` §4).
 ## Estado — 2026-08-28
 
 > ### 🔴 Antes que nada: `.github/workflows/ci.yml` **nunca corrió**
-> `git ls-remote --heads origin` está **vacío** contra **89** commits locales; `origin/main` figura
+> `git ls-remote --heads origin` está **vacío** contra **103** commits locales (eran 89 el mismo día,
+> antes de S6/S6.1/S6.2: **crece el denominador, no el numerador**); `origin/main` figura
 > `gone`. Todo *"corre en CI"* de este índice, de `SLICE_BOARD.md` y de `DECISIONS.md` significa
 > **"`ci.yml` declara el step"** — nivel 1. Nivel 2 (corrió en `ubuntu-latest`, sobre este commit) no
 > lo alcanzó **ningún** gate del repo. Misma distinción que ADR-016 fijó para `"status": "active"`
@@ -97,7 +98,8 @@ Lo que hay que saber sin leer nada más:
   `grafito` y la página dice `Negro espacial`.
 - **S4 está `done`: `./scripts/accept-s4.sh` re-ejecutado por el LEAD el 2026-08-28, sin fixture —
   37 PASS, 0 FAIL**, con la suite e2e corrida de verdad (**73 tests**) y el repo en **1004 passed /
-  0 failed**. El click del botón de WhatsApp deja **una** fila en `wa_click_events` y nada más:
+  0 failed** — números **de esa corrida**, no los de hoy: los actuales (1225 y 86) están al final de
+  esta sección. El click del botón de WhatsApp deja **una** fila en `wa_click_events` y nada más:
   `filas_al_cargar=0 · filas_antes=0 · filas_despues=1` (dispara en el **click**, no en el **view**),
   `filas_creadas=0` en el cruce de tenants, y `anchors=1 · abre_whatsapp=si` **con JavaScript
   apagado** — la telemetría nunca se pone adelante de la venta. Sin PII: no se anonimiza, **no se
@@ -178,11 +180,53 @@ Lo que hay que saber sin leer nada más:
   toda transición se evaluaba con `activeReservation: null` — *"Publicar"* sobre una unidad reservada
   devolvía ok y el equipo volvía a la vidriera **como Disponible con la seña puesta**. **El typecheck
   no podía verlo porque el parámetro era opcional y su default un valor válido**; el fix fue **borrar
-  el default**, no pasar el dato. Dos cosas para leer junto al `done`: **(a)** la barrida que lo
-  respalda es **anterior** a `10d31b6`, que reescribió la **V8** —hasta ahí grepeaba el fuente y daba
-  PASS con dos comentarios—, así que la medición está hecha pero el gate en su forma actual **no
-  tiene corrida registrada**; **(b)** deja abierta **S6.1**: la regla de en qué queda una reserva
-  cerrada vive en `apps/web` y es de la máquina de estados.
+  el default**, no pasar el dato. Dos cosas para leer junto al `done`: **(a)** el residuo se cerró el
+  2026-08-28 —el LEAD declara haber re-ejecutado `scripts/accept-s6.sh` **en su forma actual**, la
+  V8 que mide una corrida y no la que grepeaba el fuente— **con una salvedad que no se redondea:
+  consta el veredicto, no el conteo de PASS**, mismo caso que la corrida que cerró S4.1;
+  **(b)** dejaba abierta **S6.1**, ya cerrada (abajo). Y dejó abierto algo que no es residuo de
+  proceso sino de gate: **la V5 de `accept-s6.sh` se llama *"señar no purga la vidriera entera"* y lo
+  que ejecuta es `grep -rqE 'invalidateStorefrontUnit'`** — durante todo el defecto de S6.2 la
+  función se llamaba así **y purgaba la vidriera entera**, con el gate en verde.
+- **S6.1 cerró** (`83bc673`, `domain-agent` + `app-agent`) y es **ADR-019**: *en qué queda una
+  reserva cerrada lo decide la tabla del dominio; el call site sólo declara su intención*. El defecto
+  no era un valor mal puesto sino **dos call sites decidiendo por separado sobre la misma arista**
+  —el cron escribía `expired`, el panel `cancelled`, y los dos tenían tests verdes—. El efecto dejó
+  de ser un booleano y pasó a ser `closesReservationAs: 'confirmed' | 'expired' | 'cancelled' | null`,
+  y el `intent` es **obligatorio aunque admita `null`**, porque un parámetro opcional con default
+  válido no distingue *"no me lo pasaron"* de *"me pasaron que no hay"* — que es exactamente lo que
+  ya había roto S6 con `extras`. **Residuo abierto: `T18`** — en `main` (`f504d69`)
+  `cancelReservation()` todavía escribe `'cancelled'` a mano (`reserve-unit.ts:277`) en vez de
+  preguntarle a la tabla; hoy **acierta por casualidad**, y ésa es justo la forma en que este defecto
+  vuelve. El arreglo está en el árbol de trabajo **sin commitear**, así que la fila sigue abierta.
+- **S6.2 cerró** (`f504d69`) y es la corrección más cara de leer del día: `invalidateStorefrontUnit()`
+  **purgaba la vidriera entera**. Reservar **una** unidad en un tenant de 60 equipos tiraba abajo las
+  **61** páginas, porque **un tag de cache es un OR** y la ficha registraba también los tags de
+  tenant. Lo encontró `cost-auditor` auditando S6 (`e3f3703`): cold-hit hacia **~39%** contra una
+  alarma de 5%. Medición del LEAD después del arreglo: `rerender=2 · esperado=2 ·
+  sobrevivieron=[ficha-a,ficha-c,ficha-d]`; **antes, en un clone desechable, `rerender=5` de 5.**
+  La topología final (quién registra qué tag) está en `ARCHITECTURE.md`, y **hay que leerla antes de
+  emitir un tag a mano**: el camino de HIT de la ficha ya **no** registra `storefront:{slug}`, así
+  que quien cambie el **TC** con `invalidateStorefront()` va a actualizar la grilla y dejar cada
+  ficha con el precio viejo **hasta un año**, sin error y sin log (**T12**).
+- **El objetivo de costo es por plan desde `ea26a02`: Base ≤ USD 0,50 · Negocio ≤ USD 1,50**, con el
+  1,50 = *0,50 + hasta 1,00 atribuible al chat*. **Una slice de vidriera, panel o media se mide
+  contra 0,50 aunque el tenant esté en Negocio.** La fuente del número es **`COST.md`**
+  (`cost-auditor`); ningún otro doc lo re-deriva.
+- **Abiertas al cerrar esta pasada (2026-08-28):** **S2.5** — el guard de IMEI de `packages/media`
+  rechaza keys legítimas: una key content-addressed es hexadecimal y cae sola en `/\d{15}/`, o sea
+  **1 de cada 158 variantes**, **1,88% de las fotos imposibles de subir para siempre** (la key es
+  determinista: reintentar da el mismo rechazo) y **57% de los onboardings de 15 equipos**. Ataca el
+  *done cobrable* de `CLAUDE.md` §1, y de segundo orden **cuelga la ficha**, porque el mismo guard
+  corre dentro del `'use cache'` y un throw ahí es un 200 que nunca cierra el stream. **El arreglo
+  está en el árbol de trabajo, sin commitear y sin aceptar.** · **T17** (reserva configurable por
+  tenant, la mitad que le falta a P3 de `PRODUCT.md`) · **T18** (arriba) · **T19** (`packages/ai`
+  **no existe**: `ls packages/` → `db domain media`; FASE 5 sin arrancar, y con ella E7–E9 y S7 de
+  `TEST_MATRIX.md`).
+- **Números de la última corrida registrada** (sobre `f504d69`): **1225 tests** en unit/integración
+  (domain 199 · media 107 · db 300 · web 365 · tests 254) y **86 e2e · 0 skip**, con censo del
+  reporter en **13/13 archivos**. `packages/media` es el único paquete que no se movió —107 antes y
+  después de las tres slices de reservas—, y es donde estaba esperando **S2.5**.
 - **Regla de método vigente: un gate que nunca se vio fallar no es un gate.** Dos gates estaban
   verdes por vacío desde S1 (la regla del `TODO` no podía disparar nunca) y una regla del
   `guard-leaks` exigía citar el ADR equivocado. Toda regla nueva se prueba en **las dos
@@ -231,12 +275,13 @@ Lo que hay que saber sin leer nada más:
   `storefront-track-rl` pasó a `active`, y `active` significa *"el archivo declara que debe estar
   publicada"*, **no** *"está publicada"*. El drift contra la config viva lo cierra
   `vercel firewall diff --json`, que **no existe todavía**.
-- **T2 dejó de ser "no lo chequea nadie" y pasó a "no está commiteado".** La regla existe: es
-  **`W015`** de `apps/web/scripts/web-lint.mjs`, corre y da verde (15 tablas de negocio **derivadas
-  del schema**, no de una lista a mano). Pero `git log -S W015` sobre ese archivo devuelve **cero
-  commits** y `git status` lo marca `M`: **en `main` no existe y no corrió en ningún push.** Es la
-  tercera pregunta que este repo tuvo que aprender a hacerse —*¿hay chequeo?*, *¿lo corre alguien?*
-  y ahora **¿está en `main`?**— y la cierra el LEAD, no un doc.
+- **La cuarta pregunta, que nació de que este índice se contradijera a sí mismo.** Hasta el
+  2026-08-28 había acá dos viñetas sobre **T2**: una decía que había cerrado en `9b3d7d2` y la otra,
+  doce renglones abajo, que `W015` *"en `main` no existe"*. Las dos fueron ciertas, con **horas** de
+  diferencia. Se borra la segunda y queda la lección, que es más útil que la fila: la lista de
+  preguntas de este repo es **¿hay chequeo?** · **¿lo corre alguien?** · **¿está en `main`?** ·
+  **¿corrió el CI?**, y un índice que se actualiza por agregado —sin releer lo que ya dice— produce
+  exactamente este resultado. `TEST_MATRIX.md` §"La familia gate vacuamente verde" agrega tres más.
 - **Deuda de los instrumentos: T3 cerró** (`d686923`). El test de RLS cruzado vive en
   `tests/rls-cross-tenant.test.ts` —`db-agent` escribe las policies, así que no puede ser dueño del
   test que las audita— y el LEAD lo re-ejecutó desde la ubicación nueva: **69 casos** verdes, total

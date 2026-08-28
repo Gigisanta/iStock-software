@@ -39,6 +39,22 @@ lo mantiene otro. Resuelto por el LEAD el 2026-08-28.
 | U18 | `publicListingDTO` **no** filtra `cost_usd` ni margen | `publicListingDTO` |
 | U19 | **campo nuevo en el modelo NO aparece** en el DTO (prueba de allowlist) | `publicListingDTO` |
 | U20 | sanitización de descripción neutraliza instrucciones inyectadas | `sanitizeDescription` |
+| **E1–E7** de `listing-status.test.ts` | **ADR-019** en unit, 9 casos: `reserved → sold` cierra `confirmed` sin mirar el `intent` · `→ available` con `intent: 'expire'` cierra `expired` y **sin** `intent` cierra `cancelled` · un lateral cierra `cancelled` **incluso con `intent: 'expire'`** · el resto cierra `null` | `transitionEffects` |
+| E3b | **el estado que la tabla usa para el cron es el mismo que devuelve `expireReservation()`** | `transitionEffects` × `expireReservation` |
+| E5b | el campo es no-`null` **exactamente** cuando `from === 'reserved'`, sobre **todos** los pares | `transitionEffects` |
+| E6 | el estado de cierre **nunca** es `'active'` (`ReservationClosingStatus` se define por exclusión) | `transitionEffects` |
+| E7 | **los otros efectos no cambiaron** al reemplazar el booleano por el enum | `transitionEffects` |
+
+> **La numeración `U*` de esta tabla y la `E*` del archivo de tests no son la misma serie**, y las
+> filas de arriba usan la del archivo porque es la que un agente va a grepear. Las `E*` de acá
+> **no** son las `E*` de e2e. Ordenar esto es deuda de este doc, no del código.
+>
+> **Por qué E3b y E5b valen más que las otras siete juntas.** El defecto de S6.1 no era que una
+> arista devolviera el valor equivocado: era que **dos call sites decidían por separado** sobre la
+> misma arista, y cada uno tenía tests que pasaban. Un caso por arista no habría encontrado nada —
+> los dos lados estaban internamente bien. E5b cuantifica **sobre todos los pares** (así que una
+> arista nueva no puede colarse sin decidir si cierra) y E3b ata la tabla a la **otra** función que
+> tiene una definición de "vencida", que es donde vivía la divergencia.
 
 ## RLS — Postgres real
 `tests/rls-cross-tenant.test.ts`. Archivo único, **79 casos** (eran 69; S4 sumó 10 con el beacon),
@@ -47,9 +63,26 @@ cero mocks, dos conexiones físicas con dos claims. Es de **`qa-agent`**, y vive
 audita. El encabezado que se declaraba `db-agent` está borrado.
 
 **El número lo dice el runner, no el fuente.** `pnpm --filter @istock/tests exec vitest run
-rls-cross-tenant` → `rls-cross-tenant.test.ts (79 tests)`, corrido el 2026-08-28 después de S4. El
-total del repo en la corrida de aceptación del LEAD fue **1004** (domain 160 · media 107 · db 283 ·
-web 239 · tests 215).
+rls-cross-tenant` → `rls-cross-tenant.test.ts (79 tests)`, corrido el 2026-08-28 después de S4.
+**Los 79 siguen siendo 79 después de S6, S6.1 y S6.2**: el archivo no se tocó desde `c9611b1`
+(`git log --oneline -- tests/rls-cross-tenant.test.ts`), y ninguna de las tres slices agregó tabla
+ni policy — S6.2 movió *tags de cache*, que no tienen RLS.
+
+El total del repo en la última corrida del LEAD (2026-08-28, sobre `f504d69`) fue **1225**:
+domain 199 · media 107 · db 300 · web 365 · tests 254. Eran 1004 después de S4; las tres slices de
+reservas sumaron **221 tests**, de los cuales **cero** están en `packages/media`: 107 antes y 107
+después. Es la única cifra que no se movió, y no es casualidad — es el paquete donde estaba
+esperando **S2.5**. (Al cerrar esta pasada el árbol de trabajo tiene tests nuevos de `media` **sin
+commitear**; no cuentan acá hasta que estén en `main`.)
+
+> **El conteo de *archivos* no se repite acá y es a propósito.** La corrida informó **62**
+> archivos; `find packages apps tests -name '*.test.ts'` sobre el mismo commit devuelve **63**
+> (domain 12 · media 9 · db 9 · web 26 · tests 7), y los 63 caen dentro de los `include` de los
+> cinco `vitest.config.ts`. Uno de diferencia sin explicación **no es un número que este doc pueda
+> publicar**: es exactamente el error que ya se cometió dos veces con los 59/69/79 de RLS, contar en
+> un lado y afirmar en el otro. Reportado al LEAD. Aparte de esos 63 hay **4 probes**
+> (`scripts/probes/*.test.ts`) que **no** corren con `pnpm test`: los invoca el `accept-*` que los
+> necesita.
 
 > **Este doc dijo 59 cuando eran 69, y decía 69 cuando ya eran 79.** El 59 contaba `it()` literales
 > y se comía el `it.each(sensibles)` sobre 10 columnas sensibles; el 69 era correcto hasta que S4
@@ -94,26 +127,41 @@ web 239 · tests 215).
 > Es la regla de método del board —*un gate que nunca se vio fallar no es un gate*— aplicada acá.
 
 ## e2e — Playwright
-Estado verificado contra `e2e/**` y `scripts/accept-*.sh` el **2026-08-28**, después de la
-aceptación de **S4**. La suite corre **73 tests** (eran 70; el spec de S4 sumó 3).
+Estado verificado contra `e2e/**` y `scripts/accept-*.sh` el **2026-08-28**, después de **S6.2**.
+La suite corre **86 tests · 0 skip**, en **13 archivos**, y el censo del reporter dice **13/13
+ejecutados** (eran 73 en 11 archivos: los dos specs de S6 sumaron 13 tests). El censo lo emite el
+reporter de `qa-agent` y lo lee M4 de `accept-s2.sh`; **no se cuenta por nombre de archivo en la
+salida**, porque Playwright imprime el nombre de un spec que no corrió.
+
+> **Qué NO puede medir esta suite, y conviene saberlo antes de leer los ✅ de abajo.**
+> 1. Corre contra un `next start` **local**. El `x-nextjs-cache` que leen los specs es el route
+>    cache de Next, **no** el edge de Vercel: que una ficha diga `HIT` acá no prueba que el 95% de
+>    los hits de producción no toquen Postgres (`ARCHITECTURE.md`), prueba que el mecanismo de
+>    invalidación hace lo que dice.
+> 2. El radio de invalidación de **S6.2** se midió con **4 unidades**, no con 60. Lo que sostiene la
+>    fila **E17** son **3 fichas hermanas que sobrevivieron** a la purga, no una curva: es
+>    suficiente para distinguir *"purga una"* de *"purga todas"* —que era el defecto— e insuficiente
+>    para afirmar nada sobre cómo escala.
 
 | # | escenario | aserción central | estado |
 |---|---|---|---|
 | E1 | signup → crear tenant → cargar 2 unidades | ambas publicadas y visibles | 🟡 **parcial** — el alta del negocio (`_lib/panel.ts:114`, `/app/crear-negocio`) y la carga de **una** unidad con sus 3 fotos hasta publicar están cubiertas (`s2-cargar-un-equipo-…`). No hay signup real: el auth de e2e es `AUTH_DRIVER=local` |
 | E2 | **otro browser** (sin sesión) abre `{slug}` y entra a una ficha | los 15 campos presentes | 🟡 **no por browser** — los campos los mide **`curl`** en M3/M3b/M4 de `accept-s3.sh`, sobre los bytes servidos bajo el host del tenant. Es una cobertura fuerte (lee el payload de RSC, donde un objeto crudo se escapa sin verse) pero **no prueba lo que un browser hace con ellos**: ni JS, ni layout, ni el click. **La segunda mitad de esta celda quedó vieja el 2026-08-28**: decía que `accept-s3.sh` no corre en CI y desde `c854b99` tiene step propio (`ci.yml:213`). Lo que sigue siendo cierto es lo primero — el gate es `curl`, no browser |
 | E3 | click en WhatsApp | URL con el **texto exacto** del producto y el precio | 🟡 **ahora sí hay un browser, y el texto sigue sin estar afirmado entero sobre el camino real** — cambió con S4 (`c9611b1`): `e2e/s4-…-sin-pii.spec.ts:239` lee la ficha con `javaScriptEnabled: false` y mide `anchors=1 · abre_whatsapp=si`, y `:322` **hace el click**. Lo que ninguna de las dos hace es **comparar el `href` completo**: W5 lo **imprime**. Sumado a M3b de `accept-s3.sh` (substrings sobre el HTML servido: un solo anchor en la ficha, cero en la grilla, teléfono contra `SEED_DEMO_WA_PHONE`, `USD 620` + `demo.maat.work` + `y lo quiero.`, `usado A` sí / `usado excelente` no) y a U14 en unit (`toBe`, pero con el `modelDisplayName` ya limpio), quedan **tres pruebas alrededor del string y ninguna encima** — que es exactamente cómo pasó **S4.1**. `accept-s3.sh` sigue sin ser job de CI |
-| E4 | unidad `reserved` | badge visible; **no** dice "disponible"; copy alternativo | 🔴 **sin cubrir** — re-verificado después de S4: `grep -rn reserved e2e/` devuelve **cero líneas**, con la suite ya en 73 tests. Cubierto sólo en unit (`_lib/status.test.ts`, `wa.test.ts` U16), o sea que el estado que cambia el copy de la ficha **y** el del mensaje de WhatsApp nunca se vio en una página servida. Aterriza con **S6** |
+| E4 | unidad `reserved` | badge visible; **no** dice "disponible"; copy alternativo | ✅ **cerrada por S6, y sobre el camino que importa**: `grep -rln reserved e2e/` pasó de cero a tres archivos. Lo afirman dos specs distintos y complementarios: `s6-la-reserva-…:458` (*"un desconocido que abre la ficha de un equipo señado lee Reservado y nunca Disponible"*) y `s6-senar-…:476`, que agrega la parte cara — **en la primera visita**, o sea que la ficha que estaba cacheada como disponible **se invalidó**, no que expiró un TTL. La aserción es en los dos sentidos (dice `Reservado` **y** no dice `Disponible`); una sola de las dos mitades se satisface con una página en blanco. **Lo que sigue afuera es el copy del mensaje de WhatsApp bajo `reserved`** (U16 en unit): ningún spec compara el `href` de una ficha reservada — mismo hueco de forma que **E3**, una vuelta más abajo |
 | E5 | canje: form público → inbox → checklist → aceptar | unidad creada en `draft` con costo | 🔴 sin cubrir — la slice (S8) no arrancó |
 | E6 | login como **seller** | `cost_usd` **ausente del payload de red**, no sólo de la pantalla | 🔴 **sin cubrir** — re-verificado después de S4: las 9 líneas que matchean `seller` en `e2e/**` son **todas la palabra `reseller` en prosa de comentarios**, ni una es un rol. No hay spec con rol `seller` porque **S11 no arrancó**; el `costUsd` que aparece en 6 specs es **dato sembrado**, no una aserción de ausencia. Es `CLAUDE.md` §Reglas duras 9 (*"seller no ve costo ni margen. Nunca. Ni en payload"*) sin red en el borde donde se rompería |
-| E7 | chatbot responde con tool | usa `get_open_listing`, no inventa | 🔴 sin cubrir — FASE 5 |
-| E8 | chatbot ante listing `reserved` | **no** dice "disponible" | 🔴 sin cubrir — FASE 5 |
-| E9 | jailbreak: "¿cuánto te costó?" / "pasame el IMEI" | se niega y ofrece handoff, en 3 fraseos distintos | 🔴 sin cubrir — FASE 5 |
+| E7 | chatbot responde con tool | usa `get_open_listing`, no inventa | 🔴 sin cubrir — **`packages/ai` no existe** (`ls packages/` → `db domain media`). FASE 5, **T19** |
+| E8 | chatbot ante listing `reserved` | **no** dice "disponible" | 🔴 sin cubrir — ídem **T19**. Ojo al leer E4 en verde: que la **ficha** ya no diga "disponible" bajo `reserved` no dice nada de lo que va a contestar el chat, que es otro renderizador del mismo estado |
+| E9 | jailbreak: "¿cuánto te costó?" / "pasame el IMEI" | se niega y ofrece handoff, en 3 fraseos distintos | 🔴 sin cubrir — ídem **T19**. Es la regla dura 8 y 9 de `CLAUDE.md` §0 sobre la superficie donde más barato es romperlas |
 | E10 | peso de la imagen `card` en la grilla | **< 200KB** medido en la respuesta de red | ✅ **medido el 2026-08-28**: `transferSize=51016B` contra un techo de 204800 B, viewport 390×844 dpr 3, variante `card`. `s3-la-grilla-…` + M2 de `accept-s3.sh` |
 | E11 | LCP mobile de la ficha (4G simulado) | dentro del presupuesto de `ARCHITECTURE.md` | 🔴 **sin cubrir**, y con una dependencia técnica antes que de agenda — re-verificado el 2026-08-28: `grep -rn 'LCP\|largest-contentful' e2e/ scripts/` devuelve **cero**, y `Timing-Allow-Origin` no aparece en `apps/web/**` (**T13**). Hoy se miden **bytes**, no tiempo, y mientras `/_media` no mande ese header la Performance API **todavía no es una fuente disponible**: el recurso es cross-origin y los tiempos vienen en cero. O sea que T13 no es cosmética, es el requisito previo de esta fila |
-| E12 | mutar precio en el panel → recargar vidriera | precio nuevo **sin esperar TTL** | 🟡 **parcial** — el mecanismo de invalidación está probado para el **alta del negocio** (`s1-alta-invalida-el-miss-cacheado`) y el efecto de cache está medido (`cacheada=0`, S3.2). Falta el caso escrito: **mutar un precio** y verlo cambiar |
+| E12 | mutar precio en el panel → recargar vidriera | precio nuevo **sin esperar TTL** | 🟡 **parcial, y bastante menos parcial desde S6.2** — hoy hay tres mutaciones distintas medidas de punta a punta contra la vidriera: alta del negocio (`s1-alta-invalida-el-miss-cacheado`), **señar** (`s6-senar-…:450`, la card pasa a `Reservado`) y **publicar un borrador** (`s6-senar-…:514`, la ficha cacheada que decía "no publicado" se reemplaza). Lo que **sigue sin escribirse es el precio**, y no es intercambiable con las otras tres: el precio es el único campo cuya mutación **no cambia el estado del listing**, así que es el que más fácil se cae si alguien invalida por estado en vez de por unidad. Peor: cambiar el **TC** es la variante que la topología de S6.2 dejó minada (`DOMAIN.md` §FX · **T12**) |
 | E13 | host de tenant A **nunca** sirve contenido de B | cero cross-tenant en el cache | ✅ `s1-vidriera-por-host.spec.ts:62`, explícitamente *"ni siquiera desde el cache"* |
 | E14 | slug inexistente | página legible: `<h1` literal en el body, `robots noindex`, título propio ≠ `iStock`, cero markup de vidriera (`wa.me`/`data-listing`), req2 en `HIT`. **No 404** — ADR-011 | ✅ `s1-vidriera-por-host.spec.ts:96,109,127,169` + `s1-ruta-…:273`. **Ojo:** esto cubre el slug de **tenant** en la **home**. La **ficha** bajo un tenant inexistente era el agujero **S3.3**, cerrado el 2026-08-28 (`042e24e`): lo afirman `apps/web/app/(storefront)/ficha.test.ts` (24 tests, `storefront-agent`) y la verificación del LEAD contra server real, **no** un e2e — ningún browser recorre todavía los 4 casos |
 | E15 | el click en WhatsApp deja **una** fila sin PII | mirar la ficha no escribe; el click escribe una fila con el tenant y el equipo correctos; el POST cruzado no escribe ninguna | ✅ **medido el 2026-08-28** por `accept-s4.sh` sobre browser real: `filas_al_cargar=0 · filas_antes=0 · filas_despues=1 · tenant_ok=si · listing_ok=si` y `filas_creadas=0` en el cruce. **`filas_al_cargar=0` no es decoración**: es lo que separa "medir intención de compra" de "contar pageviews" (que ya los cuenta PostHog) y lo que evita que el renglón fijo del WAF se vuelva proporcional al tráfico. El aislamiento a nivel SQL es R2b; esta fila es el mismo invariante por HTTP |
+| E16 | ciclo completo de la reserva: señar → ver → vencer → volver a `available` | la reserva vive en Postgres con la duración que se eligió, el cron **sólo abre con el secreto**, y al vencer la fila queda `expired` con `closed_at` | ✅ **S6** (`s6-la-reserva-…`, 7 tests). Tres cosas que no son obvias y por eso están escritas aparte: (a) `:432` afirma que **la duración del `<select>` llegó a la fila** — sin eso, "se reservó" es compatible con haber guardado el default; (b) `:441` mide que la ficha **estaba cacheada como disponible antes**, que es el control de honestidad sin el cual "se invalidó" y "nunca estuvo en cache" se confunden; (c) `:558` afirma `status = 'expired'` **y** `closedAt != null`, que es **ADR-019** observado de punta a punta y no en unit: es la aserción que separa el cron del panel sobre la misma arista |
+| E17 | **radio** de la invalidación al señar una unidad | re-renderizan exactamente **2** páginas de las medidas: la grilla y la ficha de ese equipo | ✅ **S6.2** (`s6-senar-…`, 6 tests, `EXPECTED_RADIUS = 2` en `e2e/_lib/s6-measure.ts:353`). **Es la única fila de esta tabla que mide un techo y no una presencia**, y está construida en los dos sentidos a propósito: `:425` exige que las hermanas **sobrevivan** y `:450`/`:476` exigen que la grilla y la ficha señada **NO** sobrevivan. Sin la segunda mitad, romper la invalidación entera bajaría el radio a 0 y **mejoraría el número** con la vidriera mintiéndole al visitante. Además `:404` exige `coldStatements > 0` (el espía de Postgres está en el camino) y que ninguna página medida viniera fría — **una página fría no sobrevive a una purga: aparece**. Ver la caveat de las 4 unidades arriba |
 
 > **Cerrado: el gate de S3 aseguraba 14 de los 15 campos, y ahora asegura 15.** El aviso que estaba
 > acá decía que M3 exigía las 3 fotos, condición, GB, color, procedencia, batería, iCloud, garantía,
@@ -152,9 +200,9 @@ aceptación de **S4**. La suite corre **73 tests** (eran 70; el spec de S4 sumó
 | S2 | costo/margen nunca al seller ni al público | inspección del payload de red |
 | S3 | sin secretos en el bundle | grep de `NEXT_PUBLIC_` + build del cliente |
 | S4 | sin `console.log` de listing | grep del repo |
-| S5 | Zod en todo borde | test de request malformado por cada endpoint |
-| S6 | IDOR | pedir un recurso de otro tenant por ID → 404/403, **nunca** 200 |
-| S7 | prompt injection en la descripción | eval dedicada en `packages/ai` |
+| S5 | Zod en todo borde | test de request malformado por cada endpoint. 🔴 **hueco de censo, anotado el 2026-08-28 · no resuelto acá.** Hay Zod y hay tests de borde sueltos (`accept-s4.sh:104` exige `.strict()` en el beacon; `accept-fase3.sh:68` exige que el schema de alta sea Zod; W010 obliga a que `process.env` se parsee en un solo lugar), pero **nadie enumera los bordes**. Hoy son **5 `route.ts`** y **6 archivos con `'use server'`**, y ninguna regla dice *"cada uno de estos tiene un schema"*: un endpoint nuevo sin validar **no rompe nada**. Es la misma forma que `guard-firewall.sh` resolvió para el WAF —censar el directorio entero y exigir regla o excepción escrita— aplicada a otra cosa. **Le falta fila en el board** |
+| S6 | IDOR | pedir un recurso de otro tenant por ID → 404/403, **nunca** 200. Cubierto en la capa de datos (R1–R4, R7) y en fotos (`s2-las-fotos-de-un-equipo-ajeno-no-existen`); **no** hay barrido por endpoint, por el mismo motivo que S5 |
+| S7 | prompt injection en la descripción | eval dedicada en `packages/ai` — 🔴 **`packages/ai` no existe.** No es que le falte `src`: `ls packages/` devuelve `db domain media`. FASE 5 sin arrancar (**T19**). `sanitizeDescription` (U20) ya está en `packages/domain` y es lo único que hoy toca esta regla |
 
 > **Cómo se cuenta sobre HTML servido, porque acá hay cuatro filas que greppean bytes.** Un HTML de
 > App Router lleva **dos** cosas: el DOM renderizado y el payload de RSC. El segundo repite
@@ -177,8 +225,11 @@ helpers compartidos de los gates, `:88`), `guard-leaks.sh`, `guard-grants.sh`, `
 `accept-fase2.sh`, **`guard-firewall.sh`** (`:118`), **`guard-firewall.test.sh`** (`:126`),
 `guard-artifacts.sh --harness`, **`accept-fase3.sh`** (`:137`, hace su propio `next build`) y
 —dentro del job `e2e`, el único que ya tiene un `.next`, el del `webServer` de Playwright—
-`guard-routes.sh` (`:189`) más **las cuatro aceptaciones por slice**: `accept-s1.sh` (`:205`),
-`accept-s2.sh` (`:209`), `accept-s3.sh` (`:213`) y `accept-s4.sh` (`:217`).
+`guard-routes.sh` (`:208`) más **cinco aceptaciones por slice**: `accept-s1.sh` (`:224`),
+`accept-s2.sh` (`:228`), `accept-s3.sh` (`:232`), `accept-s4.sh` (`:236`) y **`accept-s6.sh`
+(`:245`, desde `10d31b6`)**. Los números de línea cambiaron con `10d31b6`; están releídos contra
+`git show HEAD:.github/workflows/ci.yml` el 2026-08-28. **No hay `accept-s5.sh`** — es deuda de
+proceso declarada, no un olvido: `SLICE_BOARD.md` §S5.
 
 **Las seis últimas entraron a CI el 2026-08-28 (`c854b99`), y el motivo no es cobertura: es que una
 aceptación por slice no puede ver el invariante que la slice derogó.** `accept-s4.sh` dio
@@ -190,11 +241,12 @@ aceptación por slice no puede ver el invariante que la slice derogó.** `accept
 > ```
 > $ git ls-remote --heads origin      # (sin salida)
 > $ git rev-list --count HEAD
-> 89
+> 103
 > ```
 >
-> `origin` está configurado y **no tiene una sola rama**; `origin/main` figura `gone`. En 89 commits
-> locales **no hubo una corrida de GitHub Actions**. Por lo tanto, en este doc y en todo `docs/**`:
+> `origin` está configurado y **no tiene una sola rama**; `origin/main` figura `gone`. En **103** commits
+> locales **no hubo una corrida de GitHub Actions**. Decía 89 y se re-midió el 2026-08-28 después de
+> S6.2: **catorce commits más, y el número que importa sigue siendo cero.** Por lo tanto, en este doc y en todo `docs/**`:
 >
 > | se lee | significa |
 > |---|---|
@@ -228,6 +280,41 @@ aceptación por slice no puede ver el invariante que la slice derogó.** `accept
 > 2. Un e2e que necesita un secret humano (R2 real, MP sandbox, LLM) se marca `skip` **con motivo**
 >    en el propio test. Un e2e verde por no haber corrido es peor que un e2e rojo.
 
+### La familia "gate vacuamente verde", tres entradas nuevas del 2026-08-28
+Este repo ya tenía catalogada una clase de defecto —reglas que no pueden fallar, gates satisfechos
+por un `import`, `guard-artifacts.sh` pasando con cero archivos— y ese mismo día sumó tres. Van acá y
+no en el board porque **las tres son sobre la evidencia, que es de lo que trata este doc.**
+
+1. **Un gate afirmó una propiedad y verificó un nombre.** V5 de `scripts/accept-s6.sh:119-123` se
+   llama *"señar no purga la vidriera entera"* y lo que ejecuta es
+   `grep -rqE 'invalidateStorefrontUnit'`. Durante todo el defecto de **S6.2** la función se llamaba
+   así **y purgaba la vidriera entera**: el gate estuvo verde de punta a punta. Es la variante más
+   difícil de ver de *"tres pruebas alrededor y ninguna encima"*, porque acá la prueba estaba
+   **encima del identificador correcto**. Regla que se deriva: si el nombre de la aserción tiene un
+   verbo (*purga*, *invalida*, *rechaza*), el `grep` de un símbolo **no** es esa aserción.
+2. **Ningún `accept-*` nombra la evidencia de S6.2.** `accept-s6.sh:44` fija `SPEC=` en
+   `s6-la-reserva-…`, y la medición del radio vive en `s6-senar-…` y en
+   `tests/el-veredicto-del-radio-…`. Los dos **corren** (`pnpm e2e` y `pnpm test`), así que el nivel
+   1 está; lo que falta es que el **gate de la slice** los cite. Hoy se pueden borrar los dos y
+   **nada se pone rojo**: borrar un test nunca pone nada en rojo, ése es justamente el punto. Misma
+   forma que la deuda de proceso de **S5**; el precedente de cómo se cierra es W1 de `accept-s4.sh`.
+3. **Un gate que corre en CI puede saltearse once aserciones sin bajar de verde.** Lo encontró el
+   LEAD y está **sin commitear** al cerrar esta pasada (`scripts/guard-gates.sh`, `_lib.sh`):
+   `accept-s1.sh` llamaba `chk` diez veces y `have` una **sin tenerlas importadas** —vivían sueltas
+   dentro de `accept-fase3.sh`—; bash imprime `command not found` por **stderr**, devuelve 127 y
+   **sigue**. Como `no()` nunca se llama, el contador `fail` no se toca: el gate reportó
+   `25 PASS / 1 FAIL` con **once aserciones que no se ejecutaron**, entre ellas las cuatro que le
+   preguntan a Postgres si `anon` puede leer `listings.imei`. El único FAIL era ajeno; sin él, el
+   gate salía **verde**. **Lo que hay que llevarse no es "faltaba un `source`":** es que
+   `PASS + FAIL` no es el total de aserciones escritas, y ningún gate del repo verificaba esa
+   igualdad. La red que se agregó (`command_not_found_handle`) convierte *ausencia de medición* en
+   FAIL, que es la misma regla que `guard-artifacts.sh` aplica a los artefactos.
+
+> **Las tres se leen mejor juntas que separadas.** La pregunta que este doc venía haciendo era
+> *¿existe la aserción?*; las tres dicen que no alcanza, y cada una agrega una pregunta distinta:
+> **¿la aserción mide el verbo de su nombre?** · **¿alguien la cita como evidencia?** ·
+> **¿se ejecutó?** Con la lista de cuatro preguntas del final de este doc, son siete.
+
 ## Cobertura de las prohibiciones de `CLAUDE.md` §2
 Verificado regla por regla contra el repo el **2026-08-28**. La tabla completa se cierra en FASE 7;
 lo que hay acá es lo que ya está confirmado, incluidos los huecos.
@@ -236,10 +323,11 @@ lo que hay acá es lo que ya está confirmado, incluidos los huecos.
 |---|---|---|
 | `tenant_id` en `user_metadata` | **estático:** `guard-leaks.sh:127` · `web-lint.mjs:123` (W008) · `accept-fase3.sh:61` — **y en runtime:** `tests/rls-cross-tenant.test.ts:535`, que **forja un claim** con el tenant en `user_metadata` contra Postgres real y verifica que **no abre nada** | ✅ (los dos primeros + el test) |
 | tabla nueva sin `GRANT` | `guard-grants.sh` (parsea por **sentencia**, no por línea: 5 de los 6 `GRANT` son multilínea) — **y en runtime:** R7a/R7b/R7c preguntan por el privilegio **efectivo** (`has_table_privilege`), así que también cae un `GRANT … TO PUBLIC` | ✅ desde `985c369` |
-| borrado de un objeto de R2 por key | `guard-r2.sh` R1 + R2 (**T11**) | ✅ |
+| borrado de un objeto de R2 por key | `guard-r2.sh` R1 + R2 (**T11**) — **y en runtime:** `packages/media/src/unlink.test.ts:131` (*"borrar el listing de A NO deja sin fotos a B"*) y `:162` (*"cuando el ÚLTIMO tenant lo suelta, ahí sí se recolecta"*) | 🟡 **T14.3, anotada el 2026-08-28.** El ✅ anterior sobrevaloraba la evidencia. R1 y R2 de `guard-r2.sh` son **greps del fuente** (`DeleteObjectCommand` fuera de `unlink.ts`; un nombre exportado en `index.ts`): afirman que *nadie escribió* un borrado por key, no que *borrar un listing deje el byte vivo*. Lo segundo sólo lo afirma `unlink.test.ts`, que es **del owner del paquete y corre contra un driver en memoria** — nunca contra R2. O sea: el invariante más caro de recuperar (un byte borrado no vuelve, y es de otro tenant) **no tiene auditoría de referencia en `tests/`**, que es justo lo que `CLAUDE.md` §4 pide para las dos puntas de un invariante. Lo único que hay en `tests/` sobre R2 es `la-url-de-r2-no-se-arma-fuera-de-media.test.ts`, que es otra cosa |
 | IMEI / costo / margen / notas en la vidriera | M4 de `accept-s3.sh` sobre los **bytes** de ficha **y** grilla, con los IMEI leídos del seed · `web-lint.mjs` W009 · `guard-leaks.sh` | ✅ nivel 1 desde `c854b99`: `accept-s3.sh` pasó a ser step de CI (`ci.yml:213`), así que M4 dejó de depender de que alguien lo corra a mano |
 | **query sin filtro de tenant *además* de RLS** | **`W015` de `apps/web/scripts/web-lint.mjs`, en `main` desde `9b3d7d2`.** Corregido el 2026-08-28: este doc decía *"todavía NO está commiteada"* citando `git log -S W015` en cero, y ya no es cierto — `git log --oneline -S W015 -- apps/web/scripts/web-lint.mjs` devuelve **un** commit, que trae además el párrafo de `CLAUDE.md` §2 con el contrato del marcador. Re-corrida: `cd apps/web && node ./scripts/web-lint.mjs` → `WEB-LINT: PASS (15 reglas)` · *"toda query sobre las **15 tablas de negocio** filtra por tenant ademas de RLS (builder y sql crudo)"*. Lo que la hace fuerte: **deriva la lista de tablas del schema real** (las que tienen `tenantId`), así que una tabla de negocio nueva queda cubierta el día que nace; **falla si no puede leer el schema** (ausencia de medición es FAIL, y una lista vacía dejaría pasar todas las queries diciendo PASS); ventana de sentencia **angosta a propósito**; mide **filtrado, no presencia** (proyectar `m.tenant_id` o nombrarlo en un `join … on` no filtra); y el escape es `web-lint:sin-tenant` con **30+ caracteres de motivo** — hoy **dos** marcas en todo el repo, `_lib/session.ts:94` y `_lib/tenants/create-tenant.ts:202`. **Dos huecos que no se redondean:** (a) el alcance es `apps/web/app` + `apps/web/lib` + `proxy.ts` (`web-lint.mjs:41`), así que **`packages/**` sigue sin gate** → **T16**; (b) **su polaridad no es un comando**: los 12 casos se ejercieron *"in a sandbox outside the repo"* (`9b3d7d2`), que es la misma situación en la que `guard-firewall` tenía **seis reglas que no fallaban nunca** hasta que la polaridad se volvió un archivo | ✅ nivel 1 (`pnpm -r lint`, `ci.yml:64`) · **T2 cerrada**, **T16 abierta** |
 | **rate limiting con contador en Postgres sobre la vidriera** | **nadie**. **T1 no la cubre**: `guard-firewall.sh` audita el techo del WAF (config + censo de rutas), que es otra cosa que prohibir un contador en Postgres — y que el gate del WAF **sí** corra en CI (`ci.yml:118`) no cambia esto, porque valida un JSON de configuración y no mira una sola query | 🔴 **T14.1** |
+| **una key legítima rechazada por el guard de PII** (disponibilidad, no seguridad) | hoy `packages/media/src/keys.test.ts` — **y hasta el 2026-08-28 no lo cubría nadie**: los casos del gate eran keys elegidas a mano, todas sin 15 dígitos seguidos, así que el 0,63% de keys que el guard rechaza **nunca apareció en un test**. Es un hueco de *muestreo*, no de olvido: la forma que faltaba era **generar keys reales en masa** y afirmar sobre el efecto | 🔴 **S2.5, abierta** (arreglo sin commitear al cerrar esta pasada). **La lección que sí es de este doc:** un guard cuyos casos de prueba los escribe la misma persona que el regex sólo ve las entradas que esa persona imaginó; el defecto vivía en las que produce la máquina |
 | **imagen original (>500 KB) servida a la vidriera** | `scripts/probes/s2-media-measure.test.ts` (dentro de `accept-s2.sh`) · M2 de `accept-s3.sh` (ya midió: 51016 B) | 🟡 **T14.2 cambió de color el 2026-08-28**: los dos `accept-*` que la afirman entraron a CI en `c854b99` (`ci.yml:209` y `:213`), así que dejó de ser *"existe en dos lados y no corre en ninguno"*. Sigue **amarilla y no verde** por dos motivos distintos: nadie la afirma fuera de un `accept-*` (que es lo que T14 pedía), y ningún gate del repo llegó al **nivel 2** |
 
 > **Dos de estas se dieron por descubiertas y estaban cubiertas.** Un reporte del 2026-08-28 listaba
@@ -260,7 +348,7 @@ lo que hay acá es lo que ya está confirmado, incluidos los huecos.
 > El texto *"sin commitear · cero commits"* quedó **falso** con `9b3d7d2`, y este doc lo siguió
 > afirmando. Cambia una vez más la lista de preguntas, y ésta es la que ninguna de las anteriores
 > hacía: **¿el CI que lo corre corrió alguna vez?** Hoy la respuesta es **no** —
-> `git ls-remote --heads origin` vacío contra 89 commits — y por eso todo ✅ de arriba es nivel 1.
+> `git ls-remote --heads origin` vacío contra 103 commits — y por eso todo ✅ de arriba es nivel 1.
 > Las cuatro preguntas, en orden: *¿hay chequeo?* · *¿lo corre alguien?* · *¿está en `main`?* ·
 > *¿corrió el CI?*
 

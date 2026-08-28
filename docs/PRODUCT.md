@@ -1,7 +1,12 @@
 # PRODUCT — iStock
 
-_Owner: `product-scribe`. El producto **no se reabre** (`CLAUDE.md` §1). Este doc lo hace ejecutable._
-_Estado: seed del LEAD en FASE 0. `product-scribe` lo completa en FASE 2._
+_**Qué es:** el producto cerrado de `CLAUDE.md` §1, en forma verificable — a quién le sirve, qué
+entra en Capa 1, qué preguntas quedaron abiertas y con qué número se declara cobrable. **Para quién:**
+quien va a decidir si algo entra en una slice. **Cuándo se actualiza:** cuando una pregunta abierta se
+cierra, o cuando una slice cambia el alcance de Capa 1. El producto **no se reabre** (`CLAUDE.md` §1)._
+
+_Owner: **`docs-keeper`** por `CLAUDE.md` §4. Ver la salvedad de ownership en `DOMAIN.md` (encabezado):
+`.claude/agents/product-scribe.md` reclama este archivo y **eso lo resuelve el LEAD**, no este doc._
 
 ## Una frase
 Cargás el stock una vez → tenés vidriera en `{slug}.maat.work` → el visitante llega informado →
@@ -63,5 +68,5 @@ WhatsApps esa misma noche** que mencionan el equipo y el precio.
 |---|---|---|
 | P1 | ¿Qué pasa con la vidriera al vencer el trial sin pago? | 7 días de gracia con banner → luego vidriera en modo "contactá al vendedor" (fichas visibles, sin precios). **No** 404: rompe links ya compartidos en WhatsApp. |
 | P2 | ¿La ficha de un equipo vendido devuelve 404? | No. 200 con "vendido" + link a similares. Los links viven en chats de WhatsApp para siempre. |
-| P3 | ¿Duración default de la reserva? | 60 min (rango permitido 30–120). **Implementado en S6, a medias:** el rango y el default son constantes del dominio (`RESERVATION_MIN/MAX/DEFAULT_MINUTES`), sostenidas además por el `CHECK` `reservations_minutes_range`; **el "configurable por tenant" no existe** y no tiene fila en el board. Fuera de rango se **rechaza**, no se clampea. |
+| P3 | ¿Duración default de la reserva? | 60 min (rango permitido 30–120). **Implementado en S6, a medias:** el rango y el default son constantes del dominio (`RESERVATION_MIN/MAX/DEFAULT_MINUTES`), sostenidas además por el `CHECK` `reservations_minutes_range`; **el "configurable por tenant" no existe**. Fuera de rango se **rechaza**, no se clampea. **Desde el 2026-08-28 la mitad que falta tiene fila: `T17` en `SLICE_BOARD.md`.** |
 | P4 | ¿El seller puede publicar (`draft → available`)? | Sí, pero **no** ve ni edita `cost_usd`. |

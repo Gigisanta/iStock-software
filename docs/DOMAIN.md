@@ -1,7 +1,19 @@
 # DOMAIN — modelo de negocio ejecutable
 
-_Owner: `product-scribe` (reglas) + `domain-agent` (implementación en `packages/domain`)._
-_Estado: esqueleto del LEAD en FASE 0. Se completa en FASE 2._
+_**Qué es:** el modelo de negocio en su forma ejecutable — glosario, máquina de estados, FX,
+visibilidad por rol y el `publicListingDTO`. **Para quién:** cualquiera que vaya a escribir una regla
+de negocio, antes de escribirla. **Cuándo se actualiza:** con cada slice que toca reglas de negocio._
+
+_Owner: **`docs-keeper`** por `CLAUDE.md` §4 (`docs/**` menos `research/` y `COST.md`).
+`domain-agent` es dueño de la **implementación** en `packages/domain`, no de este archivo._
+
+> ⚠ **Conflicto de ownership abierto, levantado el 2026-08-28 — lo resuelve el LEAD, no este doc.**
+> `CLAUDE.md` §4 da `docs/**` a `docs-keeper`; `INDEX.md` daba este archivo a `product-scribe`; y
+> `.claude/agents/product-scribe.md:11` dice *"escribís sólo en `docs/PRODUCT.md` y
+> `docs/DOMAIN.md`"*. **Tres fuentes, dos respuestas** — exactamente la misma forma que el conflicto
+> de `architect` sobre `ARCHITECTURE.md`/`DECISIONS.md`, que el LEAD cerró en FASE 4 a favor de la
+> tabla de §4. Mientras no se decida, **manda `CLAUDE.md` §4** (regla escrita en el propio §4:
+> *"conflicto de ownership = el LEAD reasigna"*). `.claude/**` es del LEAD y no se toca desde acá.
 
 ## Glosario
 | término | significado en iStock |
@@ -30,13 +42,20 @@ Laterales (desde available o draft, y de vuelta):
 
 | de | a | guard | efecto |
 |---|---|---|---|
-| `draft` | `available` | tiene ≥3 fotos, precio USD, condición, modelo | `revalidateTag(storefront:{slug})` |
-| `available` | `reserved` | entitlement `reservations`; no hay reserva activa | crea `reservation` con `expires_at`; revalida |
-| `reserved` | `available` | `now >= expires_at` (cron) **o** cancelación manual | cierra reserva; revalida |
-| `reserved` | `sold` | reserva vigente y del mismo tenant | crea `sale`; revalida |
-| `available` | `sold` | — | crea `sale`; revalida |
+| `draft` | `available` | tiene ≥3 fotos, precio USD, condición, modelo | `invalidateStorefrontUnit` |
+| `available` | `reserved` | entitlement `reservations`; no hay reserva activa | crea `reservation` con `expires_at`; `invalidateStorefrontUnit` |
+| `reserved` | `available` | `now >= expires_at` (cron) **o** cancelación manual | cierra la reserva **con el estado que dice el dominio** (ver §Reservas); `invalidateStorefrontUnit` |
+| `reserved` | `sold` | reserva vigente y del mismo tenant | cierra la reserva como `confirmed`; crea `sale`; `invalidateStorefrontUnit` |
+| `available` | `sold` | — | crea `sale`; `invalidateStorefrontUnit` |
 | `sold` | — | **terminal**. Revertir = evento de corrección auditado, no una transición normal. | |
-| cualquiera | lateral | — | sale de la vidriera; revalida |
+| cualquiera | lateral | — | sale de la vidriera; cierra la reserva si venía de `reserved`; `invalidateStorefrontUnit` |
+
+**El efecto de vidriera es `invalidateStorefrontUnit`, no `revalidateTag('storefront:{slug}')`, y la
+diferencia es de costo, no de estilo** (corregido el 2026-08-28, S6.2): purgar por tag de tenant
+tiraba abajo **las 61 páginas** de un tenant de 60 equipos para que cambiara una. La topología
+completa —quién registra qué tag, y por qué el camino de miss de la ficha es asimétrico— está en
+`ARCHITECTURE.md` §"Quién registra qué tag". `packages/domain` **declara** los efectos
+(`transitionEffects`); `apps/web` los **ejecuta**.
 
 **Toda** transición escribe en `listing_events` (quién, cuándo, de→a, motivo).
 `canTransition(from, to, ctx)` es **exhaustiva**: transición no listada = `false`, no `true` por default.
@@ -46,9 +65,18 @@ Laterales (desde available o draft, y de vuelta):
 priceArs = round(priceUsd * tenant.fxRate)
 ```
 - El TC vive en `fx_settings` por tenant, con `updated_at` y quién lo cambió.
-- Regla de redondeo: **definir y testear** (propuesta: redondeo a los $1.000 más cercanos hacia
-  arriba, porque así se publica en la práctica). `product-scribe` confirma en FASE 2.
-- Cambiar el TC **revalida toda la vidriera** del tenant.
+- **Regla de redondeo: `ceil_1000` — techo al millar de ARS — es el default del tenant.** No es
+  propuesta: lo ratificó el LEAD en FASE 2 (`CLAUDE.md` §1) y está implementado en
+  `packages/domain/src/fx.ts` (`DEFAULT_FX_ROUNDING`, `:35`; `applyFx`, `:117`). Es como se publica en
+  la práctica y **nunca deja el precio publicado por debajo del USD × TC**. Los otros modos existen y
+  están testeados; **el default se cambia por tenant, no por deploy**.
+  _Esta línea decía "definir y testear (propuesta: …)" hasta el 2026-08-28: era drift, la decisión
+  estaba tomada y el código escrito desde S5._
+- Cambiar el TC **revalida toda la vidriera** del tenant, y eso significa **`invalidateStorefront()`**,
+  que emite los **dos** tags de tenant. Desde S6.2 la ficha ya **no** registra `storefront:{slug}` en
+  su camino de HIT, así que emitir ese tag a mano actualiza la grilla y **deja cada ficha con el TC
+  viejo hasta un año** (`cacheLife('max')`), sin error y sin log. Es la trampa que espera a **T12**
+  (`SLICE_BOARD.md` §T12 · `ARCHITECTURE.md` §"Quién registra qué tag").
 - El ARS es **informativo**: la operación real se cierra por WhatsApp. La ficha lo dice.
 
 ## Visibilidad por rol
@@ -66,17 +94,28 @@ componente es un fallo de seguridad, no una decisión de UI.
 ## `publicListingDTO` — allowlist explícita
 ```ts
 // ALLOWLIST. Agregar un campo acá es una decisión, no un accidente.
+// Verificado contra packages/domain/src/dto.ts:101-129 el 2026-08-28.
 {
-  id, slug, title, modelDisplayName, storageGb, color, condition,
+  id, slug, title, modelDisplayName, storageGb, color,
+  condition, conditionLabel,         // el enum Y su etiqueta de ficha ("usado excelente")
   batteryPct, screenOriginal, icloudStatusText, warrantyText, provenanceText,
-  priceUsd, priceArs, fxRateUsed,
+  description,                       // SANITIZADA. Nunca el texto crudo del dueño
+  priceUsd, priceArs,                // { cents, formatted } — el ARS es informativo
+  fxRateUsed,
   photos: [{ card, detail, alt }],   // sólo URLs de variante, nunca la key del original
   status,                            // 'available' | 'reserved' | 'sold'
   pickup: [{ name, address, hours }],
   paymentMethods, acceptsTradeIn,
-  waUrl,
+  waUrl, waMessage,                  // UN solo botón; el texto ya viene armado
 }
 ```
+_Tres campos faltaban en esta lista hasta el 2026-08-28 (`conditionLabel`, `description`,
+`waMessage`) y estaban en el DTO desde S3/S4. **Una allowlist incompleta es peor que no tenerla**:
+invita a leerla como "lo que sale hoy" cuando su trabajo es ser la lista contra la que se compara._
+
+**`nameSource` es del `PublicListingSource`, no del DTO, y esa asimetría es a propósito**: dice si
+`modelDisplayName` salió del `catalog_model` o del `title` libre del dueño, alimenta el mensaje de
+WhatsApp (S4.1) y **no tiene por qué viajar al comprador**.
 **Prohibido para siempre:** `imei` · `cost_usd` · `margin` · `internal_notes` · `supplier` ·
 `enacomResult` · `tenantId` interno · `userId` · cualquier timestamp interno.
 
@@ -95,10 +134,25 @@ vencido no conserva ninguna feature, la vigencia se resuelve en `featureAccess()
 en la Server Action — **ADR-018**. **Cancelar no pide entitlement**: soltar una unidad no puede
 quedar bloqueado por facturación.
 
-**En qué queda una reserva que se cierra** —`confirmed` si la transición fue a `sold`, `cancelled` si
-la soltó una persona, `expired` si la venció el cron— es regla de la máquina de estados y le
-corresponde a `packages/domain`. Al 2026-08-28 vive a medias en `apps/web`: es la fila **S6.1** del
-board, y esta línea se actualiza cuando cierre.
+**En qué queda una reserva que se cierra lo decide la tabla del dominio; el call site sólo declara su
+intención.** Es **ADR-019**, cerrada el 2026-08-28 (S6.1, `83bc673`). La puerta única es
+`transitionEffects(from, to, intent)`, y el efecto **no es un booleano**: es
+`closesReservationAs: ReservationClosingStatus | null`, donde `null` significa *"esta transición no
+cierra ninguna reserva"*.
+
+| arista | queda | por qué |
+|---|---|---|
+| `reserved → sold` | `confirmed` | sin importar el `intent`: no existe una venta que venció |
+| `reserved → available` con `intent: 'expire'` | `expired` | es el mismo valor que devuelve `expireReservation()`, que es **quien tiene la definición de vencida** |
+| `reserved → cualquier otro destino` | `cancelled` | **incluso si la reserva ya estaba vencida**: `expired` significa "se venció sola" |
+
+`intent` (`'expire' | 'cancel' | null`) es el **motivo humano**, no el resultado, y es **obligatorio**
+aunque admita `null`: un parámetro opcional con default válido no distingue *"no me lo pasaron"* de
+*"me pasaron que no hay"*, y ésa es justo la distinción que hacía que el panel escribiera `cancelled`
+donde el cron escribía `expired`, **sobre la misma arista**.
+
+`ReservationClosingStatus` se define por **exclusión** de `'active'`, para que agregar un estado de
+reserva obligue a decidir si es un cierre en vez de quedar afuera en silencio.
 
 ## Mensaje de WhatsApp
 Ver skill `wa-payload`. Texto canónico en `CLAUDE.md` §1. Función pura en `packages/domain/src/wa.ts`
