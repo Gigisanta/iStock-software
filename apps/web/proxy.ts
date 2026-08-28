@@ -154,6 +154,34 @@ export function proxy(request: NextRequest): NextResponse {
     return malformedHost('la vidriera se sirve en {slug}.maat.work, no en esta ruta.');
   }
 
+  // ── P1: los file conventions de metadata NO tienen guarda propia, y eso es la decisión ──────
+  //
+  // `/favicon.ico`, `/icon.png`, `/apple-icon.png`, `/opengraph-image.png`, `/twitter-image.png`,
+  // `/manifest.json`, `/robots.txt`, `/sitemap.xml`, `/sitemap/1.xml` y sus 16 hermanas caen acá
+  // abajo, en la regla general, a propósito: **siguen el host como cualquier otra ruta de la
+  // vidriera.** Bajo el apex pasan derecho (`resolveHost` → `marketing`); bajo `acme.maat.work` se
+  // reescriben a `/s/acme/robots.txt`, `/s/acme/icon.png`, etc.
+  //
+  // Y esas rutas **todavía no existen** — las trae S3 —, así que hoy dan **404 bajo un host de
+  // tenant. Eso es correcto, no es un pendiente**, y lo escribo acá porque el próximo que vea el
+  // 404 va a querer "arreglarlo" con un passthrough:
+  //
+  // - Un `robots.txt` ausente significa "crawleá todo", que es exactamente lo que queremos para
+  //   una vidriera pública. El 404 no bloquea a nadie.
+  // - Un favicon 404 en la pestaña de `acme.maat.work` es **la ausencia de una marca**. Servirle
+  //   ahí el ícono del apex —que es lo que pasaba hasta esta slice— es poner la marca de MaatWork
+  //   en la vidriera de un cliente. Entre las dos, el 404 es la correcta.
+  // - Lo mismo con `sitemap.xml`: servirle a `acme.maat.work` el sitemap de marketing es peor que
+  //   no darle ninguno, porque le declara a Google que las URLs de ese host son las del apex.
+  //
+  // O sea: el bug no era el 404, era el 200 con el archivo de otro. Por eso **no hay `if` acá**.
+  // `/_media/**` sí tiene guarda porque su URL es global al deploy (content-addressed, sin tenant
+  // adentro); estas no lo son: `/icon.png` significa una cosa distinta en cada host.
+  //
+  // NO se implementan `/s/[slug]/robots.txt` ni `/s/[slug]/sitemap.xml` en esta slice: son S3 y
+  // van con su propio perfil de cache (un sitemap que pegue a Postgres por hit de crawler rompe el
+  // 95% de `CLAUDE.md` §3). Esta slice es sólo el enrutamiento.
+
   const resolved = resolveHost(request.headers.get('host'));
 
   switch (resolved.kind) {
@@ -185,78 +213,91 @@ export function proxy(request: NextRequest): NextResponse {
  * archivos de `public/`. Cada invocación se factura (Active CPU + invocación) y ninguna de esas
  * necesita resolución de host.
  *
- * Lo que queda excluido acá se sirve desde el apex: `robots.txt` y `sitemap.xml` por tenant son de
- * S3, no de esta slice.
+ * ## El criterio, después de tres agujeros de la misma familia (P2)
  *
- * ## Las entradas de prefijo son fixes de agujeros medidos. No son decorativas.
+ * La exclusión de este matcher mira el **sufijo del path**. El router de Next matchea por
+ * **segmento** y decide los file conventions de metadata **por nombre de archivo**. Esa
+ * discrepancia produjo tres agujeros, todos el mismo bug con otra ropa:
  *
- * ### `/s` y `/s/:path*` — HIGH del adversary de S1.
- * La exclusión por extensión de la tercera entrada es un match de SUFIJO, no de directorio: no
- * distingue `/logo.png` (un archivo real de `public/`) de `/s/algo.json` (**una ruta de la app**,
- * porque `/s/[slug]` matchea con `slug = "algo.json"`). El resultado era que sobre `/s/**` el proxy
- * no corría, la guarda de `isStorefrontInternalPath` no se evaluaba, y el slug basura llegaba a
- * `cacheTag()` → throw de render → bajo `cacheComponents` + PPR, **stream colgado con `200`**.
+ * | # | URL | por qué el sufijo no alcanzaba |
+ * |---|---|---|
+ * | S1 | `/s/algo.json` | `/s/[slug]` matchea con `slug = "algo.json"` |
+ * | S2 | `/_media/…​.webp` | `[...key]`: la extensión la elige quien pide la URL |
+ * | P2 | `/icon.png`, `/robots.txt`, `/sitemap/1.xml` (25 URLs) | son **nombres**, no sufijos |
  *
- * El arreglo es declarar el prefijo `/s` como cubierto SIEMPRE. Los matchers de un array se
- * combinan con OR (doc de `proxy.md`: *"For multiple paths: Use an array"*), así que estas dos
- * entradas ganan sobre cualquier exclusión de la tercera. Van las dos porque `:path*` es *cero o
- * más* segmentos y no quiero que el caso `/s` pelado dependa de esa lectura.
+ * Los dos primeros se taparon agregando una entrada de inclusión por incidente. El tercero **no**
+ * se tapa así: son 25 URLs de 8 convenciones, y la lista crece cada vez que Next agrega una.
  *
- * ### `/_media/:path*` y `/%5Fmedia/:path*` — el mismo agujero, encontrado en S2 por el guard
- * `tests/proxy-matcher-no-deja-la-vidriera-sin-vigilar.test.ts` (16 casos rojos, uno por sufijo).
- * `apps/web/app/(app)/%5Fmedia/[...key]/route.ts` sirve las fotos, las fotos son `.webp`, y `webp`
- * es uno de los 16 sufijos de la exclusión: el proxy **no corría nunca** sobre el camino de media, y
- * con él tampoco `stripInboundTenantHeaders()` — un `x-tenant-*` del cliente sobrevivía hasta la
- * app. Es la misma clase de bug que `/s/algo.json`, no un caso nuevo: el router matchea por
- * **segmento** y la exclusión mira el **sufijo**.
+ * **La causa raíz, medida:** `apps/web/public/` **no existe** — ni ahí ni en la raíz del repo, y no
+ * hay un solo `favicon.ico`, `icon.*`, `robots.txt` ni `sitemap.xml` en el árbol. La exclusión de
+ * 16 sufijos no protege **ningún archivo**: protege una carpeta que nunca se creó. Su costo real
+ * hoy es **cero requests ahorradas** y tres agujeros producidos.
  *
- * Tres decisiones deliberadas en cómo está escrita esta cobertura:
+ * **Lo que se hizo, entonces:** se sacaron del lookahead los tres nombres propios
+ * (`favicon\.ico`, `robots\.txt`, `sitemap\.xml` — que excluían por partida doble, así que acotar
+ * sólo los sufijos los dejaba afuera igual) y la exclusión por sufijo pasó a **no aplicarse a los
+ * file conventions de metadata**, que es el lookahead anidado del final. El criterio ya no es
+ * "sufijo de archivo" sino **el mismo que usa Next: el nombre**. `/icon.png` es una ruta de la app
+ * y entra; `/logo.png` es un asset y no entra. Por sufijo esas dos URLs son indistinguibles, y ése
+ * era exactamente el problema.
  *
- * 1. **Se cubre el prefijo entero, no `.webp`.** Cubrir la extensión de hoy sería volver a razonar
- *    por sufijo — el error original — y quedaría roto solo el día que el pipeline emita `.avif`
- *    (que `CLAUDE.md` §3 ya nombra) o `.jpg` de fallback. La ruta es un `[...key]`: quien pide la
- *    URL elige el último segmento, así que la extensión no es una propiedad de la ruta.
- * 2. **Va la forma `%5F` además de `/_media`.** El directorio en disco es `%5Fmedia` porque
- *    `_media` sería *private folder*; la URL pública es `/_media/…` y es contra la URL que se
- *    escribe un matcher. La percent-encodeada se cubre igual, y el porqué —con la evidencia de
- *    `next@16.3.3` de que el normalizador de `%5F` corre del lado de la definición y no del
- *    request— está entero en `isGlobalMediaPath`. Resumen: si esa forma llega a la app, aunque sea
- *    para dar 404, tiene que haber pasado por el saneo de headers; y cubrirla no cuesta tráfico
- *    real porque ningún cliente escribe `%5F` a mano.
- * 3. **Cubrir sin la guarda del cuerpo rompía las fotos de todas las vidrieras.** Sobre
- *    `acme.maat.work`, `/_media/…` caía en la rama `storefront` y se reescribía a
- *    `/s/acme/_media/…`. Por eso el cambio son dos mitades y ninguna sirve sola: entrada en el
- *    `matcher` + `isGlobalMediaPath()` → `passthrough` arriba de la resolución de host.
+ * La cobertura la verifica `tests/proxy-matcher-no-deja-la-vidriera-sin-vigilar.test.ts`, que
+ * deriva las 25 URLs ejecutando las funciones del propio Next (`fillStaticMetadataSegment`,
+ * `normalizeMetadataRoute`), no de una lista escrita a mano. Si Next cambia una convención, ese
+ * guard se pone rojo con nombre y valor viejo/nuevo.
  *
- * Estas dos entradas **no** amplían el gasto sobre assets estáticos: `/_media/**` no es un archivo
- * de `public/` ni de `_next/static`, es una ruta de la app que siempre se sirvió con una invocación.
- * Lo único que cambia es que ahora esa invocación está precedida por el proxy — un `if` de dos
- * comparaciones de string, sin red y sin allocations. Y es transitorio: con `MEDIA_DRIVER=r2` las
- * fotos las sirve el CDN de Cloudflare desde otro host, que ni siquiera pasa por Vercel.
+ * **Qué pasa a invocar el proxy que hoy no lo invoca: hoy, nada.** No existe en el repo ningún
+ * archivo que se sirva en esas 25 URLs, así que las 25 devuelven 404 con o sin proxy y el delta de
+ * invocaciones facturadas es **0**. A futuro, cuando S3 traiga los file conventions por tenant, las
+ * que pasen a existir se piden **una vez por sesión de browser y quedan cacheadas por el CDN**
+ * (`favicon` y `manifest` con `immutable`), contra los ~40 chunks de `_next/static` por pageview
+ * que siguen afuera. El orden de magnitud del ahorro no se mueve.
  *
- * **Por qué NO se toca la exclusión por extensión** (que era la otra salida posible): existe para
- * que `public/` se sirva sin invocar el proxy, y `public/` cuelga de la RAÍZ (`/logo.png`,
- * `/fonts/x.woff2`), nunca de `/s/**`. Sacarla mandaría cada asset al proxy —invocación + Active
- * CPU en el 100% de los assets, contra el presupuesto de ADR-007— y, peor, sobre un host de tenant
- * `/logo.png` se reescribiría a `/s/{slug}/logo.png` y el asset dejaría de existir. Acotar la
- * exclusión es correcto; borrarla rompe el servido estático.
+ * ## Por qué `_next/static` y `_next/image` se quedan afuera
+ * Ahí está el volumen real —decenas de subrequests por pageview— y ninguno de los dos puede ser
+ * jamás una ruta de la app: son espacios de URL del runtime del build, globales al deploy. Es el
+ * único par que se puede excluir **por prefijo** sin razonar por sufijo, o sea sin reabrir el bug.
+ * (`isInfrastructurePath()` en el cuerpo los cubre igual, porque la doc avisa que `_next/data` se
+ * invoca aunque el matcher lo excluya.)
  *
- * **Qué medir para saber que `/_next/static` no se rompió** (no lo puedo correr yo, requiere build):
+ * ## Las cuatro entradas de inclusión, revisadas en P2
+ * Con la exclusión acotada, tres siguen siendo **load-bearing** y una es redundante:
+ *
+ * - **`/s/:path*` (necesaria).** `/s/algo.json` sigue cayendo en la exclusión por sufijo —`algo.json`
+ *   no es un nombre de convención—, así que sin esta entrada el HIGH de S1 vuelve tal cual.
+ * - **`/_media/:path*` y `/%5Fmedia/:path*` (necesarias).** Ídem con `.webp`/`.avif`: es el fix de
+ *   S2, y la forma `%5F` va porque el directorio en disco es `%5Fmedia` (`_media` sería *private
+ *   folder*). El argumento largo de las dos está en `isGlobalMediaPath`.
+ * - **`/s` (redundante hoy, se queda).** `/s` pelado no tiene extensión, así que el catch-all ya lo
+ *   cubre. Se queda por dos motivos, ninguno estético: (a) no hay hoy ningún test que fije el
+ *   comportamiento de `/s` pelado, así que borrarla sería un cambio **no medido** —y la regla de
+ *   esta slice es no tocar lo que ningún test respalde—; (b) hace que llegar a la guarda de
+ *   `isStorefrontInternalPath` no dependa del lookahead del catch-all, que es el mecanismo que ya
+ *   falló tres veces. Cuesta cero: nadie pide `/s`.
+ *
+ * Ninguna de las tres necesarias amplía el gasto sobre assets: `/s/**` y `/_media/**` son rutas de
+ * la app, siempre se sirvieron con una invocación. Lo único que cambia es que ahora esa invocación
+ * está precedida por un `if` de dos comparaciones de string, sin red y sin allocations.
+ *
+ * ## Qué medir contra un server real (no lo puedo correr yo, requiere build)
  * 1. `curl -sI http://127.0.0.1:3100/_next/static/chunks/<uno real>.js` → `200` + `cache-control:
  *    public, max-age=31536000, immutable`. Si el proxy se metiera en el medio, ese header cambia.
  * 2. Lo mismo con `Host: demo.127.0.0.1.nip.io`: mismo `200` y mismo `cache-control`. Es el caso
  *    que rompe si alguien alguna vez saca `isInfrastructurePath` del cuerpo del proxy.
  * 3. `curl -s http://demo.127.0.0.1.nip.io:3100/ | grep -c '/_next/static'` > 0 y cada uno de esos
  *    chunks devuelve `200` — o sea, la página **carga** sus propios assets, no sólo los nombra.
- * 4. Control negativo del fix: `/s/x.json`, `/s/x.txt`, `/s/x.css`, `/s/x.xml`, `/s/x.woff2` → los
+ * 4. Control negativo de S1: `/s/x.json`, `/s/x.txt`, `/s/x.css`, `/s/x.xml`, `/s/x.woff2` → los
  *    cinco `404`, en milisegundos, con `content-type: text/plain` (es la respuesta del proxy) y sin
  *    `__next_error__` en el body. Es lo que ya chequea `scripts/accept-s1.sh` A8.
- * 5. Control del fix de S2, el que importa porque la regresión sería silenciosa: la MISMA key de
- *    variante pedida con `Host: 127.0.0.1.nip.io` (apex) y con `Host: demo.127.0.0.1.nip.io`
- *    (tenant) tiene que devolver `200` y los mismos bytes en los dos casos. Si alguna vez alguien
- *    saca la guarda de `isGlobalMediaPath` del cuerpo, el segundo pasa a `404` y las fotos
- *    desaparecen sólo en los subdominios de tenant — o sea, en el único lugar donde alguien las
- *    mira. `scripts/accept-s2.sh` hoy sólo pega contra el apex.
+ * 5. Control de S2, el que importa porque la regresión sería silenciosa: la MISMA key de variante
+ *    pedida con `Host: 127.0.0.1.nip.io` (apex) y con `Host: demo.127.0.0.1.nip.io` (tenant) tiene
+ *    que devolver `200` y los mismos bytes en los dos casos. Si alguien saca la guarda de
+ *    `isGlobalMediaPath` del cuerpo, el segundo pasa a `404` y las fotos desaparecen sólo en los
+ *    subdominios de tenant — o sea, en el único lugar donde alguien las mira.
+ * 6. Control de P2, nuevo: `curl -sI http://127.0.0.1.nip.io:3100/robots.txt` (apex) y
+ *    `curl -sI http://demo.127.0.0.1.nip.io:3100/robots.txt` (tenant) **no** pueden devolver el
+ *    mismo body. Hoy los dos dan `404` (no existe el archivo en ningún lado) y eso es pasar; lo que
+ *    reprueba es que el segundo devuelva `200` con el `robots.txt` del apex.
  *
  * **No se declara `runtime`**: en Proxy esa opción tira error (v16.0.0). El runtime es Node.js.
  */
@@ -266,6 +307,15 @@ export const config = {
     '/s/:path*',
     '/_media/:path*',
     '/%5Fmedia/:path*',
-    '/((?!_next/static|_next/image|favicon\\.ico|robots\\.txt|sitemap\\.xml|.*\\.(?:svg|png|jpg|jpeg|gif|webp|avif|ico|css|js|txt|xml|json|woff|woff2|ttf)$).*)',
+    // El lookahead anidado se lee así: excluí un path por su sufijo **salvo** que sea un file
+    // convention de metadata de Next. La lista de adentro es la de Next, nombre POR extensión y no
+    // "nombre con cualquier extensión": `robots.txt` es convention y `robots.png` no lo es, así que
+    // este matcher tampoco lo trata como tal. `icon\d*` cubre `icon1.png` (la doc permite numerar
+    // sólo las cuatro de imagen) y `sitemap/\d+\.xml` cubre `generateSitemaps`.
+    // `/logo.png` → excluido, es un asset. `/icon.png` → adentro, es una ruta.
+    // El `(?:.*/)?` es deliberado: las conventions de imagen y el sitemap NO son sólo de la raíz,
+    // así que `/precios/icon.png` es tan ruta de la app como `/icon.png`. Anclarlo a la raíz
+    // dejaría el mismo agujero un nivel más abajo, esperando a la primera convention anidada.
+    '/((?!_next/static|_next/image|(?!(?:.*/)?(?:favicon\\.ico|icon\\d*\\.(?:ico|jpe?g|png|svg)|apple-icon\\d*\\.(?:jpe?g|png)|(?:opengraph|twitter)-image\\d*\\.(?:jpe?g|png|gif)|manifest\\.(?:json|webmanifest)|robots\\.txt|sitemap\\.xml|sitemap/\\d+\\.xml)$).*\\.(?:svg|png|jpg|jpeg|gif|webp|avif|ico|css|js|txt|xml|json|woff|woff2|ttf)$).*)',
   ],
 };

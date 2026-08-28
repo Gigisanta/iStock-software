@@ -302,6 +302,57 @@ function leaksIn(...responses: readonly Response[]): string[] {
   );
 }
 
+// ══════════════════════════════════════════════════════════════════════════════════════════════
+//  El número que ADR-014 dejó anotado como hueco: se IMPRIME, no se assertea
+// ══════════════════════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Emite el status de las tres respuestas por cada puerta, con un prefijo grepeable.
+ *
+ * ## Por qué existe
+ * `DECISIONS.md`, ADR-014 §"Hueco declarado", punto 1: *"Nadie midió el status de esta ruta después
+ * del cambio"*. Hay dos afirmaciones vivas y opuestas en el repo —el docblock de
+ * `stock/[id]/fotos/page.tsx:69-72` dice que `instant = false` le devuelve el **404 real** a la
+ * unidad ajena; el encabezado de este archivo dice que bajo Cache Components el status **no se
+ * puede fijar**— y pueden ser ciertas las dos, porque hablan de casos distintos (con shell y sin
+ * shell). Este archivo ya calculaba los tres statuses en las tres puertas y los tiraba a la basura.
+ * Ahora salen por pantalla.
+ *
+ * ## Por qué se IMPRIME y NO se assertea — no convertir esto en un `expect`
+ * **ADR-013 dice que el invariante chequeable es la indistinguibilidad, no el status code**, y el
+ * encabezado de este archivo cuenta qué pasó la última vez que alguien fijó un número acá: el
+ * `expect(status).toBe(404)` iba primero y **tapaba las aserciones de fuga**, que nunca se
+ * evaluaron en ningún gate. Si mañana Next cambia y esto pasa de 404 a 200, el que tiene que
+ * ponerse rojo es el invariante de indistinguibilidad —`theirs.status === ghost.status`, que sigue
+ * asertado abajo y no depende del valor—, no una expectativa sobre un número que ADR-013 declara
+ * explícitamente fuera de los invariantes. Lo que hace falta acá es **el dato para cerrar el hueco
+ * de ADR-014**, no un test nuevo.
+ *
+ * ## Cómo se lee
+ * `console.log` sobrevive al reporter de censo: `spec-census-reporter.ts` no implementa `onStdOut`,
+ * así que el stdout del test lo imprime el reporter `list` del `playwright.config.ts`. Desde el
+ * gate:
+ *
+ * ```
+ * pnpm --filter @istock/e2e e2e 2>&1 | grep 'MEDIDO adr014'
+ * ```
+ */
+function medirStatus(
+  puerta: string,
+  medidas: readonly (readonly [string, number | null | undefined])[],
+): void {
+  const valores = medidas
+    .map(([label, status]) => `${label}=${status === null || status === undefined ? '(no medido)' : String(status)}`)
+    .join(' ');
+  console.log(`MEDIDO adr014 status · ruta=/app/stock/{id}/fotos · puerta=${puerta} · ${valores}`);
+}
+
+/**
+ * El status de MI propia pantalla en el browser lo mide el control positivo, que es otro test.
+ * Se guarda para que la línea de la puerta "browser" salga con las tres columnas y no con dos.
+ */
+let browserMineStatus: number | null | undefined;
+
 /** Cuáles de estas respuestas dibujaron la pantalla del dueño. Tiene que ser ninguna. */
 function ownerScreensIn(...responses: readonly Response[]): string[] {
   return responses
@@ -315,6 +366,7 @@ function ownerScreensIn(...responses: readonly Response[]): string[] {
 
 test('la pantalla de fotos de mi propio equipo abre: sin este control positivo, "no existe para nadie" pasaría por aislamiento', async () => {
   const mine = await openScreen(page, 'la pantalla de mi propio equipo', myListingId);
+  browserMineStatus = mine.status;
 
   // Sin esto, el test de abajo —que compara dos respuestas **entre sí**— daría verde con la ruta
   // sin implementar: mismo "no existe" para todo el mundo, aislamiento perfecto, producto
@@ -334,6 +386,15 @@ test('la pantalla de fotos de mi propio equipo abre: sin este control positivo, 
 test('un equipo de otro negocio es indistinguible de un id inventado: mismo status y ni un dato de su dueño', async () => {
   const theirs = await openScreen(page, 'la pantalla del equipo ajeno', theirListingId);
   const ghost = await openScreen(page, 'la pantalla del id inventado', GHOST_ID);
+
+  // Se imprime ANTES de las aserciones, a propósito: si algo de abajo se pone rojo, el dato para
+  // cerrar el hueco de ADR-014 ya salió. Ver `medirStatus`: esto NO es una aserción y no se
+  // convierte en una.
+  medirStatus('browser', [
+    ['mine', browserMineStatus],
+    ['theirs', theirs.status],
+    ['ghost', ghost.status],
+  ]);
 
   // ── 1. Fuga. Va primero porque es lo caro, y en UNA aserción sobre la lista completa para que
   //       ningún marcador quede detrás del fallo de otro.
@@ -396,6 +457,14 @@ test('el "no existe" del equipo ajeno lo decide el server, no el JavaScript del 
   const mine = await fetchScreen(page.request, 'mi propio equipo por HTTP crudo', myListingId);
   const theirs = await fetchScreen(page.request, 'el equipo ajeno por HTTP crudo', theirListingId);
   const ghost = await fetchScreen(page.request, 'el id inventado por HTTP crudo', GHOST_ID);
+
+  // La puerta que más le importa a ADR-014: HTTP crudo, sin browser de por medio, es el `curl` que
+  // la ADR pide. Se imprime, no se assertea (ver `medirStatus`).
+  medirStatus('http-crudo-con-sesion', [
+    ['mine', mine.status],
+    ['theirs', theirs.status],
+    ['ghost', ghost.status],
+  ]);
 
   expect(
     leaksIn(theirs, ghost),
@@ -565,6 +634,14 @@ test('sin sesión, un equipo ajeno y uno inventado se comportan exactamente igua
     // inventado se distingan, porque eso convierte al login en un buscador de ids ajenos.
     const theirs = await fetchScreen(anon.request, 'el equipo ajeno sin sesión', theirListingId);
     const ghost = await fetchScreen(anon.request, 'el id inventado sin sesión', GHOST_ID);
+
+    // Sin sesión no hay "mi propio equipo" que medir: la columna va vacía y eso es el dato, no un
+    // agujero. Se imprime, no se assertea (ver `medirStatus`).
+    medirStatus('sin-sesion', [
+      ['mine', null],
+      ['theirs', theirs.status],
+      ['ghost', ghost.status],
+    ]);
 
     expect(
       leaksIn(theirs, ghost),
