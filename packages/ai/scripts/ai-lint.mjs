@@ -22,10 +22,18 @@
  */
 
 import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { dirname, join, relative } from 'node:path';
+import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
+/**
+ * `AI_LINT_ROOT` existe para que el arnes de polaridad pueda apuntar el linter a un arbol de
+ * fixtures. En CI no se setea nunca — el `lint` del `package.json` lo corre sin variable y audita
+ * este paquete. Sin la escotilla las reglas se prueban a mano una vez y quedan escritas en un
+ * comentario, y un comentario no vuelve a correr (mismo motivo que `WEB_LINT_ROOT`).
+ */
+const ROOT = process.env.AI_LINT_ROOT
+  ? resolve(process.env.AI_LINT_ROOT)
+  : join(dirname(fileURLToPath(import.meta.url)), '..');
 const SRC = join(ROOT, 'src');
 
 function walk(dir) {
@@ -197,6 +205,43 @@ for (const file of files) {
   }
 }
 
+// ── A010 · la evidencia de medición no se falsifica ─────────────────────────────────────────────
+//
+// `MeasuredUsage` lleva una marca `unique symbol` **declarada y no exportada** en `entitlement.ts`:
+// afuera de ese módulo no hay literal que el tipo acepte, así que el único modo de fabricar una
+// medición falsa es un `as`. Eso no es un olvido, es una afirmación — «acá hay un contador» cuando
+// no lo hay — y por eso la regla no admite excepción por apuro.
+//
+// Lo que la marca evita sola es la OMISIÓN, que es el modo de falla del apuro: el `0` que iba a
+// escribir el primer cableado de `/api/chat` para poder compilar. Lo que NO puede evitar sola es la
+// mentira deliberada, porque `as` la escribe igual. `entitlement.test.ts` ya lo dice en prosa —
+// *"no se olvidó de nada, está mintiendo, y eso se ve en el diff"*—; esto es lo que hace que
+// «se ve en el diff» sea un comando y no una esperanza de que alguien mire.
+//
+// Se auditan **también los tests**, a propósito y a diferencia de A001/A003/A004. Un test que forja
+// la marca es la plantilla de la que alguien va a copiar la línea a producción, y acá el fixture
+// adversario no la necesita: `chat.test.ts` construye sus casos malos con literales crudos y un
+// `as unknown as ChatInput` sobre el input entero, que es otra cosa — falsifica el borde, no la
+// evidencia. El único exento es `src/entitlement.ts`, que es donde viven los constructores.
+scan(
+  'A010',
+  (file) => !/src\/entitlement\.ts$/u.test(file.rel),
+  /\bas\s+(?:unknown\s+as\s+)?(?:MeasuredUsage|UnmeasuredUsage|TenantUsageToday)\b|<(?:MeasuredUsage|UnmeasuredUsage|TenantUsageToday)>/u,
+  'evidencia de medición forjada con un `as`: se construye con usageMeasured()/usageUnmeasured()',
+);
+
+// Y la otra mitad: el literal a mano. El runtime de `requireMeasuredUsage` acepta un objeto con la
+// forma exacta —lo dice y lo prueba `entitlement.test.ts`— así que en código de producción armar
+// `{ kind: 'measured' }` es pasar por el costado del constructor sin escribir ningún `as`. En los
+// tests se permite: ahí es el fixture adversario con el que se prueba que el runtime lo rechaza, y
+// prohibirlo dejaría al borde JS sin quien lo ataque.
+scan(
+  'A010',
+  (file) => !isTest(file.rel) && !/src\/entitlement\.ts$/u.test(file.rel),
+  /kind:\s*['"]measured['"]/u,
+  'literal de medición armado a mano: se construye con usageMeasured()',
+);
+
 // ── salida ──────────────────────────────────────────────────────────────────────────────────────
 if (findings.length > 0) {
   for (const finding of findings) {
@@ -205,5 +250,5 @@ if (findings.length > 0) {
   process.stdout.write(`\nai-lint: ${findings.length} hallazgo(s).\n`);
   process.exitCode = 1;
 } else {
-  process.stdout.write(`ai-lint: ${files.length} archivos, 9 reglas, sin hallazgos.\n`);
+  process.stdout.write(`ai-lint: ${files.length} archivos, 10 reglas, sin hallazgos.\n`);
 }

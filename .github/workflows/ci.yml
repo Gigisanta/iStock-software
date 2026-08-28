@@ -157,6 +157,16 @@ jobs:
         if: always()
         run: ./scripts/web-lint.test.sh
 
+      # Hermano del de arriba, mismo motivo y misma escotilla (`AI_LINT_ROOT`). Audita A010, que
+      # es lo unico que separa la marca de medicion de `packages/ai` de un `as` — el tipo la
+      # protege en TypeScript y no la protege en absoluto de quien escribe el cast. Cada caso
+      # exige el ID **y el numero de linea**: un fixture que trae la forma legal en una linea y la
+      # prohibida en la de abajo prueba de una sola vez que el archivo se escaneo y que la linea
+      # legal se aprobo. Un SILENT solo no distingue "la regla lo miro" de "la regla nunca lo vio".
+      - name: polaridad de ai-lint (A010: la evidencia de medicion no se forja)
+        if: always()
+        run: ./scripts/ai-lint.test.sh
+
       - name: polaridad del gate de WAF (cada regla se tiene que ver romper)
         if: always()
         run: ./scripts/guard-firewall.test.sh
