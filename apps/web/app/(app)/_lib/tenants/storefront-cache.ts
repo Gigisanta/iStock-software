@@ -1,6 +1,6 @@
 import 'server-only';
 import { revalidateTag, updateTag } from 'next/cache';
-import { storefrontTag, tenantConfigTag } from '../../../(storefront)/_lib/cache-tags';
+import { listingTag, storefrontTag, tenantConfigTag } from '../../../(storefront)/_lib/cache-tags';
 import { logEvent } from '../log';
 
 /**
@@ -41,7 +41,7 @@ import { logEvent } from '../log';
  * seguido, el propio dueño probando su link.
  *
  * ══════════════════════════════════════════════════════════════════════════════════════════════
- *  Los DOS tags, siempre
+ *  Los DOS tags de tenant, siempre juntos
  * ══════════════════════════════════════════════════════════════════════════════════════════════
  *
  * - `storefront:{slug}`    → el cuerpo de la vidriera.
@@ -56,13 +56,46 @@ import { logEvent } from '../log';
  * `storefront-agent`) en vez de re-escribirse acá. Un tag que el panel arma distinto del que la
  * vidriera registró no invalida nada **y no falla**: es la misma clase de bug que dos listas de
  * slugs reservados. Se lee, no se escribe: el ownership es de escritura.
+ *
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *  Y el TERCER tag: `listing:{uuid}`, el de la unidad (S3.2)
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * La ficha registra tres tags: los dos del tenant **y el suyo propio**
+ * (`(storefront)/_lib/listings.ts`, `getStorefrontListing`). Un tag de Vercel es un OR: la entrada
+ * cacheada muere si se purga **cualquiera** de los tres. Eso convierte a `listing:{uuid}` en un
+ * bisturí que el panel no estaba usando:
+ *
+ * | mutación | qué cambia de verdad | qué se emite |
+ * |---|---|---|
+ * | publicar / despublicar | la grilla **y** la ficha | los tres |
+ * | 2ª y 3ª foto de una unidad publicada | **sólo** la ficha (la grilla pinta `photos[0]`) | sólo `listing:{uuid}` |
+ *
+ * La fila de abajo es la que paga la slice: con 200 equipos, agregar una foto emitía
+ * `storefront:{slug}` y tiraba abajo la vidriera entera — 200 fichas más la grilla— para que
+ * cambiara **una**. Ahora es una revalidación. Es exactamente el objetivo de `CLAUDE.md` §3
+ * ("95% de los hits no tocan Postgres"), que no se cumple regenerando 200 páginas por foto.
+ *
+ * La primera foto **sí** cambia la grilla (la card pasa de placeholder a foto), así que ahí se
+ * emiten los tres. Lo decide `addUnitPhoto` con el `count(*)` de adentro de su transacción, no
+ * este módulo: la pregunta "¿esta foto es la que se ve en la card?" es de quien escribió la fila.
+ *
+ * ── El UUID se valida, y si no es un UUID no se explota ─────────────────────────────────────
+ * `listingTag()` **tira** con un id que no tiene forma de UUID, y acá una excepción llegaría
+ * **después** de que la mutación commiteó. Misma política que el `catch` de `updateTag`: degradar
+ * a lo más ancho (los tags de tenant) y dejar rastro, nunca romperle la pantalla a alguien cuya
+ * escritura salió bien ni —peor— dejar la ficha vieja pegada en el CDN.
  */
 
 /**
- * "Esta vidriera cambió: mostrala actualizada en la próxima visita."
+ * "Esta vidriera **entera** cambió: mostrala actualizada en la próxima visita."
  *
- * Se llama en **toda** mutación que cambia lo que ve un visitante: alta del negocio, publicar o
- * despublicar un equipo, reservar, vender, cambiar el TC o los datos del comercio.
+ * Es la invalidación más ancha y es la correcta cuando lo que cambió no es una unidad: el alta del
+ * negocio, el TC, los medios de pago, un punto de retiro, el teléfono. Todo eso reescribe las 200
+ * fichas a la vez y no hay nada más chico que purgar.
+ *
+ * Si lo que cambió es **una unidad**, esta no es la función: son `invalidateStorefrontUnit()` y
+ * `invalidateListing()`, acá abajo.
  *
  * ## Sobre el `catch`
  * `updateTag` **sólo** se puede llamar desde una Server Action (tira `E872` en un Route Handler o
@@ -78,12 +111,63 @@ import { logEvent } from '../log';
  * no es "el contexto equivocado", es el cache roto.
  */
 export function invalidateStorefront(slug: string): void {
-  for (const tag of [storefrontTag(slug), tenantConfigTag(slug)]) {
+  emit(tenantTags(slug));
+}
+
+/**
+ * "Esta unidad cambió **y** la grilla también": publicar, despublicar, vender, reservar, la
+ * primera foto. Emite los tres tags.
+ *
+ * El de la unidad es hoy redundante con `storefront:{slug}` —la ficha lleva los dos y muere con
+ * cualquiera— y se emite igual, por dos motivos: es el contrato que le permite a
+ * `storefront-agent` sacarle a la ficha el tag de tenant sin que el panel deje de invalidarla, y
+ * un tag de más en una llamada que ya emite dos no cuesta nada (el techo de Vercel es 16 por
+ * purga bulk).
+ */
+export function invalidateStorefrontUnit(slug: string, listingId: string): void {
+  emit([...tenantTags(slug), ...unitTagOrWiden(slug, listingId)]);
+}
+
+/**
+ * "Cambió **sólo** la ficha de esta unidad": la 2ª y 3ª foto de un equipo ya publicado, que la
+ * grilla no muestra (pinta `photos[0]`).
+ *
+ * Emite **un** tag y ese es el punto: con 200 equipos, la alternativa era purgar 201 páginas.
+ *
+ * `slug` no se emite — se usa sólo como red de contención si `listingId` no fuera un UUID, en
+ * cuyo caso es preferible purgar de más que dejar la ficha vieja servida por un año.
+ */
+export function invalidateListing(slug: string, listingId: string): void {
+  const unit = unitTagOrWiden(slug, listingId);
+  emit(unit.length === 0 ? tenantTags(slug) : unit);
+}
+
+function tenantTags(slug: string): readonly string[] {
+  return [storefrontTag(slug), tenantConfigTag(slug)];
+}
+
+/**
+ * El tag de la unidad, o `[]` si el id no tiene forma de UUID. **No propaga**: acá ya commiteó la
+ * escritura y una excepción sería romperle la pantalla a alguien que hizo todo bien.
+ */
+function unitTagOrWiden(slug: string, listingId: string): readonly string[] {
+  try {
+    return [listingTag(listingId)];
+  } catch {
+    // Ni el slug ni el id son PII, pero se loguea el slug (ya público en la URL) y no el id crudo,
+    // que es justo el valor que no tiene la forma que esperábamos.
+    logEvent('storefront.cache.listing_tag_invalid', { slug });
+    return [];
+  }
+}
+
+function emit(tags: readonly string[]): void {
+  for (const tag of tags) {
     try {
       updateTag(tag);
     } catch {
       // El slug no es PII y ya viaja en la URL pública. No se loguea nada más.
-      logEvent('storefront.cache.update_tag_unavailable', { slug, tag });
+      logEvent('storefront.cache.update_tag_unavailable', { tag });
       revalidateTag(tag, { expire: 0 });
     }
   }

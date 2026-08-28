@@ -28,10 +28,20 @@ vi.mock('./queries', () => ({
   loadUnitForTransition: (...args: unknown[]) => loadUnitForTransition(...args) as unknown,
 }));
 
-const invalidateStorefront = vi.fn();
+/**
+ * Las dos invalidaciones son mocks **separados** a propósito: lo que se verifica en S3.2 no es
+ * "se invalidó algo" sino **cuánto** se invalidó. Un solo espía que las tape a las dos dejaría
+ * pasar justo el bug (purgar la vidriera entera por la segunda foto de un equipo).
+ */
+const invalidateStorefrontUnit = vi.fn();
+const invalidateListing = vi.fn();
 vi.mock('../tenants/storefront-cache', () => ({
-  invalidateStorefront: (slug: string) => {
-    invalidateStorefront(slug);
+  invalidateStorefront: vi.fn(),
+  invalidateStorefrontUnit: (slug: string, listingId: string) => {
+    invalidateStorefrontUnit(slug, listingId);
+  },
+  invalidateListing: (slug: string, listingId: string) => {
+    invalidateListing(slug, listingId);
   },
 }));
 
@@ -161,7 +171,9 @@ describe('addUnitPhoto · camino feliz', () => {
     expect(result).toEqual({ ok: true, photoCount: 3 });
     expect(db.inserts).toEqual([{ sortOrder: 5, masterKey: uploaded.masterKey }]);
     expect(db.updatedListing).toBe(1);
-    expect(invalidateStorefront).toHaveBeenCalledWith('lacoope');
+    // Tercera foto: la grilla pinta `photos[0]` y no cambió. Se purga UNA ficha. Ver S3.2.
+    expect(invalidateListing).toHaveBeenCalledWith('lacoope', 'listing-1');
+    expect(invalidateStorefrontUnit).not.toHaveBeenCalled();
   });
 
   it('toma el lock del listing ANTES de contar y de insertar', async () => {
@@ -178,7 +190,59 @@ describe('addUnitPhoto · camino feliz', () => {
     db.maxSortOrder = 0;
 
     await expect(add()).resolves.toEqual({ ok: true, photoCount: 2 });
-    expect(invalidateStorefront).not.toHaveBeenCalled();
+    expect(invalidateStorefrontUnit).not.toHaveBeenCalled();
+    expect(invalidateListing).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *  S3.2 · cuánto se purga por una foto
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ * El bug del board no era "no se invalida": era que **todo** se invalidaba. Con 200 equipos
+ * publicados, la segunda foto de uno emitía `storefront:{slug}` y tiraba abajo la grilla más las
+ * 200 fichas. Estos tests fijan la frontera y son de polaridad: el de "sólo la ficha" se cae si
+ * alguien vuelve a la invalidación ancha, y el de "la primera foto" se cae si alguien la angosta
+ * de más y deja la card de la grilla con el placeholder.
+ */
+describe('addUnitPhoto · granularidad de la invalidación (S3.2)', () => {
+  it('la PRIMERA foto de una unidad publicada sí mueve la grilla: se purga la vidriera', async () => {
+    givenUnit(0);
+    db.total = 0;
+    db.maxSortOrder = -1;
+
+    await expect(add()).resolves.toEqual({ ok: true, photoCount: 1 });
+    expect(invalidateStorefrontUnit).toHaveBeenCalledWith('lacoope', 'listing-1');
+    expect(invalidateListing).not.toHaveBeenCalled();
+  });
+
+  it('la SEGUNDA foto no mueve la grilla: se purga una sola ficha', async () => {
+    givenUnit(1);
+    db.total = 1;
+    db.maxSortOrder = 0;
+
+    await expect(add()).resolves.toEqual({ ok: true, photoCount: 2 });
+    expect(invalidateListing).toHaveBeenCalledWith('lacoope', 'listing-1');
+    expect(invalidateStorefrontUnit).not.toHaveBeenCalled();
+  });
+
+  it('el slug sale de la sesión y el id de la unidad viaja siempre, para armar listing:{uuid}', async () => {
+    givenUnit(1);
+    db.total = 1;
+
+    await add();
+
+    expect(invalidateListing.mock.calls).toEqual([['lacoope', 'listing-1']]);
+  });
+
+  it('una unidad reservada también publica ficha: se invalida igual que una disponible', async () => {
+    givenUnit(1, 'reserved');
+    db.total = 1;
+    db.maxSortOrder = 0;
+
+    await add();
+
+    expect(invalidateListing).toHaveBeenCalledWith('lacoope', 'listing-1');
   });
 });
 
@@ -209,7 +273,8 @@ describe('addUnitPhoto · el techo de MAX_PHOTOS_PER_LISTING', () => {
     expect(result.ok).toBe(false);
     expect(db.inserts).toEqual([]);
     expect(db.updatedListing).toBe(0);
-    expect(invalidateStorefront).not.toHaveBeenCalled();
+    expect(invalidateStorefrontUnit).not.toHaveBeenCalled();
+    expect(invalidateListing).not.toHaveBeenCalled();
   });
 
   it('también aborta si el count se pasó del techo (N carreras ya perdidas)', async () => {

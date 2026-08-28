@@ -37,6 +37,7 @@ export function CreateTenantForm({ rootDomain }: { rootDomain: string }) {
   const nameId = useId();
   const slugId = useId();
   const phoneId = useId();
+  const fxId = useId();
 
   const effectiveSlug = slugTouched ? normalizeSlug(slug) : suggestSlug(name);
 
@@ -168,6 +169,50 @@ export function CreateTenantForm({ rootDomain }: { rootDomain: string }) {
           {state.errors.waPhone ??
             'Con característica, sin el 0 ni el 15. Ejemplo: 299 555 1234. Le agregamos el +54 9 nosotros.'}
         </p>
+      </div>
+
+      {/**
+       * El TC. Es obligatorio y no un "después lo cargás": sin fila en `fx_settings` la vidriera
+       * no publica **nada** (ver el encabezado de `_lib/tenants/create-tenant.ts`), y el número no
+       * lo podemos poner nosotros — `CLAUDE.md` §1, lo setea el dueño. Preguntarlo acá es lo que
+       * hace que el negocio nazca con vidriera viva sin que inventemos un precio.
+       *
+       * `inputMode="decimal"` y no `type="number"`: el spinner de `number` en mobile es un blanco
+       * de 20 px al lado del campo y la coma decimal se pierde según el locale del teclado. El
+       * parser (`_lib/tenants/parse-fx.ts`) acepta coma y punto, así que el `text` es más honesto.
+       */}
+      <div>
+        <label htmlFor={fxId} className="block text-sm font-medium">
+          ¿A cuánto tomás el dólar?
+        </label>
+        <div className="mt-1.5 flex items-center rounded-xl border border-neutral-300 bg-white focus-within:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-900 dark:focus-within:border-white">
+          <span className="shrink-0 pl-4 text-base text-neutral-500 dark:text-neutral-400">$</span>
+          <input
+            id={fxId}
+            name="fxRate"
+            type="text"
+            required
+            inputMode="decimal"
+            autoComplete="off"
+            maxLength={10}
+            defaultValue={state.values.fxRate}
+            placeholder="1487"
+            aria-invalid={state.errors.fxRate !== undefined}
+            className="min-w-0 flex-1 bg-transparent px-3 py-3 text-base tabular-nums outline-none"
+          />
+          <span className="shrink-0 pr-4 text-sm text-neutral-500 dark:text-neutral-400">
+            por USD
+          </span>
+        </div>
+        {state.errors.fxRate === undefined ? (
+          <p className="mt-2 text-sm text-neutral-500 dark:text-neutral-400">
+            Con esto pasamos tus precios a pesos en la vidriera. Lo cambiás cuando quieras.
+          </p>
+        ) : (
+          <p role="alert" className="mt-2 text-sm font-medium text-red-600">
+            {state.errors.fxRate}
+          </p>
+        )}
       </div>
 
       <label className="flex items-start gap-3 rounded-xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">

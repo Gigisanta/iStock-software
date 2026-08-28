@@ -1,12 +1,14 @@
 import 'server-only';
 import { eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { memberships, tenants } from '@istock/db';
+import { DEFAULT_FX_ROUNDING } from '@istock/domain';
+import { fxSettings, locations, memberships, tenants } from '@istock/db';
 import { authDriver } from '../auth/driver';
 import { withServiceDb } from '../db/session';
 import { logEvent } from '../log';
 import { slugSchema } from '../slug';
 import { normalizeArWaPhone } from '../wa-phone';
+import { parseFxArsPerUsd } from './parse-fx';
 import { invalidateStorefront } from './storefront-cache';
 
 /** Trial de 14 días (`CLAUDE.md` §1 · `PRODUCT.md` §Planes). El trial no toca Mercado Pago. */
@@ -15,7 +17,59 @@ export const TRIAL_DAYS = 14;
 /**
  * Alta del negocio. Es la única escritura del esqueleto, y toca cuatro cosas que después no se
  * pueden arreglar barato: el subdominio, el aislamiento, el trial y el cache de la vidriera.
+ *
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *  El alta también siembra `fx_settings` y un punto de retiro, y eso NO es conveniencia
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * El read model de la vidriera (`(storefront)/_lib/listings.ts`) corta así:
+ *
+ *     const fx = await fxContext(tx, tenant.id);
+ *     if (fx === null) return { rows: [], publishedCount };   // grilla
+ *     if (fx === null) return null;                            // ficha → 404
+ *
+ * O sea: **sin fila en `fx_settings` no se publica nada**, ni siquiera el precio en USD. Un tenant
+ * que nace sin esa fila carga 15 equipos, abre su vidriera y ve la grilla vacía con el cartel de
+ * "Vidriera casi lista". Eso rompe el "done cobrable" de `CLAUDE.md` §1 para **todo** tenant que
+ * no sea el del seed. Por eso las dos filas se escriben en la **misma transacción** que el tenant:
+ * un negocio a medio nacer es peor que uno que no nació.
+ *
+ * ── El TC se PREGUNTA, no se inventa ────────────────────────────────────────────────────────
+ * `CLAUDE.md` §1: *"el TC lo setea el DUEÑO, manualmente, por tenant. No hay API de dólar en el
+ * hot path."* Las tres salidas posibles eran:
+ *
+ * | opción | qué pasa |
+ * |---|---|
+ * | no sembrar `fx_settings` | la vidriera no publica **nada** hasta que exista la pantalla de TC (S4+) |
+ * | sembrar un TC de relleno | se publica un ARS que el dueño no dijo, en la ficha que él pegó en un estado |
+ * | **preguntarlo en el alta** | el TC es del dueño desde el segundo cero y la vidriera nace viva |
+ *
+ * Se eligió la tercera, y hay una cuarta que **no** existe: no hay forma de sembrar un TC
+ * "sin confirmar". El esquema no tiene columna para eso y el sentinel obvio —`ars_per_usd = 0`—
+ * hace que `fxRateFromArsCents()` **tire** adentro de un render con `'use cache'`, que bajo PPR
+ * no es un 500 sino un stream que nunca cierra. `updated_by` tampoco sirve de señal: no está en
+ * el `GRANT` de columnas de `anon` (migración 0002), así que la vidriera ni lo ve.
+ *
+ * El redondeo sí es nuestro y es `ceil_1000` (ratificado en FASE 2): así publica el reseller y
+ * nunca deja el ARS por debajo del USD × TC. Se cambia por tenant, no por deploy.
+ *
+ * ── El punto de retiro sembrado es un placeholder VERDADERO ─────────────────────────────────
+ * Sale publicado en la ficha de un desconocido, así que no puede ser una dirección inventada de
+ * Neuquén. Lo que se siembra es la única cosa que ya sabemos que es cierta de todo tenant nuevo:
+ * la entrega se coordina por WhatsApp, que es donde se cierra la operación. Es editable y es
+ * exacto; una dirección falsa sería editable y mentira.
  */
+
+/**
+ * Punto de retiro inicial. Texto de mostrador, no relleno: mientras el dueño no cargue su local,
+ * esto es literalmente cómo se entrega. `city` queda `null` a propósito — no sabemos en qué
+ * ciudad está y no lo vamos a suponer.
+ */
+export const INITIAL_PICKUP_POINT = {
+  name: 'A coordinar por WhatsApp',
+  address: 'Escribinos y arreglamos dónde te lo entregamos',
+  hours: 'Todos los días, por WhatsApp',
+} as const;
 
 const businessNameSchema = z
   .string({ error: 'Poné el nombre de tu negocio.' })
@@ -48,10 +102,30 @@ const waPhoneSchema = z
     return result.value;
   });
 
+/**
+ * El TC inicial. Es un campo obligatorio del alta y no un "después lo cargás": ver el encabezado
+ * del módulo. El parseo vive en `parse-fx.ts` (puro, con test propio) y el dominio tiene la
+ * última palabra sobre la forma del número.
+ *
+ * El valor que sale de acá está en **centavos de ARS por USD** — el nombre del campo lo dice para
+ * que nadie lo inserte creyendo que son pesos.
+ */
+const fxRateSchema = z
+  .string({ error: 'Poné a cuánto tomás el dólar hoy.' })
+  .transform((raw, ctx) => {
+    const result = parseFxArsPerUsd(raw);
+    if (!result.ok) {
+      ctx.addIssue({ code: 'custom', message: result.reason });
+      return z.NEVER;
+    }
+    return result.arsCentsPerUsd;
+  });
+
 export const createTenantSchema = z.object({
   name: businessNameSchema,
   slug: slugSchema,
   waPhone: waPhoneSchema,
+  fxArsCentsPerUsd: fxRateSchema,
   acceptsTradeIn: z.boolean().default(false),
 });
 
@@ -59,7 +133,11 @@ export type CreateTenantInput = z.infer<typeof createTenantSchema>;
 
 export type CreateTenantResult =
   | { readonly ok: true; readonly tenantId: string; readonly slug: string }
-  | { readonly ok: false; readonly field: 'slug' | 'name' | 'waPhone' | 'form'; readonly message: string };
+  | {
+      readonly ok: false;
+      readonly field: 'slug' | 'name' | 'waPhone' | 'fxRate' | 'form';
+      readonly message: string;
+    };
 
 /**
  * ¿Está libre el slug? Corre con privilegios porque quien pregunta todavía no tiene tenant y RLS
@@ -89,14 +167,16 @@ function isUniqueViolation(error: unknown): boolean {
 }
 
 /**
- * Crea tenant + membresía `owner` en **una** transacción.
+ * Crea tenant + membresía `owner` + `fx_settings` + punto de retiro en **una** transacción.
  *
  * Por qué `withServiceDb` y no `withTenantDb`: el usuario todavía no tiene `app_metadata.tenant_id`,
  * así que la policy `tenants_tenant_insert` (`with check id = <claim>`) evaluaría contra `null` y
  * rechazaría la fila. Es uno de los tres usos declarados de la conexión privilegiada.
  *
  * Por qué una sola transacción: un tenant sin membresía es un negocio que nadie puede administrar
- * y un slug quemado para siempre (el `unique index` no lo suelta).
+ * y un slug quemado para siempre (el `unique index` no lo suelta). Y un tenant sin `fx_settings`
+ * es un negocio cuya vidriera no publica nada, con el mismo slug quemado — el fallo parcial que
+ * el board registró como S3.1. Las cuatro filas o ninguna.
  */
 export async function createTenant(userId: string, input: CreateTenantInput): Promise<CreateTenantResult> {
   if (await hasMembership(userId)) {
@@ -129,6 +209,27 @@ export async function createTenant(userId: string, input: CreateTenantInput): Pr
         userId,
         role: 'owner',
         acceptedAt: sql`now()`,
+      });
+
+      /**
+       * El TC que la persona acaba de tipear en el alta. `updated_by` es quien lo puso, y es
+       * quien lo puso de verdad: no hay TC de sistema en este producto.
+       */
+      await tx.insert(fxSettings).values({
+        tenantId: row.id,
+        arsPerUsd: input.fxArsCentsPerUsd,
+        rounding: DEFAULT_FX_ROUNDING,
+        updatedBy: userId,
+      });
+
+      /** Un punto de retiro, activo, verdadero y editable. Ver el encabezado del módulo. */
+      await tx.insert(locations).values({
+        tenantId: row.id,
+        name: INITIAL_PICKUP_POINT.name,
+        address: INITIAL_PICKUP_POINT.address,
+        hours: INITIAL_PICKUP_POINT.hours,
+        isActive: true,
+        sortOrder: 0,
       });
 
       return row.id;
@@ -168,7 +269,15 @@ export async function createTenant(userId: string, input: CreateTenantInput): Pr
    */
   invalidateStorefront(input.slug);
 
-  logEvent('tenant.created', { tenantId, userId, plan: 'trial' });
+  // `fxSeeded` y `pickupPoints` son la señal operativa de S3.1: un `tenant.created` sin las dos
+  // es un negocio cuya vidriera no publica nada. El valor del TC no se loguea: no hace falta.
+  logEvent('tenant.created', {
+    tenantId,
+    userId,
+    plan: 'trial',
+    fxSeeded: true,
+    pickupPoints: 1,
+  });
 
   return { ok: true, tenantId, slug: input.slug };
 }

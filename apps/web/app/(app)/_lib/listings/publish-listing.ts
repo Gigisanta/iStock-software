@@ -11,7 +11,7 @@ import {
 import { listingEvents, listings } from '@istock/db';
 import { withTenantDb, type TenantContext } from '../db/session';
 import { logEvent } from '../log';
-import { invalidateStorefront } from '../tenants/storefront-cache';
+import { invalidateStorefrontUnit } from '../tenants/storefront-cache';
 import { loadUnitForTransition, type UnitForTransition } from './queries';
 
 /**
@@ -160,9 +160,15 @@ export async function transitionUnit(
     return { ok: false, message: 'Alguien cambió este equipo mientras lo mirabas. Recargá la pantalla.' };
   }
 
-  // El dominio decide si la vidriera cambió; nosotros ejecutamos.
+  /**
+   * El dominio decide si la vidriera cambió; nosotros ejecutamos.
+   *
+   * Publicar o despublicar mueve la **grilla** (el equipo entra o sale) y la **ficha**, así que va
+   * la invalidación de los tres tags: los dos del tenant más `listing:{uuid}`. El de la unidad no
+   * se saltea aunque hoy sea redundante — ver el bloque "el TERCER tag" en `storefront-cache.ts`.
+   */
   if (transitionEffects(from, to).revalidateStorefront) {
-    invalidateStorefront(tenantSlug);
+    invalidateStorefrontUnit(tenantSlug, listingId);
   }
 
   logEvent('listing.status_changed', {

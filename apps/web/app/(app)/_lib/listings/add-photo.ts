@@ -5,7 +5,7 @@ import { uploadListingPhoto, type UploadedListingPhoto } from '@istock/media';
 import { listingPhotos, listings } from '@istock/db';
 import { withTenantDb, type TenantContext } from '../db/session';
 import { logError, logEvent } from '../log';
-import { invalidateStorefront } from '../tenants/storefront-cache';
+import { invalidateListing, invalidateStorefrontUnit } from '../tenants/storefront-cache';
 import { loadUnitForTransition } from './queries';
 import { MAX_PHOTOS_PER_LISTING } from './schema';
 
@@ -204,8 +204,26 @@ export async function addUnitPhoto(
 
       const { photoCount } = outcome;
 
-      // La unidad publicada cambió de verdad para el visitante. `CLAUDE.md` §0.7.
-      if (isPublicStatus(unit.status)) invalidateStorefront(tenantSlug);
+      /**
+       * ══════════════════════════════════════════════════════════════════════════════════════
+       *  Qué se invalida: la ficha sola, o la vidriera entera (S3.2)
+       * ══════════════════════════════════════════════════════════════════════════════════════
+       * La unidad publicada cambió de verdad para el visitante (`CLAUDE.md` §0.7), pero **cuánto**
+       * cambió depende de si esta foto es la que se ve en la grilla:
+       *
+       * - `photoCount === 1` → es la primera, o sea `photos[0]`, o sea la card de la grilla pasa
+       *   de placeholder a foto. Cambia la grilla: van los tres tags.
+       * - `photoCount > 1`  → el `sort_order` es `max + 1`, así que **nunca** es `photos[0]` y la
+       *   grilla queda idéntica. Cambia sólo la ficha: va un tag y se purga una página.
+       *
+       * Esa segunda rama es la que arregla el hallazgo: con 200 equipos, la 2ª foto de uno tiraba
+       * abajo las 200 fichas más la grilla. `photoCount` sale del `count(*)` tomado **con el lock
+       * de la fila** unas líneas más arriba, así que no es una lectura optimista.
+       */
+      if (isPublicStatus(unit.status)) {
+        if (photoCount === 1) invalidateStorefrontUnit(tenantSlug, listingId);
+        else invalidateListing(tenantSlug, listingId);
+      }
 
       logEvent('listing.photo.added', {
         tenantId: ctx.tenantId,
