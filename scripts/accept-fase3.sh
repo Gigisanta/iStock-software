@@ -6,10 +6,7 @@
 # K4 layout del panel mobile-first · K5 probe de upload a R2
 set -uo pipefail
 cd "$(dirname "$0")/.."
-. scripts/_lib.sh   # sec/ok/no/inf/none/noneraw + el contador `fail`. Probado en scripts/_lib.test.sh
-chk()  { if eval "$2" >/dev/null 2>&1; then ok "$1"; else no "$1"; fi; }
-# nofile: el archivo tiene que existir Y no estar vacio (phantom-file guard de CLAUDE.md).
-have() { if [ -s "$1" ]; then ok "existe y no esta vacio: $1"; else no "falta o esta vacio: $1"; fi; }
+. scripts/_lib.sh   # sec/ok/no/inf/chk/have/none/noneraw + `fail`. Probado en scripts/_lib.test.sh
 
 sec "K3 · proxy de host (storefront-agent)"
 have apps/web/proxy.ts

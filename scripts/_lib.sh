@@ -105,3 +105,64 @@ none() { local d="$1" re="$2"; shift 2
 # y la regla dio PASS. Llevaba dos slices en verde sin poder distinguir un arbol limpio de uno sucio.
 noneraw() { local d="$1" re="$2"; shift 2
   _veredicto "$d" "$(_buscar "$re" "$@")"; }
+
+
+# ── `chk` y `have`: los dos helpers que TRES gates creian tener ─────────────────────────────────
+# Vivian sueltos adentro de `accept-fase3.sh`. `accept-s1.sh` los llamaba igual —diez veces `chk`
+# y una `have`— sin definirlos y sin importarlos, porque `. scripts/_lib.sh` no los traia.
+#
+# Bash no protesta por eso de ninguna forma que un gate pueda ver: imprime `chk: command not found`
+# por **stderr**, devuelve 127, y sigue. `no()` no se llama, asi que `fail` NO se toca. El 2026-08-28
+# `accept-s1.sh` reporto 25 PASS / 1 FAIL con ONCE aserciones que no se ejecutaron, entre ellas las
+# cuatro que consultan Postgres de verdad para probar que `anon` no puede leer `listings.imei` y que
+# `listings` tiene RLS forzada — o sea la evidencia viva del invariante mas caro del producto.
+# El unico FAIL era un falso positivo ajeno; sin el, el gate salia **VERDE**. Y corre en CI.
+chk()  { if eval "$2" >/dev/null 2>&1; then ok "$1"; else no "$1"; fi; }
+# El archivo tiene que existir Y no estar vacio: es el phantom-file guard de `CLAUDE.md` en linea.
+have() { if [ -s "$1" ]; then ok "existe y no esta vacio: $1"; else no "falta o esta vacio: $1"; fi; }
+
+# ── La red, que es lo que de verdad arregla la clase ────────────────────────────────────────────
+# Definir `chk` cura los once casos de hoy y no impide el numero doce. La propiedad que faltaba no
+# es "existe `chk`": es **"un gate no puede saltearse una asercion en silencio"**. Bash ofrece
+# exactamente un gancho para eso, y es este.
+#
+# Con `command_not_found_handle` definido, cualquier comando inexistente en cualquier gate que haga
+# `. scripts/_lib.sh` imprime un FAIL con nombre y linea, ensucia `fail`, y el gate sale != 0.
+# Ausencia de medicion = FAIL, nunca PASS — la misma regla que `guard-artifacts.sh` aplica a los
+# artefactos, aplicada ahora a las aserciones.
+#
+# DOS limites conocidos y declarados, porque una red con letra chica escondida es peor que ninguna:
+#
+# 1. **`command_not_found_handle` es de bash >= 4.0, y macOS ships 3.2.57.** En CI (`ubuntu-latest`,
+#    bash 5.x) la red agarra; en la maquina del LEAD es INERTE. Una red que solo funciona donde no
+#    la miro es exactamente la clase de tranquilidad falsa que este repo trata como el peor modo de
+#    falla, asi que **la mecanica primaria no es esta: es `scripts/guard-gates.sh`**, que es estatico
+#    y corre igual en las dos plataformas. Esto es el cinturon de mas, no el pantalon.
+# 2. Si el comando inexistente esta dentro de `$(...)` o de un pipe, corre en una subshell y el
+#    `fail=1` muere con ella. La linea FAIL **igual se imprime** (queda en la salida capturada), pero
+#    el exit code del gate no la refleja. No se arregla con un `trap EXIT` porque `_lib.test.sh`,
+#    `guard-firewall.test.sh` y `web-lint.test.sh` ya ponen el suyo y lo pisarian: preferi el limite
+#    escrito antes que una red que se cae en tres archivos sin avisar.
+command_not_found_handle() {
+  no "comando inexistente: \`$1\` (${BASH_SOURCE[1]:-?}:${BASH_LINENO[0]:-?})"
+  printf '        Una asercion que invoca un comando que no existe no falla: se evapora. Bash\n'
+  printf '        avisa por stderr, devuelve 127 y sigue; el gate nunca se entera. Si el nombre\n'
+  printf '        parece un helper (`chk`, `have`, `say`), lo mas probable es que este definido\n'
+  printf '        adentro de OTRO gate y que este no lo importe.\n'
+  return 127
+}
+
+# ─────────────────────────────────────────────────────────────────────────────────────────────
+# `puerto_ocupado <n>` — 0 si algo ya escucha en ese puerto TCP.
+#
+# Existe por un rojo fantasma del 2026-08-28: dos gates corriendo a la vez sobre :3100 y
+# `accept-s2.sh` titulando "el censo dice 0/13 archivos ejecutados: la suite no corrio entera".
+# La causa real -otro proceso tenia el puerto- estaba en el cuerpo del error, pero el titular
+# acusaba a la suite e2e, que no habia hecho nada.
+#
+# `e2e/playwright.config.ts` ya decide `reuseExistingServer: false` a proposito, para que un
+# puerto ocupado rompa fuerte en vez de prestar un server sin el espia de Postgres. Esto no lo
+# reemplaza: lo adelanta, para que el gate nombre la causa ANTES de gastar un `next build` y para
+# que el rojo no apunte a la columna equivocada. Un arnes que puede acusar al writer equivocado es
+# peor que uno lento, y eso ya esta escrito en el config.
+puerto_ocupado() { lsof -nP -iTCP:"$1" -sTCP:LISTEN >/dev/null 2>&1; }

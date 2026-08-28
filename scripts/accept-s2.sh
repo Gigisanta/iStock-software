@@ -20,6 +20,18 @@ cd "$(dirname "$0")/.."
 
 DBURL="${DATABASE_URL:-postgresql://localhost:5432/istock_dev}"
 PORT="${E2E_PORT:-3100}"
+
+# Chequeo de entorno, no de producto: si otro proceso tiene el puerto, este gate no puede levantar
+# su propio server y por lo tanto NO PUEDE MEDIR. Se corta aca, con la causa nombrada, en vez de
+# gastar un `next build` para terminar titulando "la suite no corrio entera" -que acusa a `qa-agent`
+# por una colision de corridas. Ver `e2e/playwright.config.ts`: `reuseExistingServer: false` esta
+# puesto a proposito para que un puerto ocupado rompa fuerte en lugar de prestar un server sin el
+# espia de Postgres, que es como una medicion ausente se disfraza de exito.
+if puerto_ocupado "${E2E_PORT:-3100}"; then
+  no "el puerto ${E2E_PORT:-3100} lo tiene otro proceso: este gate no puede medir. NO es un rojo del producto: es otra corrida (otro accept-*, una suite e2e a mano) pisandose con esta. Esperala y volve a correr, o E2E_PORT=<otro>."
+  exit "$fail"
+fi
+
 MEDIA="packages/media"
 
 # ─────────────────────────────────────────────────────────────────────────────

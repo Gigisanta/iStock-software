@@ -87,6 +87,73 @@ else
   printf '  \033[32mok\033[0m    lstart_a_epoch rechaza lo que no es una fecha\n'
 fi
 
+printf '\n\033[1m── chk(): las dos polaridades\033[0m\n'
+caso "chk aprueba cuando la condicion se cumple" PASS "$(chk d 'true')"
+caso "chk RECHAZA cuando no se cumple"           FAIL "$(chk d 'false')"
+caso "chk RECHAZA un comando que no existe"      FAIL "$(chk d 'comando_que_no_existe_jamas')"
+
+printf '\n\033[1m── have(): existe Y no esta vacio\033[0m\n'
+: > "$T/vacio.ts"
+caso "have aprueba un archivo con contenido"     PASS "$(have "$T/limpio.ts")"
+caso "have RECHAZA un archivo vacio"             FAIL "$(have "$T/vacio.ts")"
+caso "have RECHAZA un archivo que no existe"     FAIL "$(have "$T/no-existe.ts")"
+
+printf '\n\033[1m── command_not_found_handle(): una asercion no se puede evaporar\033[0m\n'
+# El caso real del 2026-08-28: `accept-s1.sh` llamaba a `chk` y a `have` sin tenerlos importados.
+# Bash imprime "command not found" por STDERR, devuelve 127 y sigue; `no()` no se llama y `fail`
+# queda intacto. Once aserciones —entre ellas las cuatro que prueban contra Postgres que `anon` no
+# lee `listings.imei` y que `listings` tiene RLS forzada— no se ejecutaron, y el gate habria salido
+# VERDE de no ser por un FAIL ajeno. Las tres aserciones de abajo son las tres mitades del arreglo.
+# El gancho es de bash >= 4.0. macOS ships 3.2.57, asi que aca hay que elegir entre un rojo
+# permanente en la maquina donde mas se corre, o un skip. Se elige **skip DECLARADO con motivo**,
+# que es la unica forma honesta: un skip mudo seria el mismo pecado que la asercion evaporada.
+# La red que si corre en las dos plataformas es `scripts/guard-gates.sh`, y esa no tiene skip.
+if [ "${BASH_VERSINFO[0]:-0}" -ge 4 ]; then
+  caso "un comando inexistente imprime FAIL, no silencio" FAIL "$(comando_que_no_existe_jamas 2>/dev/null)"
+
+  fail=0; comando_que_no_existe_jamas >/dev/null 2>&1  # guard-gates:a-proposito el fixture de la polaridad ES un comando inexistente
+  [ "$fail" = "1" ] \
+    && printf '  \033[32mok\033[0m    ensucia `fail`, asi que el gate sale != 0\n' \
+    || { printf '  \033[31mMAL\033[0m   `fail` quedo en %s: la asercion se evaporo igual que antes\n' "$fail"; tfail=1; }
+
+  comando_que_no_existe_jamas >/dev/null 2>&1; rc=$?  # guard-gates:a-proposito el fixture de la polaridad ES un comando inexistente
+  [ "$rc" = "127" ] \
+    && printf '  \033[32mok\033[0m    devuelve 127 (no rompe `if cmd; then`, solo lo hace visible)\n' \
+    || { printf '  \033[31mMAL\033[0m   devolvio %s en vez de 127\n' "$rc"; tfail=1; }
+else
+  printf '  \033[33mskip\033[0m  bash %s < 4.0: `command_not_found_handle` no existe en esta\n' "${BASH_VERSION%%(*}"
+  printf '        plataforma. En CI (bash 5.x) SI corre. La cobertura de esta clase en las dos\n'
+  printf '        plataformas la da scripts/guard-gates.sh, que es estatico.\n'
+fi
+
+fail=0; true
+[ "$fail" = "0" ] \
+  && printf '  \033[32mok\033[0m    un comando que SI existe no dispara nada\n' \
+  || { printf '  \033[31mMAL\033[0m   el handler se disparo con un comando valido\n'; tfail=1; }
+
+printf '\n\033[1m── puerto_ocupado: las dos direcciones, contra un socket de verdad\033[0m\n'
+# No se mockea nada: se abre un socket real, se pregunta, se cierra y se vuelve a preguntar. Un
+# helper de entorno testeado contra un stub prueba el stub.
+PUERTO_T=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
+
+if puerto_ocupado "$PUERTO_T"; then
+  printf '  \033[31mMAL\033[0m   dijo ocupado un puerto que nadie escucha (%s)\n' "$PUERTO_T"; tfail=1
+else
+  printf '  \033[32mok\033[0m    polo negativo: puerto libre -> no ocupado (%s)\n' "$PUERTO_T"
+fi
+
+python3 -c 'import socket,sys,time; s=socket.socket(); s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1); s.bind(("127.0.0.1",int(sys.argv[1]))); s.listen(1); time.sleep(20)' "$PUERTO_T" &
+PID_T=$!
+for _ in 1 2 3 4 5 6 7 8 9 10; do puerto_ocupado "$PUERTO_T" && break; done
+
+if puerto_ocupado "$PUERTO_T"; then
+  printf '  \033[32mok\033[0m    polo positivo: con algo escuchando -> ocupado\n'
+else
+  printf '  \033[31mMAL\033[0m   no vio un listener vivo en %s: el chequeo previo de los gates no sirve\n' "$PUERTO_T"; tfail=1
+fi
+
+kill "$PID_T" 2>/dev/null; wait "$PID_T" 2>/dev/null
+
 printf '\n\033[1m── la libreria no se ejecuta, se importa\033[0m\n'
 if bash scripts/_lib.sh >/dev/null 2>&1; then
   printf '  \033[31mMAL\033[0m   scripts/_lib.sh se dejo ejecutar directo\n'; tfail=1

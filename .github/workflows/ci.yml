@@ -87,6 +87,23 @@ jobs:
       - name: polaridad de los helpers de los gates
         run: ./scripts/_lib.test.sh
 
+      # Nace de un hallazgo del LEAD el 2026-08-28, y es el hermano del de arriba: si `_lib.sh`
+      # protege de que TODOS los gates se vuelvan vacuamente verdes a la vez, este protege de que
+      # UNO se vuelva vacuamente verde sin que nadie lo note. `accept-s1.sh` llamaba a `chk` diez
+      # veces y a `have` una sin tenerlos importados —vivian sueltos adentro de `accept-fase3.sh`—
+      # y bash resuelve eso imprimiendo por stderr, devolviendo 127 y siguiendo. `no()` nunca se
+      # llama, asi que `fail` no se toca: el gate reporto 25 PASS / 1 FAIL con ONCE aserciones que
+      # no corrieron, entre ellas las cuatro que le preguntan a Postgres si `anon` puede leer
+      # `listings.imei` y si `listings` tiene RLS forzada. El unico FAIL era ajeno y falso: sin el,
+      # el gate salia VERDE. No necesita base ni build, solo lee los scripts.
+      - name: gate de los gates (ningun gate invoca un helper que no tiene)
+        if: always()
+        run: ./scripts/guard-gates.sh
+
+      - name: polaridad del gate de los gates (se tiene que ver encender contra el arbol de ayer)
+        if: always()
+        run: ./scripts/guard-gates.test.sh
+
       - name: gate de datos sensibles
         run: ./scripts/guard-leaks.sh
 

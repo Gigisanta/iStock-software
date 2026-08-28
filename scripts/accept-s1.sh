@@ -20,6 +20,18 @@ cd "$(dirname "$0")/.."
 
 DBURL="${DATABASE_URL:-postgresql://localhost:5432/istock_dev}"
 PORT="${E2E_PORT:-3100}"
+
+# Chequeo de entorno, no de producto: si otro proceso tiene el puerto, este gate no puede levantar
+# su propio server y por lo tanto NO PUEDE MEDIR. Se corta aca, con la causa nombrada, en vez de
+# gastar un `next build` para terminar titulando "la suite no corrio entera" -que acusa a `qa-agent`
+# por una colision de corridas. Ver `e2e/playwright.config.ts`: `reuseExistingServer: false` esta
+# puesto a proposito para que un puerto ocupado rompa fuerte en lugar de prestar un server sin el
+# espia de Postgres, que es como una medicion ausente se disfraza de exito.
+if puerto_ocupado "${E2E_PORT:-3100}"; then
+  no "el puerto ${E2E_PORT:-3100} lo tiene otro proceso: este gate no puede medir. NO es un rojo del producto: es otra corrida (otro accept-*, una suite e2e a mano) pisandose con esta. Esperala y volve a correr, o E2E_PORT=<otro>."
+  exit "$fail"
+fi
+
 APEX="${E2E_APEX_HOST:-127.0.0.1.nip.io}"
 SF="apps/web/app/(storefront)"
 
@@ -100,10 +112,26 @@ fi
 # ─────────────────────────────────────────────────────────────────────────────
 sec "A2 · la vidriera baja de rol antes de consultar (HIGH-1, storefront-agent)"
 have "$SF/_lib/tenant.ts"
-chk "abre transaccion y setea el rol (como (app)/_lib/db/session.ts)" \
-    "grep -qE 'set local role' '$SF/_lib/tenant.ts' && grep -qE '\.transaction\(' '$SF/_lib/tenant.ts'"
+have "$SF/_lib/storefront-db.ts"
+chk "el helper unico abre transaccion y baja a anon" \
+    "grep -qE 'set local role anon' '$SF/_lib/storefront-db.ts' && grep -qE '\.transaction\(' '$SF/_lib/storefront-db.ts'"
+# ── ESTA ASERCION LA REESCRIBIO EL LEAD, 2026-08-28, y el motivo importa mas que el arreglo ──
+# La version anterior greppeaba `set local role` DENTRO de tenant.ts. Cuando storefront-agent
+# centralizo la bajada de rol en `_lib/storefront-db.ts` -que es mejor codigo: un solo lugar donde
+# se abre transaccion y se baja a anon- la asercion quedo apuntando a un archivo que ya no la
+# contiene. No lo noto nadie porque `chk` no estaba definido y la linea se EVAPORABA en silencio
+# (ese hallazgo es lo que motivo scripts/guard-gates.sh).
+# Repuntar el grep a storefront-db.ts habria repuesto exactamente la misma fragilidad: un gate
+# atado al nombre del archivo de hoy. Lo que se afirma ahora es el invariante, no su domicilio:
+# NINGUN archivo de la vidriera construye su propia conexion. Si el pool vive en un solo lugar y
+# ese lugar baja el rol, entonces toda query de la vidriera corre como `anon`, sin importar cuantos
+# helpers nuevos aparezcan. Un atajo que se saltee `withStorefrontDb` rompe el gate el dia que se
+# escribe, y no el dia que alguien se acuerda de actualizar el grep.
+# `createDb(` es el constructor; importar `tenants`/`listings` de @istock/db es schema, no conexion.
+chk "solo storefront-db.ts construye conexion: el resto consulta via withStorefrontDb" \
+    "! grep -rlE 'createDb\(' '$SF' --include='*.ts' | grep -qv '_lib/storefront-db.ts'"
 none "no queda una conexion memoizada que consulte sin rol" \
-     "memoizedDb[^=]*=[^=]*createDb" "$SF/_lib/tenant.ts"
+     "memoizedDb[^=]*=[^=]*createDb" "$SF"
 chk "el WHERE de tenant explicito sigue ahi (defensa en profundidad, no reemplazo de RLS)" \
     "grep -qriE '(tenantId|tenant_id|slug)' '$SF/_lib/tenant.ts'"
 

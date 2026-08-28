@@ -30,6 +30,18 @@ cd "$(dirname "$0")/.."
 
 DBURL="${DATABASE_URL:-postgresql://localhost:5432/istock_dev}"
 PORT="${E2E_PORT:-3100}"
+
+# Chequeo de entorno, no de producto: si otro proceso tiene el puerto, este gate no puede levantar
+# su propio server y por lo tanto NO PUEDE MEDIR. Se corta aca, con la causa nombrada, en vez de
+# gastar un `next build` para terminar titulando "la suite no corrio entera" -que acusa a `qa-agent`
+# por una colision de corridas. Ver `e2e/playwright.config.ts`: `reuseExistingServer: false` esta
+# puesto a proposito para que un puerto ocupado rompa fuerte en lugar de prestar un server sin el
+# espia de Postgres, que es como una medicion ausente se disfraza de exito.
+if puerto_ocupado "${E2E_PORT:-3100}"; then
+  no "el puerto ${E2E_PORT:-3100} lo tiene otro proceso: este gate no puede medir. NO es un rojo del producto: es otra corrida (otro accept-*, una suite e2e a mano) pisandose con esta. Esperala y volve a correr, o E2E_PORT=<otro>."
+  exit "$fail"
+fi
+
 APEX="${E2E_APEX_HOST:-127.0.0.1.nip.io}"
 SF="apps/web/app/(storefront)"
 # El listing del seed. Se elige el que tiene TODOS los campos peligrosos cargados (imei, costo,
@@ -65,11 +77,46 @@ if [ -d "$SF" ]; then
   BAD=$(node -e '
     const fs=require("fs"),p=require("path");
     const root=process.argv[1]; const bad=[];
+    // ── AGREGADO POR EL LEAD, 2026-08-28. El escaner miraba el archivo CRUDO. ────────────────
+    // Lo reporto `storefront-agent`: un docblock que mencionaba `srcSet` unas lineas despues de
+    // un `<img>` en PROSA hizo que la ventana del tag se abriera en el `<` del comentario, y el
+    // gate tiro FAIL sobre `listings.ts`, un archivo que no renderiza ni una etiqueta. O sea que
+    // el gate castigaba DOCUMENTAR la regla que el gate defiende: el unico arreglo disponible
+    // para quien lo choca es borrar la explicacion. Un gate que empuja a borrar prosa correcta
+    // esta roto aunque su intencion sea buena.
+    // Se blanquean comentarios y strings ANTES de escanear, reemplazando por espacios para no
+    // mover un solo offset: los numeros de linea que reporta el gate siguen siendo los del
+    // archivo real. Es lo mismo que ya hace `scan()` de `apps/web/scripts/web-lint.mjs`.
+    // LIMITE DECLARADO: no se detectan literales de regex, asi que un `//` adentro de uno podria
+    // blanquear de mas. No se detecta ninguno en `apps/web` hoy y el modo de falla seria omitir
+    // una deteccion, no inventarla; si aparece, el fix es tokenizar de verdad, no aflojar la regla.
+    const blanquear=src=>{
+      const out=src.split(""); let st=null;
+      for(let i=0;i<src.length;i++){
+        const c=src[i], n=src[i+1];
+        if(st===null){
+          // `\u0027` y no la comilla literal: este JS viaja adentro de un `node -e` entrecomillado
+          // SIMPLE, y una comilla simple aca —hasta en un comentario— corta el string de shell.
+          if(c==="\""||c==="\u0027"||c==="`"){ st=c; continue; }
+          if(c==="/"&&n==="/"){ st="//"; out[i]=" "; continue; }
+          if(c==="/"&&n==="*"){ st="/*"; out[i]=" "; continue; }
+          continue;
+        }
+        if(st==="//"){ if(c==="\n"){ st=null; continue; } out[i]=" "; continue; }
+        if(st==="/*"){ if(c==="*"&&n==="/"){ out[i]=" "; out[i+1]=" "; i++; st=null; continue; }
+                       if(c!=="\n") out[i]=" "; continue; }
+        // dentro de un string: se blanquea el contenido, no las comillas
+        if(c==="\\"){ out[i]=" "; if(i+1<src.length&&src[i+1]!=="\n") out[i+1]=" "; i++; continue; }
+        if(c===st){ st=null; continue; }
+        if(c!=="\n") out[i]=" ";
+      }
+      return out.join("");
+    };
     const walk=d=>fs.readdirSync(d,{withFileTypes:true}).forEach(e=>{
       const f=p.join(d,e.name);
       if(e.isDirectory()) return walk(f);
       if(!/\.(tsx|ts)$/.test(e.name)||/\.test\.tsx?$/.test(e.name)) return;
-      const s=fs.readFileSync(f,"utf8");
+      const s=blanquear(fs.readFileSync(f,"utf8"));
       for(const m of s.matchAll(/srcSet|srcset/g)){
         // Ventana del tag: hacia atras hasta el `<` que lo abre, hacia adelante hasta el `>`.
         const open=s.lastIndexOf("<",m.index); if(open<0) continue;
