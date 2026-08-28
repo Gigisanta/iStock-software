@@ -88,4 +88,12 @@ Test obligatorio: agregar un campo nuevo al modelo de DB **no** debe hacerlo apa
 Al expirar: `reserved → available` + revalidate. Una unidad tiene **como máximo una** reserva activa.
 
 ## Mensaje de WhatsApp
-Ver skill `wa-payload`. Texto canónico en `CLAUDE.md` §1. Función pura en `packages/domain/wa.ts`.
+Ver skill `wa-payload`. Texto canónico en `CLAUDE.md` §1. Función pura en `packages/domain/src/wa.ts`
+(el path decía `packages/domain/wa.ts`, que no existe; corregido el 2026-08-28).
+
+**Dos registros de condición, a propósito** (ratificado por el LEAD en FASE 2, no reabrir): la ficha
+dice `usado excelente` (`CONDITION_LABELS`, `src/types.ts:52`) y el mensaje de WhatsApp dice
+`usado A` (`WA_CONDITION_LABELS`, `:69`). La ficha le habla a un comprador; el mensaje, a un reseller
+que usa esa jerga. **No es una inconsistencia y no se unifica.** Quien lo afirma sobre la misma
+página —único lugar donde los dos mapas se observan a la vez— es **M3b de `scripts/accept-s3.sh`**;
+los unit tests ven un mapa por vez y **seguirían verdes** si alguien los fusionara.

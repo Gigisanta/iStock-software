@@ -789,3 +789,52 @@ renombró a `sec()`, como en los otros cinco.
 **Corolario para el que audita:** el peligro no lo ve el archivo que define la función, lo ve el que
 la llama. Un `grep` de "funciones con nombre de comando" es barato y hay que correrlo **antes** de
 mover un script a una librería compartida, no después.
+
+
+### 2026-08-28 · Un invariante puede tener tres pruebas alrededor y ninguna encima
+
+Hallazgo de `docs-keeper` al no poder citar evidencia para una fila del board, verificado por el LEAD
+antes de aceptarlo y cerrado por él en el commit `0edb661` (módulo **M3b** de `scripts/accept-s3.sh`).
+El invariante era el más caro del producto: **la ficha renderiza el botón `wa.me`**. De los 15 campos
+de la ficha mínima (`CLAUDE.md` §1) el gate aseguraba 14, y el que faltaba era el único por el que
+entra la plata — los otros 14 informan, ese convierte.
+
+Lo que hace que esto sobreviva a una revisión es que **el invariante no estaba desnudo: estaba
+rodeado.** Tres pruebas, las tres correctas, las tres útiles, ninguna capaz de fallar si la vidriera
+perdiera el botón en todas sus fichas:
+
+| prueba | qué afirma de verdad | por qué no alcanza |
+|---|---|---|
+| `packages/domain/src/wa.test.ts` (U14–U16) | el string canónico, byte a byte | prueba **la función**, no que alguien la llame |
+| `apps/web/app/(storefront)/ficha.test.ts:69` | **un solo** componente emite el enlace | cuenta en el **fuente**: un componente que existe y no se renderiza pasa |
+| `e2e/_lib/miss.ts:96` | el miss **no** trae `wa.me` | está en **negativo**: una vidriera sin botón lo satisface perfectamente |
+
+**La forma del error, que es lo que se guarda:** cada prueba cubre un lado distinto —el valor, la
+estructura, la ausencia— y ninguna cubre **la presencia del valor en la página servida**. Sumadas
+dan la sensación de cobertura total porque nombran el invariante tres veces. Un inventario que
+cuenta menciones —y `TEST_MATRIX.md` es un inventario— las cuenta como tres.
+
+**El detalle que lo vuelve reproducible en cualquier otro invariante:** el docblock de
+`ficha.test.ts` **declara su propia limitación y delega**, textual: *"La afirmación de comportamiento
+—el HTML servido de verdad— vive donde corresponde: `scripts/accept-s3.sh` M3/M4, contra un server
+vivo."* La delegación era correcta y honesta; **el destinatario no la había recibido**. Nadie leyó el
+otro archivo. **Regla derivada: una prueba que delega parte de su invariante a otra tiene que nombrar
+la aserción concreta del destino, no el archivo** — y quien audita cobertura sigue el puntero hasta
+verla, o la fila no está cubierta.
+
+**Por qué no es un caso más de *"un gate que nunca se vio fallar no es un gate"*.** Aquellos dos eran
+gates que daban verde **por ausencia** (una lista vacía, un `import` sin llamada). Este no: los tres
+tests miran algo y fallan si eso cambia. El agujero no está en ninguno de los tres, está **entre**
+ellos, y por eso no lo encuentra leer un archivo — lo encuentra preguntarse, para un invariante dado,
+**qué archivo lo afirma sobre el artefacto que ve el usuario**. Si la respuesta es una lista de tres
+y ninguno es ese artefacto, la respuesta es *ninguno*.
+
+**Corolario que ya está aplicado, y es la parte que no se puede probar en otro lado.** M3b afirma
+además el **par de registros de condición** de `CLAUDE.md` §1: la misma página dice `usado excelente`
+en el cuerpo y `usado A` en el mensaje de WhatsApp, y se afirma en las dos direcciones (que esté
+`usado A` **y que no esté** `usado excelente`). Es el único punto del proyecto donde los dos mapas se
+observan **a la vez sobre el mismo HTML**: el unit de dominio ve un mapa por vez y no sabe que existe
+una página. El día que alguien "arregle la inconsistencia" unificando `WA_CONDITION_LABELS`
+(`packages/domain/src/types.ts:69`), **todos los tests unitarios siguen verdes** y sólo falla este
+gate. Una decisión de producto deliberada que sólo un test defiende es una decisión con fecha de
+vencimiento.

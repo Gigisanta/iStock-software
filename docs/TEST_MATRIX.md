@@ -41,9 +41,11 @@ lo mantiene otro. Resuelto por el LEAD el 2026-08-28.
 | U20 | sanitización de descripción neutraliza instrucciones inyectadas | `sanitizeDescription` |
 
 ## RLS — Postgres real
-Archivo único: `packages/db/src/rls-cross-tenant.test.ts`, **59 `it()`**, cero mocks, dos conexiones
-físicas con dos claims. **Es de `qa-agent` y todavía vive en `packages/db/`** — la mudanza a `tests/`
-es la fila **T3** del board, abierta.
+Archivo único, **59 `it()`**, cero mocks, dos conexiones físicas con dos claims. Es de `qa-agent`.
+**Al 2026-08-28 está mudado a `tests/rls-cross-tenant.test.ts` en el working tree, sin commitear ni
+correr** (fila **T3**, `doing`): el encabezado que se declaraba `db-agent` ya se reescribió. Hasta
+que el LEAD corra los 59 contra Postgres real, los ✅ de abajo son de la **última corrida verde desde
+`packages/db/src/`**, no de la ubicación nueva.
 
 | # | aserción | estado |
 |---|---|---|
@@ -71,8 +73,8 @@ aceptación de S3.
 | # | escenario | aserción central | estado |
 |---|---|---|---|
 | E1 | signup → crear tenant → cargar 2 unidades | ambas publicadas y visibles | 🟡 **parcial** — el alta del negocio (`_lib/panel.ts:114`, `/app/crear-negocio`) y la carga de **una** unidad con sus 3 fotos hasta publicar están cubiertas (`s2-cargar-un-equipo-…`). No hay signup real: el auth de e2e es `AUTH_DRIVER=local` |
-| E2 | **otro browser** (sin sesión) abre `{slug}` y entra a una ficha | los 15 campos presentes | 🟡 **no por browser** — los campos los mide **`curl`** en M3/M4 de `accept-s3.sh`, sobre los bytes servidos bajo el host del tenant. Es una cobertura fuerte (lee el payload de RSC, donde un objeto crudo se escapa sin verse) pero **no prueba lo que un browser hace con ellos**: ni JS, ni layout, ni el click. Y `accept-s3.sh` **no corre en CI** |
-| E3 | click en WhatsApp | URL con el **texto exacto** del producto y el precio | 🔴 **sin cubrir end-to-end** — el string está fijado byte a byte en unit (`packages/domain/src/wa.test.ts`, U14/U14b/U15/U15b/U16/U16b). Lo que nadie verifica es que **la página renderice ese string**: ningún e2e lo toca **y `accept-s3.sh` tampoco lo chequea** (ver el aviso de abajo) |
+| E2 | **otro browser** (sin sesión) abre `{slug}` y entra a una ficha | los 15 campos presentes | 🟡 **no por browser** — los campos los mide **`curl`** en M3/M3b/M4 de `accept-s3.sh`, sobre los bytes servidos bajo el host del tenant. Es una cobertura fuerte (lee el payload de RSC, donde un objeto crudo se escapa sin verse) pero **no prueba lo que un browser hace con ellos**: ni JS, ni layout, ni el click. Y `accept-s3.sh` **no corre en CI** |
+| E3 | click en WhatsApp | URL con el **texto exacto** del producto y el precio | 🟡 **cubierto sobre el HTML servido, no por click** — **M3b** de `scripts/accept-s3.sh` (`0edb661`, 2026-08-28) afirma: **un solo anchor** `wa.me` en la ficha y **cero** en la grilla, el teléfono contra el del seed (`SEED_DEMO_WA_PHONE`), el `text=` decodificado con `USD 620` + `demo.maat.work` + `y lo quiero.`, y el **par de registros** (`usado A` sí, `usado excelente` no). Lo que falta es lo mismo que en E2: **ningún browser hace click**, y `accept-s3.sh` no corre en CI. El string sigue fijado byte a byte en unit (`packages/domain/src/wa.test.ts`, U14/U14b/U15/U15b/U16/U16b) |
 | E4 | unidad `reserved` | badge visible; **no** dice "disponible"; copy alternativo | 🔴 **sin cubrir** — cero menciones de `reserved` en `e2e/**`. Cubierto sólo en unit (`_lib/status.test.ts`, `wa.test.ts` U16) |
 | E5 | canje: form público → inbox → checklist → aceptar | unidad creada en `draft` con costo | 🔴 sin cubrir — la slice (S8) no arrancó |
 | E6 | login como **seller** | `cost_usd` **ausente del payload de red**, no sólo de la pantalla | 🔴 **sin cubrir** — no hay ningún e2e con rol `seller`; la slice de roles (S11) no arrancó. El `costUsd` que aparece en 6 specs es **dato sembrado**, no una aserción de ausencia |
@@ -85,14 +87,19 @@ aceptación de S3.
 | E13 | host de tenant A **nunca** sirve contenido de B | cero cross-tenant en el cache | ✅ `s1-vidriera-por-host.spec.ts:62`, explícitamente *"ni siquiera desde el cache"* |
 | E14 | slug inexistente | página legible: `<h1` literal en el body, `robots noindex`, título propio ≠ `iStock`, cero markup de vidriera (`wa.me`/`data-listing`), req2 en `HIT`. **No 404** — ADR-011 | ✅ `s1-vidriera-por-host.spec.ts:96,109,127,169` + `s1-ruta-…:273`. **Ojo:** esto cubre el slug de **tenant**; la **ficha** bajo un tenant inexistente es el agujero **S3.3** del board |
 
-> **Aviso: el gate de S3 asegura 14 de los 15 campos, no 15.** Verificado el 2026-08-28 contra
-> `scripts/accept-s3.sh`: M3 exige, contra el HTML servido, las 3 fotos, condición, GB, color,
-> procedencia, batería, iCloud, garantía, USD, pantalla original, badge, punto + horario, medios de
-> pago, canje y el ARS con la forma de `formatArs` — **y ninguna aserción sobre el botón `wa.me`**,
-> que es el 15° campo de `CLAUDE.md` §1 y el que factura. La única mención de `wa.me` en el gate
-> (`:231`) es un mensaje de error. Lo más cerca que llega es exigir que la grilla **linkee** a la
-> ficha. **Es una decisión del LEAD, no de este doc: `scripts/**` es del LEAD (§4).** Queda anotado
-> acá porque E3 es la fila que lo describe.
+> **Cerrado: el gate de S3 aseguraba 14 de los 15 campos, y ahora asegura 15.** El aviso que estaba
+> acá decía que M3 exigía las 3 fotos, condición, GB, color, procedencia, batería, iCloud, garantía,
+> USD, pantalla original, badge, punto + horario, medios de pago, canje y el ARS —14— **y ninguna
+> aserción sobre el botón `wa.me`**, el 15° de `CLAUDE.md` §1 y el único por el que entra la plata.
+> Lo escribió el LEAD (`scripts/**` es suyo, §4) como módulo **M3b**, commit `0edb661`, entre M3 y
+> M4. Gate entero re-ejecutado: **58 PASS · 0 FAIL · `S3: ACEPTADA`** (eran 50; M3b suma 8).
+>
+> **La lección de método, que es más grande que la fila:** *un invariante puede tener tres pruebas
+> alrededor y ninguna encima.* Las tres que había eran correctas y ninguna afirmaba que la ficha
+> renderiza el botón — el unit de dominio fija el string **fuera** de la página; `ficha.test.ts`
+> cuenta componentes **en el fuente**, no anchors en el HTML; `e2e/_lib/miss.ts:96` lo chequea **en
+> negativo**. Una vidriera que perdiera el botón en todas sus fichas las satisfacía a las tres. El
+> desarrollo largo está en `DECISIONS.md` §"Notas operativas".
 
 ## Seguridad — una por regla de `CLAUDE.md` §2
 | # | regla | cómo se prueba |
@@ -155,3 +162,12 @@ Concreto: antes de marcar 🔴, se corre el grep de la **regla** (`user_metadata
 mira si el gate que aparece **corre en CI** o sólo dentro de un `accept-*` a mano. Las dos preguntas
 son distintas y las dos importan: la mitad de los huecos reales de este repo no fueron *"no hay
 test"* sino *"hay test y no lo corre nadie"*.
+
+**Y la misma disciplina en el otro sentido, agregada el 2026-08-28.** Un ✅ también se escribe sólo
+después de buscarlo: la fila **E3** y la columna de gate de **S3** decían *"los 15 campos"* citando
+un gate que exigía 14. Nadie mintió — un `grep -iE 'wa\.me|whatsapp'` sobre el gate anterior a M3b
+devolvía **cinco líneas**, y las cinco eran **comentarios o mensajes de error** (`:228`, `:231`,
+`:250`, `:302`, `:410`). El nombre estaba cinco veces; la aserción, cero. Por eso: **antes de marcar ✅ se busca la
+aserción, no la mención**, y si la cobertura está repartida entre varios archivos se pregunta cuál
+de ellos la afirma **sobre el artefacto que ve el usuario**. Tres pruebas que rodean un invariante
+no son una que lo afirme (`DECISIONS.md` §"Notas operativas").

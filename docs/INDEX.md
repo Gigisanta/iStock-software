@@ -5,7 +5,7 @@
 | [PRODUCT.md](PRODUCT.md) | producto ejecutable: ICP, recorrido que factura, planes, fuera de alcance | `product-scribe` | cambio de producto (raro — no se reabre) |
 | [DOMAIN.md](DOMAIN.md) | glosario, entidades, máquina de estados, FX, visibilidad por rol, `publicListingDTO` | `product-scribe` + `domain-agent` | cada slice que toca reglas de negocio |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | monorepo, host→tenant, cache, camino de una foto, RLS, límites de confianza, **qué NO reescribe el proxy** | LEAD en FASE 1, después `docs-keeper` | FASE 1 + §"Qué NO se reescribe" agregada en **S2** |
-| [DECISIONS.md](DECISIONS.md) | ADRs numeradas con alternativas descartadas y verificación + **§"Notas operativas"** (hallazgos verificados que no abren ADR) | LEAD en FASE 1, después `docs-keeper`; **el LEAD ratifica** cada ADR nueva | **ADR-001..015; 008 y 010 abiertas.** ADR-011 supersede el corolario 4 de ADR-007; ADR-012 lo precisa con el polo negativo; **013** (indistinguibilidad en el panel) y **014** (`instant = false`, **enmendada el 2026-08-28 con la medición del status**) salieron de S2; **015** (el matcher excluye por nombre, no por sufijo) cierra P1+P2. **Notas operativas abiertas el 2026-08-28** con los dos gates que daban verde por ausencia **y con el `head()` que pisaba el comando `head`** |
+| [DECISIONS.md](DECISIONS.md) | ADRs numeradas con alternativas descartadas y verificación + **§"Notas operativas"** (hallazgos verificados que no abren ADR) | LEAD en FASE 1, después `docs-keeper`; **el LEAD ratifica** cada ADR nueva | **ADR-001..015; 008 y 010 abiertas.** ADR-011 supersede el corolario 4 de ADR-007; ADR-012 lo precisa con el polo negativo; **013** (indistinguibilidad en el panel) y **014** (`instant = false`, **enmendada el 2026-08-28 con la medición del status**) salieron de S2; **015** (el matcher excluye por nombre, no por sufijo) cierra P1+P2. **Notas operativas abiertas el 2026-08-28**: los dos gates que daban verde por ausencia, el `head()` que pisaba el comando `head`, y **"un invariante puede tener tres pruebas alrededor y ninguna encima"** (el botón `wa.me`, cerrado con M3b) |
 | [SLICE_BOARD.md](SLICE_BOARD.md) | **estado de la verdad del avance** + blockers + **FASE 4 bis** (trabajo que salió de una slice) | `docs-keeper` | cada slice |
 | [TEST_MATRIX.md](TEST_MATRIX.md) | unit / RLS / e2e / seguridad + **qué regla no prueba nadie todavía**, verificado contra el repo | `docs-keeper` (era `qa-agent`; **corregido por el LEAD el 2026-08-28**: quien escribe los tests que cruzan no puede escribir también el doc que declara la cobertura) | cada test nuevo, y cada corrida de gate que cambie lo cubierto |
 | [COST.md](COST.md) | piso de plataforma, marginal por tenant, estrés, métrica a vigilar | LEAD en FASE 1, después `cost-auditor` | **con fuente desde FASE 1** |
@@ -34,10 +34,11 @@
 
 ## Estado — 2026-08-28
 **FASE 0, FASE 1 y FASE 2 cerradas.** El LEAD re-ejecutó el gate de FASE 2 el 2026-08-27 y **D1–D4
-pasaron a `done`** con la corrida registrada en `SLICE_BOARD.md`. **FASE 3 (K1–K5), S1 y S2 NO.**
-Ojo con el motivo, que cambió el 2026-08-28: el `next build` **ya compila** (la medición de ADR-014
-corrió `next start` y los e2e del panel). Lo que falta es **correr los gates enteros**. El código
-está escrito, pero **el gate es la corrida, no el código**.
+pasaron a `done`** con la corrida registrada en `SLICE_BOARD.md`. **S1, S2 y S3 están ACEPTADAS** —
+las tres corridas están fechadas abajo. **FASE 3 (K1–K5) sigue sin re-ejecutar**: su gate termina en
+`next build` y no se corrió. El código de FASE 3 está escrito, pero **el gate es la corrida, no el
+código** — es la misma regla que tuvo a S1 en `doing` y a S2 en `todo` un día largo con el código ya
+en `main`.
 Lo que hay que saber sin leer nada más:
 - La vidriera es `proxy.ts` + rewrite a `/s/{slug}` + `'use cache'`. **El slug en el path no es
   estilo: sin él, dos tenants comparten entrada de cache.** (ADR-007)
@@ -52,6 +53,15 @@ Lo que hay que saber sin leer nada más:
 - **El techo de request body que manda es 4 MB** (Routing Middleware), no 4.5. Por eso entra **una
   foto por request**. La slice que lo levanta es **S2.1** y está `blocked` en B1 — y arrastra una
   pregunta abierta entre las reglas 1 y 4 de `media-agent` que hay que contestar antes de empezar.
+- **S1 y S2 están `done`: el LEAD re-ejecutó los dos gates enteros el 2026-08-28** — `accept-s1.sh`
+  26 PASS / 0 FAIL, `accept-s2.sh` 21 PASS / 0 FAIL, los dos con `EXIT=0`. Ninguna pasa por
+  ausencia: S2 imprimió bytes (`card=50692B` contra `techo=153600B`, más `detail`, `thumb`, `master`
+  y los 4 objetos), y S1, que no imprime `MEDIDO`, pega HTTP en vivo, consulta Postgres y corre la
+  suite e2e entera con censo (`10/10 archivos · 70/70 tests · 0 salteados`). **Aceptar la slice no
+  cierra sus deudas:** siguen abiertas **T1**, **T2**, **S2.1** (`blocked` en B1), **S2.2**, **S2.3**
+  y **S2.4**. Y sigue viva la deuda declarada de **ADR-011**: el miss contesta `200`, así que **deja
+  de ser distinguible por status code en los logs de acceso** — el gate lo imprime, no lo esconde, y
+  vuelve a morder en FASE 8.
 - **S3 está `done`: el LEAD re-ejecutó `bash scripts/accept-s3.sh` el 2026-08-28 — 50 PASS, 0 FAIL,
   `S3: ACEPTADA`.** Con eso cierran también **S3.1**, **S3.2** y **T8**. Las dos mediciones que
   bloqueaban salieron con número: `transferSize=51016B` contra un techo de 204800 B (la grilla de un
@@ -59,11 +69,13 @@ Lo que hay que saber sin leer nada más:
   una** sentencia a Postgres). La corrida encontró **cuatro defectos** que la entrega del código no
   había mostrado (`9837ee7`, `50173df`, `ba8536c`, `09c9bc3`): es el mejor argumento que tiene este
   repo para la regla de que **`done` lo fija la corrida, no el código**.
-  **Queda abierto de S3: T3, y S3.3 — nueva.** Una ficha bajo un slug de **tenant** inexistente
-  contesta *"Este equipo ya no está publicado"* en vez de *"No hay ninguna vidriera en esta
-  dirección"*: al que abre el link de un negocio que nunca existió le decimos que el equipo se
-  vendió. `ListingPage` no llama a `getStorefrontTenant` y no distingue los dos `null`. ~10 líneas,
-  `storefront-agent`.
+  **Queda abierto de S3: T3 y S3.3, las dos `doing` — con código en el working tree y sin corrida.**
+  S3.3: una ficha bajo un slug de **tenant** inexistente contestaba *"Este equipo ya no está
+  publicado"* en vez de *"No hay ninguna vidriera en esta dirección"*, o sea que al que abre el link
+  de un negocio que nunca existió le decíamos que el equipo se vendió. T3: la mudanza del test de RLS
+  cruzado a `tests/`. Las dos entregas están sin commitear y **ninguna es `done`**: falta que el LEAD
+  corra el gate. **Abierta además T15** (prioridad baja, `db-agent`): en el `/demo`, el slug del
+  listing dice `grafito` y la página dice `Negro espacial`.
 - **La forma de `listings.slug` está cerrada en las dos capas** (**T9**): `LISTING_SLUG_PATTERN`
   (3–64, sin guión en los bordes) en `packages/domain` con 15 tests, y `0003_listing_slug_format`
   en `packages/db` con 21 casos contra Postgres real, de polaridad negativa. Queda en vuelo que
@@ -74,6 +86,9 @@ Lo que hay que saber sin leer nada más:
   asset, y por sufijo son indistinguibles. Y el gate de S3 ya existe (**P3**,
   `scripts/accept-s3.sh`): mide **el byte que el browser pide** —un `srcset` sin `sizes` baja
   `detail` (128.570 B) donde el presupuesto dice `card` (50.692 B)— y exige los **15 campos**.
+  Los 15 **recién desde `0edb661`** (módulo **M3b**, 2026-08-28): hasta ese commit exigía 14 y el que
+  faltaba era el botón `wa.me`, el único de los 15 por el que entra la plata. Gate re-ejecutado
+  entero después: **58 PASS · 0 FAIL**.
 - **`instant = false` no recupera el status 404 del panel: está medido** (ADR-014, "Corrección
   medida", 2026-08-28). No es un defecto de seguridad —`mine`, `theirs` y `ghost` dan 200 los tres,
   que es el invariante de ADR-013—, pero un 404 que viaja como 200 **no aparece en la tasa de error**

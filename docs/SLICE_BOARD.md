@@ -131,9 +131,9 @@ cuyo gate no pudo correr: las cinco quedan `todo` hasta que el gate corra **ente
 
 | id | slice | estado | owner | gate de aceptación |
 |---|---|---|---|---|
-| S1 | host → hello storefront | doing | `storefront-agent` | `{slug}.local` resuelve al tenant; slug inexistente → página legible con `noindex` (**ADR-011**, el gate viejo "404 real en la primera request" era inalcanzable); se verifica con `bash scripts/accept-s1.sh` |
-| S2 | listing unit + fotos R2 con variantes | todo | `media-agent` → `app-agent` | 3 variantes generadas; `card` ≤150KB medido |
-| S3 | grilla + ficha mínima | **done** | `storefront-agent` | `bash scripts/accept-s3.sh`: los **15 campos** de `CLAUDE.md` §1; cero campos prohibidos en el HTML; el byte medido es el que **pide el browser** (P3). **Re-ejecutado por el LEAD el 2026-08-28: 50 PASS · 0 FAIL · `S3: ACEPTADA`** |
+| S1 | host → hello storefront | **done** | `storefront-agent` | `{slug}.local` resuelve al tenant; slug inexistente → página legible con `noindex` (**ADR-011**, el gate viejo "404 real en la primera request" era inalcanzable); se verifica con `bash scripts/accept-s1.sh`. **Re-ejecutado por el LEAD el 2026-08-28: EXIT=0 · 26 PASS · 0 FAIL · `S1: ACEPTADA`** |
+| S2 | listing unit + fotos R2 con variantes | **done** | `media-agent` → `app-agent` | 3 variantes generadas; `card` ≤150KB **medido sobre bytes** (`card=50692B`, techo `153600B`). **Re-ejecutado por el LEAD el 2026-08-28: EXIT=0 · 21 PASS · 0 FAIL · `S2: ACEPTADA`** |
+| S3 | grilla + ficha mínima | **done** | `storefront-agent` | `bash scripts/accept-s3.sh`: los **15 campos** de `CLAUDE.md` §1 —los 15 de verdad recién desde **M3b** (`0edb661`), que agregó el botón `wa.me`—; cero campos prohibidos en el HTML; el byte medido es el que **pide el browser** (P3). **Re-ejecutado entero por el LEAD el 2026-08-28: 58 PASS · 0 FAIL · `S3: ACEPTADA`** (la corrida que la aceptó dio 50; M3b sumó 8 aserciones) |
 | S4 | botón `wa.me` + tracking de eventos | todo | `domain-agent` → `storefront-agent` | texto exacto byte a byte; evento registrado sin PII |
 | S5 | FX → precio en ARS | todo | `domain-agent` → `app-agent` | TC del dueño; redondeo testeado; ARS visible en ficha |
 | S6 | reserva + cron de expiración | todo | `app-agent` | reserva 30–120min; cron libera; vidriera revalida |
@@ -147,16 +147,48 @@ cuyo gate no pudo correr: las cinco quedan `todo` hasta que el gate corra **ente
 
 **Cada slice suma al gate:** `adversary-reviewer PASS` + `cost-auditor PASS` ("no agrega costo tonto").
 
-> **Estado de S1 y S2 al 2026-08-28 — medido, no supuesto.**
-> **S1 sigue `doing`** y **S2 sigue `todo`**, y el motivo cambió: el 2026-08-27 los dos gates
-> (`scripts/accept-s1.sh`, `scripts/accept-s2.sh`) fallaban porque **el `next build` no compilaba**.
-> **Eso ya no es cierto** — la medición de ADR-014 del 2026-08-28 corrió `next start` y los e2e del
-> panel. Lo que falta ahora es **la corrida completa de los dos gates**, que además cambiaron desde
-> entonces (`b5065a4`: la regla del TODO estaba verde por vacío). Que el código esté escrito no es
-> el gate; el gate es la corrida.
+> **S1 y S2 ACEPTADAS — 2026-08-28.** El LEAD re-ejecutó los dos gates enteros:
+>
+> ```
+> accept-s1.sh → EXIT=0 · 26 PASS · 0 FAIL · S1: ACEPTADA
+> accept-s2.sh → EXIT=0 · 21 PASS · 0 FAIL · S2: ACEPTADA
+> ```
+>
+> Hasta hoy S1 figuraba `doing` y S2 `todo` **con el código en `main`**. El motivo ya no era técnico:
+> el 2026-08-27 los dos gates fallaban porque el `next build` no compilaba, eso se arregló, y lo
+> único que faltaba era **la corrida**. Lo mismo le pasó a S3.1, S3.2 y T8, que estuvieron `todo` un
+> día entero con el código escrito. Dicho una sola vez y bien, porque es la regla que hace que este
+> board sirva: **`done` lo fija la corrida del gate por el LEAD, no la entrega del código.**
+>
+> **Ninguna de las dos pasa por ausencia** — se verificó explícitamente, porque en este repo un gate
+> verde por no haber mirado nada ya apareció dos veces (`DECISIONS.md` §"Dos formas nuevas de que un
+> gate esté verde sin haber mirado nada"):
+>
+> - **S2 midió con número:** `card=50692B` contra `techo=153600B`, `detail=128570B / 409600B`,
+>   `thumb=7718B / 25600B`, `master=313980B / 819200B` desde una fuente de `3006369B`, y 4 objetos =
+>   `500960B`. O sea que el probe `scripts/probes/s2-media-measure.test.ts` **corrió de verdad**: el
+>   techo de 150 KB que este board viene citando desde S2 está afirmado sobre bytes reales, no sobre
+>   una constante leída. Pasaron además el polo positivo (la variante pública se sirve, HTTP 200) y
+>   el tercero (la misma key devuelve los mismos bytes por apex y por host de tenant).
+> - **S1 no imprime `MEDIDO`, y eso NO es un agujero** — chequeado antes de darlo por bueno: sus
+>   siete secciones (A1–A8) pegan HTTP en vivo (`primera request a noexiste-… -> HTTP 200 (19965
+>   bytes)`), consultan Postgres para el aislamiento, y **A6 corre la suite e2e entera con censo
+>   `10/10 archivos · 70/70 tests · 0 salteados · 0 skip declarado`**. No hay tier muerto.
+>
+> **La deuda de ADR-011 sigue viva, y el gate la imprime en vez de esconderla.** El miss contesta
+> `200/200`, no `404`: **deja de ser distinguible por status code en los logs de acceso.** No se
+> mitiga —se aceptó a cambio de que la persona que se equivocó de subdominio lea algo en vez de una
+> página en blanco— y lo que reemplaza al status como invariante chequeable son A3/A4 de
+> `accept-s1.sh` (`<h1` literal, `noindex`, título propio, cero markup de vidriera, req2 en `HIT`).
+> Dónde vuelve a morder está fechado: en **FASE 8** la observabilidad no puede depender del status,
+> el mismo corolario que dejó la corrección medida de ADR-014 para el panel.
+>
+> **Aceptar la slice no cierra sus deudas.** Siguen abiertas, con dueño y sin tocar: **T1** (rate
+> limiting: no hay implementación), **T2** (guard de query sin filtro de tenant), **S2.1**
+> (`blocked` por **B1**), **S2.2**, **S2.3** y **S2.4**.
 >
 > **El aviso de drift de FASE 2 se cerró.** D1–D4 pasaron a `done` con la re-ejecución registrada
-> arriba, en "Evidencia de la re-ejecución". FASE 3 y S1/S2 no: no se pudieron correr.
+> arriba, en "Evidencia de la re-ejecución".
 
 > **S3 ACEPTADA — 2026-08-28. El LEAD re-ejecutó `bash scripts/accept-s3.sh` entero: 50 PASS, 0
 > FAIL, `S3: ACEPTADA`.** Con eso pasan a `done` **S3**, **S3.1**, **S3.2** y **T8**. Lo que destrabó
@@ -181,14 +213,34 @@ cuyo gate no pudo correr: las cinco quedan `todo` hasta que el gate corra **ente
 > **Lo que S3 dejó abierto y sigue abierto:** **T3** (`qa-agent`, la mudanza del test de RLS) y
 > **S3.3**, nueva — bajo un **tenant** inexistente la ficha contesta el texto del *listing-miss*.
 >
-> **Y una precisión sobre el gate, para que el board no diga más de lo que el gate mide**
-> (`docs-keeper`, verificado línea por línea contra `scripts/accept-s3.sh`): la columna de la
-> izquierda dice *"los 15 campos"* y **M3 asegura 14**. El que falta es el **botón `wa.me`**, que es
-> el 15° de `CLAUDE.md` §1 y el que factura: no hay ninguna aserción sobre él en el gate — la única
-> mención (`:231`) es un mensaje de error, y lo más cerca que llega es exigir que la grilla
-> **linkee** a la ficha. El texto del mensaje sí está fijado byte a byte en unit
-> (`packages/domain/src/wa.test.ts`), pero **nadie verifica que la página lo renderice**. Es la fila
-> **E3** de `docs/TEST_MATRIX.md`. **`scripts/**` es del LEAD (§4): esto se reporta, no se edita.**
+> **El gate aseguraba 14 de los 15 campos. Cerrado — commit `0edb661`, módulo M3b.** Lo reportó
+> `docs-keeper` (la columna de la izquierda decía *"los 15 campos"* y M3 aseguraba 14), lo verificó
+> el LEAD antes de creerlo —`grep -i 'wa\.me|whatsapp' scripts/accept-s3.sh` devolvía cinco líneas y
+> **las cinco eran comentarios o mensajes de error**— y lo escribió él, porque `scripts/**` es suyo
+> (§4). El campo que faltaba era el **botón `wa.me`**: los otros 14 informan, ese convierte, y el
+> "done cobrable" del producto es *"recibe WhatsApps esa noche"*.
+>
+> **M3b** va entre M3 y M4 y afirma, contra el HTML servido: **un solo anchor** `wa.me` en la ficha
+> —cuenta `<a ...>`, no ocurrencias del texto, porque medido `wa.me` aparece **3 veces** en una ficha
+> sana y las otras dos son el mismo `<a>` serializado en el payload de RSC—; **cero** anchors en la
+> grilla; el teléfono del href contra el del **seed** (`SEED_DEMO_WA_PHONE`, `seed-data.ts:28`), no
+> contra uno hardcodeado en el gate; y el `text=` decodificado nombrando `USD 620`, `demo.maat.work`
+> y `y lo quiero.` Probado en las dos polaridades con cinco fixtures, cada una rompiendo una regla y
+> sólo esa. Es la fila **E3** de `docs/TEST_MATRIX.md`, que pasa a cubierta.
+>
+> **Re-ejecución del gate entero por el LEAD, 2026-08-28 después de M3b: 58 PASS · 0 FAIL ·
+> `S3: ACEPTADA`** (eran 50; M3b suma 8 aserciones). El mensaje que imprimió, decodificado del HTML
+> servido: `Hola, vi el iPhone 14 Pro 256 Negro espacial (usado A) a USD 620 en demo.maat.work y lo
+> quiero.` La corrida de 50 PASS que aparece más arriba sigue siendo la que aceptó S3, S3.1, S3.2 y
+> T8: no se reescribe, se le agrega esta.
+>
+> **La aserción que no existía en ningún otro lado: el par de registros de condición.** La misma
+> página dice `usado excelente` en el cuerpo (M3) y `usado A` en el mensaje de WA, y M3b lo afirma en
+> las dos direcciones —que esté `usado A` **y que NO esté** `usado excelente`—. Es el único lugar del
+> proyecto donde los dos mapas de `CLAUDE.md` §1 se observan **a la vez sobre el mismo HTML**: el
+> unit de dominio ve un mapa por vez y no sabe que existe una página. El día que alguien "arregle la
+> inconsistencia" unificando `WA_CONDITION_LABELS` (`packages/domain/src/types.ts:69`), **todos los
+> tests unitarios siguen verdes** y sólo falla este gate.
 >
 > El diagnóstico de por qué esta slice estuvo `blocked` se conserva abajo, en las filas S3.1, S3.2
 > y T8: **`done` lo fija la corrida del gate por el LEAD, no la entrega del código**, y estas tres
@@ -198,7 +250,8 @@ cuyo gate no pudo correr: las cinco quedan `todo` hasta que el gate corra **ente
 
 ## FASE 4 bis — trabajo que salió de una slice, no del plan original
 
-> Todo lo de esta sección apareció **haciendo** S1 y S2, o **corriendo sus gates**. No estaba en el
+> Todo lo de esta sección apareció **haciendo** S1, S2 y S3, o **corriendo sus gates** — las últimas
+> dos filas (**S3.3**, **T15**) salieron de la corrida de `accept-s3.sh`, no de leer código. No estaba en el
 > orden fijo de FASE 4 y no lo reordena: son entradas propias con su propio dueño y su propio
 > bloqueo. **T3**, **T7**, **T13** y **T14** no son deuda de producto: son deuda **de los
 > instrumentos** — quién es dueño del test que audita las policies, un parser de tests que trunca en
@@ -206,7 +259,9 @@ cuyo gate no pudo correr: las cinco quedan `todo` hasta que el gate corra **ente
 > **Cerradas al 2026-08-28:** **P1**, **P2** y **P3** (las tres condiciones previas a S3), **T9**,
 > **T11**, **T4** (`scripts/_lib.sh` + su test de polaridad) y **T10** (los 8 comandos de aceptación
 > que no filtraban); y con la corrida de `accept-s3.sh` del LEAD, **S3.1**, **S3.2** y **T8**.
-> **Abierta el 2026-08-28 cerrando S3: S3.3** — el tenant-miss de la ficha.
+> **Abiertas el 2026-08-28 cerrando S3: S3.3** —el tenant-miss de la ficha— y **T15**, que salió de
+> medir el mensaje de WhatsApp. **T1**, **T2**, **S2.1**, **S2.2**, **S2.3** y **S2.4** siguen
+> abiertas después de aceptar S1 y S2: **aceptar la slice no cierra sus deudas.**
 
 | id | título | estado | owner | bloqueo | gate de aceptación | artefacto |
 |---|---|---|---|---|---|---|
@@ -215,7 +270,7 @@ cuyo gate no pudo correr: las cinco quedan `todo` hasta que el gate corra **ente
 | P2 | metadata file conventions bajo host de tenant — **decisión de diseño** | **done** | `storefront-agent` + `qa-agent` | — | ídem P1: misma causa raíz, misma ADR, mismo commit | ADR-015 · `apps/web/proxy.ts` · `tests/proxy-matcher-no-deja-la-vidriera-sin-vigilar.test.ts` |
 | T1 | rate limiting en el edge: las 2 reglas de Vercel Firewall | todo | **LEAD** (`vercel.json`, §4) | — | 2 reglas activas + prueba de que disparan; **cero** contador en Postgres sobre la vidriera | falta definir (no hay `vercel.json` hoy) |
 | T2 | guard estático de "query sin filtro de tenant" | todo | **LEAD** (`scripts/**`, §4) | — | el guard falla sobre una query sin `tenant_id` **y** pasa con la excepción declarada | `scripts/guard-leaks.sh` §16 |
-| T3 | mudar el test de RLS cruzado a `tests/` | todo | `qa-agent` | agendado **después** de que cierre S2 | los 59 `it()` corren desde `tests/` contra Postgres real, verdes, sin perder ninguno; `packages/db/src/rls-cross-tenant.test.ts` deja de existir; **y en la misma mudanza se borra el encabezado que se declara `db-agent`**, derogado por la regla de desempate de `CLAUDE.md` §4 | `tests/` |
+| T3 | mudar el test de RLS cruzado a `tests/` | **doing** | `qa-agent` | S2 cerró el 2026-08-28 y la destrabó; la mudanza **ya está en el working tree, sin commitear ni correr** | los 59 `it()` corren desde `tests/` contra Postgres real, verdes, sin perder ninguno; `packages/db/src/rls-cross-tenant.test.ts` deja de existir; **y en la misma mudanza se borra el encabezado que se declara `db-agent`**, derogado por la regla de desempate de `CLAUDE.md` §4 | `tests/` |
 | T4 | extraer los helpers de los gates a `scripts/_lib.sh` | **done** | **LEAD** | — | un solo juego de helpers en el repo; los gates que lo importan re-corridos con el mismo veredicto **y** el helper probado en las dos polaridades, en CI | `scripts/_lib.sh` + `scripts/_lib.test.sh` (`dc1d854`) |
 | S2.2 | `collectOrphanObjects` existe y no lo llama nadie | todo | `media-agent` (función) + `app-agent` (comentarios) | — | se elige **(a)** o **(b)** por escrito: si (a), el job corre y borra un huérfano sembrado; si (b), **ningún** comentario del repo la nombra en presente | `packages/media/src/unlink.ts`, `apps/web/app/(app)/_lib/listings/*.ts` |
 | S2.3 | el `<input type="file">` conserva la foto después de subirla | todo | `app-agent` | — | tras un alta exitosa el input queda vacío; `PhotoActionState` distingue inicial de éxito | `apps/web/app/(app)/app/(panel)/stock/[id]/fotos/*` |
@@ -224,7 +279,7 @@ cuyo gate no pudo correr: las cinco quedan `todo` hasta que el gate corra **ente
 | T7 | `readMatchers()` trunca el matcher en el primer `]` | todo | `qa-agent` | — | **nada roto hoy** — trampa conocida, ver abajo | `tests/proxy-matcher-no-deja-la-vidriera-sin-vigilar.test.ts:144` |
 | S3.1 | un tenant real nace sin `fx_settings` y sin `locations` | **done** | `app-agent` | — | **severidad alta** — alta o onboarding siembran un `fx_settings` y ≥ 1 punto de retiro; un tenant nuevo que carga 3 equipos ve grilla con precio y retiro, no vacía. **Cerrada por la corrida de `accept-s3.sh` del LEAD (2026-08-28, 50 PASS/0 FAIL):** M3 exige el punto de retiro, el horario y el ARS con la forma de `formatArs`, y los tres salen de las filas sembradas | `apps/web/app/(app)/_lib/tenants/create-tenant.ts` (`eaccfee`) |
 | S3.2 | publicar un equipo purga el catálogo entero del tenant | **done** | `app-agent` | — | al mutar una unidad se emite además `updateTag(listingTag(id))`; los dos tags de tenant dejan de ser la única invalidación. **Cerrada por la misma corrida:** `MEDIDO s3 db-hits · primera=9 · cacheada=0` | `apps/web/app/(app)/_lib/tenants/storefront-cache.ts` (`eaccfee`) |
-| S3.3 | bajo un **tenant** inexistente la ficha dice que el equipo se vendió | todo | `storefront-agent` | — | una ficha bajo un slug de tenant que no existe contesta el *tenant-miss* (`STOREFRONT_MISS_TITLE`, "No hay ninguna vidriera en esta dirección"), no el *listing-miss* ("Este equipo ya no está publicado"); el `null` del tenant se sigue cacheando con `STOREFRONT_MISS_LIFE` | `apps/web/app/(storefront)/s/[slug]/p/[listing]/page.tsx` |
+| S3.3 | bajo un **tenant** inexistente la ficha dice que el equipo se vendió | **doing** — código en el working tree, sin corrida | `storefront-agent` | — | una ficha bajo un slug de tenant que no existe contesta el *tenant-miss* (`STOREFRONT_MISS_TITLE`, "No hay ninguna vidriera en esta dirección"), no el *listing-miss* ("Este equipo ya no está publicado"); el `null` del tenant se sigue cacheando con `STOREFRONT_MISS_LIFE` | `apps/web/app/(storefront)/s/[slug]/p/[listing]/page.tsx` |
 | T8 | los dos specs que miden S3 no emiten ninguna medición | **done** | `qa-agent` | — | las dos líneas `MEDIDO` exactas (ver abajo); **la de imagen se mide sobre la grilla**, no sobre la ficha. **Emitidas y verificadas por el LEAD el 2026-08-28** (`transferSize=51016B` / `primera=9 · cacheada=0`) | `e2e/s3-la-grilla-en-un-telefono-no-baja-la-foto-grande.spec.ts`, `e2e/s3-la-ficha-cacheada-no-le-pega-a-postgres.spec.ts` (`09c9bc3`) |
 | T9 | forma de `listings.slug` en `domain` + en el motor | **done** | `domain-agent` + `db-agent` | resto en vuelo con `storefront-agent` | ver abajo | `packages/domain/src/slug.ts`, `packages/db/drizzle/0003_listing_slug_format.sql` |
 | T10 | ocho comandos de aceptación corrían la suite entera creyendo filtrar | **done** | **LEAD** (`.claude/**`, §4) | — | el comando de cada contrato **filtra de verdad**, verificado en las dos polaridades (filtra, y falla con exit 1 ante un patrón que no matchea) | 4 `.claude/agents/*.md` + 4 `.claude/skills/*/SKILL.md` + `scripts/accept-fase3.sh` (`0d647c6`) |
@@ -234,6 +289,7 @@ cuyo gate no pudo correr: las cinco quedan `todo` hasta que el gate corra **ente
 | T12 | editar el TC y los puntos de retiro después del alta **no existe** | todo | `app-agent` | — | el dueño cambia el TC y edita/agrega un punto de retiro desde el panel **sin recrear el negocio**, y la mutación arrastra la invalidación de la vidriera | `apps/web/app/(app)/app/(panel)/ajustes/` |
 | T13 | `/_media` no manda `Timing-Allow-Origin` | todo | `app-agent` | — | la Performance API reporta el byte real del recurso cross-origin; el spec de S3 compara sus **dos** cuentas en vez de descartar una | `apps/web/app/(app)/%5Fmedia/[...key]/route.ts` |
 | T14 | dos prohibiciones de `CLAUDE.md` §2 que ningún gate afirma | todo | `qa-agent` (ver desempate abajo) | — | cada una tiene un chequeo **que se vio fallar** sobre una violación sembrada, y corre **en cada push**, no dentro de un `accept-*` | `tests/` (o `scripts/**`, y entonces es del **LEAD**) |
+| T15 | el seed del demo dice un color en la URL y otro en la página | todo · **prioridad baja** | `db-agent` | — | **pregunta abierta, no diagnóstico** (ver abajo). Cerrada cuando el slug del listing y el color que muestra la ficha nombren lo mismo, y `bash scripts/accept-s3.sh` siga en verde | `packages/db/src/seed-data.ts:114-116` |
 
 > **Anti-drift, 2026-08-28 — el caso completo, de punta a punta, porque es el que enseña la regla.**
 > Durante un día **S3.1 y S3.2 estuvieron `todo` con el código ya en `main`** (`eaccfee`). Las filas
@@ -381,16 +437,26 @@ proyecto Supabase para todos los tenants la policy **es** el límite de segurida
 atrás. Es exactamente la clase de test que `CLAUDE.md` §4 pone del lado de `qa-agent`: *"lo que
 cruza un límite"*.
 
-**Re-verificado el 2026-08-28 y sigue vigente tal cual:** `packages/db/src/rls-cross-tenant.test.ts`
-existe, tiene **59 `it()`**, y su encabezado (`:3-6`) sigue declarando `Owner: db-agent` citando la
-mitad de arriba de la regla de §4 — la mitad que el desempate de FASE 4 **derogó** para este archivo.
+**El diagnóstico de arriba describe el estado hasta el 2026-08-28 a la mañana**, cuando el archivo
+seguía en `packages/db/src/` y su encabezado (`:3-6`) todavía se declaraba `Owner: db-agent` citando
+la mitad de la regla de §4 que el desempate de FASE 4 **derogó** para este archivo. Se conserva
+porque es el argumento de por qué se muda; el estado actual está abajo.
 
-**Confirmada abierta el 2026-08-28**, después de la aceptación de S3 (`docs-keeper`): el archivo
-sigue en `packages/db/src/`, `tests/` contiene tres specs y ninguno es éste.
+**Estado al 2026-08-28, verificado en el working tree y no en un reporte** (`docs-keeper`): la
+mudanza **ya está hecha y sin commitear** — `git status` la muestra como `RM
+packages/db/src/rls-cross-tenant.test.ts -> tests/rls-cross-tenant.test.ts`, el archivo tiene sus
+**59 `it()`**, `tests/vitest.config.ts` está tocado, y el encabezado **ya se reescribió**: en vez de
+declararse `db-agent` ahora explica por qué vive en `tests/` y remite al desempate de `CLAUDE.md` §4.
+O sea que las dos mitades del gate que dependen de leer archivos están cumplidas.
+**Sigue `doing`, no `done`:** falta la corrida de los 59 contra Postgres real por el LEAD, y falta el
+commit. Nada de esto lo puede afirmar `docs-keeper`: es la misma regla que tuvo a S1, S2, S3.1 y S3.2
+esperando con el código en `main`.
 
-**Se agenda después de que cierre S2.** Mudar 59 tests con una slice en vuelo es riesgo sin apuro.
-Al mudarlo hay que corregir también el encabezado del archivo, que hoy argumenta lo contrario: si se
-mueve el código y queda el comentario, el próximo agente lee la versión vieja de la decisión.
+**Se agendaba después de que cerrara S2, y S2 cerró el 2026-08-28** (21 PASS / 0 FAIL). El motivo de
+la espera era no mudar 59 tests con una slice en vuelo; ya no hay slice en vuelo sobre `packages/db`.
+La segunda mitad de la fila —*"al mudarlo hay que corregir el encabezado, o el próximo agente lee la
+versión vieja de la decisión"*— **está cumplida en la misma entrega**: el comentario no quedó atrás
+del código.
 
 ### T4 · los helpers de los gates estaban duplicados  ·  **CERRADA el 2026-08-28** (`dc1d854`)
 
@@ -612,6 +678,12 @@ que quedan asentadas acá:
    `tenants.payment_methods`, `tenants.accepts_trade_in`. **Lo que S5 agrega es la pantalla** para
    que el dueño cambie el TC y el redondeo, **no el dato**. Este board no los difiere: S3 los
    renderiza o no pasa.
+3. **Y aun así le faltaba el 15°, un mes entero.** Agregado el 2026-08-28 (`0edb661`, módulo
+   **M3b**): el gate exigía 14 campos y **ninguna aserción sobre el botón `wa.me`**. Que un gate se
+   escriba antes que el código lo protege de amoldarse al código; **no lo protege de tener un
+   agujero**. Los dos puntos de arriba salieron de revisar el gate contra el presupuesto y contra el
+   schema; este salió de no poder citar evidencia para una fila del board. Los detalles están en la
+   nota de FASE 4, arriba, y el método en `DECISIONS.md` §"Notas operativas".
 
 ### T5 · el techo de 8 fotos está probado por forma, no por efecto  ·  cruza a `qa-agent`
 
@@ -783,6 +855,18 @@ subdominios sigue pagando una vez y cero después. No toca el camino feliz.
 primera request no salga en blanco. Éste es sobre **cuál de los dos textos** se devuelve, y los dos
 casos ya salen 200 con contenido.
 
+**Actualización del 2026-08-28, tarde — pasa a `doing`.** El arreglo **está en el working tree, sin
+commitear**: `page.tsx` ya importa `getStorefrontTenant` y `StorefrontMiss`, la rama `null` del
+loader devuelve `(await storefrontExists(slug)) ? <ListingMiss /> : <StorefrontMiss />`, y el mismo
+desempate se aplica al `<title>` en un solo lugar (`missMetadataFor()`), que era la otra mitad del
+bug —un cuerpo que dice "no hay vidriera" con un `<title>` que dice "este equipo ya no está
+publicado" es el mismo defecto corrido de lugar—. Trae además una decisión que la fila no pedía y
+que conviene mirar al aceptar: un slug de tenant que **no pasa `isSlugShaped`** ahora contesta el
+tenant-miss **sin consultar Postgres**, apoyándose en el CHECK `tenants_slug_format` de
+`packages/db` (si no puede entrar a la tabla, no hace falta preguntar). **`docs-keeper` no afirma
+que esto funcione:** lo que está verificado es que el código existe y qué hace. Falta la corrida del
+gate por el LEAD.
+
 ### T9 · la forma de `listings.slug` · **CERRADA el 2026-08-28**, con un resto en vuelo
 
 `listings.slug` entra al **cache key de `'use cache'`** y a una **URL pública**, y la base lo aceptaba
@@ -918,6 +1002,33 @@ esquivar sin querer.
 | `tenant_id` fuera de `app_metadata` | `guard-leaks.sh:127` (§7) · `apps/web/scripts/web-lint.mjs:123` (W008) · `accept-fase3.sh:61` | sí (las dos primeras) |
 | tabla nueva sin `GRANT` | `scripts/guard-grants.sh` | sí, desde `985c369` — antes **sólo** corría dentro de `accept-s1.sh`, que no está en CI |
 | borrado de un objeto de R2 por key | `scripts/guard-r2.sh` R1 + R2 (**T11**, `done`) | sí |
+
+### T15 · el seed del demo dice un color en la URL y otro en la página  ·  `db-agent`
+
+Abierta el 2026-08-28. **Salió de una medición, no de una revisión:** M3b de `accept-s3.sh` decodifica
+el `text=` del `wa.me` de la ficha del demo e imprime el mensaje real, y ahí se ve el par:
+
+```
+mensaje: Hola, vi el iPhone 14 Pro 256 Negro espacial (usado A) a USD 620 en demo.maat.work y lo quiero.
+slug:    iphone-14-pro-256-grafito
+```
+
+**Los hechos, verificados en `packages/db/src/seed-data.ts`:** el listing `:114` tiene
+`slug: 'iphone-14-pro-256-grafito'`, `title: 'iPhone 14 Pro 256 GB Negro espacial'` (`:115`) y
+`color: 'Negro espacial'` (`:116`). El modelo `iphone-14-pro` (`:49`) declara
+`colors: ['Negro espacial', 'Plata', 'Oro', 'Morado oscuro']` — **`Grafito` no está entre sus
+colores**; sí es un color de `iphone-13-pro` (`:46`). Dato al lado, sin conclusión: el string
+canónico de ejemplo de `CLAUDE.md` §1 dice *"iPhone 14 Pro 256 Grafito"*.
+
+**Qué NO se afirma acá, a propósito:** no está verificado si el slug se deriva del color en algún
+lado, si se escribió a mano, o cuál de los dos valores es el equivocado. **Es una pregunta abierta
+para `db-agent`, no un diagnóstico** — y cuál corregir cambia según eso.
+
+**Por qué es prioridad baja y aun así entra al board:** no rompe nada, ningún gate lo mira, y el
+mensaje de WhatsApp que factura es correcto (nombra el color de la página). Lo que se rompe es más
+chico y más caro de explicar: en el `/demo` que se le muestra a un reseller, **la URL dice una cosa y
+la página dice otra**. Es exactamente el tipo de detalle que un reseller sí mira, porque el color es
+parte del precio.
 
 ## FASE 5 — Chatbot (post S4/S8)
 Capa 2. Se **diseña** en FASE 1, se **codea** después de S4/S8. Ver `docs/CHATBOT.md`.
