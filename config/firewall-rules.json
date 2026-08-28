@@ -50,8 +50,9 @@
         "algo": "fixed_window",
         "action": "deny"
       },
-      "status": "planned",
-      "lands_with": "S8",
+      "status": "active",
+      "landed_in": "S8",
+      "$status": "Paso de planned a active el 2026-08-28, en el mismo commit que el handler, que es lo que exige guard-firewall (una regla planned vive en este archivo y no en Vercel, asi que el handler estaria sirviendo sin techo). Vale la misma advertencia que en storefront-track-rl y se repite en vez de referenciarse porque es la que se olvida: active NO significa \"publicada en Vercel\", significa que este archivo declara que DEBE estarlo. El apply es manual y esta en $apply de arriba; la brecha entre el archivo y la config viva sigue siendo el riesgo residual de T1 hasta que exista el gate de nivel 2.",
       "covers": [
         "/s/[slug]/api/tradein"
       ],

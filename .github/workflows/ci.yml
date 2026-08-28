@@ -335,6 +335,16 @@ jobs:
         if: always()
         run: ./scripts/accept-s7.sh
 
+      # S8 mide la SEGUNDA escritura sin autenticar del producto, y la mitad que mas importa se
+      # sostiene por algo que NO ESTA: `anon` no lee `tradein_leads` porque nadie le otorgo SELECT.
+      # Una ausencia no la ve ningun lint de policies, asi que la afirma este gate (V2) y la mide la
+      # probe (`returning_desde_anon`). El primer campo del parte que hay que mirar es
+      # `canario_rol_anon`: sin el, `set local role` podria estar siendo un no-op y los otros nueve
+      # numeros estarian medidos como superusuario, que bypassea RLS y GRANT a la vez.
+      - name: aceptacion de S8 (canje, medido contra Postgres real)
+        if: always()
+        run: ./scripts/accept-s8.sh
+
       # `test-results/`, no `playwright-report/`: el config no tiene reporter `html`, tiene
       # `list` + el censo de specs. Lo unico que queda en disco tras una falla son los traces de
       # `trace: 'retain-on-failure'`, y van a `e2e/test-results/`. La ruta anterior
