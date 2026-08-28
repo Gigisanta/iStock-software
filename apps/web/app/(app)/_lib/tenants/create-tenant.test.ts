@@ -11,6 +11,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * La otra mitad es *dónde* nacen: las cuatro filas van en la **misma** transacción. Un tenant a
  * medio nacer deja el slug quemado (`tenants_slug_key` no lo suelta) y no hay pantalla para
  * arreglarlo.
+ *
+ * La tercera mitad —la agregó la migración `0005`— es **qué se le dice a la persona cuando pierde
+ * una carrera**. Desde `0005` hay DOS `unique index` que tiran `23505` en esa misma transacción, y
+ * significan cosas opuestas: uno dice "cambiá el link", el otro dice "ya tenés un negocio". Un
+ * `23505` sin discriminar por `constraint_name` manda a la mitad de la gente a arreglar lo que no
+ * está roto. Los tests de abajo miran el mensaje, no el código de error.
  */
 
 vi.mock('server-only', () => ({}));
@@ -30,11 +36,14 @@ vi.mock('./storefront-cache', () => ({
 }));
 
 const logEvent = vi.fn();
+const logError = vi.fn();
 vi.mock('../log', () => ({
   logEvent: (event: string, fields: unknown) => {
     logEvent(event, fields);
   },
-  logError: vi.fn(),
+  logError: (event: string, code: string, fields: unknown) => {
+    logError(event, code, fields);
+  },
 }));
 
 const TENANT_ID = '11111111-2222-4333-8444-555555555555';
@@ -52,9 +61,24 @@ const db = {
   inserts: [] as RecordedInsert[],
   /** Lo que devuelve el `select` (membresía previa). Vacío = esta persona todavía no tiene negocio. */
   selectRows: [] as unknown[],
-  /** Si no es `null`, el `insert` de `tenants` tira este error. */
-  insertError: null as unknown,
+  /**
+   * Qué `insert` explota y con qué. `table` importa: la constraint del slug muere en el `insert`
+   * de `tenants` y la de la membresía muere **una fila después**, con el tenant ya insertado en la
+   * misma transacción. Un mock que falla siempre en el primer `insert` no puede distinguirlas.
+   */
+  insertError: null as { readonly table: unknown; readonly error: unknown } | null,
 };
+
+/**
+ * Un `23505` como lo entrega `postgres-js`: `code` y `constraint_name`. Sin `constraint_name`
+ * cuando se lo omite — ese caso también es una rama, y no la más obvia.
+ */
+function uniqueViolation(constraint?: string): Error {
+  const error = Object.assign(new Error('duplicate key value violates unique constraint'), {
+    code: '23505',
+  });
+  return constraint === undefined ? error : Object.assign(error, { constraint_name: constraint });
+}
 
 function thenable<T>(produce: () => T): PromiseLike<T> & Record<string, unknown> {
   const builder = {
@@ -75,7 +99,7 @@ const tx = {
   insert: (table: unknown) => ({
     values: (row: Record<string, unknown>) =>
       thenable(() => {
-        if (db.insertError !== null) throw db.insertError;
+        if (db.insertError !== null && db.insertError.table === table) throw db.insertError.error;
         db.inserts.push({ txIndex: db.txCount, table, row });
         return [{ id: TENANT_ID }];
       }),
@@ -163,7 +187,7 @@ describe('createTenant · las CUATRO filas del alta (S3.1)', () => {
   });
 
   it('si el slug ya existe no queda ninguna fila colgada del alta', async () => {
-    db.insertError = Object.assign(new Error('duplicate key'), { code: '23505' });
+    db.insertError = { table: tenants, error: uniqueViolation('tenants_slug_key') };
 
     const result = await createTenant(USER_ID, parsedInput());
 
@@ -175,6 +199,139 @@ describe('createTenant · las CUATRO filas del alta (S3.1)', () => {
     expect(db.inserts).toEqual([]);
     expect(syncTenantClaim).not.toHaveBeenCalled();
     expect(invalidateStorefront).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *  Qué `23505` es cuál (migración `0005`)
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * `0005` agregó `memberships_single_owner_per_user_key` — `unique (user_id) where role = 'owner'`.
+ * Desde entonces, la transacción del alta puede morir con `23505` por dos motivos que le piden a
+ * la persona cosas **opuestas**:
+ *
+ * | constraint | qué pasó de verdad | qué tiene que hacer la persona |
+ * |---|---|---|
+ * | `tenants_slug_key` | el subdominio está tomado | elegir otro link |
+ * | `memberships_single_owner_per_user_key` | ya tiene un negocio | **nada**: entrar al que tiene |
+ *
+ * Mapear los dos al mensaje del slug no es "un mensaje impreciso": es mandar a alguien a cambiar
+ * el nombre de su negocio, reintentar, y fallar igual. Un error que manda al usuario a arreglar lo
+ * que no está roto es peor que uno genérico.
+ */
+describe('createTenant · un 23505 no es un mensaje: hay que mirar QUÉ constraint murió', () => {
+  it('slug tomado → el mensaje del link', async () => {
+    db.insertError = { table: tenants, error: uniqueViolation('tenants_slug_key') };
+
+    const result = await createTenant(USER_ID, parsedInput());
+
+    expect(result).toEqual({
+      ok: false,
+      field: 'slug',
+      message: 'Ese link ya lo está usando otro negocio.',
+    });
+  });
+
+  /**
+   * La carrera que cerró `0005`: dos altas concurrentes de la misma persona. El chequeo previo
+   * `hasMembership()` vio 0 filas en las dos, la primera commiteó, la segunda muere acá.
+   *
+   * Hoy este test falla afirmando `'Ese link ya lo está usando otro negocio.'`, que es exactamente
+   * el defecto: al que pierde la carrera se le dice que el problema es su link.
+   */
+  it('membresía duplicada → "Ya tenés un negocio creado.", NO el mensaje del link', async () => {
+    db.insertError = {
+      table: memberships,
+      error: uniqueViolation('memberships_single_owner_per_user_key'),
+    };
+
+    const result = await createTenant(USER_ID, parsedInput());
+
+    expect(result).toEqual({ ok: false, field: 'form', message: 'Ya tenés un negocio creado.' });
+  });
+
+  /**
+   * El invariante que importa: **ganar o perder la carrera se ve igual desde afuera**. Si los dos
+   * caminos no dan el mismo objeto, el resultado depende de milisegundos y hay dos copias del
+   * mensaje esperando divergir.
+   */
+  it('perder la carrera se ve IGUAL que el chequeo previo, campo y texto', async () => {
+    db.selectRows = [{ id: 'membership-1' }];
+    const precheck = await createTenant(USER_ID, parsedInput());
+
+    db.selectRows = [];
+    db.insertError = {
+      table: memberships,
+      error: uniqueViolation('memberships_single_owner_per_user_key'),
+    };
+    const race = await createTenant(USER_ID, parsedInput());
+
+    expect(race).toEqual(precheck);
+  });
+
+  it('la membresía duplicada no sincroniza claim ni invalida el cache del slug', async () => {
+    db.insertError = {
+      table: memberships,
+      error: uniqueViolation('memberships_single_owner_per_user_key'),
+    };
+
+    await createTenant(USER_ID, parsedInput());
+
+    expect(syncTenantClaim).not.toHaveBeenCalled();
+    expect(invalidateStorefront).not.toHaveBeenCalled();
+  });
+
+  /**
+   * La tercera constraint. Hoy este test falla porque el `catch` devuelve el mensaje del slug para
+   * cualquier `23505`: un error desconocido presentado como uno conocido es cómo se pierde un
+   * incidente. Se propaga, como ya se propaga cualquier otro error de Postgres que este módulo no
+   * entiende — compartir el código `23505` con dos constraints conocidas no es motivo para heredar
+   * su mensaje.
+   */
+  it('una constraint desconocida NO se traga: propaga', async () => {
+    db.insertError = { table: fxSettings, error: uniqueViolation('fx_settings_pkey') };
+
+    await expect(createTenant(USER_ID, parsedInput())).rejects.toThrow(/duplicate key/u);
+  });
+
+  it('la constraint desconocida queda logueada por nombre, que es lo que se investiga después', async () => {
+    db.insertError = { table: fxSettings, error: uniqueViolation('fx_settings_pkey') };
+
+    await expect(createTenant(USER_ID, parsedInput())).rejects.toThrow();
+
+    expect(logError).toHaveBeenCalledWith(
+      'tenant.create.unknown_unique_violation',
+      '23505',
+      expect.objectContaining({ userId: USER_ID, constraint: 'fx_settings_pkey' }),
+    );
+  });
+
+  /**
+   * Falla cerrada. Un `23505` sin `constraint_name` no es ninguna de las dos que conocemos, así
+   * que tampoco puede llevarse el mensaje de ninguna. Postgres manda el campo desde 9.3 y
+   * `postgres-js` lo expone, o sea que llegar acá ya es raro: razón de más para no adivinar.
+   */
+  it('un 23505 sin constraint_name tampoco hereda un mensaje: propaga', async () => {
+    db.insertError = { table: tenants, error: uniqueViolation() };
+
+    await expect(createTenant(USER_ID, parsedInput())).rejects.toThrow();
+    expect(logError).toHaveBeenCalledWith(
+      'tenant.create.unknown_unique_violation',
+      '23505',
+      expect.objectContaining({ constraint: 'unnamed' }),
+    );
+  });
+
+  /** Lo de siempre: lo que no es `23505` sigue subiendo intacto. */
+  it('un error que no es 23505 sigue propagando y no se loguea como unique violation', async () => {
+    db.insertError = {
+      table: tenants,
+      error: Object.assign(new Error('deadlock detected'), { code: '40P01' }),
+    };
+
+    await expect(createTenant(USER_ID, parsedInput())).rejects.toThrow(/deadlock/u);
+    expect(logError).not.toHaveBeenCalled();
   });
 });
 
