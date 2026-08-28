@@ -213,20 +213,22 @@ export function proxy(request: NextRequest): NextResponse {
  * archivos de `public/`. Cada invocación se factura (Active CPU + invocación) y ninguna de esas
  * necesita resolución de host.
  *
- * ## El criterio, después de tres agujeros de la misma familia (P2)
+ * ## El criterio, después de cuatro agujeros de la misma familia (P2, S8)
  *
  * La exclusión de este matcher mira el **sufijo del path**. El router de Next matchea por
  * **segmento** y decide los file conventions de metadata **por nombre de archivo**. Esa
- * discrepancia produjo tres agujeros, todos el mismo bug con otra ropa:
+ * discrepancia produjo cuatro agujeros, todos el mismo bug con otra ropa:
  *
  * | # | URL | por qué el sufijo no alcanzaba |
  * |---|---|---|
  * | S1 | `/s/algo.json` | `/s/[slug]` matchea con `slug = "algo.json"` |
  * | S2 | `/_media/…​.webp` | `[...key]`: la extensión la elige quien pide la URL |
  * | P2 | `/icon.png`, `/robots.txt`, `/sitemap/1.xml` (25 URLs) | son **nombres**, no sufijos |
+ * | S8 | `/app/canjes/basura-991.json` (×16 sufijos) | `/app/canjes/[id]`: el dinámico es el **último** segmento |
  *
  * Los dos primeros se taparon agregando una entrada de inclusión por incidente. El tercero **no**
  * se tapa así: son 25 URLs de 8 convenciones, y la lista crece cada vez que Next agrega una.
+ * El cuarto tampoco se tapa por URL, y el porqué está abajo, en la entrada `/app/:path*`.
  *
  * **La causa raíz, medida:** `apps/web/public/` **no existe** — ni ahí ni en la raíz del repo, y no
  * hay un solo `favicon.ico`, `icon.*`, `robots.txt` ni `sitemap.xml` en el árbol. La exclusión de
@@ -260,11 +262,53 @@ export function proxy(request: NextRequest): NextResponse {
  * (`isInfrastructurePath()` en el cuerpo los cubre igual, porque la doc avisa que `_next/data` se
  * invoca aunque el matcher lo excluya.)
  *
- * ## Las cuatro entradas de inclusión, revisadas en P2
- * Con la exclusión acotada, tres siguen siendo **load-bearing** y una es redundante:
+ * ## Las cinco entradas de inclusión, revisadas en P2 y ampliadas en S8
+ * Con la exclusión acotada, cuatro son **load-bearing** y una es redundante:
  *
  * - **`/s/:path*` (necesaria).** `/s/algo.json` sigue cayendo en la exclusión por sufijo —`algo.json`
  *   no es un nombre de convención—, así que sin esta entrada el HIGH de S1 vuelve tal cual.
+ * - **`/app/:path*` (necesaria, S8: el panel ENTERO, no una ruta).** Cierra el cuarto agujero de la
+ *   tabla de arriba. `/app/canjes/[id]` es la primera ruta de `/app` cuyo segmento dinámico es el
+ *   **último**: el valor lo elige quien pide la URL, así que `/app/canjes/basura-991.json` es match
+ *   perfecto de la ruta —el router de Next acepta un punto adentro de un segmento— y, a la vez, cae
+ *   en la exclusión por sufijo. Resultado medido: **16 URLs (una por sufijo) que la app atiende y el
+ *   proxy no ve**, con las dos consecuencias de siempre — las guardas de host y de path no se
+ *   evalúan, y sobre todo **`stripInboundTenantHeaders()` no corre**, o sea un `x-tenant-*` puesto
+ *   por el cliente sobrevive hasta el panel (`CLAUDE.md` §2: escalación de tenant). Por eso entra
+ *   `/app`: no porque el panel necesite rewrite —bajo un host de tenant lo va a resolver el cuerpo,
+ *   como cualquier otra ruta—, sino porque **el saneo de headers no puede ser opcional en el
+ *   subárbol autenticado**.
+ *
+ *   **Por qué NO se arregló estrecho, que es la parte que importa.** La corrección obvia era darle
+ *   una excepción a la regex por esta ruta (`(?!app/canjes/)…`). Eso deja el mismo agujero esperando
+ *   a la próxima ruta de `/app` con dinámico final —`/app/clientes/[id]`, `/app/reservas/[id]`, la
+ *   que sea—, que es exactamente cómo este repo pagó S1 y S2: una excepción por incidente. La
+ *   inclusión por subárbol no depende de qué rutas se creen adentro: `/app/**` es del panel entero y
+ *   **no hay nada más ahí**. La entrada gana sobre la exclusión por sufijo porque el `matcher` es una
+ *   lista **OR**, y eso está verificado contra el Next instalado, no supuesto: la doc dice *"For
+ *   multiple paths: Use an array … which applies the Proxy to both"*, y
+ *   `next/dist/shared/lib/router/utils/middleware-route-matcher` itera las entradas y devuelve
+ *   `true` en el primer match (`if (!routeMatch) continue`). Es el mismo mecanismo con el que `/s` y
+ *   `/_media` ya ganan hoy.
+ *
+ *   **No mete estáticos al proxy: `apps/web/public/` no existe** (re-medido en S8; tampoco hay
+ *   `public/` en la raíz del repo, ni un solo archivo no-TS bajo `apps/web/app`). Y si existiera,
+ *   los assets de `public/` se sirven desde la **raíz** (`/logo.png`, `/fonts/inter.woff2`), no
+ *   bajo `/app/`. Medido con `getMiddlewareMatchers` + `getMiddlewareRouteMatcher` del propio Next:
+ *   las siete URLs de asset del guard siguen dando `false` con esta entrada puesta.
+ *
+ *   **No hace falta `/app` pelado, y se midió antes de no escribirlo.** El regex que Next compila
+ *   para `/app/:path*` es `^…\/app(?:\/(…))?(\.json|\.rsc|…)?[\/#\?]?$`: el grupo del `*` es
+ *   opcional, así que la entrada **ya cubre `/app`** (y `/app/`). Tampoco desborda a hermanos por
+ *   prefijo de string: `/appendix`, `/apps` y `/app-otro` dan `false` — `path-to-regexp` ancla por
+ *   segmento. Es la diferencia con `/s`, que sí tiene entrada pelada: allá se dejó por no tocar lo
+ *   que ningún test respalda; acá agregarla sería una segunda entrada redundante contra la primera,
+ *   y el `/app` pelado del panel (`app/(app)/app/(panel)/page.tsx`) ya está fijado por el guard.
+ *
+ *   **Ninguna entrada vieja queda muerta.** `/s`, `/s/:path*`, `/_media/:path*` y `/%5Fmedia/:path*`
+ *   viven en subárboles disjuntos de `/app`, y la exclusión por sufijo sigue siendo la única que
+ *   deja afuera los assets de raíz. Lo único que se solapa es el catch-all, que ya cubría los paths
+ *   de `/app` **sin** extensión: ese solape es el punto, no un descuido.
  * - **`/_media/:path*` y `/%5Fmedia/:path*` (necesarias).** Ídem con `.webp`/`.avif`: es el fix de
  *   S2, y la forma `%5F` va porque el directorio en disco es `%5Fmedia` (`_media` sería *private
  *   folder*). El argumento largo de las dos está en `isGlobalMediaPath`.
@@ -298,6 +342,13 @@ export function proxy(request: NextRequest): NextResponse {
  *    `curl -sI http://demo.127.0.0.1.nip.io:3100/robots.txt` (tenant) **no** pueden devolver el
  *    mismo body. Hoy los dos dan `404` (no existe el archivo en ningún lado) y eso es pasar; lo que
  *    reprueba es que el segundo devuelva `200` con el `robots.txt` del apex.
+ * 7. Control de S8, y es el único de la lista que **no** es observable sin instrumentar: pedir
+ *    `/app/canjes/basura-991.json` con un header `x-tenant-id: otro` y verificar que la request que
+ *    llega al panel **no** lo trae. Sin un endpoint que refleje headers no se puede medir desde
+ *    afuera — por eso la afirmación la sostiene el guard estático
+ *    (`tests/proxy-matcher-no-deja-la-vidriera-sin-vigilar.test.ts`) y no el e2e. Lo que sí se mide
+ *    con `curl`: esa URL bajo un host de tenant tiene que dar `404` de la vidriera (el rewrite a
+ *    `/s/{slug}/app/…` no existe), no la página del panel.
  *
  * **No se declara `runtime`**: en Proxy esa opción tira error (v16.0.0). El runtime es Node.js.
  */
@@ -305,6 +356,14 @@ export const config = {
   matcher: [
     '/s',
     '/s/:path*',
+    // El panel entero. Gana sobre la exclusión por sufijo (el matcher es una lista OR) y por eso
+    // `/app/canjes/basura-991.json` —match de la ruta `/app/canjes/:id`, con el segmento dinámico
+    // en el ÚLTIMO lugar— ya no se saltea `stripInboundTenantHeaders()`. Subárbol, no ruta: una
+    // excepción por ruta reabriría el mismo agujero con la próxima. Cubre `/app` sin entrada aparte.
+    // (Los comentarios de este array van SIN corchetes a propósito: el guard lo lee del FUENTE con
+    // un regex no-goloso que corta en el primer corchete de cierre, así que un corchete adentro de
+    // un comentario le esconde la mitad de las entradas y el rojo que da no habla de eso.)
+    '/app/:path*',
     '/_media/:path*',
     '/%5Fmedia/:path*',
     // El lookahead anidado se lee así: excluí un path por su sufijo **salvo** que sea un file
