@@ -238,13 +238,17 @@ Conflicto de ownership = el LEAD reasigna. Un agente **nunca** edita fuera de su
 **Agregado por el LEAD en FASE 4** (hueco real, lo encontró `docs-keeper` al no poder asignar dueño a
 dos entradas del board): los **gates no tienen dueño en la tabla y por lo tanto no los tenía nadie**.
 `scripts/accept-*.sh`, `scripts/guard-*.sh`, `scripts/probes/**`, las reglas de lint de
-`apps/web/scripts/` y el futuro `vercel.json` (que hoy no existe) son del LEAD, por un motivo que no
+`apps/web/scripts/` y `vercel.json` son del LEAD, por un motivo que no
 es jerárquico sino de independencia: **el gate no puede ser del mismo writer que el código que
 audita.** Por la misma regla, **`config/firewall-rules.json` es del LEAD** (fila nueva, FASE 4):
 las reglas de rate limit deciden qué endpoints de `app-agent` y de `storefront-agent` tienen techo,
 así que no pueden ser de ninguno de los dos.
 
-**El rate limit no entra en `vercel.json`, y `vercel.json` no existe.** El schema oficial tipa
+**El rate limit no entra en `vercel.json`.** El archivo **sí existe desde S6** (2026-08-28) y
+declara **una sola cosa: el `crons` que dispara `GET /api/cron/expire-reservations` cada 5 min**.
+No puede declarar nada más: el schema oficial tiene `additionalProperties: false` en la raíz, así
+que sólo admite `$schema` y las claves que él tipa — una clave de más no se ignora, rompe el deploy.
+Y el rate limit no es una de ellas: el schema oficial tipa
 `routes[].mitigate.action` como enum cerrado `["challenge","deny"]` con `additionalProperties: false`,
 y `rate_limit` aparece **cero veces** (verificado contra `openapi.vercel.sh/vercel.json`, 2026-08-28,
 `docs/research/vercel-firewall-as-code.md`). Las reglas viven versionadas en `config/firewall-rules.json`
