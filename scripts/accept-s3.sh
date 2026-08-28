@@ -130,16 +130,46 @@ else
   CAP=$(echo "$IMG" | sed -nE 's/.*techo=([0-9]+)B.*/\1/p')
   if [ -z "$GOT" ] || [ -z "$CAP" ]; then
     no "la linea MEDIDO s3 imagen cambio de formato y no puedo leer los numeros — arreglar el gate"
+  elif [ "$GOT" -lt 1024 ]; then
+    # Piso, agregado por el LEAD el 2026-08-28. Lo encontro `qa-agent` corriendo la polaridad de
+    # su propio spec: `transferSize=0B` **pasaba** este gate, porque 0 <= 204800. Es el mismo bug
+    # que M5 ya tenia tapado con `primera=0` y que aca faltaba: **ausencia de medicion no es un
+    # numero chico, es ausencia**, y un gate que la lee como "muy liviano, PASS" es peor que no
+    # tenerlo. La red cuenta 0 cuando el recurso salio del cache del browser o cuando el timing
+    # es cross-origin sin `Timing-Allow-Origin`, que es justo lo que pasa hoy con `/_media`.
+    # 1024B y no 1B: una variante `card` de 800px de ancho no existe en menos de un KB. Un numero
+    # entre 1 y 1023 no es una foto liviana, es otro sintoma del mismo agujero.
+    no "transferSize=${GOT}B: eso no es una foto, es la red contando cero. La medicion es vacua"
+    inf "causa tipica: recurso servido del cache del browser, o Performance API cross-origin"
+    inf "sin Timing-Allow-Origin en /_media (por eso el spec mide con request.sizes() de Playwright)"
   elif [ "$GOT" -le "$CAP" ]; then
     ok "el recurso que el browser eligio pesa ${GOT}B y el techo de la grilla es ${CAP}B"
   else
     no "el browser bajo ${GOT}B y el techo es ${CAP}B — falta 'sizes', o la grilla sirve 'detail'"
   fi
-  # Que el elegido NO sea la variante grande. El numero solo no alcanza: una foto chica puede pasar
-  # el techo AUNQUE la grilla este pidiendo `detail`, y el dia que entre una foto pesada revienta.
-  echo "$IMG" | grep -q 'elegido=[^ ]*detail' \
-    && no "el browser eligio la variante 'detail' en la grilla: eso es exactamente P3" \
-    || ok "el recurso elegido no es la variante 'detail'"
+
+  # ── que el elegido NO sea la variante grande ──────────────────────────────
+  # El numero solo no alcanza: una foto chica puede pasar el techo AUNQUE la grilla este pidiendo
+  # `detail`, y el dia que entre una foto pesada revienta.
+  #
+  # Reescrito por el LEAD el 2026-08-28. La version anterior era `grep 'elegido=[^ ]*detail'` sobre
+  # la URL, y era **letra muerta**: por ADR-006 las keys de R2 son content-addressed y opacas, asi
+  # que la palabra "detail" no aparece nunca en una URL publica — la regla no podia fallar ni
+  # sirviendo `detail` a proposito. Lo levanto `qa-agent`, y la salida que eligio es anotar la
+  # variante que el spec resolvio, como fragmento: `...webp#variante=card`. El fragmento no viaja
+  # al server, o sea que la anotacion no puede cambiar lo que se descargo.
+  #
+  # La anotacion se exige, no se asume: si falta, la regla no puede afirmar nada y eso es FAIL.
+  # Una regla que se apaga sola cuando le sacan el insumo es la forma mas comun de gate muerto.
+  VAR=$(echo "$IMG" | sed -nE 's/.*elegido=[^ ]*#variante=([a-z]+).*/\1/p')
+  if [ -z "$VAR" ]; then
+    no "la linea MEDIDO s3 imagen no anota '#variante=' en la URL elegida: no se que variante bajo"
+    inf "las keys de R2 son opacas (ADR-006): sin la anotacion del spec, esta regla no puede medir"
+  elif [ "$VAR" = "card" ] || [ "$VAR" = "thumb" ]; then
+    ok "el browser eligio la variante '$VAR' en la grilla"
+  else
+    no "el browser eligio la variante '$VAR' en la grilla: eso es exactamente P3"
+  fi
 fi
 
 # ── M5, que viaja en la misma corrida ────────────────────────────────────────
