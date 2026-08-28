@@ -24,8 +24,23 @@ inf()  { printf '  \033[36m····\033[0m  %s\n' "$1"; }
 chk()  { if eval "$2" >/dev/null 2>&1; then ok "$1"; else no "$1"; fi; }
 have() { if [ -s "$1" ]; then ok "existe y no esta vacio: $1"; else no "falta o esta vacio: $1"; fi; }
 none() { local d="$1" re="$2"; shift 2
-  local o; o=$(grep -rnE "$re" "$@" 2>/dev/null | grep -vE '^([^:]*:)?[0-9]+:[[:space:]]*(//|\*|/\*|#|--)' || true)
-  if [ -z "$o" ]; then ok "$d"; else no "$d"; echo "$o" | sed 's/^/        /' | head -6; fi; }
+  local o; o=$(grep -rnE --exclude-dir=.next --exclude-dir=node_modules --exclude-dir=dist \
+      --exclude-dir=.turbo --exclude="*.map" "$re" "$@" 2>/dev/null \
+      | grep -vE '^([^:]*:)?[0-9]+:[[:space:]]*(//|\*|/\*|#|--)' || true)
+  # `git check-ignore`: lo que git ignora es artefacto de build; lo que no, es codigo nuestro
+  # AUNQUE no este en el indice todavia (los archivos de una slice recien escrita estan sin
+  # `git add` y filtrar por "trackeado" los saltearia justo cuando hay que auditarlos).
+  # Motivo real: `apps/web/tsconfig.tsbuildinfo` lista cada archivo del repo y hacia MATCH con
+  # cualquier patron. 2026-08-27.
+  local kept="" line f
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    f="${line%%:*}"
+    git check-ignore -q "$f" 2>/dev/null && continue
+    kept="${kept}${line}"$'\n'
+  done <<< "$o"
+  if [ -z "${kept//[$'\n\t ']/}" ]; then ok "$d"
+  else no "$d"; echo "$kept" | sed 's/^/        /' | cut -c1-200 | head -6; fi; }
 
 DBURL="${DATABASE_URL:-postgresql://localhost:5432/istock_dev}"
 PORT="${E2E_PORT:-3100}"
@@ -327,8 +342,12 @@ fi
 # Tampoco pasar --reporter: en la CLI REEMPLAZA los reporters del config y apaga el censo de
 # qa-agent (medido por ellos). El acotado va por env, no por flag.
 if pnpm --filter @istock/e2e "$E2E_SCRIPT" >"$OUT" 2>&1; then E2ERC=0; else E2ERC=1; fi
-RAN=0; for f in e2e/*.spec.ts; do grep -q "$(basename "$f")" "$OUT" && RAN=$((RAN+1)); done
-inf "specs nombrados en la salida: $RAN/$SPECS"
+# NO se cuenta "el nombre del spec aparece en la salida": cuando el censo FALLA imprime el nombre
+# de cada spec que NO corrio, asi que ese conteo daba 8/8 con CERO tests ejecutados. El numero se
+# lee del censo, que lo emite el reporter de `qa-agent` (otra columna). 2026-08-27, medido en S2.
+RAN=$(grep -iE 'censo de specs' "$OUT" | tail -1 \
+      | sed -nE 's|.*[^0-9]([0-9]+)/([0-9]+) archivos ejecutados.*|\1|p')
+RAN="${RAN:-0}"
 # El censo por ARCHIVO no alcanza: un spec puede aparecer nombrado y dejar tests sin correr
 # ("did not run"). qa-agent emite un censo por TEST; si esta, lo exijo.
 CENSO=$(grep -iE 'censo de specs' "$OUT" | tail -1 || true)

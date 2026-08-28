@@ -15,8 +15,23 @@ chk()  { if eval "$2" >/dev/null 2>&1; then ok "$1"; else no "$1"; fi; }
 have() { if [ -s "$1" ]; then ok "existe y no esta vacio: $1"; else no "falta o esta vacio: $1"; fi; }
 # grep que NO tiene que encontrar nada, ignorando comentarios.
 none() { local d="$1" re="$2"; shift 2
-  local o; o=$(grep -rnE "$re" "$@" 2>/dev/null | grep -vE ':[0-9]+:\s*(//|\*|/\*)' || true)
-  if [ -z "$o" ]; then ok "$d"; else no "$d"; echo "$o" | sed 's/^/        /' | head -6; fi; }
+  local o; o=$(grep -rnE --exclude-dir=.next --exclude-dir=node_modules --exclude-dir=dist \
+      --exclude-dir=.turbo --exclude="*.map" "$re" "$@" 2>/dev/null \
+      | grep -vE '^([^:]*:)?[0-9]+:[[:space:]]*(//|\*|/\*|#|--)' || true)
+  # `git check-ignore`: lo que git ignora es artefacto de build; lo que no, es codigo nuestro
+  # AUNQUE no este en el indice todavia (los archivos de una slice recien escrita estan sin
+  # `git add` y filtrar por "trackeado" los saltearia justo cuando hay que auditarlos).
+  # Motivo real: `apps/web/tsconfig.tsbuildinfo` lista cada archivo del repo y hacia MATCH con
+  # cualquier patron. 2026-08-27.
+  local kept="" line f
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    f="${line%%:*}"
+    git check-ignore -q "$f" 2>/dev/null && continue
+    kept="${kept}${line}"$'\n'
+  done <<< "$o"
+  if [ -z "${kept//[$'\n\t ']/}" ]; then ok "$d"
+  else no "$d"; echo "$kept" | sed 's/^/        /' | cut -c1-200 | head -6; fi; }
 
 sec "K3 · proxy de host (storefront-agent)"
 have apps/web/proxy.ts
@@ -82,9 +97,31 @@ sec "K4 · panel mobile-first (app-agent)"
 have "apps/web/app/(app)/app/(panel)/layout.tsx"
 chk "hay navegacion inferior (mobile-first, CLAUDE.md 0.11)" \
     "ls 'apps/web/app/(app)/app/(panel)/_ui/bottom-nav.tsx'"
-none "el panel no filtra costo ni IMEI a un componente cliente" \
-     "\b(cost_?[Uu]sd|costUsd|margin|internal_?[Nn]otes)\b" \
+# ─────────────────────────────────────────────────────────────────────────────────────────────
+#  §0.9 "el seller no ve costo ni margen": lo que se audita es el ROL, no la palabra.
+# ─────────────────────────────────────────────────────────────────────────────────────────────
+# La regla anterior era un `none` de `costUsd|margin|internal_notes` sobre todo `(panel)/**.tsx`.
+# El 2026-08-28 empezo a marcar dos cosas correctas: el input donde el DUENIO tipea su propio
+# costo al dar de alta un equipo, y `_ui/unit-row.tsx`, que ni siquiera es componente cliente.
+# Un gate que acusa a un Server Component de filtrar al cliente no esta midiendo el invariante:
+# esta contando ocurrencias de un identificador.
+#
+# El invariante tiene tres partes, y ninguna es "la palabra no aparece":
+#   A. `margin` e `internal_notes` no se le muestran a NADIE en el panel. No cambia.
+#   B. el costo no viaja a un componente CLIENTE, salvo el alta: ahi lo escribe el dueno.
+#   C. toda lectura de `cost_usd` de la base esta condicionada por el rol `owner`.
+# C es la que muerde: es la que va a fallar el dia que alguien sume el costo a una query nueva.
+none "margen y notas internas no se muestran en ninguna pantalla del panel" \
+     "\b(margin|internal_?[Nn]otes)\b" \
      "apps/web/app/(app)/app/(panel)" --include='*.tsx'
+chk "el costo no llega a un componente cliente del panel (salvo el alta, donde lo tipea el dueno)" \
+    "! grep -rl \"^'use client'\" 'apps/web/app/(app)/app/(panel)' --include='*.tsx' \
+       | xargs -r grep -lE '\b(cost_?[Uu]sd|costUsd)\b' \
+       | grep -v 'stock/nuevo/' | grep -q ."
+chk "toda lectura de cost_usd de la base condiciona por el rol owner (no filtra: no pide)" \
+    "! grep -rlE 'listings\.costUsd' 'apps/web/app/(app)' --include='*.ts' \
+       | grep -v '\.test\.' \
+       | xargs -r grep -LE \"role === .owner.\" | grep -q ."
 
 sec "K5 · media / probe de R2 (media-agent)"
 have packages/media/src/pipeline.ts

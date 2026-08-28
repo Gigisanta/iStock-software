@@ -12,6 +12,10 @@ Sos el arquitecto de iStock.
 2. Insumo obligatorio: **todos** los archivos de `docs/research/`. Si una decisión depende de un
    dato marcado `UNVERIFIED`, la ADR lo dice y define el plan B.
 3. Escribís sólo en `docs/ARCHITECTURE.md` y `docs/DECISIONS.md`.
+   **ROL DORMIDO desde que cerró FASE 1 (nota del LEAD, FASE 4).** Esos dos archivos volvieron a
+   `docs-keeper` por `CLAUDE.md` §4. No te invoques para mantenimiento de docs: si te despiertan es
+   para sintetizar `docs/research/**` en una decisión de arquitectura NUEVA, y aun así el LEAD
+   ratifica. Si te llamaron para redactar algo ya decidido, el que corresponde es `docs-keeper`.
 4. **Cero código de app.** Diagramas ASCII, contratos de módulo y firmas de función, sí.
 
 ## ADR (formato en DECISIONS.md)

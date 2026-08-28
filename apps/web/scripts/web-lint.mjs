@@ -157,7 +157,24 @@ must('W011', 'sin console.log de un listing/unit/row entero (CLAUDE.md §2)', sr
   }
   const check = acts.filter((f) => !lifecycle(f) && !marked(f));
   const sin = check
-    .filter((f) => !/(requireSession|requireUser|getSession|assertSession|currentSession|requireOwner)/.test(f.src))
+    // `requireTenant` y `getPanelSession` NO estaban en esta lista, y son EL guard real de este
+    // panel (`_lib/session.ts`): `requireTenant()` llama a `getPanelSession()` y redirige si no hay
+    // sesión o si no hay tenant. O sea que W012 marcaba en rojo justamente a las Server Actions que
+    // usaban el guard correcto, y empujaba a la persona hacia el marcador de exención. Encontrado
+    // en S2, 2026-08-27: `app-agent` verificaba sesión adentro y aun así tuvo que poner
+    // `web-lint-allow W012` para pasar el lint. Una regla que castiga la conducta correcta se
+    // desactiva sola.
+    //
+    // LÍMITE CONOCIDO Y ACEPTADO, escrito para que nadie lo confunda con una garantía: esto es un
+    // grep de NOMBRES, no un análisis de flujo. Un archivo que menciona `getPanelSession()` y no
+    // hace nada con el resultado pasa igual. La regla acota el descuido (olvidarse del guard), no
+    // el engaño (fingirlo). Endurecerla pide exigir además el redirect/throw, y eso es otra slice.
+    .filter(
+      (f) =>
+        !/(requireSession|requireUser|getSession|getPanelSession|requireTenant|assertSession|currentSession|requireOwner)/.test(
+          f.src,
+        ),
+    )
     .map((f) => f.rel);
   check.length === 0
     ? ok('W012 (sin Server Actions que necesiten guard todavía)')

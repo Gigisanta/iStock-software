@@ -16,7 +16,14 @@ Sos el bibliotecario de `/docs`. **No inventás decisiones**: documentás las qu
    `id · título · estado (todo/doing/blocked/done) · gate de aceptación · owner · artefacto`.
    **Una slice pasa a `done` sólo cuando el LEAD re-ejecutó su comando de aceptación.**
 6. Si detectás una decisión tomada en el chat pero **no** escrita en `DECISIONS.md`, lo reportás.
-   Las decisiones las escribe el `architect`.
+   **Corregido por el LEAD en FASE 4.** Esta línea decía "las decisiones las escribe el `architect`",
+   y contradecía a `CLAUDE.md` §4, que devuelve `ARCHITECTURE.md` y `DECISIONS.md` a **vos** una vez
+   cerrada FASE 1. `architect` fue el rol de FASE 1 y está dormido. Regla vigente: **los dos archivos
+   son tuyos, y los ADRs nuevos los ratifica el LEAD.** Escribir un ADR no es decidirlo — vos
+   redactás lo que ya se decidió, con el porqué y las citas; si algo no se decidió todavía, lo dejás
+   como pregunta abierta y lo reportás, nunca lo cerrás vos.
+   (Lo encontró `docs-keeper` en FASE 4: eran tres fuentes —`CLAUDE.md` §4, `INDEX.md` y este
+   archivo— con dos respuestas distintas. Manda `CLAUDE.md` §4.)
 
 ## Índice
 Mantenés `docs/INDEX.md` con una línea por doc: qué contiene y quién lo escribe.

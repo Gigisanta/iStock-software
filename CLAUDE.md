@@ -207,8 +207,23 @@ Rutas: `/` marketing · `/demo` · `/onboarding` · `/app/*` panel · **`proxy.t
 | `docs/research/**` | `researcher` (uno por topic-file) | ✅ |
 | `docs/COST.md` | `cost-auditor` | ✅ |
 | `CLAUDE.md`, `AGENTS.md`, `.claude/**` | **LEAD** | ✅ |
+| `scripts/**`, `vercel.json`, `apps/web/scripts/*-lint.mjs` | **LEAD** | ✅ |
 
 Conflicto de ownership = el LEAD reasigna. Un agente **nunca** edita fuera de su columna.
+
+**Agregado por el LEAD en FASE 4** (hueco real, lo encontró `docs-keeper` al no poder asignar dueño a
+dos entradas del board): los **gates no tienen dueño en la tabla y por lo tanto no los tenía nadie**.
+`scripts/accept-*.sh`, `scripts/guard-*.sh`, `scripts/probes/**`, las reglas de lint de
+`apps/web/scripts/` y el futuro `vercel.json` (que hoy no existe) son del LEAD, por un motivo que no
+es jerárquico sino de independencia: **el gate no puede ser del mismo writer que el código que
+audita.** Por eso `scripts/probes/s2-media-measure.test.ts` vive afuera de `packages/media` aunque
+mida a `packages/media`, y por eso un agente que quiere cambiar un techo pide, no edita.
+
+### `architect` es un rol de FASE 1, y está dormido
+`docs/ARCHITECTURE.md` y `docs/DECISIONS.md` son de **`docs-keeper`** desde que cerró FASE 1, como
+dice la excepción declarada más abajo. `INDEX.md` decía `architect` y el contrato de `docs-keeper`
+decía que las decisiones las escribe el `architect`: eran tres fuentes y dos respuestas. **Manda esta
+tabla.** El LEAD sigue ratificando los ADRs nuevos; escribirlos no es lo mismo que decidirlos.
 
 **Corregido por el LEAD en FASE 2.** La fila anterior daba **todo** `**/*.test.ts` a `qa-agent`, y
 eso contradecía el contrato de cada agente de paquete, que exige un test por export público. Regla
@@ -218,6 +233,15 @@ tests de integración. Corolario que ya se está aplicando: **`qa-agent` nunca e
 test para poner un test en verde**, y el owner del paquete **nunca edita un test de `qa-agent`
 para tapar un fallo**. Si el test de `qa-agent` falla, el defecto es del código hasta que se
 demuestre lo contrario.
+
+**Desempate, agregado por el LEAD en FASE 4.** Un test puede cumplir las dos descripciones a la vez:
+estar *dentro* de un paquete y ser *RLS cruzado contra Postgres real*. **Gana la segunda**, y el
+archivo se muda a `tests/`. El motivo es el mismo que separa un gate de su código: `db-agent`
+escribe las **policies**, así que no puede ser también el dueño del test que las audita — sería el
+mismo writer en las dos puntas del invariante más caro del producto ("sin RLS no hay merge").
+Concreto y vigente: `rls-cross-tenant.test.ts` es de **`qa-agent`**. Su encabezado se declara
+`db-agent` citando la mitad de arriba de esta regla; ese comentario está **derogado** y se borra en
+la mudanza (fila T3 del board). Un test de RLS que sólo mira su propio tenant sí es del paquete.
 
 **Excepción declarada, FASE 1:** la síntesis de `docs/ARCHITECTURE.md`, `docs/DECISIONS.md` y
 `docs/COST.md` a partir de `docs/research/**` la escribe el **LEAD**, una sola vez. Decidir el
