@@ -91,9 +91,36 @@ NOSUB=$(psql -d "$DB" -tAc "select tablename||'.'||policyname from pg_policies w
 TOPUBLIC=$(psql -d "$DB" -tAc "select tablename||'.'||policyname from pg_policies where schemaname='public' and 'public' = any(roles)" 2>/dev/null | tr '\n' ' ')
 [ -z "$(echo "$TOPUBLIC" | tr -d ' ')" ] && ok "ADR-005: ninguna policy sin TO (roles={public} aplica a anon tambien)" \
   || no "policy sin TO, aplica a TODOS los roles: $TOPUBLIC"
-ANONWRITE=$(psql -d "$DB" -tAc "select tablename||'.'||policyname||' ('||cmd||')' from pg_policies where schemaname='public' and 'anon' = any(roles) and cmd <> 'SELECT'" 2>/dev/null | tr '\n' ' ')
-[ -z "$(echo "$ANONWRITE" | tr -d ' ')" ] && ok "ADR-005: toda policy de anon es SELECT (el visitante no escribe)" \
-  || no "policy de ESCRITURA para anon: $ANONWRITE"
+# ── S4 movio la lista, no el invariante ─────────────────────────────────────────────────────
+# Esta regla nacio como "toda policy de anon es SELECT" y fue cierta hasta `drizzle/
+# 0004_storefront_wa_click_insert.sql`, que le da a `anon` la unica escritura sin autenticar del
+# producto: el beacon del click de WhatsApp. Desde ese commit el gate quedo rojo y nadie se
+# entero, porque `ci.yml` nunca corrio (el remoto no tiene ramas). Tercer gate de la misma
+# familia en el mismo dia, y el segundo roto por el mismo commit.
+#
+# La reaccion comoda seria borrar la regla, o aflojarla a "casi todas son de lectura". Las dos la
+# convierten en una descripcion del estado actual, y la SEGUNDA escritura sin autenticar entraria
+# sin despertar a nadie. Asi que la lista se fija por nombre y se compara por IGUALDAD, no por
+# subconjunto: una escritura nueva rompe el gate, y BORRAR el beacon tambien lo rompe. El numero
+# de excepciones lo escribe una persona o no existe.
+#
+# `UPDATE`/`DELETE`/`ALL` para `anon` no tienen lista: son FAIL siempre. La excepcion es de INSERT
+# y de una tabla, y ademas tiene que estar acotada por `storefront_tenant_id()` — un INSERT de
+# `anon` sin esa condicion es un visitante escribiendo en el tenant de otro.
+#
+# La auditoria de referencia es R6c de `tests/rls-cross-tenant.test.ts` (`qa-agent`), que fija
+# ademas los GRANT por COLUMNA: `anon` inserta `tenant_id`, `listing_id` y `source`, nunca `id`
+# ni `created_at`. Este gate es el filo grueso, el que corre sin runner de tests.
+ANONWRITE_OK='wa_click_events.wa_click_events_storefront_insert (INSERT)'
+ANONWRITE=$(psql -d "$DB" -tAc "select tablename||'.'||policyname||' ('||cmd||')' from pg_policies where schemaname='public' and 'anon' = any(roles) and cmd <> 'SELECT' order by 1" 2>/dev/null | tr '\n' ' ' | sed 's/ *$//')
+[ "$ANONWRITE" = "$ANONWRITE_OK" ] && ok "ADR-005: la UNICA escritura de anon es el beacon del click de WA (S4)" \
+  || no "las escrituras de anon no son las declaradas: [$ANONWRITE] != [$ANONWRITE_OK]"
+ANONUD=$(psql -d "$DB" -tAc "select tablename||'.'||policyname||' ('||cmd||')' from pg_policies where schemaname='public' and 'anon' = any(roles) and cmd in ('UPDATE','DELETE','ALL')" 2>/dev/null | tr '\n' ' ')
+[ -z "$(echo "$ANONUD" | tr -d ' ')" ] && ok "ADR-005: anon no tiene UPDATE/DELETE/ALL, y no hay lista que lo permita" \
+  || no "anon puede modificar o borrar: $ANONUD"
+ANONSCOPE=$(psql -d "$DB" -tAc "select count(*) from pg_policies where schemaname='public' and 'anon' = any(roles) and cmd = 'INSERT' and coalesce(with_check,'') not like '%storefront_tenant_id%'" 2>/dev/null)
+[ "$ANONSCOPE" = "0" ] && ok "ADR-005: todo INSERT de anon esta acotado por storefront_tenant_id()" \
+  || no "hay $ANONSCOPE INSERT de anon sin storefront_tenant_id() en el WITH CHECK"
 OTHERROLE=$(psql -d "$DB" -tAc "select tablename||'.'||policyname||' -> '||roles::text from pg_policies where schemaname='public' and not ('authenticated' = any(roles) or 'anon' = any(roles))" 2>/dev/null | tr '\n' ' ')
 [ -z "$(echo "$OTHERROLE" | tr -d ' ')" ] && ok "ADR-005: toda policy es de authenticated o de anon, de nadie mas" \
   || no "policy con un rol inesperado: $OTHERROLE"
