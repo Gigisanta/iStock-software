@@ -91,6 +91,28 @@ importers:
         specifier: ^5.9.3
         version: 5.9.3
 
+  packages/ai:
+    dependencies:
+      '@istock/domain':
+        specifier: workspace:*
+        version: link:../domain
+      zod:
+        specifier: ^4.1.13
+        version: 4.4.3
+    devDependencies:
+      '@types/node':
+        specifier: ^22.18.8
+        version: 22.20.1
+      tsx:
+        specifier: ^4.20.6
+        version: 4.23.12
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.4
+        version: 3.2.7(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.23.12)
+
   packages/db:
     dependencies:
       '@istock/domain':
