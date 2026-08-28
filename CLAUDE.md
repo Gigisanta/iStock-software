@@ -25,6 +25,12 @@ Diseña, orquesta, verifica y re-ejecuta los comandos de aceptación.
 ### Reglas duras
 
 1. **Un writer por archivo/directorio a la vez.** Ver tabla de ownership (§4).
+   **Precisión, LEAD, 2026-08-28:** el tope cuenta **writers en paralelo sobre un directorio**,
+   no ítems adentro de un encargo. Un encargo con varios ítems al mismo agente es **una** entrada
+   en `doing`. Lo levantó `docs-keeper` al encontrar `packages/ai` con dos filas en `doing`
+   (`S8.2` y `T50`) y registrarlo sin arbitrarlo, que es lo correcto de su parte. **Se resolvió
+   haciendo cierta la regla, no aflojándola:** `S8.2` no tenía a nadie encima, así que se sumó
+   al encargo abierto del mismo writer. No es una excepción y no sienta una.
 2. Nada es `done` sin (a) artefacto en `/docs` y (b) comando de aceptación que **el LEAD re-ejecuta**.
 3. **Dos fallos en la misma slice → STOP y re-plan.** No hay tercer intento a ciegas.
 4. Slice = spec en `SLICE_BOARD.md` → test → impl → typecheck/lint/test → adversary → commit.
