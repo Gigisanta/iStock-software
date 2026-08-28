@@ -273,6 +273,17 @@ dice la excepción declarada más abajo. `INDEX.md` decía `architect` y el cont
 decía que las decisiones las escribe el `architect`: eran tres fuentes y dos respuestas. **Manda esta
 tabla.** El LEAD sigue ratificando los ADRs nuevos; escribirlos no es lo mismo que decidirlos.
 
+**Generalizado por el LEAD el 2026-08-28, porque `architect` no era el único.** `docs-keeper` no
+pudo asignar dueño y lo reportó: `.claude/agents/product-scribe.md` reclamaba `docs/PRODUCT.md` y
+`docs/DOMAIN.md`, que esta tabla le da a `docs-keeper`. Mismo patrón, otro archivo. La regla que
+cierra la clase entera, en vez de este caso: **un contrato de agente puede acotar lo que su dueño
+escribe, nunca ampliarlo.** Si `.claude/agents/*.md` y §4 discrepan sobre quién es dueño de un path,
+**gana §4** y el contrato está derogado en esa línea hasta que el LEAD lo edite. El motivo no es de
+autoridad: dos archivos que se creen dueños del mismo path producen dos writers, y "un writer por
+directorio" es la primitiva de la que cuelga todo lo demás. `product-scribe` queda dormido igual
+que `architect`; si el LEAD lo despierta, el encargo nombra el archivo y `docs-keeper` no lo toca
+mientras dure.
+
 **Corregido por el LEAD en FASE 2.** La fila anterior daba **todo** `**/*.test.ts` a `qa-agent`, y
 eso contradecía el contrato de cada agente de paquete, que exige un test por export público. Regla
 vigente: **el test unitario de un paquete es del owner del paquete** — nace y muere con el código
