@@ -133,7 +133,7 @@ cuyo gate no pudo correr: las cinco quedan `todo` hasta que el gate corra **ente
 |---|---|---|---|---|
 | S1 | host → hello storefront | doing | `storefront-agent` | `{slug}.local` resuelve al tenant; slug inexistente → página legible con `noindex` (**ADR-011**, el gate viejo "404 real en la primera request" era inalcanzable); se verifica con `bash scripts/accept-s1.sh` |
 | S2 | listing unit + fotos R2 con variantes | todo | `media-agent` → `app-agent` | 3 variantes generadas; `card` ≤150KB medido |
-| S3 | grilla + ficha mínima | **blocked** | `storefront-agent` | `bash scripts/accept-s3.sh`: los **15 campos** de `CLAUDE.md` §1; cero campos prohibidos en el HTML; el byte medido es el que **pide el browser** (P3) |
+| S3 | grilla + ficha mínima | **done** | `storefront-agent` | `bash scripts/accept-s3.sh`: los **15 campos** de `CLAUDE.md` §1; cero campos prohibidos en el HTML; el byte medido es el que **pide el browser** (P3). **Re-ejecutado por el LEAD el 2026-08-28: 50 PASS · 0 FAIL · `S3: ACEPTADA`** |
 | S4 | botón `wa.me` + tracking de eventos | todo | `domain-agent` → `storefront-agent` | texto exacto byte a byte; evento registrado sin PII |
 | S5 | FX → precio en ARS | todo | `domain-agent` → `app-agent` | TC del dueño; redondeo testeado; ARS visible en ficha |
 | S6 | reserva + cron de expiración | todo | `app-agent` | reserva 30–120min; cron libera; vidriera revalida |
@@ -158,13 +158,41 @@ cuyo gate no pudo correr: las cinco quedan `todo` hasta que el gate corra **ente
 > **El aviso de drift de FASE 2 se cerró.** D1–D4 pasaron a `done` con la re-ejecución registrada
 > arriba, en "Evidencia de la re-ejecución". FASE 3 y S1/S2 no: no se pudieron correr.
 
-> **S3 pasa a `blocked`, no a `done` — 2026-08-28.** `storefront-agent` entregó la implementación
-> (grilla, ficha, `srcSet` + `sizes` obligatorios juntos en
-> `apps/web/app/(storefront)/_components/storefront-photo.tsx`) y dejó **cuatro traspasos** a otros
-> owners, que están abajo como filas propias: **S3.1** y **S3.2** (`app-agent`), **T8** y **T3**
-> (`qa-agent`). El bloqueo es **T8**: `scripts/accept-s3.sh` exige dos líneas `MEDIDO` que hoy
-> ningún spec emite, así que el gate **nace en rojo por ausencia de medición** — que es su diseño
-> (P3). **`done` lo fija la corrida del gate por el LEAD, no la entrega del código.**
+> **S3 ACEPTADA — 2026-08-28. El LEAD re-ejecutó `bash scripts/accept-s3.sh` entero: 50 PASS, 0
+> FAIL, `S3: ACEPTADA`.** Con eso pasan a `done` **S3**, **S3.1**, **S3.2** y **T8**. Lo que destrabó
+> el gate fueron las dos mediciones que nunca habían corrido de verdad, y salieron con número:
+>
+> ```
+> MEDIDO s3 imagen  · viewport=390x844 dpr=3 · elegido=…5d49904070bcac12dc5fd1801d0f4ed0.webp#variante=card
+>                   · transferSize=51016B · techo=204800B
+> MEDIDO s3 db-hits · ruta=/p/qae2e-iphonemtcm352f42 · primera=9 · cacheada=0
+> ```
+>
+> `transferSize=51016B` contra un techo de 204800 B es el byte que **el browser eligió** en un
+> viewport de teléfono, que es lo que P3 exigía medir; `cacheada=0` es el objetivo del 95% de hits
+> sin Postgres (`CLAUDE.md` §3) verificado sobre una ficha real y no sobre un 404 servido rápido.
+>
+> Commits que llevaron el gate de rojo a verde, en orden:
+> `9837ee7` (M7 no podía correr: el teardown mataba el server tres líneas antes) ·
+> `50173df` (M3/M4 salía rojo por el `margin` de la página de error de Next, no por la vidriera) ·
+> `ba8536c` (la ficha inexistente salía en blanco en la primera request — ADR-011 un nivel más
+> abajo) · `09c9bc3` (T8: las dos líneas `MEDIDO`).
+>
+> **Lo que S3 dejó abierto y sigue abierto:** **T3** (`qa-agent`, la mudanza del test de RLS) y
+> **S3.3**, nueva — bajo un **tenant** inexistente la ficha contesta el texto del *listing-miss*.
+>
+> **Y una precisión sobre el gate, para que el board no diga más de lo que el gate mide**
+> (`docs-keeper`, verificado línea por línea contra `scripts/accept-s3.sh`): la columna de la
+> izquierda dice *"los 15 campos"* y **M3 asegura 14**. El que falta es el **botón `wa.me`**, que es
+> el 15° de `CLAUDE.md` §1 y el que factura: no hay ninguna aserción sobre él en el gate — la única
+> mención (`:231`) es un mensaje de error, y lo más cerca que llega es exigir que la grilla
+> **linkee** a la ficha. El texto del mensaje sí está fijado byte a byte en unit
+> (`packages/domain/src/wa.test.ts`), pero **nadie verifica que la página lo renderice**. Es la fila
+> **E3** de `docs/TEST_MATRIX.md`. **`scripts/**` es del LEAD (§4): esto se reporta, no se edita.**
+>
+> El diagnóstico de por qué esta slice estuvo `blocked` se conserva abajo, en las filas S3.1, S3.2
+> y T8: **`done` lo fija la corrida del gate por el LEAD, no la entrega del código**, y estas tres
+> filas estuvieron `todo` con el código en `main` durante un día entero por esa regla.
 
 ---
 
@@ -172,10 +200,13 @@ cuyo gate no pudo correr: las cinco quedan `todo` hasta que el gate corra **ente
 
 > Todo lo de esta sección apareció **haciendo** S1 y S2, o **corriendo sus gates**. No estaba en el
 > orden fijo de FASE 4 y no lo reordena: son entradas propias con su propio dueño y su propio
-> bloqueo. **T3**, **T4** y **T7** no son deuda de producto: son deuda **de los instrumentos** —
-> quién es dueño del test que audita las policies, por qué los cuatro gates no comparten un helper, y
-> un parser de tests que trunca en silencio. **P1**, **P2** y **P3** están **cerradas** (2026-08-28)
-> y eran las tres condiciones previas a S3.
+> bloqueo. **T3**, **T7**, **T13** y **T14** no son deuda de producto: son deuda **de los
+> instrumentos** — quién es dueño del test que audita las policies, un parser de tests que trunca en
+> silencio, una medición que no se puede tomar, y prohibiciones que no chequea nadie.
+> **Cerradas al 2026-08-28:** **P1**, **P2** y **P3** (las tres condiciones previas a S3), **T9**,
+> **T11**, **T4** (`scripts/_lib.sh` + su test de polaridad) y **T10** (los 8 comandos de aceptación
+> que no filtraban); y con la corrida de `accept-s3.sh` del LEAD, **S3.1**, **S3.2** y **T8**.
+> **Abierta el 2026-08-28 cerrando S3: S3.3** — el tenant-miss de la ficha.
 
 | id | título | estado | owner | bloqueo | gate de aceptación | artefacto |
 |---|---|---|---|---|---|---|
@@ -185,20 +216,41 @@ cuyo gate no pudo correr: las cinco quedan `todo` hasta que el gate corra **ente
 | T1 | rate limiting en el edge: las 2 reglas de Vercel Firewall | todo | **LEAD** (`vercel.json`, §4) | — | 2 reglas activas + prueba de que disparan; **cero** contador en Postgres sobre la vidriera | falta definir (no hay `vercel.json` hoy) |
 | T2 | guard estático de "query sin filtro de tenant" | todo | **LEAD** (`scripts/**`, §4) | — | el guard falla sobre una query sin `tenant_id` **y** pasa con la excepción declarada | `scripts/guard-leaks.sh` §16 |
 | T3 | mudar el test de RLS cruzado a `tests/` | todo | `qa-agent` | agendado **después** de que cierre S2 | los 59 `it()` corren desde `tests/` contra Postgres real, verdes, sin perder ninguno; `packages/db/src/rls-cross-tenant.test.ts` deja de existir; **y en la misma mudanza se borra el encabezado que se declara `db-agent`**, derogado por la regla de desempate de `CLAUDE.md` §4 | `tests/` |
-| T4 | extraer los helpers de los gates a `scripts/_lib.sh` | todo | **LEAD** | — | un solo `none()` en el repo; los **4** gates (`accept-fase2`, `accept-fase3`, `accept-s1`, `accept-s2`) re-corridos y con el mismo veredicto que antes | `scripts/_lib.sh` |
+| T4 | extraer los helpers de los gates a `scripts/_lib.sh` | **done** | **LEAD** | — | un solo juego de helpers en el repo; los gates que lo importan re-corridos con el mismo veredicto **y** el helper probado en las dos polaridades, en CI | `scripts/_lib.sh` + `scripts/_lib.test.sh` (`dc1d854`) |
 | S2.2 | `collectOrphanObjects` existe y no lo llama nadie | todo | `media-agent` (función) + `app-agent` (comentarios) | — | se elige **(a)** o **(b)** por escrito: si (a), el job corre y borra un huérfano sembrado; si (b), **ningún** comentario del repo la nombra en presente | `packages/media/src/unlink.ts`, `apps/web/app/(app)/_lib/listings/*.ts` |
 | S2.3 | el `<input type="file">` conserva la foto después de subirla | todo | `app-agent` | — | tras un alta exitosa el input queda vacío; `PhotoActionState` distingue inicial de éxito | `apps/web/app/(app)/app/(panel)/stock/[id]/fotos/*` |
-| P3 | el gate de S3 mide el byte que el browser **pide**, no el que el pipeline generó | **done** (el gate; S3 no) | **LEAD** escribió el gate · `storefront-agent` implementa S3 | — | el gate existe, exige los 15 campos y **nace en rojo a propósito** — ver abajo | `scripts/accept-s3.sh` (`1406c6f`, `d9d7719`) |
+| P3 | el gate de S3 mide el byte que el browser **pide**, no el que el pipeline generó | **done** | **LEAD** escribió el gate · `storefront-agent` implementó S3 | — | el gate existe, **nació en rojo a propósito** y el 2026-08-28 pasó a verde midiendo el byte que el browser eligió (`51016B`) — ver abajo | `scripts/accept-s3.sh` (`1406c6f`, `d9d7719`, `20fb7ac`) |
 | S2.4 | el docblock de `page.tsx:69-72` afirma un 404 que la medición desmiente | todo | `app-agent` | — | el comentario describe el comportamiento **medido** (ADR-014, "Corrección medida"); alcance = el comentario, no la ruta | `apps/web/app/(app)/app/(panel)/stock/[id]/fotos/page.tsx` |
 | T7 | `readMatchers()` trunca el matcher en el primer `]` | todo | `qa-agent` | — | **nada roto hoy** — trampa conocida, ver abajo | `tests/proxy-matcher-no-deja-la-vidriera-sin-vigilar.test.ts:144` |
-| S3.1 | un tenant real nace sin `fx_settings` y sin `locations` | todo | `app-agent` | — | **severidad alta** — alta o onboarding siembran un `fx_settings` y ≥ 1 punto de retiro; un tenant nuevo que carga 3 equipos ve grilla con precio y retiro, no vacía | `apps/web/app/(app)/_lib/tenants/create-tenant.ts` |
-| S3.2 | publicar un equipo purga el catálogo entero del tenant | todo | `app-agent` | — | al mutar una unidad se emite además `updateTag(listingTag(id))`; los dos tags de tenant dejan de ser la única invalidación | `apps/web/app/(app)/_lib/tenants/storefront-cache.ts` |
-| T8 | los dos specs que miden S3 no emiten ninguna medición | todo | `qa-agent` | bloquea **S3** | las dos líneas `MEDIDO` exactas (ver abajo); **la de imagen se mide sobre la grilla**, no sobre la ficha | `e2e/` |
+| S3.1 | un tenant real nace sin `fx_settings` y sin `locations` | **done** | `app-agent` | — | **severidad alta** — alta o onboarding siembran un `fx_settings` y ≥ 1 punto de retiro; un tenant nuevo que carga 3 equipos ve grilla con precio y retiro, no vacía. **Cerrada por la corrida de `accept-s3.sh` del LEAD (2026-08-28, 50 PASS/0 FAIL):** M3 exige el punto de retiro, el horario y el ARS con la forma de `formatArs`, y los tres salen de las filas sembradas | `apps/web/app/(app)/_lib/tenants/create-tenant.ts` (`eaccfee`) |
+| S3.2 | publicar un equipo purga el catálogo entero del tenant | **done** | `app-agent` | — | al mutar una unidad se emite además `updateTag(listingTag(id))`; los dos tags de tenant dejan de ser la única invalidación. **Cerrada por la misma corrida:** `MEDIDO s3 db-hits · primera=9 · cacheada=0` | `apps/web/app/(app)/_lib/tenants/storefront-cache.ts` (`eaccfee`) |
+| S3.3 | bajo un **tenant** inexistente la ficha dice que el equipo se vendió | todo | `storefront-agent` | — | una ficha bajo un slug de tenant que no existe contesta el *tenant-miss* (`STOREFRONT_MISS_TITLE`, "No hay ninguna vidriera en esta dirección"), no el *listing-miss* ("Este equipo ya no está publicado"); el `null` del tenant se sigue cacheando con `STOREFRONT_MISS_LIFE` | `apps/web/app/(storefront)/s/[slug]/p/[listing]/page.tsx` |
+| T8 | los dos specs que miden S3 no emiten ninguna medición | **done** | `qa-agent` | — | las dos líneas `MEDIDO` exactas (ver abajo); **la de imagen se mide sobre la grilla**, no sobre la ficha. **Emitidas y verificadas por el LEAD el 2026-08-28** (`transferSize=51016B` / `primera=9 · cacheada=0`) | `e2e/s3-la-grilla-en-un-telefono-no-baja-la-foto-grande.spec.ts`, `e2e/s3-la-ficha-cacheada-no-le-pega-a-postgres.spec.ts` (`09c9bc3`) |
 | T9 | forma de `listings.slug` en `domain` + en el motor | **done** | `domain-agent` + `db-agent` | resto en vuelo con `storefront-agent` | ver abajo | `packages/domain/src/slug.ts`, `packages/db/drizzle/0003_listing_slug_format.sql` |
-| T10 | el comando de aceptación de `storefront-agent` no resuelve | todo | **LEAD** (`.claude/**`, §4) | — | el comando escrito en el contrato **corre**; hoy no existe ni el filtro ni el paquete que nombra | `.claude/agents/storefront-agent.md:40` |
+| T10 | ocho comandos de aceptación corrían la suite entera creyendo filtrar | **done** | **LEAD** (`.claude/**`, §4) | — | el comando de cada contrato **filtra de verdad**, verificado en las dos polaridades (filtra, y falla con exit 1 ante un patrón que no matchea) | 4 `.claude/agents/*.md` + 4 `.claude/skills/*/SKILL.md` + `scripts/accept-fase3.sh` (`0d647c6`) |
 | T11 | las reglas de R2 de `CLAUDE.md` §2 no tenían gate | **done** | **LEAD** | — | `scripts/guard-r2.sh` (`985c369`) — ver la nota de método, regla R5 | `scripts/guard-r2.sh` |
 | T5 | concurrencia real del techo de 8 fotos, contra Postgres real | todo | `qa-agent` | comparte harness con **T3** | 7 fotos + dos `addUnitPhoto` en paralelo → exactamente 8 fotos y un `ok:false` de techo | `tests/` |
 | T6 | `SELECT … FOR UPDATE` bajo RLS: verificación pendiente, no bug | todo | `qa-agent` | corre con **T5** | el `for('update')` devuelve la fila con rol `authenticated` y el claim del tenant, sin `42501` | `tests/` |
+| T12 | editar el TC y los puntos de retiro después del alta **no existe** | todo | `app-agent` | — | el dueño cambia el TC y edita/agrega un punto de retiro desde el panel **sin recrear el negocio**, y la mutación arrastra la invalidación de la vidriera | `apps/web/app/(app)/app/(panel)/ajustes/` |
+| T13 | `/_media` no manda `Timing-Allow-Origin` | todo | `app-agent` | — | la Performance API reporta el byte real del recurso cross-origin; el spec de S3 compara sus **dos** cuentas en vez de descartar una | `apps/web/app/(app)/%5Fmedia/[...key]/route.ts` |
+| T14 | dos prohibiciones de `CLAUDE.md` §2 que ningún gate afirma | todo | `qa-agent` (ver desempate abajo) | — | cada una tiene un chequeo **que se vio fallar** sobre una violación sembrada, y corre **en cada push**, no dentro de un `accept-*` | `tests/` (o `scripts/**`, y entonces es del **LEAD**) |
+
+> **Anti-drift, 2026-08-28 — el caso completo, de punta a punta, porque es el que enseña la regla.**
+> Durante un día **S3.1 y S3.2 estuvieron `todo` con el código ya en `main`** (`eaccfee`). Las filas
+> **no se movieron** entonces: el estado lo fija la corrida del gate por el LEAD, no la entrega del
+> código (regla 5 de este board). Se movieron a `done` recién con la corrida verde del 2026-08-28,
+> y en el medio esa corrida encontró **cuatro defectos reales** (`9837ee7`, `50173df`, `ba8536c`,
+> `09c9bc3`) que la entrega del código no había mostrado. Eso es lo que compra la regla.
+> Lo que sí se corrigió el día que las filas seguían `todo` fue la **descripción**, porque decía algo
+> que el código ya no hacía:
+> - **S3.1** — `create-tenant.ts` ya siembra `fx_settings` (`:218`) y una fila de `locations`
+>   (`:226`) en la **misma** transacción que `tenants` + `memberships` (`eaccfee`).
+> - **S3.2** — `storefront-cache.ts` ya tiene tres puntos de entrada según el alcance real de la
+>   mutación (`invalidateStorefront` 2 tags · `invalidateStorefrontUnit` 3 · `invalidateListing` 1),
+>   y los tags se **importan** de `(storefront)/_lib/cache-tags` en vez de redefinirse.
+>
+> Lo que faltaba para las dos era lo mismo —**la corrida verde de `bash scripts/accept-s3.sh`**— y
+> llegó el 2026-08-28. Las dos son `done`.
 
 ### S2.1 · upload directo a R2 por URL prefirmada  ·  **blocked por B1**
 
@@ -329,11 +381,18 @@ proyecto Supabase para todos los tenants la policy **es** el límite de segurida
 atrás. Es exactamente la clase de test que `CLAUDE.md` §4 pone del lado de `qa-agent`: *"lo que
 cruza un límite"*.
 
+**Re-verificado el 2026-08-28 y sigue vigente tal cual:** `packages/db/src/rls-cross-tenant.test.ts`
+existe, tiene **59 `it()`**, y su encabezado (`:3-6`) sigue declarando `Owner: db-agent` citando la
+mitad de arriba de la regla de §4 — la mitad que el desempate de FASE 4 **derogó** para este archivo.
+
+**Confirmada abierta el 2026-08-28**, después de la aceptación de S3 (`docs-keeper`): el archivo
+sigue en `packages/db/src/`, `tests/` contiene tres specs y ninguno es éste.
+
 **Se agenda después de que cierre S2.** Mudar 59 tests con una slice en vuelo es riesgo sin apuro.
 Al mudarlo hay que corregir también el encabezado del archivo, que hoy argumenta lo contrario: si se
 mueve el código y queda el comentario, el próximo agente lee la versión vieja de la decisión.
 
-### T4 · los helpers de los gates están duplicados y ya divergieron  ·  deuda de los gates
+### T4 · los helpers de los gates estaban duplicados  ·  **CERRADA el 2026-08-28** (`dc1d854`)
 
 Corriendo el gate de S2 el LEAD encontró **tres defectos en sus propios scripts**, los tres ya
 corregidos en `scripts/accept-s2.sh` y `scripts/accept-s1.sh`:
@@ -354,13 +413,42 @@ corregidos en `scripts/accept-s2.sh` y `scripts/accept-s1.sh`:
 `accept-s2.sh`, `accept-fase3.sh`) **y las copias ya divergieron**. Medido el 2026-08-27: `s1` y
 `fase3` son byte a byte idénticas, `s2` es una tercera versión. Los helpers chicos (`sec`, `ok`,
 `no`) están triplicados idénticos, y `accept-fase2.sh` corre con un juego propio y distinto
-(`ok`/`bad`/`head`/`strip_comments`), sin `none()`.
+(`ok`/`bad`/`head`/`strip_comments`), sin `none()`. *(Ese `head` propio resultó ser el motivo real
+de la migración; ver el punto 1 de más abajo.)*
 
-Hay que extraer los helpers a un **`scripts/_lib.sh` único**. Owner **LEAD** (`scripts/**` es suyo
-por §4, y un gate no puede ser del mismo writer que el código que audita). **Requiere re-correr los
-cuatro gates** para probar que no se rompió ninguno — por eso no se hizo en el momento en que se
-encontró el bug: tocar los cuatro auditores a la vez, con el `next build` roto, es cambiar el
-instrumento en medio de la medición.
+**Cómo cerró.** `scripts/_lib.sh` es hoy el único lugar donde viven `sec` / `ok` / `no` / `inf`,
+`_buscar`, `_veredicto`, `none` y `noneraw`, y **seis** gates lo importan con `. scripts/_lib.sh`:
+`accept-s1.sh`, `accept-s2.sh`, `accept-s3.sh`, `accept-fase2.sh`, `accept-fase3.sh` y
+`guard-grants.sh` (más `_lib.test.sh`, que lo prueba). La librería además **se niega a ejecutarse
+directo** (`_lib.sh:31`): es una librería, no un script.
+
+**Dos precisiones sobre lo que este board pedía, porque el gate escrito arriba no era el que se
+cumplió.** Decía *"los **4** gates (`accept-fase2`, `accept-fase3`, `accept-s1`, `accept-s2`)"*:
+
+1. **`accept-fase2.sh` era la excepción anotada, y la excepción se cerró el 2026-08-28** (`0bcb281`,
+   decisión del LEAD). **El motivo anotado acá era el equivocado.** Decía que `bad()` y
+   `strip_comments()` no tenían equivalente: `bad()` es `no()` con otro nombre y nada más, y
+   `strip_comments()` lo usa un solo gate, así que se quedó local — no hay dos copias que puedan
+   divergir. Lo que decidió la migración fue **un tercer helper que no estaba en la lista: el gate
+   definía `head()`, que pisa el comando `head`.** Mientras corrió autónomo fue latente, porque
+   nunca lo invocaba. Al hacer `source` de `_lib.sh` dejaba de serlo: **`_veredicto()` termina en
+   `| head -6`** (`_lib.sh:64`) y bash resuelve funciones **en el momento de la llamada**, así que
+   ese `head -6` habría entrado a la función del gate —un pipe a `printf '%s' "$1"` que se come la
+   salida y devuelve 0— y la regla habría seguido imprimiendo `FAIL` **sin listar un solo hallazgo**.
+   Se renombró a `sec()`, como en los otros cinco gates, y el problema deja de existir.
+   **La lección, que es la que se guarda:** un helper con nombre de comando de `coreutils` es una
+   bomba con temporizador puesto en *"el día que este archivo comparta scope con otro"*.
+2. **Se reconectaron seis y no cuatro**, porque en el medio nacieron `accept-s3.sh` (P3) y
+   `guard-grants.sh`, y los dos arrancaron importando en vez de copiar.
+
+**Lo que compra el riesgo de compartir.** El argumento en contra de centralizar era real —*un gate
+que importa de otro gate se rompe de a dos*, y si `none()` se rompe **todos** los gates se vuelven
+vacuamente verdes a la vez. La contrapartida es `scripts/_lib.test.sh`: **10 aserciones**, cada
+helper **en las dos polaridades** (`none` limpio → PASS / con aguja → FAIL / con la aguja adentro de
+un comentario → PASS; `noneraw` al revés), más el `git check-ignore` (artefacto de build salteado,
+código sin commitear auditado igual) y el contador `fail`. Corre **en CI**, en su propio step
+(`.github/workflows/ci.yml`, *"polaridad de los helpers de los gates"*), antes que los guards que
+dependen de él.
 
 ### Regla de método de los gates — **un gate que nunca se vio fallar no es un gate**
 
@@ -385,6 +473,30 @@ Los dos comparten la moraleja con **T4**: los gates son código y se auditan com
 operativas": la regla R5 de `guard-r2.sh` se satisfacía con un `import` (verificaba la **presencia
 del símbolo**, no la **invocación**), y `scripts/guard-artifacts.sh` sin argumentos daba
 `GUARD: PASS` habiendo chequeado cero archivos. Los dos ya fallan. **T11** registra el gate nuevo.
+
+### El harness de CI también estaba verde por vacío  ·  corregido el 2026-08-28 (`fe4e5dc`)
+
+Tres defectos en `.github/workflows/ci.yml`, la misma enfermedad de la sección de arriba pero un
+nivel más afuera: no era un gate que no podía fallar, era **el job que corre los gates**.
+
+1. **El job `e2e` venía verde sin ejecutar un solo test.** CI corría
+   `pnpm --filter @istock/web e2e`. El script existía en `apps/web/package.json`, así que el comando
+   **resolvía**; pero `apps/web` no tiene `@playwright/test` ni `playwright.config.ts` — el único
+   config del repo es `e2e/playwright.config.ts`. Medido: `Total: 0 tests in 0 files`, **exit 0**.
+   Corregido a `@istock/e2e` en las dos líneas (install de browsers y corrida), **y se borró el
+   script `e2e` de `apps/web/package.json`**: era lo que hacía que el comando mal escrito resolviera
+   en vez de fallar. Ahora falla con *"None of the selected packages has a `e2e` script"*.
+2. **`scripts/guard-routes.sh` no corría en ningún push.** Ahora corre **dentro del job `e2e`**, que
+   es el único que tiene un `.next` — lo buildea el `webServer` de Playwright, y el guard no
+   buildea: lee ese manifest. Estaba fuera de CI, y por eso había quedado **rojo tres commits** sin
+   que nadie lo notara.
+3. **El artifact de fallas subía cero bytes.** Apuntaba a `apps/web/playwright-report/`, que no
+   existe nunca: el config no tiene reporter `html`. Ahora sube `e2e/test-results/`, que es donde
+   caen los traces de `trace: 'retain-on-failure'`.
+
+El patrón de los tres es el mismo y conviene decirlo una vez: **un comando que resuelve no es un
+comando que hace lo que dice.** Es literalmente el defecto de **T10**, en otro archivo y el mismo
+día.
 
 ### S2.4 · el docblock de `page.tsx` afirma un 404 que la medición desmiente  ·  deuda de S2
 
@@ -556,10 +668,26 @@ Arreglarlo **no es un fix de una línea**, y por eso abre su propia slice en vez
 
 Owner: **`app-agent`**.
 
-### S3.1 · un tenant real nace sin FX y sin punto de retiro  ·  traspaso de S3  ·  **severidad alta**
+### S3.1 · un tenant real nace sin FX y sin punto de retiro  ·  **CERRADA el 2026-08-28**
 
-`create-tenant.ts` inserta **`tenants` + `memberships` y nada más** (`:112`, `:127`). No siembra
-`fx_settings` ni una fila de `locations`. Consecuencia directa: el dueño que se registra hoy carga
+> **`done`.** El LEAD re-ejecutó `bash scripts/accept-s3.sh` (50 PASS, 0 FAIL). Lo que lo prueba no
+> es que el `insert` esté escrito sino que M3 exige, contra el HTML servido, el punto de retiro
+> (`Local Neuquén centro`), su horario (`lun a vie de 10 a 18`), el segundo punto y un ARS con la
+> forma de `formatArs` terminado en `000` — y esos cuatro datos sólo existen si `fx_settings` y
+> `locations` están sembrados.
+>
+> **Lo que el código ya hacía desde `eaccfee` (`docs-keeper`, verificado contra el repo).**
+> `create-tenant.ts` inserta hoy `tenants` + `memberships` + `fx_settings` (`:218`) + un punto de
+> retiro (`:226`) en una sola transacción, el alta pide el TC en ARS/USD, y `parse-fx.ts` delega en
+> `fxRateFromDecimal` de `@istock/domain` en vez de re-implementar la aritmética de plata. El punto
+> de retiro sembrado es un placeholder honesto (*"A coordinar por WhatsApp"*, `city` en `null` a
+> propósito: no se le inventa una dirección al dueño), y **por eso existe T12** — sin pantalla de
+> edición, ese placeholder es permanente. Se deja abajo el diagnóstico original, que es el que
+> justifica la severidad y el gate.
+
+**Diagnóstico original (cierto hasta `eaccfee`).** `create-tenant.ts` insertaba **`tenants` +
+`memberships` y nada más**. No sembraba `fx_settings` ni una fila de `locations`. Consecuencia
+directa: el dueño que se registra hoy carga
 stock y la vidriera le devuelve **grilla vacía** — no hay TC para calcular el ARS ni punto de retiro
 que mostrar, y los dos son campos obligatorios de la ficha mínima (`CLAUDE.md` §1).
 
@@ -572,11 +700,22 @@ el primer usuario real.
 Dónde va —alta o onboarding— lo decide `app-agent`. Lo que este board exige es el efecto, no el
 lugar.
 
-### S3.2 · publicar un equipo purga el catálogo entero del tenant  ·  traspaso de S3
+### S3.2 · publicar un equipo purga el catálogo entero del tenant  ·  **CERRADA el 2026-08-28**
 
-`invalidateStorefront` recorre exactamente `[storefrontTag(slug), tenantConfigTag(slug)]`
-(`storefront-cache.ts:81`). `listingTag(unitId)` **existe** (`(storefront)/_lib/cache-tags.ts:91`) y
-la invalidación del panel no lo emite nunca. O sea que publicar **una** unidad tira la entrada de
+> **`done`.** Cerrada por la misma corrida del LEAD, con la línea
+> `MEDIDO s3 db-hits · ruta=/p/qae2e-iphonemtcm352f42 · primera=9 · cacheada=0`: la ficha cacheada
+> no le manda **ni una sentencia** a Postgres, que es el efecto que esta fila pedía.
+>
+> **Lo que el código ya hacía desde `eaccfee` (`docs-keeper`, verificado contra el repo).**
+> `storefront-cache.ts` expone tres entradas según el alcance de la mutación —`invalidateStorefront`
+> (2 tags de tenant), `invalidateStorefrontUnit` (3) e `invalidateListing` (1)— y `publish-listing`
+> las usa. Los tags se **importan** de `(storefront)/_lib/cache-tags`: una segunda definición del tag
+> es una invalidación que no invalida. Se deja abajo el diagnóstico original, que es el que explica
+> por qué la fila existe.
+
+**Diagnóstico original (cierto hasta `eaccfee`).** `invalidateStorefront` recorría exactamente
+`[storefrontTag(slug), tenantConfigTag(slug)]`. `listingTag(unitId)` **existía**
+(`(storefront)/_lib/cache-tags.ts:91`) y la invalidación del panel no lo emitía nunca. O sea que publicar **una** unidad tira la entrada de
 cache de **toda** la vidriera del tenant, y el siguiente visitante paga el render completo contra
 Postgres.
 
@@ -584,7 +723,19 @@ No es un bug de corrección —la vidriera nunca queda vieja— sino de costo: e
 hits sin Postgres (`CLAUDE.md` §3) pagando de más en cada alta. Falta `updateTag(listingTag(id))` al
 mutar una unidad.
 
-### T8 · el gate de S3 está en rojo por ausencia de medición, y eso es su diseño  ·  bloquea S3
+### T8 · el gate de S3 estaba en rojo por ausencia de medición  ·  **CERRADA el 2026-08-28**
+
+> **`done`.** Las dos líneas se emiten y el LEAD las leyó en su corrida:
+>
+> ```
+> MEDIDO s3 imagen  · viewport=390x844 dpr=3 · elegido=…5d49904070bcac12dc5fd1801d0f4ed0.webp#variante=card
+>                   · transferSize=51016B · techo=204800B
+> MEDIDO s3 db-hits · ruta=/p/qae2e-iphonemtcm352f42 · primera=9 · cacheada=0
+> ```
+>
+> `elegido` termina en `#variante=card` y no en `detail`: el browser de un teléfono bajó **51 KB**
+> donde el presupuesto permitía 200 KiB. Se conserva abajo el porqué del formato, que es lo que
+> impide que la próxima medición se afloje.
 
 `scripts/accept-s3.sh` falla si no encuentra las dos líneas (`:141-146`, `:166-169`), y falla otra
 vez si las encuentra con otro formato (`:152`, `:175`). Los dos specs de `qa-agent` tienen que
@@ -600,6 +751,37 @@ grilla, no sobre la ficha.** El propio gate falla si `elegido` contiene `detail`
 es el defecto que P3 encontró y por el que existe esta medición: un `srcset` sin `sizes` hace que el
 browser pida `detail` (128.570 B) donde el presupuesto dice `card` (50.692 B). Medir la ficha daría
 verde midiendo el byte equivocado.
+
+### S3.3 · la ficha de un tenant que no existe dice que el equipo se vendió  ·  `storefront-agent`
+
+Abierta el 2026-08-28 al cerrar S3. Lo reconoció `storefront-agent` en su entrega y no tenía fila.
+
+**El hecho, verificado contra el repo por `docs-keeper`.** `ListingPage`
+(`apps/web/app/(storefront)/s/[slug]/p/[listing]/page.tsx:138-163`) **nunca llama a
+`getStorefrontTenant`**. Valida la forma de los dos slugs y va directo a
+`getStorefrontListing(slug, listingSlug)`, que devuelve `null` por **dos** motivos distintos —el
+tenant no existe (o no está `active`), o el equipo no está publicado— y la página contesta el mismo
+componente para los dos: `<ListingMiss />`, o sea **"Este equipo ya no está publicado"**
+(`_components/listing-miss.tsx:71`).
+
+**Por qué importa, y no es cosmética.** Al que abre el link de una vidriera que **nunca existió** le
+decimos que *el equipo se vendió*. Le confirmamos un negocio que no está y lo dejamos esperando. La
+respuesta correcta ya existe y está escrita: `STOREFRONT_MISS_TITLE` = **"No hay ninguna vidriera en
+esta dirección"** (`_components/storefront-miss.tsx:72`), que es la página que la home de la vidriera
+sí devuelve para el mismo caso. O sea que hoy **`{inventado}.maat.work/` y
+`{inventado}.maat.work/p/{cualquiera}` contestan cosas distintas sobre el mismo hecho.**
+
+**Alcance:** ~10 líneas. Un `getStorefrontTenant(slug)` antes del loader de la ficha, y `<StorefrontMiss />`
+en la rama `null`. La función ya es `'use cache'` y ya cachea su `null` con `STOREFRONT_MISS_LIFE`
+(`_lib/tenant.ts:71-100`), así que **no agrega una query por pageview**: el bot que escanea
+subdominios sigue pagando una vez y cero después. No toca el camino feliz.
+
+**Gate:** una ficha bajo un slug de tenant inexistente contesta el *tenant-miss* y no el
+*listing-miss*, con el `noindex` de ADR-011 y sin perder el cacheo corto del `null`.
+
+**No es ADR-011 ni su corolario de `ba8536c`.** Aquellos son sobre el **status** y sobre que la
+primera request no salga en blanco. Éste es sobre **cuál de los dos textos** se devuelve, y los dos
+casos ya salen 200 con contenido.
 
 ### T9 · la forma de `listings.slug` · **CERRADA el 2026-08-28**, con un resto en vuelo
 
@@ -620,22 +802,122 @@ porque el slug de tenant es un label DNS (vive en el host) y el de listing vive 
 **Resto en vuelo, no cerrado:** `storefront-agent` tiene que borrar su copia local e importar de
 `domain`. **No se marca cerrado hasta que el LEAD lo confirme.**
 
-### T10 · el contrato de `storefront-agent` manda correr un comando que no existe  ·  **LEAD**
+### T10 · ocho comandos de aceptación corrían la suite entera creyendo filtrar  ·  **CERRADA** (`0d647c6`)
 
-`.claude/agents/storefront-agent.md:40` dice que la aceptación es
-`pnpm --filter web test -- storefront`. **Ese comando no resuelve:** el paquete se llama
-`@istock/web` (`apps/web/package.json`) y no hay ningún filtro de nombre `storefront`. El comando
-correcto para S3 es `bash scripts/accept-s3.sh`.
+**El diagnóstico que tenía este board era peor que el problema, y estaba mal.** Decía que
+`pnpm --filter web test -- storefront` *"no resuelve"*. **Sí resolvía** — `--filter web` matchea por
+directorio— y eso lo empeora: el LEAD lo midió y el comando corría los **13 archivos y 147 tests**
+del paquete, con el patrón perdido. Un patrón inventado (`-- patron-que-no-existe-123`) devolvía los
+mismos 147 en verde. O sea que cuatro contratos de agente y cuatro skills le decían a su owner *"esta
+es tu aceptación"* y le entregaban un verde que **no era sobre su slice**. Un comando que no resuelve
+se nota; uno que aprueba de más, no.
 
-**No está en `docs/**` ni en `apps/web/**`:** el texto vive en `.claude/**`, que es del **LEAD** por
-`CLAUDE.md` §4. `.claude/skills/storefront-ficha/SKILL.md:54` tiene la misma forma
-(`pnpm --filter web test -- storefront-ficha`) y hereda el defecto. `docs-keeper` lo reporta y no lo
-edita.
+Trampa que se llevó puesta al arreglo obvio: la forma que **sí** filtra por script del paquete
+(`run test <patrón>`) hereda el `--passWithNoTests` de `apps/web/package.json`, así que un patrón mal
+escrito imprime *"No test files found"* y sale **0**. La forma que quedó es
+`pnpm --filter @istock/web exec vitest run <patrón>`, verificada en las dos polaridades: filtra a 7
+archivos / 90 tests con `storefront`, y **sale con exit 1** ante un patrón que no matchea nada.
+Lo mismo para los `pnpm e2e -- <patrón>`, que pasaron a
+`pnpm --filter @istock/e2e exec playwright test <patrón>`.
 
-Por qué importa más de lo que parece: un comando de aceptación que no resuelve **falla igual que uno
-que reprueba**, así que el agente que lo corra no puede distinguir "mi código está mal" de "el
-comando está mal" — y el que lo corra y vea el error de pnpm va a asumir lo segundo aunque sea lo
-primero.
+Alcance real: **8 comandos** en 4 contratos de agente (`app`, `billing`, `qa`, `storefront`) y 4
+skills (`isr-revalidate`, `mp-subscriptions`, `storefront-ficha`, `tradein-flow`). El texto vive en
+`.claude/**`, del **LEAD** por `CLAUDE.md` §4; `docs-keeper` lo reportó y no lo editó.
+
+Para S3 el comando de aceptación sigue siendo `bash scripts/accept-s3.sh`, no un filtro de vitest.
+
+**Salió de la misma corrida un segundo defecto, ya corregido:** `accept-fase3.sh` declaraba *"cero
+tests skipeados"* sin leer nada — corría `pnpm -s test`, y con `-s` pnpm silencia a los hijos, así
+que el log quedaba en **cero bytes** y el `grep` de "skipped" sobre un archivo vacío decía "cero
+skipeados" **siempre**, incluso con la suite entera skipeada. Ahora exige **5 resúmenes de vitest**
+antes de opinar sobre skips, y si el log no trae resumen la regla **no midió y falla**.
+
+### T12 · el TC no se puede cambiar después del alta  ·  `app-agent`  ·  es producto, no cosmética
+
+`apps/web/app/(app)/app/(panel)/ajustes/page.tsx` es **sólo lectura**, y no por olvido: no hay ni
+una Server Action en el directorio (cero `'use server'`), y la propia pantalla lo admite con un
+`NotReadyYet` que dice *"Editar estos datos, el tipo de cambio y los puntos de retiro llega en la
+próxima entrega"*. La única mutación de `fx_settings` y de `locations` en todo el repo es el
+`insert` del alta (`create-tenant.ts:218` y `:226`, sembrados por **S3.1**).
+
+**Por qué esto es producto.** El TC lo setea el **dueño**, a mano, por tenant, y **no hay API de
+dólar en el hot path** (`CLAUDE.md` §1): es la decisión de diseño, no una carencia. Pero de ahí se
+sigue lo contrario de lo que hay hoy — si el número lo pone una persona, esa persona lo va a mover,
+y más de una vez por semana. Hoy la única forma de moverlo es **volver a crear el negocio**, que
+además quema el slug: es inmutable después del alta porque ya está pegado en estados de Instagram y
+en chats de WhatsApp que no controlamos.
+
+Lo mismo con los puntos de retiro: el alta siembra **uno solo** y es un placeholder honesto
+(*"A coordinar por WhatsApp"*, `city` en `null` a propósito). El plan Negocio vende **3 puntos de
+retiro** (`CLAUDE.md` §1) y punto de retiro + horario son campos **obligatorios** de la ficha mínima.
+
+Al escribirlo, el borde que ya está resuelto en el repo y no hay que reinventar: cambiar el TC
+cambia lo que se ve en la vidriera, así que la mutación arrastra invalidación — y es
+`invalidateStorefront(slug)` (los 2 tags del tenant), no `invalidateStorefrontUnit`: el TC afecta a
+**todas** las fichas, no a una unidad.
+
+### T13 · `/_media` no manda `Timing-Allow-Origin`  ·  `app-agent`
+
+La ruta responde con `content-type`, `content-length`, `cache-control` inmutable y
+`x-content-type-options` (`route.ts:87-95`), y **nada más**. Las fotos se sirven desde **otro origen**
+que la vidriera (`img.maat.work` contra `{slug}.maat.work`; en local
+`127.0.0.1.nip.io:3100/_media/…` contra `{slug}.127.0.0.1.nip.io:3100`), y para un recurso
+cross-origin el spec de Resource Timing reporta `transferSize`, `encodedBodySize` y
+`decodedBodySize` en **0** salvo que la respuesta traiga `Timing-Allow-Origin`.
+
+**Consecuencia, medida por `qa-agent` y no supuesta: ninguna medición de bytes de imagen puede salir
+de la Performance API.** Ni los e2e —por eso el spec de la grilla mide con `request.sizes()` de
+Playwright (`responseBodySize + responseHeadersSize`), que no depende de CORS— ni RUM en producción
+el día que exista. La evidencia que hoy está en `main` es el propio gate: `accept-s3.sh:144` nombra
+la falta de `Timing-Allow-Origin` en `/_media` como la causa típica del 0 y explica por ahí por qué
+el spec mide con Playwright.
+
+**Lo que hoy hay es un workaround del spec, no una solución.** El gate ya no acepta el 0:
+`scripts/accept-s3.sh:132-145` falla si `transferSize < 1024 B` —*"ausencia de medición no es un
+número chico, es ausencia"*— y su propio `inf` nombra este header como la causa típica (`20fb7ac`).
+O sea que el agujero está **tapado y anotado**, que es distinto de cerrado.
+
+> **Ojo con el path.** El directorio en disco es `apps/web/app/(app)/%5Fmedia/[...key]/`, con el
+> guión bajo **percent-encoded**: un `_` literal haría que Next tratara la carpeta como privada y la
+> ruta no existiría. La URL pública sí es `/_media/…`. Buscarla como `_media` no la encuentra.
+
+**Confirmada abierta el 2026-08-28**, después de la aceptación de S3 (`docs-keeper`): un grep de
+`Timing-Allow-Origin` en todo el repo devuelve **sólo** este board, `INDEX.md`, dos comentarios de
+`accept-s3.sh` y tres del spec de la grilla. **Cero en `route.ts`.** Owner sigue siendo `app-agent`.
+
+### T14 · dos prohibiciones de `CLAUDE.md` §2 que ningún gate afirma  ·  `qa-agent`
+
+Verificado una por una el 2026-08-28 contra los gates del repo. **De la lista de §2 quedan dos sin
+nadie que las chequee:**
+
+1. **Rate limiting con contador en Postgres sobre la vidriera.** Cero menciones de *rate limit* en
+   `scripts/**`, `apps/web/scripts/**`, `tests/**` y `e2e/**`. **No es lo mismo que T1:** T1 es la
+   *implementación* que falta (las 2 reglas de Vercel Firewall); esto es que **nada detecta la
+   violación**. Mañana alguien mete un `insert into rate_limit_hits` en el render de la vidriera y
+   todo el pipeline sale verde — rompiendo el 95% de hits sin Postgres, que es el objetivo entero.
+2. **Imagen original (>500 KB) servida a la vidriera.** Hay dos chequeos y **ninguno corre en cada
+   push**: el probe `scripts/probes/s2-media-measure.test.ts:47` fija
+   `MASTER_MAX_BYTES = 800 * 1024` pero sólo se ejecuta **dentro de `accept-s2.sh`** (`:32`), que no
+   es un job de CI; y el byte que el browser **baja** lo mide M2 de `accept-s3.sh` (techo
+   204800 B). El propio `guard-r2.sh:12` declara que esta regla queda afuera de él (*"cubierto por
+   scripts/probes, no aca"*). La regla existe en dos lados y no corre en ninguno.
+   **Actualizado el 2026-08-28:** M2 ya no está bloqueado —corrió y midió `transferSize=51016B`—
+   pero eso **no cierra esta fila**: `accept-s3.sh` sigue sin ser un job de CI, así que la regla se
+   afirma cuando el LEAD corre el gate a mano, no en cada push. Que es justo lo que T14 pide.
+
+**Desempate de columna, para que no se trabe cuando se agende.** Si la forma que se elige es un
+grep-guard en `scripts/**`, el dueño es el **LEAD** —un gate no puede ser del mismo writer que el
+código que audita, igual que **T2**—. `qa-agent` es el dueño si la forma es un test que **siembra la
+violación** en `tests/`. La segunda es preferible para la 1: un grep de *"rate limit"* es fácil de
+esquivar sin querer.
+
+**Lo que sí tiene gate y este board no vuelve a pedir** (verificado, para que nadie lo reabra):
+
+| prohibición de §2 | quién la afirma hoy | ¿en CI? |
+|---|---|---|
+| `tenant_id` fuera de `app_metadata` | `guard-leaks.sh:127` (§7) · `apps/web/scripts/web-lint.mjs:123` (W008) · `accept-fase3.sh:61` | sí (las dos primeras) |
+| tabla nueva sin `GRANT` | `scripts/guard-grants.sh` | sí, desde `985c369` — antes **sólo** corría dentro de `accept-s1.sh`, que no está en CI |
+| borrado de un objeto de R2 por key | `scripts/guard-r2.sh` R1 + R2 (**T11**, `done`) | sí |
 
 ## FASE 5 — Chatbot (post S4/S8)
 Capa 2. Se **diseña** en FASE 1, se **codea** después de S4/S8. Ver `docs/CHATBOT.md`.

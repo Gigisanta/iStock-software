@@ -758,3 +758,34 @@ el guard si no da el número esperado.
 **Lo que comparten, y por eso están juntos:** los dos daban verde **por ausencia**, no por
 aprobación. Un gate que no distingue "lo chequeé y está bien" de "no chequeé nada" no es un gate, es
 un `echo`.
+
+### 2026-08-28 · Un helper con nombre de comando de `coreutils` es una bomba con temporizador
+
+Decisión del LEAD, verificada contra `0bcb281`. `scripts/accept-fase2.sh` era el último gate fuera de
+`scripts/_lib.sh` y se migró; con eso son **seis** los gates que comparten los helpers
+(`accept-s1`, `accept-s2`, `accept-s3`, `accept-fase2`, `accept-fase3`, `guard-grants`), más
+`_lib.test.sh` que los prueba en las dos polaridades en CI.
+
+**El motivo anotado en el board no era el motivo real, y la diferencia importa.** La excepción decía
+que `bad()` y `strip_comments()` no tenían equivalente en `_lib.sh`. La primera mitad no era un
+motivo: `bad()` es `no()` con otro nombre. La segunda es cierta y se resolvió dejando
+`strip_comments()` local — lo usa un solo gate, así que no hay dos copias que puedan divergir.
+
+Lo que decidió la migración fue un tercer helper que **no estaba en la lista**: el gate definía
+**`head()`, que pisa el comando `head`**. Mientras el archivo corrió autónomo fue latente, porque
+nunca lo invocaba. **Hacer `source` de `_lib.sh` lo activaba**: `_veredicto()` termina en `| head -6`
+(`_lib.sh:64`) y **bash resuelve funciones en el momento de la llamada, no en el de la definición**,
+así que ese `head -6` habría entrado a la función del gate —un pipe a `printf '%s' "$1"` que se come
+la salida y devuelve `0`— y la regla habría seguido imprimiendo `FAIL` **sin listar un solo
+hallazgo**. Un auditor que dice "reprobado" y no dice qué encontró es inservible en el momento exacto
+en que hace falta.
+
+**La regla general, que es lo que se guarda:** una función de shell con nombre de comando de
+`coreutils` (`head`, `tail`, `cut`, `test`, `printf`, `sort`…) no es un problema de estilo. Es una
+bomba con el temporizador puesto en **el día que ese archivo comparta scope con otro** — y el día
+llega solo, porque compartir helpers es la dirección en la que todo repo de gates evoluciona. Se
+renombró a `sec()`, como en los otros cinco.
+
+**Corolario para el que audita:** el peligro no lo ve el archivo que define la función, lo ve el que
+la llama. Un `grep` de "funciones con nombre de comando" es barato y hay que correrlo **antes** de
+mover un script a una librería compartida, no después.
