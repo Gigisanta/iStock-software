@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { SQL } from 'drizzle-orm';
+import { PgDialect } from 'drizzle-orm/pg-core';
 import { transitionEffects } from '@istock/domain';
 
 /**
@@ -20,6 +22,22 @@ import { transitionEffects } from '@istock/domain';
  * Y la mitad que le importa al producto: cada unidad liberada **invalida la vidriera de su
  * tenant**. Sin eso el equipo queda "Reservado" en el CDN hasta el próximo cambio de stock, o sea
  * escondido de la única página que lo vende.
+ *
+ * ── Y desde S6, el head-of-line ──────────────────────────────────────────────────────────────
+ * Una fila que falla siempre conservaba su lugar en `order by expires_at asc`: volvía a ser la
+ * primera del lote en cada corrida, para siempre, y con el lote lleno de filas así las sanas de
+ * atrás no llegaban nunca. Tres afirmaciones abajo, y las tres hacen falta por separado:
+ *
+ * 1. el `order by` empieza por `sweep_attempts` (fallar te manda al fondo) y el `where` tiene el
+ *    techo. Eso es forma del SQL, así que se prueba renderizando el SQL con el dialecto de
+ *    Drizzle: el Postgres de mentira de este archivo ignora `where` y `orderBy` por construcción, y
+ *    un test que sólo mira filas mockeadas pasaría en verde con el `order by` viejo;
+ * 2. el `+1` va en **otra transacción** que la que falló. Adentro se rollea con ella y el techo
+ *    queda escrito pero inalcanzable — arreglado en el código y roto en la base. Por eso cada
+ *    escritura anota en qué transacción ocurrió y el test compara ese número, no el hecho de que
+ *    la escritura exista;
+ * 3. no poder anotar el intento se cuenta aparte (`unrecorded`), porque es el estado en el que el
+ *    head-of-line vuelve entero y sin síntoma.
  */
 
 vi.mock('server-only', () => ({}));
@@ -48,7 +66,19 @@ interface Recorded {
   readonly op: 'insert' | 'update';
   readonly table: unknown;
   readonly row: Record<string, unknown>;
+  /** En qué transacción (`withServiceDb`) ocurrió. Es lo que distingue el `+1` de R2. */
+  readonly txIndex: number;
 }
+
+/** Lo que el barrido le pidió a Postgres en el `select` del lote. */
+interface Scan {
+  where: unknown;
+  orderBy: unknown[];
+}
+
+const dialect = new PgDialect();
+const render = (node: unknown): string => dialect.sqlToQuery(node as SQL).sql;
+const params = (node: unknown): unknown[] => dialect.sqlToQuery(node as SQL).params;
 
 const db = {
   due: [] as Record<string, unknown>[],
@@ -58,14 +88,28 @@ const db = {
   /** 0 = el listing ya no estaba `reserved` (se vendió, se fue a service). */
   listingReleased: 1,
   updateError: null as unknown,
+  /** Lo que devuelve el censo de abandonadas (las que pasaron `MAX_SWEEP_ATTEMPTS`). */
+  abandoned: 0,
+  /** El `+1` tampoco pudo escribirse: sin GRANT, sin conexión, lo que sea. */
+  bumpError: null as unknown,
+  /** Cuántas transacciones se abrieron, y en cuál explotó la fila. */
+  txIndex: 0,
+  failedTxIndex: -1,
+  scan: { where: null, orderBy: [] } as Scan,
 };
 
-function thenable<T>(produce: () => T): PromiseLike<T> & Record<string, unknown> {
+function thenable<T>(produce: () => T, scan: Scan | null = null): PromiseLike<T> & Record<string, unknown> {
   const builder = {
     from: () => builder,
     innerJoin: () => builder,
-    where: () => builder,
-    orderBy: () => builder,
+    where: (condition: unknown) => {
+      if (scan !== null) scan.where = condition;
+      return builder;
+    },
+    orderBy: (...keys: unknown[]) => {
+      if (scan !== null) scan.orderBy = keys;
+      return builder;
+    },
     limit: () => builder,
     returning: () => builder,
     then: (resolve: (value: T) => unknown, reject?: (reason: unknown) => unknown) =>
@@ -75,21 +119,34 @@ function thenable<T>(produce: () => T): PromiseLike<T> & Record<string, unknown>
 }
 
 const tx = {
-  select: () => thenable(() => db.due),
+  // El censo de abandonadas es el único `select` que proyecta `total`; el otro es el lote.
+  select: (fields: Record<string, unknown>) =>
+    'total' in fields
+      ? thenable(() => [{ total: db.abandoned }])
+      : thenable(() => db.due, db.scan),
   update: (table: unknown) => ({
     set: (row: Record<string, unknown>) =>
       thenable(() => {
-        if (db.updateError !== null) throw db.updateError;
+        // El `+1` de R2: es un update de `reservations` que toca el contador y nada más.
+        if (table === reservations && 'sweepAttempts' in row) {
+          if (db.bumpError !== null) throw db.bumpError;
+          db.writes.push({ op: 'update', table, row, txIndex: db.txIndex });
+          return [];
+        }
+        if (db.updateError !== null) {
+          db.failedTxIndex = db.txIndex;
+          throw db.updateError;
+        }
         const affected = table === reservations ? db.reservationClosed : db.listingReleased;
         if (affected === 0) return [];
-        db.writes.push({ op: 'update', table, row });
+        db.writes.push({ op: 'update', table, row, txIndex: db.txIndex });
         return [{ id: 'x' }];
       }),
   }),
   insert: (table: unknown) => ({
     values: (row: Record<string, unknown>) =>
       thenable(() => {
-        db.writes.push({ op: 'insert', table, row });
+        db.writes.push({ op: 'insert', table, row, txIndex: db.txIndex });
         return [];
       }),
   }),
@@ -97,10 +154,13 @@ const tx = {
 
 vi.mock('../db/session', () => ({
   withTenantDb: (_ctx: unknown, fn: (t: unknown) => unknown) => fn(tx),
-  withServiceDb: (fn: (t: unknown) => unknown) => fn(tx),
+  withServiceDb: (fn: (t: unknown) => unknown) => {
+    db.txIndex += 1;
+    return fn(tx);
+  },
 }));
 
-const { expireDueReservations } = await import('./expire-reservations');
+const { expireDueReservations, MAX_SWEEP_ATTEMPTS } = await import('./expire-reservations');
 const { listingEvents, listings, reservations } = await import('@istock/db');
 
 const NOW = new Date('2026-08-28T14:00:00.000Z');
@@ -115,6 +175,7 @@ function due(overrides: Record<string, unknown> = {}): Record<string, unknown> {
     status: 'active',
     createdAt: new Date('2026-08-28T13:00:00.000Z'),
     expiresAt: new Date('2026-08-28T13:59:00.000Z'),
+    sweepAttempts: 0,
     ...overrides,
   };
 }
@@ -126,6 +187,11 @@ beforeEach(() => {
   db.reservationClosed = 1;
   db.listingReleased = 1;
   db.updateError = null;
+  db.bumpError = null;
+  db.abandoned = 0;
+  db.txIndex = 0;
+  db.failedTxIndex = -1;
+  db.scan = { where: null, orderBy: [] };
 });
 
 describe('expireDueReservations · lo que libera', () => {
@@ -271,13 +337,117 @@ describe('expireDueReservations · una fila podrida no frena el barrido', () => 
       expect.objectContaining({ reservationId: '9a1b2c3d-4e5f-4a6b-8c7d-0e1f2a3b4c5d' }),
     );
   });
+
+  /**
+   * La primera vez que falla es contención normal: el dueño cancelando desde el mostrador la misma
+   * reserva que el barrido está venciendo. Un cron rojo por eso enseña a ignorar el rojo.
+   */
+  it('la primera falla NO es `stuck`; la de una fila que ya venía fallando sí', async () => {
+    db.updateError = Object.assign(new Error('deadlock detected'), { code: '40P01' });
+
+    db.due = [due()];
+    expect(await expireDueReservations(NOW)).toMatchObject({ failed: 1, stuck: 0 });
+
+    db.due = [due({ sweepAttempts: 1 })];
+    expect(await expireDueReservations(NOW)).toMatchObject({ failed: 1, stuck: 1 });
+  });
+});
+
+describe('expireDueReservations · head-of-line (R2)', () => {
+  /**
+   * El `where` y el `order by` los ignora el Postgres de mentira de este archivo, así que acá se
+   * renderiza el SQL de verdad con el dialecto de Drizzle. Sin esto, el `order by expires_at asc`
+   * viejo dejaría todos los tests de este archivo en verde.
+   */
+  it('el `order by` empieza por `sweep_attempts`: fallar manda al fondo de la cola', async () => {
+    db.due = [due()];
+
+    await expireDueReservations(NOW);
+
+    const keys = db.scan.orderBy.map(render);
+    expect(keys).toHaveLength(2);
+    expect(keys[0]).toContain('"sweep_attempts"');
+    expect(keys[1]).toContain('"expires_at"');
+  });
+
+  it('el `where` tiene el techo, así que una fila podrida deja de entrar al lote', async () => {
+    db.due = [due()];
+
+    await expireDueReservations(NOW);
+
+    expect(render(db.scan.where)).toContain('"sweep_attempts" <');
+    expect(params(db.scan.where)).toContain(MAX_SWEEP_ATTEMPTS);
+  });
+
+  /**
+   * El corazón de R2. El `+1` adentro de la transacción que falló se rollea con ella: el contador
+   * queda en 0, la fila vuelve a encabezar el `order by` y el techo de arriba nunca se alcanza.
+   * Por eso no alcanza con ver que la escritura existe —también existiría escrita mal—: se compara
+   * en qué transacción ocurrió.
+   */
+  it('el `+1` se escribe en OTRA transacción que la que falló', async () => {
+    db.due = [due({ sweepAttempts: 2 })];
+    db.updateError = Object.assign(new Error('deadlock detected'), { code: '40P01' });
+
+    await expireDueReservations(NOW);
+
+    const bump = db.writes.find((w) => w.table === reservations && 'sweepAttempts' in w.row);
+    expect(bump).toBeDefined();
+    expect(db.failedTxIndex).toBeGreaterThan(0);
+    expect(bump?.txIndex).toBeGreaterThan(db.failedTxIndex);
+  });
+
+  it('una fila que no falló no gasta una transacción en anotar nada', async () => {
+    db.due = [due()];
+
+    await expireDueReservations(NOW);
+
+    expect(db.writes.some((w) => 'sweepAttempts' in w.row)).toBe(false);
+  });
+
+  /**
+   * Sin el `+1` la fila vuelve a encabezar el `order by` en la próxima corrida y nunca llega al
+   * techo: el head-of-line vuelve entero y sin síntoma. Es la única forma de falla que se cuenta
+   * desde la primera vez.
+   */
+  it('si tampoco se puede anotar el intento, se cuenta aparte y el barrido no se cae', async () => {
+    db.due = [due()];
+    db.updateError = Object.assign(new Error('deadlock detected'), { code: '40P01' });
+    db.bumpError = Object.assign(new Error('permission denied'), { code: '42501' });
+
+    const result = await expireDueReservations(NOW);
+
+    expect(result).toMatchObject({ failed: 1, unrecorded: 1 });
+    expect(logError).toHaveBeenCalledWith(
+      'reservation.expire.attempt_unrecorded',
+      '42501',
+      expect.objectContaining({ reservationId: '9a1b2c3d-4e5f-4a6b-8c7d-0e1f2a3b4c5d' }),
+    );
+  });
+
+  /**
+   * Abandonar en silencio sería el mismo bug con otro disfraz: la unidad sigue trabada y ahora ni
+   * siquiera aparece en los logs. Es además el único caso en el que "no hice nada" y "hay una
+   * unidad trabada hace horas" se ven idénticos desde afuera, porque el lote viene vacío.
+   */
+  it('las que pasaron el techo se cuentan aparte y rompen el silencio del lote vacío', async () => {
+    db.abandoned = 2;
+
+    const result = await expireDueReservations(NOW);
+
+    expect(result).toMatchObject({ scanned: 0, abandoned: 2 });
+    expect(logEvent).toHaveBeenCalledWith(
+      'reservation.expire.swept',
+      expect.objectContaining({ abandoned: 2 }),
+    );
+  });
 });
 
 describe('expireDueReservations · sin nada que hacer', () => {
   it('no escribe, no invalida y no loguea un evento por corrida vacía', async () => {
     const result = await expireDueReservations(NOW);
 
-    expect(result).toMatchObject({ scanned: 0, expired: 0, failed: 0 });
+    expect(result).toMatchObject({ scanned: 0, expired: 0, failed: 0, abandoned: 0 });
     expect(db.writes).toHaveLength(0);
     expect(invalidateStorefrontUnit).not.toHaveBeenCalled();
     expect(logEvent).not.toHaveBeenCalled();

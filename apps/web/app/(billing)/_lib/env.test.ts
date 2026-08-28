@@ -1,0 +1,119 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+/**
+ * El borde de entorno de billing. Lo que se mide es **cómo falla**, que es lo único que importa
+ * en un archivo así:
+ *
+ * - sin credenciales (B3 abierto) el producto arranca en `mock` y **nadie se vuelve pagador**;
+ * - la cadena vacía —lo que trae `.env.example` y lo que hereda un preview deploy— es "no
+ *   configurado", no "configurado con nada";
+ * - con `BILLING_DRIVER="mercadopago"` a medias, **explota al arrancar** en vez de cobrar a medias.
+ */
+
+vi.mock('server-only', () => ({}));
+
+const { billingDriver, mpAccessToken, mpPreapprovalPlanId, mpWebhookSecret, resetBillingEnvCache } =
+  await import('./env');
+
+const CLAVES = [
+  'BILLING_DRIVER',
+  'MP_ACCESS_TOKEN',
+  'MP_WEBHOOK_SECRET',
+  'MP_PREAPPROVAL_PLAN_BASE',
+  'MP_PREAPPROVAL_PLAN_NEGOCIO',
+] as const;
+
+const original: Record<string, string | undefined> = {};
+
+beforeEach(() => {
+  for (const clave of CLAVES) {
+    original[clave] = process.env[clave];
+    delete process.env[clave];
+  }
+  resetBillingEnvCache();
+});
+
+afterEach(() => {
+  for (const clave of CLAVES) {
+    if (original[clave] === undefined) delete process.env[clave];
+    else process.env[clave] = original[clave];
+  }
+  resetBillingEnvCache();
+});
+
+describe('sin credenciales · B3 abierto', () => {
+  it('el driver por defecto es mock y no hay secreto con el cual autorizar a nadie', () => {
+    expect(billingDriver()).toBe('mock');
+    expect(mpWebhookSecret()).toBeNull();
+    expect(mpAccessToken()).toBeNull();
+    expect(mpPreapprovalPlanId('base')).toBeNull();
+    expect(mpPreapprovalPlanId('negocio')).toBeNull();
+  });
+
+  it('la cadena vacía es "no configurado", no "configurado con nada"', () => {
+    process.env['MP_WEBHOOK_SECRET'] = '';
+    process.env['MP_ACCESS_TOKEN'] = '';
+    resetBillingEnvCache();
+
+    // Es el valor que trae `.env.example` y el que hereda un preview deploy. Si `''` pasara como
+    // secreto, `verifyWebhookSignature` recibiría un string vacío en vez de `null` — el mismo bug
+    // que `cronSecret()` ya tuvo que resolver en el panel.
+    expect(mpWebhookSecret()).toBeNull();
+    expect(mpAccessToken()).toBeNull();
+  });
+});
+
+describe('driver real a medias · falla al arrancar', () => {
+  it.each(['MP_ACCESS_TOKEN', 'MP_WEBHOOK_SECRET', 'MP_PREAPPROVAL_PLAN_BASE', 'MP_PREAPPROVAL_PLAN_NEGOCIO'])(
+    'sin %s no arranca',
+    (faltante) => {
+      process.env['BILLING_DRIVER'] = 'mercadopago';
+      process.env['MP_ACCESS_TOKEN'] = 'token-de-mercadopago-larguito';
+      process.env['MP_WEBHOOK_SECRET'] = 'secreto-de-webhook-larguito';
+      process.env['MP_PREAPPROVAL_PLAN_BASE'] = 'plan-base';
+      process.env['MP_PREAPPROVAL_PLAN_NEGOCIO'] = 'plan-negocio';
+      delete process.env[faltante];
+      resetBillingEnvCache();
+
+      // Un driver `mercadopago` a medio configurar es peor que el mock: cobra a medias y activa a
+      // medias. El nombre de la variable que falta va en el mensaje, sin el valor de ninguna otra.
+      expect(() => billingDriver()).toThrow(faltante);
+    },
+  );
+
+  it('completo: las cinco resuelven', () => {
+    process.env['BILLING_DRIVER'] = 'mercadopago';
+    process.env['MP_ACCESS_TOKEN'] = 'token-de-mercadopago-larguito';
+    process.env['MP_WEBHOOK_SECRET'] = 'secreto-de-webhook-larguito';
+    process.env['MP_PREAPPROVAL_PLAN_BASE'] = 'plan-base';
+    process.env['MP_PREAPPROVAL_PLAN_NEGOCIO'] = 'plan-negocio';
+    resetBillingEnvCache();
+
+    expect(billingDriver()).toBe('mercadopago');
+    expect(mpWebhookSecret()).toBe('secreto-de-webhook-larguito');
+    expect(mpPreapprovalPlanId('base')).toBe('plan-base');
+    expect(mpPreapprovalPlanId('negocio')).toBe('plan-negocio');
+  });
+
+  it('un driver que no existe no cae al mock: rompe', () => {
+    process.env['BILLING_DRIVER'] = 'stripe';
+    resetBillingEnvCache();
+    expect(() => billingDriver()).toThrow(/BILLING_DRIVER/u);
+  });
+
+  it('un token truncado se rechaza en vez de rebotar contra la API de MP en producción', () => {
+    process.env['MP_ACCESS_TOKEN'] = 'corto';
+    resetBillingEnvCache();
+    expect(() => billingDriver()).toThrow(/MP_ACCESS_TOKEN/u);
+  });
+});
+
+describe('nada de esto llega al browser', () => {
+  it('ninguna variable de billing es NEXT_PUBLIC_*', () => {
+    // `MP_ACCESS_TOKEN` en el bundle es rechazo automático (CLAUDE.md §2). El módulo es
+    // `server-only`, pero el prefijo es lo que decide qué inlinea Next: se afirma el prefijo.
+    for (const clave of CLAVES) {
+      expect(clave.startsWith('NEXT_PUBLIC_')).toBe(false);
+    }
+  });
+});

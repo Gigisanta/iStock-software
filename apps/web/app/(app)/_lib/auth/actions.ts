@@ -49,6 +49,15 @@ export async function signInAction(_prev: AuthFormState, formData: FormData): Pr
   redirect('/app');
 }
 
+/**
+ * La única Server Function del panel **sin** guard de sesión, y es una decisión, no un olvido.
+ *
+ * Las otras cinco verifican la sesión adentro (ADR-007: el `proxy` no cubre Server Functions). Acá
+ * no hay nada que proteger: sin sesión, `signOut()` es un no-op y el `redirect('/')` lleva a la
+ * vidriera pública. El peor abuso imaginable es que un tercero fuerce un logout, y un logout
+ * forzado es molestia, no brecha — encima el chequeo de `Origin` de Next ya lo cubre. Pedir sesión
+ * para poder cerrarla sería, además, la forma de dejar trabado a alguien con un token roto.
+ */
 export async function signOutAction(): Promise<void> {
   await authDriver().signOut();
   redirect('/');

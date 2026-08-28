@@ -26,6 +26,40 @@ type Availability =
 
 const DEBOUNCE_MS = 600;
 
+/** Techo del texto que llega del server y se pinta en pantalla. Es un renglón, no un párrafo. */
+const MAX_REASON_LENGTH = 120;
+
+/**
+ * Lectura del cuerpo de `/api/tenants/slug-check`, **sin `as`**.
+ *
+ * Antes era `(await response.json()) as { available?: boolean; reason?: string }`, que es una
+ * afirmación sin nadie que la sostenga: un 502 con un HTML de error, un `null`, o un `reason`
+ * numérico entraban tipados como si el contrato se hubiera cumplido, y el `reason` se pintaba en
+ * el DOM. `CLAUDE.md` §5 pide validar el borde; acá el borde es la **respuesta**.
+ *
+ * Se valida a mano y no con Zod a propósito, por el mismo motivo que este archivo importa de
+ * `slug-format` y no de `slug.ts`: Zod en un Client Component se va al bundle del navegador, y
+ * esta es la primera pantalla que ve un cliente nuevo, parado en el local con mala señal. Trece KB
+ * para mirar dos campos de nuestro propio endpoint es un mal negocio. La validación que **decide**
+ * sigue siendo la del server; ésta sólo evita creerle a una respuesta rota.
+ */
+function readAvailability(body: unknown): Availability {
+  if (typeof body !== 'object' || body === null) return { state: 'idle' };
+
+  const record = body as Record<string, unknown>;
+  if (record['available'] === true) return { state: 'free' };
+  if (record['available'] !== false) return { state: 'idle' };
+
+  const reason = record['reason'];
+  return {
+    state: 'taken',
+    reason:
+      typeof reason === 'string' && reason.trim().length > 0
+        ? reason.trim().slice(0, MAX_REASON_LENGTH)
+        : 'Ese link no está disponible.',
+  };
+}
+
 export function CreateTenantForm({ rootDomain }: { rootDomain: string }) {
   const [state, formAction, isPending] = useActionState(createTenantAction, initialCreateTenantState);
 
@@ -56,13 +90,9 @@ export function CreateTenantForm({ rootDomain }: { rootDomain: string }) {
       fetch(`/api/tenants/slug-check?slug=${encodeURIComponent(effectiveSlug)}`, {
         signal: controller.signal,
       })
-        .then(async (response) => (await response.json()) as { available?: boolean; reason?: string })
+        .then(async (response): Promise<unknown> => response.json())
         .then((body) => {
-          setAvailability(
-            body.available === true
-              ? { state: 'free' }
-              : { state: 'taken', reason: body.reason ?? 'Ese link no está disponible.' },
-          );
+          setAvailability(readAvailability(body));
         })
         .catch(() => {
           // Si falla la consulta no se bloquea el alta: el `unique index` de Postgres tiene la

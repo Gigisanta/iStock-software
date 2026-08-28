@@ -1,5 +1,5 @@
 import 'server-only';
-import { and, asc, eq, lte, sql } from 'drizzle-orm';
+import { and, asc, eq, gte, lt, lte, sql } from 'drizzle-orm';
 import { expireReservation, transitionEffects } from '@istock/domain';
 import { listingEvents, listings, reservations, tenants } from '@istock/db';
 import { pgErrorCode } from '../db/pg-error';
@@ -61,15 +61,49 @@ import { invalidateStorefrontUnit } from '../tenants/storefront-cache';
  *
  * El techo de `EXPIRE_BATCH_SIZE` es la otra mitad: el cron corre cada pocos minutos y una función
  * de Vercel tiene un `maxDuration`. Lo que no entra en esta pasada entra en la próxima, porque el
- * `order by expires_at` deja primero a las más viejas.
+ * `order by` deja primero a las más viejas **de las que todavía tienen chance**.
+ *
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *  Head-of-line: por qué el `order by` empieza por `sweep_attempts` y no por `expires_at`
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * Hasta S6 el orden era `expires_at asc` a secas, y ese detalle convertía una falla de una fila en
+ * una falla del producto. Una reserva que tira siempre —un `CHECK` que no da, un listing en un
+ * estado que nadie previó, una policy que cambió— **conserva su lugar de privilegio**: es la más
+ * vieja, así que vuelve a ser la primera del lote en la corrida siguiente, y en la siguiente. El
+ * barrido la reintenta 8.640 veces por mes, y con el lote lleno de filas igual de tóxicas las sanas
+ * que vienen atrás nunca llegan a procesarse. Del lado del cliente eso se ve como una unidad que
+ * dice «Reservado» para siempre: no se factura, se cancela.
+ *
+ * El arreglo son tres piezas y las tres hacen falta:
+ *
+ * 1. **`order by sweep_attempts asc, expires_at asc`.** Fallar te manda al fondo de la cola. La
+ *    fila vieja y sana pasa adelante de la fila vieja y rota.
+ * 2. **`sweep_attempts < MAX_SWEEP_ATTEMPTS` en el `where`.** Pasado el techo la fila deja de
+ *    entrar al lote: reintentar para siempre algo que falla siempre es gastar la ventana del cron
+ *    en algo que ya sabemos que no va a andar.
+ * 3. **El `+1` en su propia transacción.** Ver el `catch` del `for`. Escribirlo adentro de la
+ *    transacción que falló es la forma fácil de creer que esto quedó arreglado y no haber
+ *    arreglado nada: el `update` se rollea con el error y el contador se queda en 0 para siempre.
+ *
+ * Y una cuarta que no es código de acá: abandonar tiene que ser **ruidoso**. Por eso `abandoned`
+ * se cuenta con una segunda query y el cron devuelve 500 (`route.ts`). Una fila abandonada en
+ * silencio es el mismo bug con otro disfraz — la unidad sigue trabada y ahora ni siquiera aparece
+ * en los logs. Las dos salidas son humanas: el dueño aprieta «Liberar equipo» en el panel (por eso
+ * `presentation.ts` dejó de decirle que esperara) o un operador pone `sweep_attempts = 0` cuando
+ * arregló la causa.
  *
  * ══════════════════════════════════════════════════════════════════════════════════════════════
  *  Costo
  * ══════════════════════════════════════════════════════════════════════════════════════════════
  *
- * Una query de barrido por corrida —cubierta por `reservations_active_expiry_idx`, el índice
- * parcial sobre `status = 'active'`— y **cero** trabajo cuando no hay nada que vencer, que es el
- * caso normal. No hay worker 24/7 (`CLAUDE.md` §3) ni contador en Postgres haciendo de rate limit.
+ * **Dos** queries por corrida —el barrido y el censo de abandonadas—, las dos cubiertas por
+ * `reservations_active_expiry_idx`, el índice parcial sobre `status = 'active'`, y las dos sobre
+ * una tabla que en el caso normal no tiene ni una fila vencida. Son 2 × 288 = 576 queries por día
+ * contra un índice parcial: ruido de fondo al lado de un pageview. La segunda se paga a propósito
+ * y no se puede evitar mirando el resultado de la primera, porque el caso que descubre es
+ * justamente aquel en el que la primera trae **cero** filas y sin embargo hay una unidad trabada.
+ * Fuera de eso, **cero** trabajo de escritura cuando no hay nada que vencer, que es el caso normal. No hay worker 24/7 (`CLAUDE.md` §3) ni contador en Postgres haciendo de rate limit.
  * `invalidateStorefrontUnit` se llama una vez por unidad liberada, no por corrida: purgar la
  * vidriera entera cuando venció una reserva regeneraría 200 fichas por una.
  */
@@ -80,6 +114,19 @@ import { invalidateStorefrontUnit } from '../tenants/storefront-cache';
  * barrer por horas), no para el caso normal.
  */
 export const EXPIRE_BATCH_SIZE = 200;
+
+/**
+ * Cuántas corridas seguidas puede fallar una reserva antes de que el barrido deje de tomarla.
+ *
+ * Con el cron cada 5 minutos son ~25 minutos de reintentos. Sobra para lo transitorio —un `40P01`
+ * contra el dueño cancelando esa misma reserva desde el mostrador se resuelve en el intento
+ * siguiente— y corta lo sistémico antes de que se coma la ventana del cron todos los días.
+ *
+ * El número vive acá y no en el dominio porque no es una regla de negocio: es cuántas veces vale la
+ * pena insistir contra esta base con este cron. Si el cron cambia de frecuencia, este número cambia
+ * con él.
+ */
+export const MAX_SWEEP_ATTEMPTS = 5;
 
 export interface ExpirySweep {
   /** Reservas candidatas que trajo la query. */
@@ -96,6 +143,33 @@ export interface ExpirySweep {
   readonly skipped: number;
   /** Filas que tiraron. El barrido siguió. */
   readonly failed: number;
+  /**
+   * El subconjunto de `failed` que **ya venía fallando** (`sweep_attempts >= 1` antes de este
+   * intento).
+   *
+   * La distinción es la que hace que el rojo del cron signifique algo. El dueño cancelando desde el
+   * panel la misma reserva que el barrido está venciendo produce un deadlock legítimo y un `failed`
+   * legítimo; un cron que se pinta de rojo por eso enseña a ignorar el rojo, que es exactamente el
+   * modo de falla que este archivo vino a cerrar. Una fila que falla dos veces seguidas ya no es una
+   * carrera perdida: es una fila rota.
+   */
+  readonly stuck: number;
+  /**
+   * Filas que fallaron y a las que **tampoco** se les pudo anotar el intento.
+   *
+   * El caso peor, y el más callado. Sin el `+1` la fila vuelve a encabezar el `order by` en la
+   * próxima corrida y nunca llega a `stuck` ni al techo: el head-of-line vuelve entero y sin
+   * síntoma. Por eso cuenta como degradación desde la primera y no espera a la segunda.
+   */
+  readonly unrecorded: number;
+  /**
+   * Reservas vencidas que el barrido ya no toma porque pasaron `MAX_SWEEP_ATTEMPTS`.
+   *
+   * No sale del `for` —el techo está en el `where`, así que estas filas por definición no entran al
+   * lote—: sale de una segunda query. Es el número que evita que "abandonar" sea sinónimo de
+   * "esconder": cada unidad contada acá está trabada en `reserved` hasta que una persona la libere.
+   */
+  readonly abandoned: number;
 }
 
 /**
@@ -115,9 +189,10 @@ export interface ExpirySweep {
  *    la vidriera para siempre. El schema ya lo previó: `reservations_active_expiry_idx` es un
  *    índice parcial **sobre `expires_at` sin `tenant_id`**, y su comentario dice literalmente que
  *    el cron barre sin filtro de tenant.
- * 2. **Nada de lo que sale cruza un borde.** Se proyectan cinco columnas —ids, un `status`, dos
- *    fechas y el `slug`, que ya es público en la URL de la vidriera— y ninguna sale de esta
- *    función: el retorno son cinco números. No hay `customer_label`, no hay `cost_usd`, no hay
+ * 2. **Nada de lo que sale cruza un borde.** Se proyectan ids, un `status`, dos fechas, un
+ *    contador de intentos y el `slug` —que ya es público en la URL de la vidriera— y ninguna sale
+ *    de esta función: el retorno son ocho números. La segunda query (el censo de abandonadas) ni
+ *    siquiera proyecta columnas: devuelve un `count(*)`. No hay `customer_label`, no hay `cost_usd`, no hay
  *    IMEI. Nadie de afuera elige un parámetro: la única entrada es `now`.
  * 3. **Cada escritura sí está acotada.** Los tres `update`/`insert` de abajo llevan
  *    `eq(tabla.tenantId, row.tenantId)` con el tenant que trajo **esa** fila. Un bug de la lectura
@@ -127,7 +202,7 @@ export interface ExpirySweep {
  * existe y esto devolvería 0 filas siempre — o sea, no fallaría, simplemente no vencería nada
  * nunca. Es el **cuarto** uso declarado de `withServiceDb` (ver su docblock en `_lib/db/session.ts`).
  *
- * web-lint:sin-tenant el cron corre sin sesion y barre las reservas vencidas de todos los tenants; cada escritura sí filtra por el tenant de su fila
+ * web-lint:sin-tenant el cron corre sin sesion y barre y censa las reservas vencidas de todos los tenants; cada escritura sí filtra por el tenant de su fila
  */
 export async function expireDueReservations(now: Date = new Date()): Promise<ExpirySweep> {
   const due = await withServiceDb(async (tx) =>
@@ -140,11 +215,20 @@ export async function expireDueReservations(now: Date = new Date()): Promise<Exp
         status: reservations.status,
         createdAt: reservations.createdAt,
         expiresAt: reservations.expiresAt,
+        sweepAttempts: reservations.sweepAttempts,
       })
       .from(reservations)
       .innerJoin(tenants, eq(tenants.id, reservations.tenantId))
-      .where(and(eq(reservations.status, 'active'), lte(reservations.expiresAt, now)))
-      .orderBy(asc(reservations.expiresAt))
+      .where(
+        and(
+          eq(reservations.status, 'active'),
+          lte(reservations.expiresAt, now),
+          lt(reservations.sweepAttempts, MAX_SWEEP_ATTEMPTS),
+        ),
+      )
+      // Fallar manda al fondo de la cola. Sin esta primera clave, la fila rota es eternamente la
+      // primera y las sanas que vienen atrás no se procesan nunca (ver «Head-of-line», arriba).
+      .orderBy(asc(reservations.sweepAttempts), asc(reservations.expiresAt))
       .limit(EXPIRE_BATCH_SIZE),
   );
 
@@ -152,6 +236,8 @@ export async function expireDueReservations(now: Date = new Date()): Promise<Exp
   let released = 0;
   let skipped = 0;
   let failed = 0;
+  let stuck = 0;
+  let unrecorded = 0;
 
   for (const row of due) {
     /**
@@ -274,21 +360,97 @@ export async function expireDueReservations(now: Date = new Date()): Promise<Exp
       }
     } catch (error) {
       failed += 1;
+      // El contador que trajo el `select`, o sea el estado ANTES de este intento: si ya venía en 1,
+      // esta es al menos la segunda vez que la misma fila rompe y deja de ser una carrera perdida.
+      if (row.sweepAttempts >= 1) stuck += 1;
+
       // El id de la reserva y el código SQLSTATE. Nunca el `Error`: su `DETAIL` trae la fila, y la
       // fila de una reserva lleva la etiqueta del cliente.
       logError('reservation.expire.failed', pgErrorCode(error), {
         reservationId: row.reservationId,
         tenantId: row.tenantId,
         listingId: row.listingId,
+        sweepAttempts: row.sweepAttempts,
       });
+
+      /**
+       * El `+1`, en **su propia transacción**. Es lo único que hace que el techo exista de verdad.
+       *
+       * Adentro del `withServiceDb` que acaba de fallar, este `update` se rollea con el error: el
+       * contador queda en 0, la fila vuelve a encabezar el `order by` y el archivo termina con un
+       * techo escrito que nunca se alcanza — arreglado en el código y roto en la base, que es la
+       * peor de las dos combinaciones porque se lee como resuelto.
+       *
+       * El guard `status = 'active'` está por lo mismo que en las otras dos escrituras: si la
+       * reserva se cerró mientras tanto (el dueño ganó la carrera), no hay intento que anotar y el
+       * `update` afecta 0 filas.
+       *
+       * Y va con su propio `try`: el barrido no puede caerse por no poder anotar que algo falló.
+       * Cuando eso pasa se cuenta aparte, porque es el estado en el que el head-of-line vuelve.
+       */
+      try {
+        await withServiceDb(async (tx) => {
+          await tx
+            .update(reservations)
+            .set({
+              sweepAttempts: sql`${reservations.sweepAttempts} + 1`,
+              updatedAt: sql`now()`,
+            })
+            .where(
+              and(
+                eq(reservations.tenantId, row.tenantId),
+                eq(reservations.id, row.reservationId),
+                eq(reservations.status, 'active'),
+              ),
+            );
+        });
+      } catch (bumpError) {
+        unrecorded += 1;
+        logError('reservation.expire.attempt_unrecorded', pgErrorCode(bumpError), {
+          reservationId: row.reservationId,
+          tenantId: row.tenantId,
+        });
+      }
     }
   }
 
-  const sweep: ExpirySweep = { scanned: due.length, expired, released, skipped, failed };
+  /**
+   * El censo de abandonadas, después del `for` a propósito: describe el estado en el que **queda**
+   * la base al terminar esta corrida, incluidas las filas que cruzaron el techo recién.
+   *
+   * No lleva `catch`: si esta query tira, tira el barrido entero y el `route.ts` devuelve 500. Es
+   * lo correcto — no poder contar las unidades trabadas no es un detalle que se reporte con un 200.
+   */
+  const abandonedRows = await withServiceDb(async (tx) =>
+    tx
+      .select({ total: sql<number>`count(*)::int` })
+      .from(reservations)
+      .where(
+        and(
+          eq(reservations.status, 'active'),
+          lte(reservations.expiresAt, now),
+          gte(reservations.sweepAttempts, MAX_SWEEP_ATTEMPTS),
+        ),
+      ),
+  );
+  const abandoned = abandonedRows[0]?.total ?? 0;
+
+  const sweep: ExpirySweep = {
+    scanned: due.length,
+    expired,
+    released,
+    skipped,
+    failed,
+    stuck,
+    unrecorded,
+    abandoned,
+  };
 
   // Una corrida vacía es el caso normal —el cron pega cada pocos minutos— y no merece una línea de
-  // log. Loguear el silencio es cómo se vuelve invisible lo que sí pasó.
-  if (sweep.scanned > 0) logEvent('reservation.expire.swept', { ...sweep });
+  // log. Loguear el silencio es cómo se vuelve invisible lo que sí pasó. `abandoned > 0` sí merece
+  // línea aunque el lote haya venido vacío: es el único caso en el que "no hice nada" y "hay una
+  // unidad trabada hace horas" se ven exactamente igual desde afuera.
+  if (sweep.scanned > 0 || sweep.abandoned > 0) logEvent('reservation.expire.swept', { ...sweep });
 
   return sweep;
 }

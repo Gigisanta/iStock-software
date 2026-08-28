@@ -1,4 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  BILLABLE_FEATURES,
+  FEATURE_CHATBOT,
+  PLAN_TIERS,
+  planIncludes,
+} from '../../(billing)/_lib/plans';
 import type { PlanSnapshot, PlanTier } from './entitlements';
 
 /**
@@ -149,5 +155,51 @@ describe('featureAccess · la vigencia del trial (D2)', () => {
   it('negocio y base no miran la fecha: un trial_ends_at vencido no les apaga nada', () => {
     expect(trialIsAlive({ plan: 'negocio', trialEndsAt: TRIAL_ENDS }, AFTER)).toBe(true);
     expect(trialIsAlive({ plan: 'base', trialEndsAt: null }, AFTER)).toBe(true);
+  });
+});
+
+/**
+ * ── Un solo mapa plan → feature en `apps/web` ─────────────────────────────────────────────────
+ *
+ * Hasta S-B2 este módulo tenía su propia tabla `PLAN_FEATURES` con una sola feature. Convivía con
+ * el catálogo comercial de `(billing)/_lib/plans.ts` y **divergían**: contra la tabla vieja,
+ * `featureAccess(negocio, 'chatbot')` daba `false`, o sea que el resolver le negaba al plan
+ * Negocio justo lo que ese plan se vende por incluir. No se notaba porque `chatbot` todavía no
+ * tiene consumidor; se hubiera notado el día que lo tuviera, como "el chatbot no anda en el plan
+ * que lo trae".
+ *
+ * Ahora el catálogo es uno y esto lo mide sobre **todas** las features facturables y los tres
+ * planes, no sobre la intersección de lo que dos mapas declaraban. La aserción que reemplaza es la
+ * de `plans.test.ts` ("el hueco entre catálogo y resolver está contado"), que se borró con esta
+ * slice porque contaba un hueco que ya no existe.
+ */
+describe('el plan lo declara el catálogo, no este módulo', () => {
+  it('los tres planes y TODAS las features facturables: el resolver coincide con el catálogo', async () => {
+    for (const tier of PLAN_TIERS) {
+      for (const feature of BILLABLE_FEATURES) {
+        // Trial VIVO (`BEFORE`): así se compara contra el plan de lista y no contra la vigencia,
+        // que es la otra decisión del módulo y ya se prueba arriba.
+        const access = await featureAccess(
+          ctx,
+          { plan: tier, trialEndsAt: TRIAL_ENDS },
+          feature,
+          BEFORE,
+        );
+        expect(access.ok, `plan ${tier} / feature ${feature}`).toBe(planIncludes(tier, feature));
+      }
+    }
+  });
+
+  it('negocio TIENE chatbot: es el hueco concreto que esta derivación cerró', async () => {
+    await expect(isFeatureEnabled(ctx, paid('negocio'), FEATURE_CHATBOT, AFTER)).resolves.toBe(true);
+    await expect(isFeatureEnabled(ctx, paid('base'), FEATURE_CHATBOT, AFTER)).resolves.toBe(false);
+  });
+
+  it('el trial vencido no hereda nada del catálogo, tampoco las features nuevas', async () => {
+    for (const feature of BILLABLE_FEATURES) {
+      await expect(
+        featureAccess(ctx, { plan: 'trial', trialEndsAt: TRIAL_ENDS }, feature, AFTER),
+      ).resolves.toEqual({ ok: false, reason: 'trial_expired' });
+    }
   });
 });

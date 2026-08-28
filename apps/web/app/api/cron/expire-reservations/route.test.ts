@@ -18,6 +18,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * 4. **El log de "sin secreto" sale una vez por instancia, no una por request** (D4). La condición
  *    que lo dispara la controla quien está afuera: un escaneo contra `/api/cron/*` no puede elegir
  *    cuántas líneas escribimos. El 401, en cambio, sale siempre.
+ *
+ * Y después, lo que sí tiene que pasar y hasta S6 no pasaba: **un barrido que no drena tiene que
+ * devolver 500**. El `try/catch` del barrido es por fila, así que una corrida en la que ninguna
+ * unidad se liberó se veía en Vercel Cron igual que una perfecta. El último `describe` fija el
+ * predicado, que es la mitad delicada: `failed > 0` a secas pintaría el cron de rojo con una sola
+ * carrera perdida contra el dueño cancelando desde el panel, y un rojo que aparece por contención
+ * normal se aprende a ignorar — que es exactamente cómo se llegó a tener el bug.
  */
 
 const expireDueReservations = vi.fn();
@@ -44,7 +51,16 @@ vi.mock('../../../(app)/_lib/log', () => ({
 const { GET } = await import('./route');
 
 const SECRET = 'cron-secret-de-verdad-largo';
-const EMPTY_SWEEP = { scanned: 0, expired: 0, released: 0, skipped: 0, failed: 0 };
+const EMPTY_SWEEP = {
+  scanned: 0,
+  expired: 0,
+  released: 0,
+  skipped: 0,
+  failed: 0,
+  stuck: 0,
+  unrecorded: 0,
+  abandoned: 0,
+};
 
 const request = (headers: Record<string, string> = {}): Request =>
   new Request('https://maat.work/api/cron/expire-reservations', { headers });
@@ -183,6 +199,9 @@ describe('GET /api/cron/expire-reservations · con la credencial correcta', () =
       released: 2,
       skipped: 0,
       failed: 0,
+      stuck: 0,
+      unrecorded: 0,
+      abandoned: 0,
     });
   });
 
@@ -214,5 +233,81 @@ describe('GET /api/cron/expire-reservations · con la credencial correcta', () =
 
     expect(response.status).toBe(500);
     expect(logError).toHaveBeenCalledWith('cron.expire_reservations.crashed', '08006', {});
+  });
+});
+
+describe('GET /api/cron/expire-reservations · un barrido que no drena no es un éxito', () => {
+  const authed = (): Promise<Response> => call({ authorization: `Bearer ${SECRET}` });
+
+  it('una fila que falló por primera vez NO pinta el cron de rojo', async () => {
+    // El dueño cancelando desde el mostrador la misma reserva que el barrido está venciendo: uno de
+    // los dos muere por diseño (D1). Es contención normal y el cron sigue verde.
+    expireDueReservations.mockResolvedValue({
+      ...EMPTY_SWEEP,
+      scanned: 4,
+      expired: 3,
+      released: 3,
+      failed: 1,
+    });
+
+    const response = await authed();
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ ok: true, failed: 1 });
+  });
+
+  it('una fila que falló teniendo ya intentos anotados devuelve 500', async () => {
+    expireDueReservations.mockResolvedValue({ ...EMPTY_SWEEP, scanned: 2, failed: 1, stuck: 1 });
+
+    const response = await authed();
+
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toMatchObject({ ok: false, stuck: 1 });
+  });
+
+  it('no poder anotar el intento es rojo desde la primera vez', async () => {
+    // Sin el `+1`, la fila vuelve a encabezar el `order by` en la próxima corrida y nunca llega a
+    // `stuck` ni al techo: el head-of-line vuelve entero y sin síntoma. Esperar a la segunda sería
+    // esperar para siempre.
+    expireDueReservations.mockResolvedValue({
+      ...EMPTY_SWEEP,
+      scanned: 1,
+      failed: 1,
+      unrecorded: 1,
+    });
+
+    expect((await authed()).status).toBe(500);
+  });
+
+  it('una reserva abandonada mantiene el rojo aunque el lote venga vacío', async () => {
+    // El caso que ninguna otra métrica ve: `scanned: 0` porque el techo las sacó del `where`, y sin
+    // embargo hay una unidad trabada en `reserved` esperando que una persona la libere.
+    expireDueReservations.mockResolvedValue({ ...EMPTY_SWEEP, abandoned: 1 });
+
+    const response = await authed();
+
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toMatchObject({ ok: false, abandoned: 1 });
+  });
+
+  it('el 500 degradado loguea números, no filas, y no dice "done"', async () => {
+    expireDueReservations.mockResolvedValue({ ...EMPTY_SWEEP, scanned: 1, failed: 1, stuck: 1 });
+
+    await authed();
+
+    expect(logError).toHaveBeenCalledWith(
+      'cron.expire_reservations.degraded',
+      'sweep_not_draining',
+      expect.objectContaining({ stuck: 1, failed: 1 }),
+    );
+    expect(logEvent).not.toHaveBeenCalled();
+  });
+
+  it('el 500 degradado tampoco se cachea', async () => {
+    expireDueReservations.mockResolvedValue({ ...EMPTY_SWEEP, abandoned: 2 });
+
+    const response = await authed();
+
+    expect(response.headers.get('cache-control')).toBe('no-store');
   });
 });

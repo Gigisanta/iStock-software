@@ -133,6 +133,46 @@ export async function GET(request: Request): Promise<Response> {
   try {
     const sweep = await expireDueReservations();
 
+    /**
+     * ══════════════════════════════════════════════════════════════════════════════════════════
+     *  Cuándo una corrida que no explotó igual es un fracaso
+     * ══════════════════════════════════════════════════════════════════════════════════════════
+     *
+     * Hasta S6 este handler devolvía 200 pase lo que pase con las filas: el `try/catch` está
+     * adentro del `for` del barrido, así que una corrida en la que fallaron las 200 filas se veía
+     * en Vercel Cron **exactamente igual** que una perfecta. Un cron verde mientras nada se vence
+     * es la falla que se descubre semanas después y del lado del cliente.
+     *
+     * El predicado importa tanto como el 500. `failed > 0` a secas estaría mal: el dueño cancelando
+     * desde el mostrador la misma reserva que el barrido está venciendo produce un deadlock —uno de
+     * los dos muere, por diseño (D1)— y pintar el cron de rojo por eso enseña a ignorar el rojo,
+     * que es cómo se llegó acá. Se mira, entonces, lo que **no** se explica por contención normal:
+     *
+     * - `stuck`: falló una fila que ya venía fallando. Dos veces seguidas no es una carrera.
+     * - `unrecorded`: falló una fila y **tampoco** se le pudo anotar el intento. Es peor que
+     *   `stuck` aunque suene menor: sin el `+1` la fila nunca llega a `stuck` ni al techo, así que
+     *   el head-of-line vuelve entero y sin síntoma. Rojo desde la primera.
+     * - `abandoned`: hay reservas vencidas que el barrido ya no toma (pasaron el techo). Cada una
+     *   es una unidad trabada en `reserved` hasta que una persona la libere. Que el barrido haya
+     *   dejado de intentarlo es la razón por la que esto tiene que gritar, no la razón por la que
+     *   podría callarse.
+     *
+     * `abandoned` es además el único de los tres que sigue en rojo en las corridas siguientes, que
+     * es lo que se quiere: no es un incidente que pasó, es un estado en el que está la base.
+     */
+    const degraded = sweep.stuck > 0 || sweep.unrecorded > 0 || sweep.abandoned > 0;
+
+    if (degraded) {
+      // Números, siempre. Ni un id de listing entero, ni la fila: `logError` no acepta objetos. Los
+      // ids de las filas que rompieron ya salieron, uno por línea, desde el barrido.
+      logError('cron.expire_reservations.degraded', 'sweep_not_draining', { ...sweep });
+
+      return Response.json(
+        { ok: false, ...sweep },
+        { status: 500, headers: { 'cache-control': 'no-store' } },
+      );
+    }
+
     // Números, siempre. Ni un id de listing entero, ni la fila: `logEvent` no acepta objetos.
     logEvent('cron.expire_reservations.done', { ...sweep });
 

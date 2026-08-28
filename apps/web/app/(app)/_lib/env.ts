@@ -50,6 +50,18 @@ const serverEnvSchema = z.object({
   CRON_SECRET: z
     .union([z.literal(''), z.string().min(24, 'CRON_SECRET necesita al menos 24 caracteres')])
     .optional(),
+
+  /**
+   * DSN de Sentry. Opcional, y **sin validar la forma acá a propósito** — que es lo contrario de
+   * lo que hace `CRON_SECRET` dos líneas más arriba, así que la diferencia se explica:
+   *
+   * Un `CRON_SECRET` corto es un agujero de autenticación y tiene que romper fuerte. Un
+   * `SENTRY_DSN` mal tipeado no abre nada: apaga la telemetría. Si acá dijera `z.url()`, una `s`
+   * de más en el DSN dejaría **el panel entero** sin arrancar por la variable menos importante del
+   * archivo. La forma la valida `parseSentryDsn()` en `_lib/observability/media-incidents.ts`, que
+   * ante un DSN roto queda inerte y deja **una** línea de log en el bootstrap.
+   */
+  SENTRY_DSN: z.string().optional(),
 });
 
 export type ServerEnv = z.infer<typeof serverEnvSchema>;
@@ -143,4 +155,17 @@ export function storefrontUrlForSlug(slug: string): string {
  */
 export function storefrontHostForSlug(slug: string): string {
   return `${slug}.${rootDomain()}`;
+}
+
+/**
+ * DSN de Sentry, o `null` si no hay ninguno configurado.
+ *
+ * `null` para ausente **y para vacío**, por el mismo motivo que `cronSecret()`: `.env.example`
+ * trae `SENTRY_DSN=""` y un preview deploy lo hereda tal cual. La diferencia con el cron es qué
+ * significa ese `null`: allá es "no autorizás a nadie", acá es "no reportás a nadie".
+ */
+export function sentryDsn(): string | null {
+  const value = serverEnv().SENTRY_DSN;
+  const trimmed = value?.trim() ?? '';
+  return trimmed.length === 0 ? null : trimmed;
 }

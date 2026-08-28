@@ -66,9 +66,34 @@ describe('reservationCountdown', () => {
     expect(reservationCountdown(new Date(NOW.getTime() + 30_000), NOW)).toBe('queda menos de 1 min');
   });
 
-  it('vencida no dice "vencida": dice lo que está pasando, que es que todavía no se liberó', () => {
-    expect(reservationCountdown(inMinutes(-5), NOW)).toBe('venció, se libera en unos minutos');
+  it('recién vencida no dice "vencida": dice que el cron la va a barrer, que es la verdad', () => {
+    expect(reservationCountdown(inMinutes(-5), NOW)).toBe('venció, se libera solo en unos minutos');
     // El borde es cerrado del lado del vencimiento, igual que en el dominio.
-    expect(reservationCountdown(NOW, NOW)).toBe('venció, se libera en unos minutos');
+    expect(reservationCountdown(NOW, NOW)).toBe('venció, se libera solo en unos minutos');
+  });
+
+  /**
+   * La mitad cara del módulo. El texto de arriba es una **promesa**: "no hagas nada, se arregla
+   * solo". Mientras el cron esté por pasar es verdad; a las tres horas es mentira, y era la misma
+   * frase. Con `reservations_one_active_per_listing` impidiendo crear otra reserva sobre la misma
+   * unidad, esa mentira es un equipo invendible con un cartel que le pide al dueño que espere.
+   *
+   * Pasada la ventana el texto deja de informar y manda, nombrando el botón que está en la misma
+   * fila. No hace falta saber si el barrido está trabado: apretar "Liberar equipo" es la respuesta
+   * correcta en los dos escenarios.
+   */
+  it('pasada la ventana del cron deja de prometer y manda al botón', () => {
+    expect(reservationCountdown(inMinutes(-20), NOW)).toBe(
+      'venció hace 20 min y sigue trabado — usá "Liberar equipo"',
+    );
+    expect(reservationCountdown(inMinutes(-90), NOW)).toBe(
+      'venció hace 1 h 30 min y sigue trabado — usá "Liberar equipo"',
+    );
+  });
+
+  it('el cambio de texto es una sola vez, en el minuto 15', () => {
+    // 14 min: el cron tuvo dos oportunidades y le queda una. Todavía se le pide que espere.
+    expect(reservationCountdown(inMinutes(-14), NOW)).toBe('venció, se libera solo en unos minutos');
+    expect(reservationCountdown(inMinutes(-15), NOW)).toContain('Liberar equipo');
   });
 });

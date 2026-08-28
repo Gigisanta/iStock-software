@@ -1,6 +1,7 @@
 import 'server-only';
 import { and, eq } from 'drizzle-orm';
 import { entitlements } from '@istock/db';
+import { planFeatures, type PlanTier } from '../../(billing)/_lib/plans';
 import { withTenantDb, type TenantContext } from './db/session';
 
 /**
@@ -76,12 +77,44 @@ import { withTenantDb, type TenantContext } from './db/session';
  * si le sacáramos precedencia no habría forma de darle una cortesía a un negocio sin inventar un
  * cambio de plan — que es justo lo que `billing-agent` todavía no puede hacer. La fila no es el
  * trial; el trial es el plan.
+ *
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *  Qué incluye cada plan NO se decide acá: se lee de `(billing)/_lib/plans.ts`
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * Este módulo tenía su propia tabla `PLAN_FEATURES` con una sola feature (`reservations`), bajo el
+ * argumento de que declarar `chatbot`/`margin`/`pickup_points` antes de que existiera su slice
+ * sería escribir el precio de algo que no se puede prender. El argumento era razonable y el
+ * resultado fue el que siempre da tener la misma respuesta escrita dos veces: **divergieron**.
+ * Contra esa tabla, `featureAccess(negocio, 'chatbot')` daba `false`, que es lo contrario de lo
+ * que `PRODUCT.md` vende. No se veía porque nadie consume `chatbot` todavía; el día que alguien lo
+ * consumiera, el bug se hubiera visto como "el chatbot no anda en el plan que lo incluye".
+ *
+ * Ahora el catálogo es uno solo —`planFeatures()`— y este módulo **resuelve**, no declara. El
+ * corte es exacto y vale la pena escribirlo: *qué se vende* es del catálogo comercial
+ * (`billing-agent`); *quién puede hacer qué hoy* —la fila explícita, la vigencia del trial— es de
+ * acá. Importar `plans.ts` es una lectura y `plans.ts` es un módulo puro (no toca Postgres, no lee
+ * `process.env`, no importa `server-only`), así que no arrastra nada al panel.
+ *
+ * Una feature que el catálogo no declara sigue apagada para los tres planes: el default es "no",
+ * no "por las dudas sí".
  */
 
 /** El nombre de la feature es el valor de `entitlements.feature`, no un enum de TypeScript. */
 export const FEATURE_RESERVATIONS = 'reservations';
 
-export type PlanTier = 'trial' | 'base' | 'negocio';
+/**
+ * El tipo también sale del catálogo, y no es cosmético: con la unión escrita a mano acá, un cuarto
+ * plan en `PLAN_TIERS` no le hubiera dado ningún error al `tsc` de este archivo —la unión chica es
+ * asignable a la grande— y el `PLAN_CATALOG[tier]` de adentro de `planFeatures()` habría explotado
+ * en runtime contra una clave que el mapa no tiene. Un plan nuevo tiene que romper en compilación
+ * o no romper en absoluto; lo que no puede es romper recién en producción.
+ *
+ * Se re-exporta porque `PlanSnapshot` es de acá y sus consumidores (`publish-listing.ts`,
+ * `reserve-unit.ts`) ya importan de este módulo: obligarlos a traer el tipo de `(billing)` sería
+ * empujar la columna de billing hasta las pantallas del panel por un alias.
+ */
+export type { PlanTier } from '../../(billing)/_lib/plans';
 
 /**
  * Lo que hace falta saber del plan de un tenant para resolver una feature. Sale entero de la
@@ -115,21 +148,6 @@ export function trialIsAlive(snapshot: PlanSnapshot, now: Date): boolean {
 }
 
 /**
- * Qué incluye cada plan **sin** fila explícita.
- *
- * Sólo figura lo que alguien consume hoy. Declarar `chatbot`, `margin` o `pickup_points` acá
- * antes de que exista su slice sería escribir el precio de algo que todavía no se puede prender:
- * cada slice agrega su feature cuando la implementa, y hasta entonces una feature que nadie
- * declaró está apagada para los tres planes. `PRODUCT.md` §Planes es la fuente; esto es su
- * traducción ejecutable, no una segunda fuente.
- */
-const PLAN_FEATURES: Readonly<Record<PlanTier, readonly string[]>> = {
-  trial: [FEATURE_RESERVATIONS],
-  base: [],
-  negocio: [FEATURE_RESERVATIONS],
-};
-
-/**
  * ¿Puede este tenant usar `feature` **hoy**, y si no, por qué?
  *
  * `snapshot` se pasa por parámetro en vez de releerse acá: ya viene en la sesión
@@ -160,7 +178,7 @@ export async function featureAccess(
 
   // El plan no la incluye: el motivo es el plan, aunque el trial además esté vencido. Decirle
   // "se te terminó la prueba" a alguien que nunca tuvo esa feature sería explicar mal.
-  if (!PLAN_FEATURES[snapshot.plan].includes(feature)) return { ok: false, reason: 'plan' };
+  if (!planFeatures(snapshot.plan).includes(feature)) return { ok: false, reason: 'plan' };
 
   return trialIsAlive(snapshot, now) ? ACCESS_OK : { ok: false, reason: 'trial_expired' };
 }
