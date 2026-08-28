@@ -74,16 +74,41 @@ MIG=$(ls packages/db/drizzle/0002_*.sql 2>/dev/null | head -1)
 if [ -n "$MIG" ] && [ -s "$MIG" ]; then ok "existe la migracion del rol anonimo: $MIG"
 else no "falta la migracion 0002 (GRANT + policies del rol anonimo)"; MIG=/dev/null; fi
 
-chk "otorga a anon a nivel de COLUMNA, no de tabla" \
-    "grep -qiE 'GRANT[[:space:]]+SELECT[[:space:]]*\(' '$MIG'"
-chk "hay policy TO anon" "grep -qiE 'TO[[:space:]]+anon' '$MIG'"
+# ── Los GRANT los audita `scripts/guard-grants.sh`, por SENTENCIA y no por linea ──────────────
+# Aca vivian dos reglas y las DOS estaban verdes por vacio. Encontrado por el LEAD el 2026-08-28
+# probando polaridades; el detalle importa porque el patron se repite:
+#
+#   1. La regla de columnas prohibidas grepeaba `GRANT` y `anon` en la MISMA linea. Cinco de los
+#      seis GRANT a `anon` son multilinea (la linea que dice GRANT no dice anon y viceversa), asi
+#      que solo veia `fx_settings`. Verificado inyectando "imei" en el GRANT de `listings`: la
+#      regla no disparaba. Se podia otorgar el IMEI al rol anonimo con S1 en verde.
+#   2. La regla "hay policy TO anon" buscaba `TO[[:space:]]+anon`, pero drizzle-kit emite
+#      `TO "anon"` CON comillas. Matcheaba 13 lineas: comentarios en prosa, un GRANT EXECUTE sobre
+#      una funcion y los GRANT de columna. Ninguna de las 5 policies reales. Borrar las cinco
+#      policies dejaba la regla verde.
+#
+# La leccion no es "arreglar el regex": es que un gate que nunca se vio fallar no es un gate.
+# La auditoria de GRANT se movio a un guard propio que parsea SENTENCIAS (separa por
+# `--> statement-breakpoint`, tira las lineas de comentario ANTES de partir, y junta la lista de
+# columnas de cada GRANT aunque ocupe cinco lineas). Sus siete reglas estan probadas en las dos
+# polaridades. Aca solo se lo invoca: una sola implementacion, un solo lugar donde arreglarla.
+if [ -x scripts/guard-grants.sh ]; then
+  if scripts/guard-grants.sh > /tmp/s1-grants.txt 2>&1; then
+    ok "guard-grants: toda tabla con GRANT explicito y anon sin columna prohibida"
+  else
+    no "guard-grants rechazo los GRANT"; sed 's/^/        /' /tmp/s1-grants.txt | head -20
+  fi
+else
+  no "falta scripts/guard-grants.sh — la auditoria de GRANT no corrio (ausencia de medicion = FAIL)"
+fi
 
-# El GRANT es la ultima defensa cuando el DTO falla: si la columna prohibida no esta otorgada,
-# un select equivocado recibe 42501 de Postgres en vez de filtrar el IMEI.
-PROH=$(grep -iE 'GRANT' "$MIG" 2>/dev/null | grep -iE '\banon\b' \
-       | grep -iE '(imei|cost_usd|margin|internal_notes|supplier|enacom)' || true)
-if [ -z "$PROH" ]; then ok "ningun GRANT a anon nombra imei/cost/margin/notas/proveedor/enacom"
-else no "un GRANT a anon toca una columna prohibida"; echo "$PROH" | sed 's/^/        /'; fi
+# Que existan las policies es una pregunta distinta del GRANT y se chequea aparte: son las DOS
+# capas de CLAUDE.md §2. El GRANT decide que tablas y columnas podes tocar; la policy, que filas
+# ves. Se cuentan las policies REALES, aceptando `TO anon` y `TO "anon"`, y se exige que sean
+# CREATE POLICY: es lo que la version anterior de esta linea no hacia.
+POLS=$(grep -icE 'CREATE[[:space:]]+POLICY.*TO[[:space:]]+"?anon"?' "$MIG" 2>/dev/null || echo 0)
+if [ "$POLS" -ge 1 ]; then ok "hay $POLS policies CREATE POLICY ... TO anon"
+else no "cero policies TO anon en $MIG (con GRANT y sin policy, anon lee cero filas)"; fi
 
 ESCR=$(grep -inE 'for[[:space:]]+(insert|update|delete|all)\b' "$MIG" 2>/dev/null \
        | grep -iE '\banon\b' || true)
