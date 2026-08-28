@@ -101,6 +101,16 @@ jobs:
         if: always()
         run: ./scripts/guard-r2.sh
 
+      # Nace del adversary de S6 (2026-08-28). El dominio declara efectos obligatorios de transicion
+      # y comenta que `apps/web` los ejecuta; cuatro de los cinco tenian CERO ejecutores, y uno de
+      # esos cuatro —`closesReservation`— era un bug real: una unidad reservada se republicaba en la
+      # vidriera como Disponible con la sena puesta. TypeScript no podia verlo (el parametro que se
+      # olvidaron de pasar es opcional y su default es un valor valido), asi que el unico lugar
+      # donde eso se ve es un gate. No necesita base ni build: solo lee dos arboles de fuentes.
+      - name: gate de efectos declarados sin ejecutor
+        if: always()
+        run: ./scripts/guard-effects.sh
+
       # Tercer caso de la misma familia en un dia (guard-routes, guard-grants, y ahora este): un
       # gate que no esta en CI se pone rojo y nadie se entera. `accept-fase2.sh` estaba rojo desde
       # que S1 agrego las policies de la vidriera. Corre aca porque el job ya tiene Postgres
