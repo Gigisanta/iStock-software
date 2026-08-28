@@ -30,6 +30,14 @@ export interface ActiveReservationRow {
   readonly tenantId: string;
   readonly listingId: string;
   readonly expiresAt: Date;
+  /**
+   * Cuántas veces seguidas falló el barrido sobre esta fila. Lo escribe el cron
+   * (`_lib/reservations/expire-reservations.ts`); acá se lee para **una** cosa: que
+   * `reservationCountdown()` distinga "el cron pasa en un rato" de "el barrido ya la abandonó y
+   * esta unidad no se libera sola nunca más". Es un `int` por fila y evita que el panel le pida al
+   * dueño que espere algo que no va a pasar.
+   */
+  readonly sweepAttempts: number;
 }
 
 /**
@@ -52,6 +60,7 @@ export async function loadActiveReservation(
         tenantId: reservations.tenantId,
         listingId: reservations.listingId,
         expiresAt: reservations.expiresAt,
+        sweepAttempts: reservations.sweepAttempts,
       })
       .from(reservations)
       .where(
@@ -86,6 +95,7 @@ export async function loadActiveReservations(
         tenantId: reservations.tenantId,
         listingId: reservations.listingId,
         expiresAt: reservations.expiresAt,
+        sweepAttempts: reservations.sweepAttempts,
       })
       .from(reservations)
       .where(

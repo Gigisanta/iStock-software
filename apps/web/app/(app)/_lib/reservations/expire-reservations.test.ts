@@ -92,6 +92,12 @@ const db = {
   abandoned: 0,
   /** El `+1` tampoco pudo escribirse: sin GRANT, sin conexión, lo que sea. */
   bumpError: null as unknown,
+  /**
+   * Lo que el `RETURNING` del `+1` deja ver: el contador **ya incrementado**, tal como quedó en la
+   * fila. `null` = el `update` no afectó ninguna fila (la reserva se cerró en el medio), que es un
+   * `[]` y no un cero.
+   */
+  bumpedTo: null as number | null,
   /** Cuántas transacciones se abrieron, y en cuál explotó la fila. */
   txIndex: 0,
   failedTxIndex: -1,
@@ -131,7 +137,7 @@ const tx = {
         if (table === reservations && 'sweepAttempts' in row) {
           if (db.bumpError !== null) throw db.bumpError;
           db.writes.push({ op: 'update', table, row, txIndex: db.txIndex });
-          return [];
+          return db.bumpedTo === null ? [] : [{ sweepAttempts: db.bumpedTo }];
         }
         if (db.updateError !== null) {
           db.failedTxIndex = db.txIndex;
@@ -188,6 +194,7 @@ beforeEach(() => {
   db.listingReleased = 1;
   db.updateError = null;
   db.bumpError = null;
+  db.bumpedTo = null;
   db.abandoned = 0;
   db.txIndex = 0;
   db.failedTxIndex = -1;
@@ -440,6 +447,110 @@ describe('expireDueReservations · head-of-line (R2)', () => {
       'reservation.expire.swept',
       expect.objectContaining({ abandoned: 2 }),
     );
+  });
+});
+
+describe('expireDueReservations · la línea de cuarentena (T23)', () => {
+  const FALLA = Object.assign(new Error('deadlock detected'), { code: '40P01' });
+
+  const cuarentenas = (): unknown[] =>
+    logEvent.mock.calls.filter((c) => c[0] === 'reservation.expire.quarantined');
+
+  /**
+   * El motivo de esta línea no es la economía —esa ya la dio el techo: una fila envenenada cuesta
+   * `MAX_SWEEP_ATTEMPTS` líneas de `failed` y después silencio—, es la operación. Sin ella el cron
+   * devuelve 500 con `abandoned: 3` y el que mira los logs tiene un número y **ningún id**: los ids
+   * salieron por última vez en el intento anterior y saber qué unidades están trabadas pasa a ser
+   * una consulta a mano contra la base.
+   */
+  it('el `+1` que deja el contador en el techo deja los ids en el log, una sola vez', async () => {
+    db.due = [due({ sweepAttempts: MAX_SWEEP_ATTEMPTS - 1 })];
+    db.updateError = FALLA;
+    db.bumpedTo = MAX_SWEEP_ATTEMPTS;
+
+    await expireDueReservations(NOW);
+
+    expect(cuarentenas()).toHaveLength(1);
+    expect(logEvent).toHaveBeenCalledWith('reservation.expire.quarantined', {
+      reservationId: '9a1b2c3d-4e5f-4a6b-8c7d-0e1f2a3b4c5d',
+      tenantId: '11111111-2222-4333-8444-555555555555',
+      listingId: '3f2b1a90-7c4d-4e21-9b8a-0c1d2e3f4a5b',
+      sweepAttempts: MAX_SWEEP_ATTEMPTS,
+    });
+  });
+
+  /** La polaridad. Un fallo cualquiera no es una cuarentena; si lo fuera, volvimos a la línea por corrida. */
+  it('un `+1` que no llega al techo no anuncia nada', async () => {
+    db.due = [due({ sweepAttempts: 0 })];
+    db.updateError = FALLA;
+    db.bumpedTo = 1;
+
+    const result = await expireDueReservations(NOW);
+
+    expect(result).toMatchObject({ failed: 1 });
+    expect(cuarentenas()).toHaveLength(0);
+  });
+
+  /**
+   * El evento es del **cruce**, no del estado. Con `>=` en vez de `===`, cualquier `+1` posterior al
+   * techo volvería a anunciar la misma fila y tendríamos de nuevo una línea por corrida con otro
+   * nombre. El estado ya se reporta y ya es por corrida: es `abandoned` y el 500 de `route.ts`.
+   */
+  it('un contador que ya pasó el techo no vuelve a anunciarse', async () => {
+    db.due = [due({ sweepAttempts: MAX_SWEEP_ATTEMPTS })];
+    db.updateError = FALLA;
+    db.bumpedTo = MAX_SWEEP_ATTEMPTS + 1;
+
+    await expireDueReservations(NOW);
+
+    expect(cuarentenas()).toHaveLength(0);
+  });
+
+  /**
+   * Dos corridas seguidas sobre la misma fila: la primera la cruza, la segunda ya no la trae —el
+   * `where` del lote la excluye, que es lo que hace que "una vez en la vida" no dependa de que
+   * nadie se equivoque después.
+   */
+  it('la corrida siguiente ya no la trae, así que la línea no se repite', async () => {
+    db.due = [due({ sweepAttempts: MAX_SWEEP_ATTEMPTS - 1 })];
+    db.updateError = FALLA;
+    db.bumpedTo = MAX_SWEEP_ATTEMPTS;
+    await expireDueReservations(NOW);
+    expect(cuarentenas()).toHaveLength(1);
+
+    // Segunda corrida: el techo la sacó del lote y sólo queda en el censo de abandonadas.
+    db.due = [];
+    db.abandoned = 1;
+    await expireDueReservations(NOW);
+
+    expect(cuarentenas()).toHaveLength(1);
+  });
+
+  /** Sin `+1` escrito no hay cruce: la fila vuelve a encabezar el lote. Eso es `unrecorded`, no cuarentena. */
+  it('si el `+1` no se pudo escribir, no se anuncia una cuarentena que no ocurrió', async () => {
+    db.due = [due({ sweepAttempts: MAX_SWEEP_ATTEMPTS - 1 })];
+    db.updateError = FALLA;
+    db.bumpError = Object.assign(new Error('permission denied'), { code: '42501' });
+
+    const result = await expireDueReservations(NOW);
+
+    expect(result).toMatchObject({ unrecorded: 1 });
+    expect(cuarentenas()).toHaveLength(0);
+  });
+
+  /**
+   * El `update` no afectó ninguna fila: el dueño cerró la reserva desde el mostrador mientras el
+   * barrido fallaba. No hay contador que haya cruzado nada, y anunciarlo sería anunciar una unidad
+   * que ya está libre.
+   */
+  it('si el `+1` no afectó ninguna fila, tampoco', async () => {
+    db.due = [due({ sweepAttempts: MAX_SWEEP_ATTEMPTS - 1 })];
+    db.updateError = FALLA;
+    db.bumpedTo = null;
+
+    await expireDueReservations(NOW);
+
+    expect(cuarentenas()).toHaveLength(0);
   });
 });
 

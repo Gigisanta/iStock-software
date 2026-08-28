@@ -198,13 +198,17 @@ export function UnitRowCard({
             Cuenta regresiva, no hora de vencimiento: el server corre en UTC y "hasta las 15:30"
             saldría tres horas corrido. El detalle está en `_lib/reservations/presentation.ts`.
             La etiqueta del cliente NO se muestra ni se consulta: `queries.ts` no la selecciona.
+
+            Se le pasa la fila entera y no `expiresAt` suelto: el texto de una reserva que el
+            barrido ya abandonó lo decide `sweep_attempts`, no el reloj, y pasando la fila el call
+            site no puede olvidárselo — sin el contador no compila.
           */}
           {unit.status === 'reserved' && reservation !== null ? (
             <p
               data-testid="reserva-restante"
               className="mt-0.5 text-xs font-medium text-amber-700 dark:text-amber-400"
             >
-              Reservado: {reservationCountdown(reservation.expiresAt, now)}
+              Reservado: {reservationCountdown(reservation, now)}
             </p>
           ) : null}
         </div>

@@ -90,8 +90,14 @@ import { invalidateStorefrontUnit } from '../tenants/storefront-cache';
  * se cuenta con una segunda query y el cron devuelve 500 (`route.ts`). Una fila abandonada en
  * silencio es el mismo bug con otro disfraz — la unidad sigue trabada y ahora ni siquiera aparece
  * en los logs. Las dos salidas son humanas: el dueño aprieta «Liberar equipo» en el panel (por eso
- * `presentation.ts` dejó de decirle que esperara) o un operador pone `sweep_attempts = 0` cuando
- * arregló la causa.
+ * `presentation.ts` mira `sweep_attempts` antes que el reloj y le dice que esa unidad no se libera
+ * sola) o un operador pone `sweep_attempts = 0` cuando arregló la causa.
+ *
+ * Y una quinta, que es la que hace operable a la cuarta: **`reservation.expire.quarantined`**, una
+ * línea por fila y una sola vez en su vida, en el momento exacto en que el `+1` la deja en el
+ * techo. `abandoned` dice *cuántas*; esta dice *cuáles*. Sin ella el 500 trae un número y los ids
+ * dejaron de aparecer en el intento anterior — el único camino a saber qué unidad está trabada
+ * sería una consulta a mano contra la base. Ver el `catch` del `for`.
  *
  * ══════════════════════════════════════════════════════════════════════════════════════════════
  *  Costo
@@ -387,10 +393,17 @@ export async function expireDueReservations(now: Date = new Date()): Promise<Exp
        *
        * Y va con su propio `try`: el barrido no puede caerse por no poder anotar que algo falló.
        * Cuando eso pasa se cuenta aparte, porque es el estado en el que el head-of-line vuelve.
+       *
+       * Que el cruce del techo se **anote** acá adentro y se **emita** afuera es por lo mismo: este
+       * `catch` significa "el `+1` no se pudo escribir" y cuenta `unrecorded`. Un `logEvent` adentro
+       * haría que cualquier cosa que él tirara se contara como una escritura que falló, o sea un 500
+       * del cron por un problema de logging.
        */
+      let crossedCap = false;
+
       try {
-        await withServiceDb(async (tx) => {
-          await tx
+        const bumped = await withServiceDb(async (tx) =>
+          tx
             .update(reservations)
             .set({
               sweepAttempts: sql`${reservations.sweepAttempts} + 1`,
@@ -402,13 +415,57 @@ export async function expireDueReservations(now: Date = new Date()): Promise<Exp
                 eq(reservations.id, row.reservationId),
                 eq(reservations.status, 'active'),
               ),
-            );
-        });
+            )
+            .returning({ sweepAttempts: reservations.sweepAttempts }),
+        );
+
+        /**
+         * ══════════════════════════════════════════════════════════════════════════════════════
+         *  La línea que deja los ids antes de que la fila desaparezca de los logs
+         * ══════════════════════════════════════════════════════════════════════════════════════
+         *
+         * Con el techo puesto, una fila envenenada cuesta exactamente `MAX_SWEEP_ATTEMPTS` líneas
+         * de `reservation.expire.failed` y después **silencio**: deja de entrar al lote, así que
+         * deja de fallar, así que deja de loguear. Esa economía es deseada y es de R2.
+         *
+         * Lo que no es deseado es lo que queda: el cron devuelve 500 con `abandoned: 3` y el que
+         * mira los logs tiene **un número y ningún id**. Los ids salieron por última vez en el
+         * quinto intento y para saber qué unidades están trabadas hay que ir a consultar la base a
+         * mano, que es justo lo que nadie hace a las 3 de la mañana. Esta línea es el índice de
+         * ese número.
+         *
+         * **Una sola vez en la vida de la fila**, y eso lo sostiene el `RETURNING`, no una
+         * comparación con lo que trajo el `select`. `row.sweepAttempts + 1` sería el valor que la
+         * fila tenía hace una transacción: con dos corridas del cron pisándose —Vercel Cron no es
+         * exactly-once— las dos calcularían el mismo cruce y saldrían dos líneas. El valor que
+         * devuelve el `update` es el que quedó escrito, y como el `+1` es exactamente uno, sólo
+         * **una** transacción en toda la vida de la fila puede dejarlo justo en el tope. De ahí en
+         * adelante el `where` del lote (`sweep_attempts < MAX_SWEEP_ATTEMPTS`) no la vuelve a
+         * traer, así que no hay siguiente intento que la re-anuncie.
+         *
+         * Por eso la comparación es `===` y no `>=`: `>=` volvería a emitir en cada `+1` posterior
+         * al tope si alguna vez hubiera uno, y convertiría "cruzó" en "está". El estado ya se
+         * reporta, y se reporta por corrida: es `abandoned` (censo, abajo) y el 500 del `route.ts`.
+         *
+         * `sweepAttempts` es un número, no un nombre de campo prohibido; los otros tres son ids.
+         * Nada de la fila —etiqueta del cliente, IMEI del listing— entra acá, igual que en el
+         * `logError` de arriba.
+         */
+        crossedCap = bumped[0]?.sweepAttempts === MAX_SWEEP_ATTEMPTS;
       } catch (bumpError) {
         unrecorded += 1;
         logError('reservation.expire.attempt_unrecorded', pgErrorCode(bumpError), {
           reservationId: row.reservationId,
           tenantId: row.tenantId,
+        });
+      }
+
+      if (crossedCap) {
+        logEvent('reservation.expire.quarantined', {
+          reservationId: row.reservationId,
+          tenantId: row.tenantId,
+          listingId: row.listingId,
+          sweepAttempts: MAX_SWEEP_ATTEMPTS,
         });
       }
     }

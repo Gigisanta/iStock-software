@@ -1,15 +1,25 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   RESERVATION_DEFAULT_MINUTES,
   RESERVATION_MAX_MINUTES,
   RESERVATION_MIN_MINUTES,
 } from '@istock/domain';
-import {
+
+/**
+ * `presentation.ts` importa `MAX_SWEEP_ATTEMPTS` del módulo del cron —el tope tiene que ser UNO, no
+ * dos que se desincronizan— y ese módulo es `server-only`, que en vitest tira al importarse. Se
+ * neutraliza el marcador, no el tope: `MAX_SWEEP_ATTEMPTS` abajo es el valor real del cron, y si
+ * mañana cambia, estos tests cambian con él.
+ */
+vi.mock('server-only', () => ({}));
+
+const { MAX_SWEEP_ATTEMPTS } = await import('./expire-reservations');
+const {
   RESERVATION_DEFAULT_OPTION,
   RESERVATION_MINUTE_OPTIONS,
   durationLabel,
   reservationCountdown,
-} from './presentation';
+} = await import('./presentation');
 
 /**
  * Los presets del `<select>` son una lista escrita a mano, y por eso se testean contra el dominio:
@@ -18,7 +28,24 @@ import {
  */
 
 const NOW = new Date('2026-08-28T14:00:00.000Z');
-const inMinutes = (minutes: number) => new Date(NOW.getTime() + minutes * 60_000);
+
+/**
+ * Una fila sana: el barrido nunca falló sobre ella. Es el caso normal y el que deja hablar al reloj.
+ * `sweepAttempts` se pasa explícito en cada llamada a propósito — no hay default que se pueda
+ * olvidar, y esa es la mitad del arreglo de T24.
+ */
+const sana = (minutes: number) => ({
+  expiresAt: new Date(NOW.getTime() + minutes * 60_000),
+  sweepAttempts: 0,
+});
+
+/** La misma fila, pero abandonada por el barrido: pasó el techo y no vuelve a entrar al lote. */
+const enCuarentena = (minutes: number) => ({
+  expiresAt: new Date(NOW.getTime() + minutes * 60_000),
+  sweepAttempts: MAX_SWEEP_ATTEMPTS,
+});
+
+const CUARENTENA = 'venció y el equipo no se va a liberar solo — usá "Liberar equipo"';
 
 describe('los presets caen dentro del rango del dominio', () => {
   it('ninguno se sale de [min, max]', () => {
@@ -58,42 +85,111 @@ describe('durationLabel', () => {
 
 describe('reservationCountdown', () => {
   it('cuenta lo que falta', () => {
-    expect(reservationCountdown(inMinutes(45), NOW)).toBe('quedan 45 min');
-    expect(reservationCountdown(inMinutes(90), NOW)).toBe('quedan 1 h 30 min');
+    expect(reservationCountdown(sana(45), NOW)).toBe('quedan 45 min');
+    expect(reservationCountdown(sana(90), NOW)).toBe('quedan 1 h 30 min');
   });
 
   it('el último minuto no dice "quedan 0 min"', () => {
-    expect(reservationCountdown(new Date(NOW.getTime() + 30_000), NOW)).toBe('queda menos de 1 min');
+    expect(reservationCountdown({ expiresAt: new Date(NOW.getTime() + 30_000), sweepAttempts: 0 }, NOW)).toBe(
+      'queda menos de 1 min',
+    );
   });
 
   it('recién vencida no dice "vencida": dice que el cron la va a barrer, que es la verdad', () => {
-    expect(reservationCountdown(inMinutes(-5), NOW)).toBe('venció, se libera solo en unos minutos');
+    expect(reservationCountdown(sana(-5), NOW)).toBe('venció, se libera solo en unos minutos');
     // El borde es cerrado del lado del vencimiento, igual que en el dominio.
-    expect(reservationCountdown(NOW, NOW)).toBe('venció, se libera solo en unos minutos');
+    expect(reservationCountdown(sana(0), NOW)).toBe('venció, se libera solo en unos minutos');
   });
 
   /**
-   * La mitad cara del módulo. El texto de arriba es una **promesa**: "no hagas nada, se arregla
-   * solo". Mientras el cron esté por pasar es verdad; a las tres horas es mentira, y era la misma
-   * frase. Con `reservations_one_active_per_listing` impidiendo crear otra reserva sobre la misma
-   * unidad, esa mentira es un equipo invendible con un cartel que le pide al dueño que espere.
-   *
-   * Pasada la ventana el texto deja de informar y manda, nombrando el botón que está en la misma
-   * fila. No hace falta saber si el barrido está trabado: apretar "Liberar equipo" es la respuesta
-   * correcta en los dos escenarios.
+   * El reloj como **fallback**. Con el contador en 0 no hay información —una caída del cron deja
+   * `sweep_attempts` en 0 porque el barrido ni corrió—, y ahí el tiempo vencido es la mejor señal
+   * que hay: pasada la ventana el texto deja de prometer y manda al botón. Se equivoca por exceso
+   * (pide trabajo manual que quizá no hacía falta) y ese error es inocuo: soltar a mano una unidad
+   * que igual se iba a soltar la deja igual de disponible.
    */
   it('pasada la ventana del cron deja de prometer y manda al botón', () => {
-    expect(reservationCountdown(inMinutes(-20), NOW)).toBe(
+    expect(reservationCountdown(sana(-20), NOW)).toBe(
       'venció hace 20 min y sigue trabado — usá "Liberar equipo"',
     );
-    expect(reservationCountdown(inMinutes(-90), NOW)).toBe(
+    expect(reservationCountdown(sana(-90), NOW)).toBe(
       'venció hace 1 h 30 min y sigue trabado — usá "Liberar equipo"',
     );
   });
 
-  it('el cambio de texto es una sola vez, en el minuto 15', () => {
+  it('el cambio de texto del reloj es una sola vez, en el minuto 15', () => {
     // 14 min: el cron tuvo dos oportunidades y le queda una. Todavía se le pide que espere.
-    expect(reservationCountdown(inMinutes(-14), NOW)).toBe('venció, se libera solo en unos minutos');
-    expect(reservationCountdown(inMinutes(-15), NOW)).toContain('Liberar equipo');
+    expect(reservationCountdown(sana(-14), NOW)).toBe('venció, se libera solo en unos minutos');
+    expect(reservationCountdown(sana(-15), NOW)).toContain('Liberar equipo');
+  });
+});
+
+/**
+ * La mitad cara del módulo (T24). Con el reloj solo, «trabado» era una conjetura; con
+ * `sweep_attempts` es un hecho: el barrido tiene el techo en el `where`, así que una fila que lo
+ * pasó **no la toma nunca más** y esa unidad no se libera sola jamás.
+ *
+ * Los dos errores del reloj no eran simétricos, y por eso el contador va primero: el caro es una
+ * fila en cuarentena **dentro** de la ventana de gracia, donde el reloj decía «se libera solo en
+ * unos minutos» — falso para siempre, y justo el texto que evita que el dueño haga lo único que
+ * arregla el problema. Como `reservations_one_active_per_listing` impide crear otra reserva sobre
+ * la misma unidad, eso es un equipo invendible con un cartel que le pide al dueño que espere.
+ */
+describe('reservationCountdown · el contador manda sobre el reloj', () => {
+  it('en cuarentena y recién vencida NO promete que se libera sola: es el caso que T24 vino a matar', () => {
+    // 1 minuto vencida: el reloj, solo, diría "se libera solo en unos minutos" y sería mentira para
+    // siempre.
+    expect(reservationCountdown(enCuarentena(-1), NOW)).toBe(CUARENTENA);
+    expect(reservationCountdown(enCuarentena(0), NOW)).toBe(CUARENTENA);
+  });
+
+  it('el texto dice que NO se va a liberar sola, no que "sigue trabada": son cosas distintas para el que lee', () => {
+    const texto = reservationCountdown(enCuarentena(-200), NOW);
+    expect(texto).toBe(CUARENTENA);
+    expect(texto).toContain('no se va a liberar solo');
+    expect(texto).not.toContain('sigue trabado');
+    // Nombra el botón que está en la misma fila: es la única salida y es reversible.
+    expect(texto).toContain('Liberar equipo');
+  });
+
+  it('el texto de cuarentena no depende del reloj: es el mismo al minuto y a las tres horas', () => {
+    expect(reservationCountdown(enCuarentena(-1), NOW)).toBe(
+      reservationCountdown(enCuarentena(-180), NOW),
+    );
+  });
+
+  /** Polaridad. Una fila sana vencida hace poco NO puede llevarse el texto de cuarentena. */
+  it('una fila sana vencida hace poco NO dice el texto de cuarentena', () => {
+    expect(reservationCountdown(sana(-1), NOW)).not.toBe(CUARENTENA);
+    expect(reservationCountdown(sana(-5), NOW)).toBe('venció, se libera solo en unos minutos');
+    // Ni siquiera pasada la ventana: ahí manda al botón, pero sin afirmar que no se libera sola.
+    expect(reservationCountdown(sana(-200), NOW)).not.toBe(CUARENTENA);
+  });
+
+  /**
+   * El borde. Un intento menos que el techo todavía puede entrar al lote, así que el barrido
+   * **puede** liberarla y decir lo contrario sería empujar al dueño a trabajo manual innecesario.
+   */
+  it('un intento por debajo del techo todavía es del reloj', () => {
+    const casiEnCuarentena = {
+      expiresAt: new Date(NOW.getTime() - 60_000),
+      sweepAttempts: MAX_SWEEP_ATTEMPTS - 1,
+    };
+    expect(reservationCountdown(casiEnCuarentena, NOW)).toBe('venció, se libera solo en unos minutos');
+  });
+
+  /** Un contador por encima del techo (un `+1` de más, un operador con la mano pesada) es cuarentena igual. */
+  it('por encima del techo también es cuarentena', () => {
+    expect(
+      reservationCountdown(
+        { expiresAt: new Date(NOW.getTime() - 60_000), sweepAttempts: MAX_SWEEP_ATTEMPTS + 3 },
+        NOW,
+      ),
+    ).toBe(CUARENTENA);
+  });
+
+  /** Una reserva viva se cuenta hacia adelante aunque el barrido la haya castigado antes. */
+  it('el contador no le gana al tiempo que todavía queda', () => {
+    expect(reservationCountdown(enCuarentena(45), NOW)).toBe('quedan 45 min');
   });
 });
