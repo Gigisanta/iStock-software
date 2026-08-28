@@ -138,16 +138,99 @@ const SUFFIXES = [
  * Se lee el **texto** y no se importa el módulo: `proxy.ts` importa `next/server`, que no está en
  * las dependencias de `@istock/tests` y que arrastraría medio runtime de Next adentro de Vitest.
  * Es el mismo camino que ya usa `reserved-slugs.test.ts` para leer las listas de otro owner.
+ *
+ * ── Por qué esto es un scanner y no un regex (S8) ─────────────────────────────────────────────
+ * La versión anterior era `/matcher\s*:\s*\[([\s\S]*?)\]/u`: no-golosa, o sea que **cortaba en el
+ * primer `]` que encontrara**. Un `]` adentro de un comentario del array —o una clase de
+ * caracteres `[…]` adentro de una entrada regex, que es lo próximo que va a pasar— truncaba la
+ * lista en la segunda entrada, y el rojo que salía de ahí eran **70 tests fallando** que hablaban
+ * de rutas sin cubrir y no del parser. Lo encontró `storefront-agent` en S8 y lo **reportó** en vez
+ * de editar este archivo, que es lo correcto (`CLAUDE.md` §4).
+ *
+ * El arreglo real que había hasta hoy era una **convención**: "los comentarios de este array van
+ * sin corchetes", escrita en `apps/web/proxy.ts`. Una convención que nadie chequea no es un
+ * invariante, es una trampa con instrucciones. Ahora el corchete se cuenta con profundidad y se
+ * saltean comentarios y literales, así que el fuente puede escribirse como se escriba.
+ *
+ * Lo que el scanner NO soporta, a propósito y por escrito: una entrada que **no** sea un literal de
+ * string (un `RegExp` crudo o una constante importada). Next compila los matchers con
+ * `path-to-regexp` sobre strings, y una entrada que no esté en el fuente sería una entrada que este
+ * guard no puede evaluar — el modo de falla correcto ahí es "no la leí", no "la aprobé". Por eso
+ * las entradas se cuentan sólo a profundidad 1 y se exige que el array cierre.
  */
+function readStringLiteral(source: string, start: number): { readonly text: string; readonly end: number } {
+  const quote = source.charAt(start);
+  let text = '';
+  let at = start + 1;
+  while (at < source.length) {
+    const char = source.charAt(at);
+    if (char === '\\') {
+      // Mismo criterio que la versión vieja: `\\` colapsa a `\` (así viaja `\\.` en el fuente y
+      // llega `\.` al RegExp). Cualquier otra escapada se deja tal cual, con su barra.
+      const escaped = source.charAt(at + 1);
+      text += escaped === '\\' || escaped === quote ? escaped : `\\${escaped}`;
+      at += 2;
+      continue;
+    }
+    if (char === quote) return { text, end: at + 1 };
+    text += char;
+    at += 1;
+  }
+  throw new Error('el `matcher` tiene un literal de string sin cerrar');
+}
+
+function parseMatcherArray(source: string): string[] {
+  const config = /export\s+const\s+config\s*=\s*\{/u.exec(source);
+  if (config === null) throw new Error('no se encontró `export const config = {`');
+  const key = /matcher\s*:\s*\[/u.exec(source.slice(config.index));
+  if (key === null) throw new Error('no se encontró `matcher: [` dentro de `export const config`');
+
+  const entries: string[] = [];
+  let depth = 1;
+  let at = config.index + key.index + key[0].length;
+
+  while (at < source.length) {
+    const char = source.charAt(at);
+    const next = source.charAt(at + 1);
+
+    if (char === '/' && next === '/') {
+      const eol = source.indexOf('\n', at);
+      if (eol === -1) break;
+      at = eol + 1;
+      continue;
+    }
+    if (char === '/' && next === '*') {
+      const end = source.indexOf('*/', at + 2);
+      if (end === -1) break;
+      at = end + 2;
+      continue;
+    }
+    if (char === "'" || char === '"' || char === '`') {
+      const literal = readStringLiteral(source, at);
+      if (depth === 1) entries.push(literal.text);
+      at = literal.end;
+      continue;
+    }
+    if (char === '[') depth += 1;
+    if (char === ']') {
+      depth -= 1;
+      if (depth === 0) {
+        if (entries.length === 0) throw new Error('el `matcher` está vacío');
+        return entries;
+      }
+    }
+    at += 1;
+  }
+
+  throw new Error('el array del `matcher` no cierra');
+}
+
 function readMatchers(): string[] {
-  const source = readFileSync(PROXY, 'utf8');
-  const block = /matcher\s*:\s*\[([\s\S]*?)\]/u.exec(source);
-  if (block === null) throw new Error('apps/web/proxy.ts: no se encontró `matcher: [...]`');
-  const entries = [...(block[1] ?? '').matchAll(/'((?:[^'\\]|\\.)*)'/gu)].map((m) =>
-    (m[1] ?? '').replace(/\\\\/gu, '\\'),
-  );
-  if (entries.length === 0) throw new Error('apps/web/proxy.ts: el `matcher` está vacío');
-  return entries;
+  try {
+    return parseMatcherArray(readFileSync(PROXY, 'utf8'));
+  } catch (error) {
+    throw new Error(`apps/web/proxy.ts: ${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
 /**
@@ -475,6 +558,87 @@ function probesFor(route: string): string[] {
 }
 
 // ── las dos mitades ───────────────────────────────────────────────────────────────────────────
+
+// ── el que lee al que lee ─────────────────────────────────────────────────────────────────────
+
+/**
+ * Fuente de mentira, con las tres formas de `]` que el regex viejo no sobrevivía. Es el fixture que
+ * hace ENCENDER el defecto que reportó `storefront-agent`: con el parser anterior
+ * (`/matcher\s*:\s*\[([\s\S]*?)\]/u`) esta lista se cortaba en **una** entrada, porque el primer
+ * `]` del fuente está adentro de un comentario. Y el síntoma no hablaba del parser: hablaba de 70
+ * rutas de la app "sin cubrir por el proxy".
+ */
+const PROXY_CON_CORCHETES_EN_COMENTARIOS = `
+import { NextResponse } from 'next/server';
+
+/** Docblock con un matcher: [ '/mentira' ] escrito en prosa, ANTES del config real. */
+export function proxy(): void {}
+
+export const config = {
+  matcher: [
+    '/s',
+    // El panel entero: cubre /app/canjes/[id] y todo lo que cuelgue de ahí.
+    '/app/:path*',
+    /* Bloque con corchetes ] y una entrada falsa: '/no-soy-una-entrada' */
+    '/_media/:path*',
+    '/((?!_next/static|(?:.*/)?icon[0-9]*\\\\.png).*\\\\.(?:png|json)$).*',
+  ],
+};
+`;
+
+describe('leer el matcher del fuente no puede depender de cómo se escriben los comentarios', () => {
+  it('un corchete adentro de un comentario del array no trunca la lista de entradas', () => {
+    expect(
+      parseMatcherArray(PROXY_CON_CORCHETES_EN_COMENTARIOS),
+      'el parser cortó la lista en el primer `]` del fuente. Ése es el defecto que reportó ' +
+        '`storefront-agent` en S8: la mitad de las entradas desaparece, este archivo declara sin ' +
+        'cubrir rutas que SÍ están cubiertas, y el rojo (70 tests) no habla del parser. Hasta hoy ' +
+        'el invariante lo sostenía una convención escrita en `apps/web/proxy.ts` —"los comentarios ' +
+        'de este array van sin corchetes"— que no chequeaba nadie.',
+    ).toEqual([
+      '/s',
+      '/app/:path*',
+      '/_media/:path*',
+      '/((?!_next/static|(?:.*/)?icon[0-9]*\\.png).*\\.(?:png|json)$).*',
+    ]);
+  });
+
+  it('una entrada citada adentro de un comentario no se cuenta como entrada del matcher', () => {
+    expect(
+      parseMatcherArray(PROXY_CON_CORCHETES_EN_COMENTARIOS),
+      "`'/no-soy-una-entrada'` está adentro de un comentario de bloque: si aparece en la lista, el " +
+        'guard estaría evaluando cobertura contra un matcher que el proxy no tiene.',
+    ).not.toContain('/no-soy-una-entrada');
+  });
+
+  it('el docblock que menciona un matcher en prosa no le gana al config exportado', () => {
+    // Se ancla en `export const config = {`, no en el primer `matcher:` del archivo. `proxy.ts` es
+    // un archivo con 350 líneas de docblock que nombran el matcher a cada rato.
+    expect(parseMatcherArray(PROXY_CON_CORCHETES_EN_COMENTARIOS)).not.toContain('/mentira');
+  });
+
+  it('un array de matcher que no cierra se reporta como tal y no como cobertura faltante', () => {
+    // El modo de falla correcto de un lector es "no pude leer", nunca "leí menos". Si esto
+    // devolviera una lista corta en vez de tirar, el rojo volvería a mentir sobre qué se rompió.
+    expect(() => parseMatcherArray("export const config = {\n  matcher: [\n    '/s',\n")).toThrow(
+      /no cierra/u,
+    );
+  });
+
+  it('las entradas del matcher real de apps/web/proxy.ts se leen enteras y sin comentarios', () => {
+    const matchers = readMatchers();
+    expect(
+      matchers.length,
+      'el matcher real tiene que traer TODAS sus entradas. Si acá hay menos, el resto de este ' +
+        'archivo está midiendo cobertura contra media lista.',
+    ).toBeGreaterThanOrEqual(5);
+    expect(
+      matchers.every((entry) => entry.startsWith('/')),
+      `una entrada leída no empieza con "/": ${JSON.stringify(matchers)}. Eso es texto de un ` +
+        'comentario colándose como entrada.',
+    ).toBe(true);
+  });
+});
 
 describe('el proxy corre sobre toda ruta que la app puede atender', () => {
   const matchers = readMatchers();

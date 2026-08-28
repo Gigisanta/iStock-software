@@ -141,10 +141,25 @@ const CONTROL_SCHEMA = 'qa_rls_control';
 // UUIDs propios de este archivo (bloque `c…`/`d…`) para no pisar los de `rls.test.ts`.
 const TENANT_A = '00000000-0000-4000-9000-0000000000c1';
 const TENANT_B = '00000000-0000-4000-9000-0000000000d1';
+/**
+ * El tercer tenant existe desde `0009` y su única razón de ser es **separar dos rechazos que
+ * Postgres cuenta con la misma frase** (ver R2c-g). Está `suspended` y con el canje PRENDIDO: es
+ * el único estado en el que el canje rebota sin que la bandera tenga nada que ver.
+ *
+ * No tiene usuario, ni membership, ni unidades: nada de lo que se le pregunta necesita una sesión
+ * autenticada, y un fixture que monta de más es un fixture que rompe otro test (ver `SALE_B`).
+ */
+const TENANT_C = '00000000-0000-4000-9000-0000000000e1';
 const USER_A = '00000000-0000-4000-9000-0000000000c2';
 const USER_B = '00000000-0000-4000-9000-0000000000d2';
 const LISTING_A = '00000000-0000-4000-9000-0000000000c3';
 const LISTING_B = '00000000-0000-4000-9000-0000000000d3';
+/**
+ * La unidad publicada del tenant suspendido. Existe para que *"su vidriera está apagada"* sea una
+ * afirmación y no un vacío: sin stock cargado, "cero unidades servidas" también es lo que devuelve
+ * una base donde nadie publicó nada, y el test daría verde con la policy de `tenants` borrada.
+ */
+const LISTING_C = '00000000-0000-4000-9000-0000000000e3';
 const SALE_A = '00000000-0000-4000-9000-0000000000c4';
 const LEAD_A = '00000000-0000-4000-9000-0000000000c5';
 const INTRUDER_ROW = '00000000-0000-4000-9000-0000000000e9';
@@ -168,6 +183,8 @@ const COST_VENTA_B = '300.00';
 /** Los slugs del host: `{slug}.maat.work`. Son el claim de la vidriera anónima (`0002`). */
 const SLUG_A = 'qa-rls-a';
 const SLUG_B = 'qa-rls-b';
+/** El slug del tenant suspendido. Existe en la tabla y aun así no resuelve: ver R2c-g. */
+const SLUG_C = 'qa-rls-c';
 
 /** El costo y el IMEI de A. Si alguna de estas dos cadenas aparece en una sesión de B, es fuga. */
 const COST_A = '412.00';
@@ -602,8 +619,10 @@ async function adminRows<T>(text: string): Promise<T[]> {
 
 async function wipeFixture(): Promise<void> {
   await admin.unsafe(`delete from sales where tenant_id in ('${TENANT_A}', '${TENANT_B}')`);
-  await admin.unsafe(`delete from listings where tenant_id in ('${TENANT_A}', '${TENANT_B}')`);
-  await admin.unsafe(`delete from tenants where id in ('${TENANT_A}', '${TENANT_B}')`);
+  await admin.unsafe(
+    `delete from listings where tenant_id in ('${TENANT_A}', '${TENANT_B}', '${TENANT_C}')`,
+  );
+  await admin.unsafe(`delete from tenants where id in ('${TENANT_A}', '${TENANT_B}', '${TENANT_C}')`);
   await admin.unsafe(`delete from users where id in ('${USER_A}', '${USER_B}')`);
   await admin.unsafe(`delete from auth.users where id in ('${USER_A}', '${USER_B}')`);
 }
@@ -625,10 +644,21 @@ beforeAll(async () => {
     insert into auth.users (id, email) values
       ('${USER_A}', 'a@qa-rls.local'), ('${USER_B}', 'b@qa-rls.local')
     on conflict (id) do nothing`);
+  // Los tres estados del canje se montan **acá y no dentro de un test**, y ninguno se toca después:
+  // la bandera y el `status` son entrada del fixture, no algo que un caso prende y apaga. Un test
+  // que muta el tenant deja al siguiente midiendo otra base, y el síntoma sería intermitencia.
+  //
+  //   A · `active`    + canje ON   → el canje entra. Es el control positivo de todo R2c.
+  //   B · `active`    + canje OFF  → vidriera viva, canje cerrado. Es la decisión del dueño.
+  //   C · `suspended` + canje ON   → no resuelve el claim: la vidriera entera está apagada.
+  //
+  // B y C existen separados porque desde `0009` el canje rebota por DOS motivos distintos que
+  // Postgres cuenta con la misma frase. Ver R2c-g: sin los dos, "rebotó" no dice cuál de los dos.
   await admin.unsafe(`
-    insert into tenants (id, slug, name, wa_phone) values
-      ('${TENANT_A}', '${SLUG_A}', 'Celus del Valle', '5492995550001'),
-      ('${TENANT_B}', '${SLUG_B}', 'Neuquen Mobile', '5492995550002')`);
+    insert into tenants (id, slug, name, wa_phone, accepts_trade_in, status) values
+      ('${TENANT_A}', '${SLUG_A}', 'Celus del Valle', '5492995550001', true,  'active'),
+      ('${TENANT_B}', '${SLUG_B}', 'Neuquen Mobile', '5492995550002', false, 'active'),
+      ('${TENANT_C}', '${SLUG_C}', 'Roca Celulares', '5492995550003', true,  'suspended')`);
   await admin.unsafe(`
     insert into users (id, email) values
       ('${USER_A}', 'a@qa-rls.local'), ('${USER_B}', 'b@qa-rls.local')
@@ -644,6 +674,10 @@ beforeAll(async () => {
     insert into listings (id, tenant_id, slug, title, condition, price_usd, status)
     values ('${LISTING_B}', '${TENANT_B}', 'iphone-13-128', 'iPhone 13 128 Azul',
             'used_excellent', 480.00, 'available')`);
+  await admin.unsafe(`
+    insert into listings (id, tenant_id, slug, title, condition, price_usd, status)
+    values ('${LISTING_C}', '${TENANT_C}', 'iphone-12-64', 'iPhone 12 64 Verde',
+            'used_excellent', 390.00, 'available')`);
   await admin.unsafe(`
     insert into fx_settings (tenant_id, ars_per_usd) values
       ('${TENANT_A}', 1487.50), ('${TENANT_B}', 1490.00)`);
@@ -1122,7 +1156,14 @@ describe('R2b · el visitante anónimo escribe su click y no puede anotarlo en l
  * casos "pasaron" sin probar nada. Todo caso pasa por {@link veredicto}, que exige el rol efectivo
  * leído de la misma transacción.
  *
- * Fuente de verdad de lo que se afirma: `packages/db/drizzle/0008_storefront_tradein_lead_insert.sql`.
+ * ── El `WITH CHECK` tiene DOS mitades desde `0009`, y se auditan por separado ───────────────
+ * `0008` ataba la fila al tenant del claim. `0009` le agregó `and exists (… t.accepts_trade_in)`,
+ * o sea una segunda condición que puede rechazar la MISMA fila por un motivo completamente
+ * distinto y con la misma frase de error. R2c a–f mide la primera mitad (el tenant, con el canje
+ * prendido); **R2c-g mide la segunda** y, sobre todo, las separa: ver su docblock.
+ *
+ * Fuente de verdad de lo que se afirma: `packages/db/drizzle/0008_storefront_tradein_lead_insert.sql`
+ * y `packages/db/drizzle/0009_tradein_accepts_and_acquisition_channel.sql`.
  */
 describe('R2c · el visitante deja su canje en la vidriera de A y no toca nada más de la base', () => {
   /**
@@ -1149,7 +1190,7 @@ describe('R2c · el visitante deja su canje en la vidriera de A y no toca nada m
   afterAll(async () => {
     await admin.unsafe(
       `delete from tradein_leads
-       where tenant_id in ('${TENANT_A}', '${TENANT_B}') and id <> '${LEAD_A}'`,
+       where tenant_id in ('${TENANT_A}', '${TENANT_B}', '${TENANT_C}') and id <> '${LEAD_A}'`,
     );
   });
 
@@ -1406,6 +1447,182 @@ describe('R2c · el visitante deja su canje en la vidriera de A y no toca nada m
         canje({ notes: `repeat('x', 501)` }, `'${TENANT_A}'`),
       );
       expect(capa, 'el CHECK no alcanza al lado autenticado: el límite está en el borde, no en el motor').toBe('CHECK');
+    });
+  });
+
+  // ── g · el canje APAGADO, y las DOS formas de rebote que `0009` dejó indistinguibles ───────
+  /**
+   * R2c-g · la segunda mitad del `WITH CHECK`: *el tenant de esta fila tiene el canje prendido*.
+   *
+   * ── Qué se rompió ───────────────────────────────────────────────────────────────────────
+   * Hasta `0008` la policy decía sólo `tenant_id = storefront_tenant_id()`. Un tenant con
+   * `accepts_trade_in = false` recibía el lead igual: lo único que lo frenaba era el `and
+   * t.accepts_trade_in` del handler de la vidriera. O sea que un `curl` que no pasara por el
+   * handler le llenaba de **nombre y teléfono de personas reales** el inbox a un reseller que
+   * decidió no tomar canje — PII de terceros en una bandeja que por definición no mira.
+   *
+   * ── Por qué esto no es "un caso más" sino un bloque aparte ──────────────────────────────
+   * Desde `0009` hay **dos maneras distintas** de que un canje no entre, y significan cosas
+   * opuestas para el dueño:
+   *
+   *   · el tenant apagó el canje (`accepts_trade_in = false`) → decisión suya, reversible desde
+   *     el panel y sin deploy. Su vidriera sigue viva: sólo se cerró el formulario.
+   *   · el tenant no está `active` → `storefront_tenant_id()` filtra por `status = 'active'`, así
+   *     que devuelve `NULL` y la PRIMERA mitad ya falla. La bandera ni se mira. No hay vidriera.
+   *
+   * **Postgres las cuenta con la misma frase**: `42501` +
+   * `new row violates row-level security policy`. Un test que sólo mire eso no distingue una de
+   * la otra — ni distingue a ninguna de las dos de un tercer mundo, el caro: si alguien recorta
+   * el `GRANT` de columna sobre `tenants.accepts_trade_in`, el `exists` deja de ser evaluable y
+   * el canje muere **para todos**, con `42501 permission denied for table tenants`. Medido en
+   * `istock_dev` dentro de una transacción revertida: es literalmente el mismo código de error.
+   * Por eso acá se afirma el **mensaje** —igual que en R2b— y, cuando el mensaje tampoco alcanza,
+   * la evidencia se busca en otro observable: si el claim resuelve y si la vidriera sirve stock.
+   *
+   * La red de regresión de `db-agent` (`packages/db/src/rls-anon-tradein-lead.test.ts`, bloque
+   * `g`) cubre los dos casos y está bien que exista, pero los afirma con el mismo par de
+   * aserciones, así que no los separa. Ésta es la auditoría de referencia (`CLAUDE.md` §4): si
+   * los dos divergen, gana ésta.
+   */
+  describe('R2c-g · el dueño que apagó el canje deja de recibir PII, y el rebote dice de qué mitad vino', () => {
+    /** El rechazo entero —capa, código y mensaje— con el canario del rol ya exigido. */
+    async function rebote(slug: string, texto: string): Promise<{ capa: string; error: PgError }> {
+      const visitante = openStorefront(slug);
+      try {
+        const visto = await visitante.conCanario<never>(texto);
+        expect(visto.rol, 'esta medición no corrió como `anon`: no probó ninguna policy').toBe('anon');
+        const error = visto.error;
+        if (error === null) throw new Error(`el canje entró en un tenant que no lo acepta: ${texto}`);
+        return { capa: capaQueRechazo(error), error };
+      } finally {
+        await visitante.close();
+      }
+    }
+
+    /** Lo que `anon` ve de su propia vidriera: si el claim resolvió y si hay stock que servir. */
+    async function vidriera(slug: string): Promise<{ tenant: string | null; titulos: string[] }> {
+      const visitante = openStorefront(slug);
+      try {
+        const resuelto = await visitante.rows<{ t: string | null }>(
+          `select public.storefront_tenant_id() as t`,
+        );
+        const stock = await visitante.rows<{ title: string }>(`select title from listings`);
+        return { tenant: resuelto[0]?.t ?? null, titulos: stock.map((r) => r.title) };
+      } finally {
+        await visitante.close();
+      }
+    }
+
+    it('el visitante de un tenant que apagó el canje no le deja el lead: lo frena la POLICY, no el GRANT', async () => {
+      // El caso que `0009` vino a cerrar: antes de la migración esto devolvía `INSERT 0 1`.
+      const antes = await adminRows<{ n: string }>(
+        `select count(*)::text as n from tradein_leads where tenant_id = '${TENANT_B}'`,
+      );
+      const { capa, error } = await rebote(SLUG_B, canje());
+      expect(capa, 'el canje entró en un tenant que lo tiene apagado, o lo frenó otra capa').toBe('POLICY');
+      expect(error.code).toBe('42501');
+      expect(
+        error.message,
+        'el rechazo no vino del `WITH CHECK`: la bandera del dueño no es lo que frenó la fila',
+      ).toContain('violates row-level security policy');
+      expect(
+        error.message,
+        'esto es "`anon` perdió un privilegio", no "la policy rechazó la fila": con el GRANT ' +
+          'recortado el canje muere para TODOS los tenants y este test seguiría verde mirando sólo el 42501',
+      ).not.toContain('permission denied');
+      const despues = await adminRows<{ n: string }>(
+        `select count(*)::text as n from tradein_leads where tenant_id = '${TENANT_B}'`,
+      );
+      expect(despues[0]?.n, 'el rechazo no fue tal: quedó una fila escrita').toBe(antes[0]?.n);
+    });
+
+    it('el que apagó el canje conserva su vidriera entera: lo único que se cerró es el formulario', async () => {
+      // Éste es el observable que separa este rebote del de abajo, y es también la regla de
+      // negocio: apagar el canje no es darse de baja. El claim resuelve y el stock se sirve.
+      const visto = await vidriera(SLUG_B);
+      expect(visto.tenant, 'el claim del slug no resolvió: entonces no se midió la bandera').toBe(TENANT_B);
+      expect(visto.titulos, 'la vidriera del que apagó el canje se quedó sin stock').toEqual([
+        'iPhone 13 128 Azul',
+      ]);
+    });
+
+    it('el tenant que no está activo rebota con el canje PRENDIDO: no se llega ni a mirar la bandera', async () => {
+      // La otra mitad. `storefront_tenant_id()` filtra por `status = 'active'`, así que devuelve
+      // NULL y la PRIMERA condición ya falla — el `exists` no decide nada acá. Se afirma que la
+      // bandera está en `true` justamente para que el rechazo no se pueda atribuir a ella.
+      const flag = await adminRows<{ f: boolean }>(
+        `select accepts_trade_in as f from tenants where id = '${TENANT_C}'`,
+      );
+      expect(flag[0]?.f, 'C tiene el canje apagado: este caso mediría lo mismo que el de arriba').toBe(true);
+
+      // C tiene una unidad `available` y publicada (`LISTING_C`): que se sirvan CERO es una
+      // afirmación sobre el `status = 'active'`, no sobre una vidriera que estaba vacía igual.
+      const publicadas = await adminRows<{ n: string }>(
+        `select count(*)::text as n from listings
+         where tenant_id = '${TENANT_C}' and status = 'available' and published_at is not null`,
+      );
+      expect(publicadas[0]?.n, 'C no tiene stock publicado: "no sirve nada" no probaría nada').toBe('1');
+
+      const visto = await vidriera(SLUG_C);
+      expect(visto.tenant, 'un tenant suspendido resolvió su claim: la vidriera de un dado de baja está viva').toBeNull();
+      expect(visto.titulos, 'un tenant suspendido sigue publicando su stock en la vidriera').toEqual([]);
+
+      const { capa, error } = await rebote(SLUG_C, canje({}, `'${TENANT_C}'`));
+      expect(capa, 'un tenant suspendido recibe canjes').toBe('POLICY');
+      expect(error.message).toContain('violates row-level security policy');
+    });
+
+    it('el visitante no puede deducir del error si el dueño apagó el canje o si lo dieron de baja', async () => {
+      // Las dos mitades fallan con la MISMA frase, y eso es deseable: el mensaje de Postgres no
+      // es un canal para contarle a un `curl` el estado comercial de un reseller. La consecuencia
+      // para quien lea este archivo es la que importa: **el código de error no alcanza para saber
+      // qué se rompió**, y por eso los dos casos de arriba se distinguen por otro observable.
+      const apagado = await rebote(SLUG_B, canje());
+      const inactivo = await rebote(SLUG_C, canje({}, `'${TENANT_C}'`));
+      expect(apagado.error.code).toBe(inactivo.error.code);
+      expect(
+        apagado.error.message,
+        'el rechazo del canje apagado y el del tenant inactivo dejaron de ser la misma frase: si ' +
+          'ahora se distinguen, la vidriera está filtrando estado comercial en un mensaje de error',
+      ).toBe(inactivo.error.message);
+    });
+
+    it('cada vidriera lee la bandera de canje de su propio dueño y nunca la del reseller de al lado', async () => {
+      // Es el read que decide si el formulario se dibuja. R7 dice que la columna está otorgada;
+      // acá se dice que el GRANT no alcanza para ver la configuración comercial del vecino.
+      for (const [slug, esperado] of [
+        [SLUG_A, { slug: SLUG_A, acepta: true }],
+        [SLUG_B, { slug: SLUG_B, acepta: false }],
+      ] as const) {
+        const visitante = openStorefront(slug);
+        try {
+          const filas = await visitante.rows<{ slug: string; acepta: boolean }>(
+            `select slug, accepts_trade_in as acepta from tenants order by slug`,
+          );
+          expect(filas, `la vidriera de ${slug} lee la bandera de más de un tenant`).toEqual([esperado]);
+        } finally {
+          await visitante.close();
+        }
+      }
+    });
+
+    it('apagar el canje baja el formulario público, no el mostrador: el dueño sigue cargando el presencial', async () => {
+      // La policy de `authenticated` NO mira `accepts_trade_in`, y eso es deliberado: la bandera
+      // dice *"no publico el formulario en la vidriera"*, no *"no tomo canje"*. El canje
+      // presencial es flujo de primera clase (`CLAUDE.md` §1) y entra por el panel, con sesión y
+      // con una persona del otro lado del mostrador. Si algún día la bandera tuviera que cerrar
+      // también el panel, este test es el que se pone rojo y nombra la decisión.
+      const antes = await adminRows<{ n: string }>(
+        `select count(*)::text as n from tradein_leads where tenant_id = '${TENANT_B}'`,
+      );
+      const escritas = await b.affected(
+        canje({ customer_name: `'Vino a la oficina'` }, `'${TENANT_B}'`),
+      );
+      expect(escritas, 'el dueño con el canje apagado no puede registrar un canje presencial').toBe(1);
+      const despues = await adminRows<{ n: string }>(
+        `select count(*)::text as n from tradein_leads where tenant_id = '${TENANT_B}'`,
+      );
+      expect(Number(despues[0]?.n ?? '0')).toBe(Number(antes[0]?.n ?? '0') + 1);
     });
   });
 });
