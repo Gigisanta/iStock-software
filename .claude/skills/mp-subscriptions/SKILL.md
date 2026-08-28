@@ -28,12 +28,28 @@ Preferir **débito automático / transferencia** sobre tarjeta de crédito: es c
 4. **Nunca confiar en el body** para el estado: revalidar contra la API de MP antes de otorgar acceso.
 
 ## Entitlements como datos
-Una sola función, consultada desde un solo lugar:
-```ts
-hasEntitlement(tenant, 'chatbot' | 'reservations' | 'margin' | 'multi_pickup'): boolean
-```
-Prohibido: `if (tenant.plan === 'negocio')` desparramado por la app.
-**Feature flags** para poder apagar cualquier feature paga sin deploy.
+La **regla**, que es lo único que esta skill fija:
+
+- Quién puede qué se pregunta a **una** función, nunca a `tenant.plan`.
+  Prohibido: `if (tenant.plan === 'negocio')` desparramado por la app.
+- El catálogo de qué vende cada plan vive en **un** archivo, y la resolución
+  (plan + fila de `entitlements` + vigencia del trial) en **otro**. Un catálogo que además
+  autoriza es el segundo lugar donde alguien se olvida de mirar `trial_ends_at`.
+- **Feature flags** para poder apagar cualquier feature paga sin deploy: la fila explícita
+  de `entitlements` gana sobre el plan, en las dos direcciones.
+- Una feature con techo numérico (los puntos de retiro) **se cuenta, no se prende**: el
+  veredicto positivo lleva el límite adentro.
+
+La **firma** no se transcribe acá a propósito, y la versión anterior de esta línea es el motivo:
+declaraba una feature que no existe (`multi_pickup`, se llama `pickup_points`) y un retorno
+`boolean` que ya no era el retorno. Una skill que copia una firma es una segunda fuente de verdad,
+y la segunda es siempre la vieja. Los tipos vigentes están en:
+
+- `apps/web/app/(billing)/_lib/plans.ts` — catálogo: planes, precios, `BILLABLE_FEATURES`, techos.
+- `apps/web/app/(app)/_lib/entitlements.ts` — `featureAccess()`, el resolver que usan las
+  Server Actions y las pantallas.
+- `apps/web/app/(billing)/_lib/entitlements.ts` — `setFeatureFlag()`, el **único** escritor de la
+  tabla, y el resolver con techo y motivo.
 
 ## Fin del trial
 La vidriera **no** se cae de golpe. La política de degradación la define `docs/PRODUCT.md`
