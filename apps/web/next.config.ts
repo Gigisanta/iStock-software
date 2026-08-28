@@ -31,6 +31,47 @@ const nextConfig: NextConfig = {
    */
   experimental: {
     taint: true,
+
+    /**
+     * ════════════════════════════════════════════════════════════════════════════════════════
+     *  Techo del body de las Server Actions. Cuatro techos, no uno, y el que manda NO es este.
+     * ════════════════════════════════════════════════════════════════════════════════════════
+     *
+     * El default de Next es `'1 MB'` (`server/app-render/action-handler.js`: `defaultBodySizeLimit`),
+     * y al pasarse tira `ApiError(413, 'Body exceeded ...')` — tambien en la rama multipart, que es
+     * la que usa el alta con foto. O sea que sin esta linea una foto de celular no entra nunca.
+     *
+     * Pero subirlo no compra lo que parece. Debajo hay dos techos de plataforma que la config de la
+     * app NO controla (verificados por el LEAD contra la doc oficial el 2026-08-27, no contra
+     * memoria; ver `docs/research/vercel-request-body-limit.md`):
+     *
+     *   | techo                                    | valor  | quien lo pone                        |
+     *   |------------------------------------------|--------|--------------------------------------|
+     *   | este `bodySizeLimit`                     | 3.5 MB | nosotros                             |
+     *   | Routing Middleware = nuestro `proxy.ts`   | **4 MB**   | Vercel (`/docs/routing-middleware`)  |
+     *   | Vercel Function                          | 4.5 MB | Vercel (`/docs/functions/limitations`) |
+     *
+     * **El que manda es el de 4 MB**, no el de 4.5: el POST del alta no termina en una extension
+     * conocida, asi que cae en el catch-all del `matcher` de `proxy.ts` y lo procesa el middleware.
+     * Y NO lo sacamos del matcher para ganar esos 0.5 MB: el proxy es quien corre
+     * `stripInboundTenantHeaders()`, y cambiar una defensa de tenant por medio mega es un mal
+     * negocio. El 4 MB es el precio de esa defensa y se paga.
+     *
+     * Ninguno de los dos varia por plan: Vercel Pro no lo sube (la pagina que desglosa por plan,
+     * `/docs/limits`, ni siquiera menciona el body size). Y **streaming no lo evade**: la frase
+     * oficial "streaming functions don't have this limit" esta en la seccion del *response* body;
+     * para el request, el remedio que documenta Vercel es subir directo al storage.
+     *
+     * Por eso 3.5 y no 4: queremos que el 413 lo tire **Next**, con nuestro mensaje, y no la
+     * plataforma con una pagina en ingles. Y por eso el cap real por archivo es todavia mas bajo
+     * (3 MB, en `_lib/listings/schema.ts`): Zod contesta en castellano antes que cualquier 413.
+     *
+     * Consecuencia de diseno, que es lo caro de todo esto: **entra UNA foto por request**. Tres
+     * fotos de 3 MB son 9 MB y no comparten request ni con el techo mas alto de los cuatro.
+     */
+    serverActions: {
+      bodySizeLimit: '3.5mb',
+    },
   },
 
   /**

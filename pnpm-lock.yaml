@@ -32,6 +32,9 @@ importers:
       '@istock/domain':
         specifier: workspace:*
         version: link:../../packages/domain
+      '@istock/media':
+        specifier: workspace:*
+        version: link:../../packages/media
       '@supabase/ssr':
         specifier: ^0.8.0
         version: 0.8.0(@supabase/supabase-js@2.112.4)

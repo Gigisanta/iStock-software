@@ -3,6 +3,7 @@ import { signOutAction } from '../../_lib/auth/actions';
 import { storefrontHostForSlug, storefrontUrlForSlug } from '../../_lib/env';
 import { requireTenant } from '../../_lib/session';
 import { BottomNav } from './_ui/bottom-nav';
+import { BottomNavView } from './_ui/bottom-nav-view';
 
 /**
  * Chrome del panel. **Mobile-first sin excepción**: el ancho base es el de un teléfono y
@@ -15,9 +16,21 @@ import { BottomNav } from './_ui/bottom-nav';
  *    "guardar" tapado por la nav es un bug, no un detalle de espaciado.
  * 3. El header es `sticky` y corto: se ve de qué negocio es el panel sin gastar media pantalla.
  *
- * Sobre el `<Suspense>`: con `cacheComponents: true` todo acceso dinámico (cookies, sesión) tiene
- * que estar adentro de un límite de suspenso. Acá además sirve: el esqueleto se pinta al toque y
- * el nombre del negocio llega cuando resuelve la query.
+ * Sobre los dos `<Suspense>`: con `cacheComponents: true` todo acceso dinámico tiene que estar
+ * adentro de un límite de suspenso, y acá hay dos fuentes distintas de dato dinámico.
+ *
+ * 1. **El header** lee la sesión. El esqueleto se pinta al toque y el nombre del negocio llega
+ *    cuando resuelve la query.
+ * 2. **La barra de abajo** lee la URL con `usePathname()`, que suspende en cualquier ruta con un
+ *    param dinámico desconocido en build — `/app/stock/{id}/fotos` es la primera que tenemos, y
+ *    sin este boundary el `next build` moría prerenderizándola. El fallback **no** es un esqueleto:
+ *    es la misma barra sin resaltado (`BottomNavView pathname={null}`), así que el shell estático
+ *    ya trae la nav completa y navegable y sólo se difiere cuál item va marcado.
+ *
+ * Los dos boundaries están acá, envolviendo hojas chicas, y no arriba envolviendo todo: el
+ * `children` y el `<main>` siguen entrando enteros al shell prerenderizado. Un boundary más alto
+ * pasaría las rutas del panel de `◐ (Partial Prerender)` a `ƒ (Dynamic)` y el panel se abre en el
+ * 4G de un local.
  */
 
 export default function PanelLayout({ children }: { children: React.ReactNode }) {
@@ -29,7 +42,13 @@ export default function PanelLayout({ children }: { children: React.ReactNode })
 
       <main className="mx-auto w-full max-w-2xl flex-1 px-4 pb-28 pt-4">{children}</main>
 
-      <BottomNav />
+      {/*
+        El fallback dibuja la MISMA barra sin item activo. Ver `bottom-nav-view.tsx`: es lo que
+        entra al shell estático de las rutas con param dinámico.
+      */}
+      <Suspense fallback={<BottomNavView pathname={null} />}>
+        <BottomNav />
+      </Suspense>
     </div>
   );
 }

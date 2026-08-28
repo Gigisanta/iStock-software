@@ -1,0 +1,70 @@
+import Link from 'next/link';
+
+/**
+ * La barra de abajo, **dibujada**. Sin hooks, sin `"use client"`, sin leer la URL.
+ *
+ * Está separada de `bottom-nav.tsx` por una razón de build, no de estética: bajo
+ * `cacheComponents: true`, `usePathname()` **suspende** en toda ruta con un param dinámico que no
+ * está en `generateStaticParams` (`node_modules/next/dist/docs/01-app/03-api-reference/04-functions/use-pathname.md`,
+ * sección "Cache Components"). El pathname de `/app/stock/{id}/fotos` no existe en build, así que
+ * el shell no se puede prerenderizar si la nav lee la URL fuera de un `<Suspense>`.
+ *
+ * La doc de migración dice literalmente qué hacer: *"Wrap the component that reads the hook in
+ * `<Suspense>` (push the read down to the smallest leaf so the rest stays prerendered)"*. Este
+ * archivo **es** ese "resto": el markup entero, que no depende de la URL, entra al shell estático
+ * como fallback; lo único que se difiere es cuál de los cuatro items va marcado.
+ *
+ * Consecuencia buscada: en el shell de una ruta dinámica la barra **ya está ahí, completa y con
+ * los links usables**, sólo que sin resaltado. No hay salto de layout ni un hueco de 60px en la
+ * zona del pulgar, que es lo que pasaría con un fallback vacío o con un esqueleto gris.
+ */
+
+const ITEMS = [
+  { href: '/app', label: 'Inicio', icon: '⌂' },
+  { href: '/app/stock', label: 'Stock', icon: '▦' },
+  { href: '/app/canjes', label: 'Canjes', icon: '⇄' },
+  { href: '/app/ajustes', label: 'Ajustes', icon: '⚙' },
+] as const;
+
+export interface BottomNavViewProps {
+  /** `null` = todavía no se sabe (shell prerenderizado). Ningún item queda marcado. */
+  readonly pathname: string | null;
+}
+
+export function BottomNavView({ pathname }: BottomNavViewProps) {
+  return (
+    <nav
+      aria-label="Secciones del panel"
+      className="fixed inset-x-0 bottom-0 z-20 border-t border-neutral-200 bg-white pb-[env(safe-area-inset-bottom)] dark:border-neutral-800 dark:bg-neutral-950"
+    >
+      <ul className="mx-auto flex w-full max-w-2xl">
+        {ITEMS.map((item) => {
+          const active =
+            pathname === null
+              ? false
+              : item.href === '/app'
+                ? pathname === '/app'
+                : pathname.startsWith(item.href);
+          return (
+            <li key={item.href} className="flex-1">
+              <Link
+                href={item.href}
+                aria-current={active ? 'page' : undefined}
+                className={`flex min-h-[60px] flex-col items-center justify-center gap-0.5 text-xs font-medium ${
+                  active
+                    ? 'text-neutral-900 dark:text-white'
+                    : 'text-neutral-500 dark:text-neutral-400'
+                }`}
+              >
+                <span aria-hidden="true" className="text-lg leading-none">
+                  {item.icon}
+                </span>
+                {item.label}
+              </Link>
+            </li>
+          );
+        })}
+      </ul>
+    </nav>
+  );
+}

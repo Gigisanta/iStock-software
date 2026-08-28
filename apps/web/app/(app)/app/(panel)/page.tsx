@@ -76,7 +76,7 @@ async function PanelHome() {
       </h2>
 
       <div className="mt-2 grid grid-cols-2 gap-3">
-        <Tile href="/app/stock" title="Stock" note="Cargar equipos: en camino" />
+        <Tile href="/app/stock" title="Stock" note="Cargá tus equipos y sus fotos" />
         <Tile href="/app/canjes" title="Canjes" note="Todavía no" />
         <Tile href="/app/ajustes" title="Ajustes" note="Ver los datos de tu negocio" />
         <div className="flex min-h-[92px] flex-col justify-between rounded-2xl border border-dashed border-neutral-300 bg-white p-4 text-neutral-500 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-400">
