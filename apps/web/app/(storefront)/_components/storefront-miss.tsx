@@ -23,9 +23,11 @@ import { STOREFRONT_DOMAIN } from '@istock/domain';
  *
  * ## Por qué un módulo y no dos archivos
  * El texto vive **una sola vez**. `page.tsx` lo renderiza en el camino negativo y
- * `s/[slug]/not-found.tsx` lo renderiza si alguna vez algo tira `notFound()` dentro del segmento
- * (hoy no lo tira nadie; mañana la ficha de S3/S4 sí puede, para un id de listing que no existe).
- * Dos copias del mismo párrafo derivan, y la que deriva es siempre la que nadie mira.
+ * `s/[slug]/not-found.tsx` lo renderiza si alguna vez algo tira `notFound()` dentro del segmento.
+ * Hoy no lo tira nadie, y ya no se espera que lo tire la ficha: S3 lo intentó y el LEAD midió lo
+ * mismo que en la raíz —0 chars de texto visible en la primera request—, así que la ficha también
+ * devuelve su propio miss como contenido (`_components/listing-miss.tsx`, el gemelo de este
+ * módulo). Dos copias del mismo párrafo derivan, y la que deriva es siempre la que nadie mira.
  *
  * ## El texto ya no dice "Error 404"
  * Decía `Error 404` cuando la respuesta era un 404. Bajo la variante B el status es `200`, así que

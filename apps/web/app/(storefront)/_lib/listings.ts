@@ -384,10 +384,12 @@ export async function getStorefrontCatalog(slug: string): Promise<StorefrontCata
 /**
  * ── Ficha ─────────────────────────────────────────────────────────────────────────────────────
  *
- * `null` = 404 de verdad (`notFound()` en la página). Un id de listing que no existe **sí** va por
- * `notFound()`: acá el shell del tenant ya resolvió, no hay ambigüedad de host y el boundary en
- * español ya existe (`s/[slug]/not-found.tsx`). Eso **no** contradice ADR-011, que gobierna otra
- * pregunta —"¿existe este tenant?"— y otra capa.
+ * `null` = **el miss de la ficha**, que la página devuelve como render normal
+ * (`_components/listing-miss.tsx`), no como `notFound()`. Este docblock decía lo contrario —"`null`
+ * = 404 de verdad", porque acá el shell del tenant ya resolvió— y el LEAD lo midió el 2026-08-28:
+ * la ficha inexistente salía `200` con **0 chars de texto visible** en la primera request y 404
+ * recién en la segunda. Mismo patológico de ADR-011, un nivel más abajo. Lo que cambia para este
+ * módulo es sólo cómo se llama la respuesta: sigue devolviendo `null` y sigue cacheándolo corto.
  *
  * El `null` se cachea con el perfil corto: un bot que pruebe mil slugs de ficha inventados hace
  * mil queries la primera vez y **cero** después, sin sembrar entradas de 30 días.

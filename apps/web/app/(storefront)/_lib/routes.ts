@@ -19,6 +19,25 @@
 export const LISTING_PATH_PREFIX = '/p';
 
 /**
+ * La home de la vidriera **del tenant que está mirando el visitante**.
+ *
+ * Es `/` a secas, y eso NO es "el apex": bajo `{slug}.maat.work` el proxy reescribe `/` a
+ * `/s/{slug}` (`storefrontPathFor` en `_lib/host.ts`), así que un link relativo se queda en el
+ * host del tenant y aterriza en su grilla. El apex `maat.work` es otro host y sirve marketing;
+ * desde una ficha no se llega nunca, porque `/s/**` y `/p/**` bajo el apex no son vidriera.
+ *
+ * Por qué no una URL absoluta `https://{slug}.maat.work/` aunque el slug esté a mano en `params`:
+ * 1. **rompe todo lo que no sea producción** — los e2e y el `next start` del gate corren sobre
+ *    `{slug}.127.0.0.1.nip.io:3100`, y un link absoluto a `maat.work` manda a la persona (y al
+ *    test) a un dominio que ahí no resuelve;
+ * 2. **es un byte de host de más en el HTML cacheado**, y el host ya está en la barra.
+ *
+ * La constante existe para que ese razonamiento viva una sola vez y no en cada `href="/"` suelto
+ * de la vidriera. Hoy la usan la ficha (el "← Volver a la vidriera") y `_components/listing-miss`.
+ */
+export const STOREFRONT_HOME_PATH = '/';
+
+/**
  * `iphone-14-pro-256-grafito` → `/p/iphone-14-pro-256-grafito`.
  *
  * ══════════════════════════════════════════════════════════════════════════════════════════════

@@ -1,15 +1,15 @@
 import type { Metadata } from 'next';
-import { notFound } from 'next/navigation';
 import { cacheLife, cacheTag } from 'next/cache';
 import type { PublicListingDTO } from '@istock/domain';
 import { STOREFRONT_DOMAIN, isListingSlugShaped } from '@istock/domain';
 import { listingTag, storefrontTag, tenantConfigTag } from '../../../../_lib/cache-tags';
 import { cacheStorefrontMiss } from '../../../../_lib/cache-life';
 import { PRERENDER_SEED_SLUG, isSlugShaped } from '../../../../_lib/host';
-import { PRERENDER_SEED_LISTING } from '../../../../_lib/routes';
+import { PRERENDER_SEED_LISTING, STOREFRONT_HOME_PATH } from '../../../../_lib/routes';
 import { getStorefrontListing } from '../../../../_lib/listings';
 import { SECONDARY_PHOTO_SIZES } from '../../../../_lib/photo';
 import { statusBadge } from '../../../../_lib/status';
+import { LISTING_MISS_METADATA, ListingMiss } from '../../../../_components/listing-miss';
 import { StatusBadge } from '../../../../_components/status-badge';
 import { StorefrontHeroPhoto, StorefrontPhoto } from '../../../../_components/storefront-photo';
 import { WaButton } from '../../../../_components/wa-button';
@@ -54,12 +54,18 @@ import { WaButton } from '../../../../_components/wa-button';
  * El TC lo carga el dueño a mano y el redondeo por default es `ceil_1000`. Publicar un peso sin
  * decir que es orientativo lo convierte en una oferta, y la operación se cierra por WhatsApp.
  *
- * ── `notFound()` acá SÍ, y no contradice ADR-011 ──────────────────────────────────────────────
- * ADR-011 gobierna *"¿existe este tenant?"* y por eso `s/[slug]` devuelve `<StorefrontMiss />` en
- * vez de lanzar. Acá la pregunta es otra —*"¿existe este equipo en esta vidriera?"*— el shell del
- * tenant ya resolvió, no hay ambigüedad de host, y el boundary en castellano ya existe
- * (`s/[slug]/not-found.tsx`). El `null` del loader **se cachea** con el perfil corto, así que un
- * bot probando mil slugs inventados hace mil queries una vez y cero después.
+ * ── El equipo que no existe: `<ListingMiss />`, no `notFound()` (medido, 2026-08-28) ──────────
+ * Acá se lanzaba `notFound()`, con el argumento de que ADR-011 gobernaba otra pregunta
+ * (*"¿existe este tenant?"*) y de que en la ficha el shell del tenant ya había resuelto. El
+ * argumento era razonable y **la medición lo desmintió**: el LEAD midió sobre el build de
+ * `eaccfee`, dos requests por caso, y el slug inventado salió `200` con **0 chars de texto
+ * visible** en la primera request y 404 recién en la segunda. Mismo patológico de ADR-011, un
+ * nivel más abajo. La tabla completa está en `_components/listing-miss.tsx`, junto al componente
+ * que la contesta; no se copia acá para que no derive.
+ *
+ * Consecuencia: los dos caminos negativos de esta página **devuelven** contenido. El `null` del
+ * loader se cachea igual con el perfil corto, así que un bot probando mil slugs inventados hace
+ * mil queries una vez y cero después.
  */
 
 /**
@@ -96,7 +102,7 @@ export async function generateMetadata({ params }: ListingPageProps): Promise<Me
   // ficha (techo 64, segmento de path). Por qué son dos, está en `packages/domain/src/slug.ts`.
   if (!isSlugShaped(slug) || !isListingSlugShaped(listingSlug)) {
     cacheStorefrontMiss();
-    return NOT_FOUND_METADATA;
+    return LISTING_MISS_METADATA;
   }
 
   cacheTag(storefrontTag(slug), tenantConfigTag(slug));
@@ -104,7 +110,7 @@ export async function generateMetadata({ params }: ListingPageProps): Promise<Me
   const listing = await getStorefrontListing(slug, listingSlug);
   if (listing === null) {
     cacheStorefrontMiss();
-    return NOT_FOUND_METADATA;
+    return LISTING_MISS_METADATA;
   }
 
   cacheTag(listingTag(listing.id));
@@ -130,28 +136,30 @@ export async function generateMetadata({ params }: ListingPageProps): Promise<Me
   };
 }
 
-/** Cuando el equipo no existe (o no es público) la metadata no puede prometer que sí. */
-const NOT_FOUND_METADATA: Metadata = {
-  title: { absolute: 'Este equipo ya no está publicado' },
-  robots: { index: false, follow: false },
-};
-
 export default async function ListingPage({ params }: ListingPageProps) {
   'use cache';
 
   const { slug, listing: listingSlug } = await params;
 
+  // Backstop de forma. Con el proxy en pie no llega nadie acá: un host que no puede ser tenant
+  // jamás lo corta el proxy, sin invocar la app (`isStorefrontInternalPath` / `malformedHost`).
+  // Entonces el contrato de esta rama es chico: no tirar, no colgarse, no filtrar y no costar caro.
+  // El status no entra en el contrato, y no por olvido — ADR-011 y la medición del 2026-08-28
+  // muestran que desde acá adentro ya está decidido. Devuelve el mismo miss que el `null` del
+  // loader porque para la persona es el mismo hecho: ese equipo no está.
   if (!isSlugShaped(slug) || !isListingSlugShaped(listingSlug)) {
     cacheStorefrontMiss();
-    notFound();
+    return <ListingMiss />;
   }
 
   cacheTag(storefrontTag(slug), tenantConfigTag(slug));
 
+  // El caso frecuente, y el que paga esta página: el equipo se vendió y se despublicó, y el link
+  // del estado de WhatsApp sigue circulando. Se **devuelve** el miss (ver el docblock de arriba).
   const listing = await getStorefrontListing(slug, listingSlug);
   if (listing === null) {
     cacheStorefrontMiss();
-    notFound();
+    return <ListingMiss />;
   }
 
   // El tag propio de la unidad, además de los dos del tenant. Se registra recién acá porque el
@@ -166,7 +174,10 @@ export default async function ListingPage({ params }: ListingPageProps) {
   return (
     <main className="pb-10">
       <p className="pt-1">
-        <a href="/" className="text-sm text-neutral-500 underline-offset-4 hover:underline">
+        <a
+          href={STOREFRONT_HOME_PATH}
+          className="text-sm text-neutral-500 underline-offset-4 hover:underline"
+        >
           ← Volver a la vidriera
         </a>
       </p>

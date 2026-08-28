@@ -89,9 +89,12 @@ import { STOREFRONT_MISS_METADATA, StorefrontMiss } from '../../_components/stor
  * `<title>` propio y distinto de `iStock` · **cero markup de vidriera** (ni `wa.me` ni
  * `data-listing`) · `x-nextjs-cache: HIT` en la req 2 · y `demo` todavía en 200.
  *
- * El texto y la metadata del miss viven en `_components/storefront-miss.tsx`, una sola vez, porque
- * `s/[slug]/not-found.tsx` sigue existiendo como boundary para lo que sí lanzará `notFound()` en
- * S3/S4 (un id de listing que no existe).
+ * El texto y la metadata del miss viven en `_components/storefront-miss.tsx`, una sola vez.
+ * `s/[slug]/not-found.tsx` sigue existiendo, pero ya no como "el boundary de lo que S3 va a
+ * lanzar": la ficha de S3 lo intentó, el LEAD midió lo mismo que acá (0 chars visibles en la
+ * primera request) y ahora también devuelve su miss como contenido, `<ListingMiss />`. Hoy ningún
+ * archivo de la vidriera llama `notFound()`; el boundary queda como piso en castellano y dentro
+ * del layout del tenant, que es un motivo que no depende de la medición.
  *
  * ## Ausencias deliberadas
  * - **`generateStaticParams` no lista tenants.** Devuelve un único slug semilla, porque su función

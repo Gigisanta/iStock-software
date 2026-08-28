@@ -120,3 +120,59 @@ describe('cache: la ficha registra su propio tag además de los del tenant', () 
     }
   });
 });
+
+/**
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *  El miss de la ficha, después de la medición del 2026-08-28
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ * La afirmación que importa —que el miss trae TEXTO VISIBLE en la PRIMERA request— sólo se puede
+ * hacer contra un server vivo, y la hace `scripts/accept-s3.sh` M7, que es del LEAD. Acá se fijan
+ * las tres cosas que M7 no puede ver y que se rompen por edición, no por lógica: que nadie vuelva
+ * a lanzar `notFound()` en la vidriera, que el texto del miss siga viviendo una sola vez, y que el
+ * miss no crezca un botón de WhatsApp.
+ */
+describe('el equipo que no existe se DEVUELVE, no se lanza', () => {
+  const MISS = FILES.find((f) => f.rel === '_components/listing-miss.tsx');
+
+  it('ningún archivo de la vidriera llama `notFound()`: está medido que no pinta nada', () => {
+    // Medido por el LEAD sobre `eaccfee`: slug de ficha inventado → req1 200 con 0 chars de texto
+    // visible, req2 404. Es el patológico de ADR-011 un nivel más abajo. Volver a `notFound()` acá
+    // es volver a servirle una pantalla en blanco a quien abrió un link viejo de un estado de WA.
+    const lanzan = FILES.filter((f) => /\bnotFound\(\)/u.test(code(f.src))).map((f) => f.rel);
+    expect(lanzan).toEqual([]);
+  });
+
+  it('la ficha devuelve `<ListingMiss />` en sus dos caminos negativos', () => {
+    expect(code(FICHA?.src ?? '').match(/return <ListingMiss \/>;/gu)).toHaveLength(2);
+  });
+
+  it('el texto del miss vive en UN solo archivo', () => {
+    const dicen = FILES.filter((f) => f.src.includes('Ver el resto de la vidriera')).map((f) => f.rel);
+    expect(dicen).toEqual(['_components/listing-miss.tsx']);
+  });
+
+  it('el `<title>` y el `<h1>` del miss son el mismo string', () => {
+    // Dos literales iguales hoy son dos literales distintos en tres meses: la pestaña dice una cosa
+    // y la pantalla otra, y nadie lo mira nunca.
+    expect(code(MISS?.src ?? '').match(/'Este equipo ya no está publicado'/gu)).toHaveLength(1);
+    expect(code(MISS?.src ?? '')).toMatch(/\{LISTING_MISS_TITLE\}/u);
+  });
+
+  it('el miss va noindex soldado al DOM, además de por la metadata', () => {
+    // Cuerpo y metadata son dos entradas de cache distintas y la metadata se streamea aparte: la
+    // directiva del camino negativo no puede depender de qué rama de metadata resolvió.
+    expect(code(MISS?.src ?? '')).toMatch(/name="robots" content="noindex, nofollow"/u);
+    expect(code(MISS?.src ?? '')).toMatch(/robots: \{ index: false, follow: false \}/u);
+  });
+
+  it('el miss no tiene botón de WhatsApp: sin equipo no hay precio que nombrar', () => {
+    expect(code(MISS?.src ?? '')).not.toMatch(/WaButton|wa\.me|waUrl/u);
+  });
+
+  it('el camino de vuelta apunta a la vidriera del tenant, no al apex', () => {
+    // `STOREFRONT_HOME_PATH` es `/` bajo el host del tenant, que el proxy reescribe a `/s/{slug}`.
+    // El motivo (y por qué no es una URL absoluta) vive una sola vez, en `_lib/routes.ts`.
+    expect(code(MISS?.src ?? '')).toMatch(/href=\{STOREFRONT_HOME_PATH\}/u);
+    expect(code(MISS?.src ?? '')).not.toMatch(/href="\//u);
+  });
+});
