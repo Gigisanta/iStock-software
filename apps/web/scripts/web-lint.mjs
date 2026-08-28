@@ -231,6 +231,26 @@ must('W011', 'sin console.log de un listing/unit/row entero (CLAUDE.md §2)', sr
 }
 
 
+/**
+ * Posicion del primer `from` que es un TOKEN y esta a nivel 0 de parentesis, o -1.
+ *
+ * Nivel 0 deja afuera la lista de columnas de un `insert ... (a, b) select` y cualquier subselect
+ * de la proyeccion; el chequeo de bordes deja afuera `from_status`, `xfrom` y demas identificadores
+ * que solo CONTIENEN la palabra. Las dos cosas juntas son la ventana que W015 dice mirar.
+ */
+function fromDeNivel0(bajo) {
+  const palabra = (c) => c !== undefined && /[\w$]/.test(c);
+  let nivel = 0;
+  for (let i = 0; i < bajo.length; i++) {
+    const c = bajo[i];
+    if (c === '(') { nivel += 1; continue; }
+    if (c === ')') { if (nivel > 0) nivel -= 1; continue; }
+    if (nivel !== 0 || c !== 'f') continue;
+    if (bajo.startsWith('from', i) && !palabra(bajo[i - 1]) && !palabra(bajo[i + 4])) return i;
+  }
+  return -1;
+}
+
 // ── W015 · filtro de tenant EN LA QUERY, ademas de RLS ────────────────────────────────────────
 // `CLAUDE.md` §2: "Query sin filtro de tenant *ademas* de RLS → rechazo (defensa en profundidad)".
 // Lo levanto `qa-agent` el 2026-08-28 auditando cobertura: era una de las prohibiciones que la
@@ -380,9 +400,60 @@ must('W011', 'sin console.log de un listing/unit/row entero (CLAUDE.md §2)', sr
         // claim y por la lista de columnas, y su `where` no nombra tenant_id ni tiene por que.
         const bajo = cuerpo.toLowerCase();
         const esIns = /insert\s+into/.test(bajo);
+        // ## `insert ... select` NO es un `insert ... values` (2026-08-28, S8)
+        // La vara "un insert no tiene where, se ata por la lista de columnas" es correcta para un
+        // `values(...)`, donde el tenant viaja como dato. Para un `insert ... select` es
+        // exactamente el falso PASS que W015 existe para cerrar, un nivel mas abajo: **la lista de
+        // columnas es PRESENCIA, no filtro**. El statement de S8 es
+        //   `insert into tradein_leads ("tenant_id", ...) select t.id, ... from tenants t
+        //    where t.id = (select public.storefront_tenant_id()) and t.accepts_trade_in`
+        // y quien lo ata al tenant es ese `where`. Sacandolo, el insert escribe **una fila por
+        // tenant de la tabla** — escritura cruzada, la peor version del bug — y `"tenant_id"`
+        // seguia en la lista de columnas, asi que W015 quedaba VERDE. Lo midio `storefront-agent`
+        // mutando su propio handler; lo reprodujo el LEAD sobre el arbol real antes de tocar esto.
+        //
+        // ## La ventana es desde el primer `from`, y NO desde el `where`
+        // Primero se escribio "el tenant tiene que estar despues del `where`". Con esa vara se
+        // encendio el OTRO beacon de S4 — el del footer, que ata el tenant en el `from`:
+        //   `select claim.tid, ... from (select (select public.storefront_tenant_id()) as tid)
+        //    as claim where claim.tid is not null`
+        // Esta perfectamente atado y su `where` no nombra tenant porque no tiene por que. O sea
+        // que la vara del `where` producia un FALSO POSITIVO sobre una query correcta, que es la
+        // forma de romper un gate que este repo paga mas caro: un gate que castiga la forma buena
+        // ensena a marcarlo `sin-tenant` y a seguir.
+        // La ventana correcta es **desde el primer `from` hasta el final**: la FUENTE del select
+        // mas su `where`. Deja afuera las dos listas que son presencia y no filtro — la de
+        // columnas del `insert` (el bug que se esta cerrando) y la de proyeccion del `select`
+        // (`select l.tenant_id, ...`, el mismo defecto ya corregido para el `select` suelto).
+        // Los dos beacons de S4 y el de S8 pasan sin tocarlos.
+        // Lo que esta ventana NO distingue es un `join ... on x.tenant_id`, que para un `select`
+        // suelto esta explicitamente excluido. Queda dicho en vez de tapado: es un hueco mas
+        // angosto que el que habia, no ninguno.
+        // El builder (`.insert(x).select(qb)`) admite la misma forma y hoy NO la usa nadie en
+        // `apps/web` — censado, 18 inserts, los 18 con `.values()`. Se deja anotado en vez de
+        // codeado: una rama de gate sin un solo caso vivo es una rama que nadie vio encender.
+        //
+        // ## `indexOf('from')` buscaba SUBCADENA, y eso apagaba la rama entera
+        // Lo encontro `adversary-reviewer` sobre esta misma slice, y lo reprodujo el LEAD antes de
+        // tocar nada. `listing_events` tiene una columna que se llama **`from_status`** (existe
+        // hoy: `packages/db/src/schema/events.ts`). Nombrarla en la lista de columnas del insert
+        // ponia el primer `from` DENTRO del parentesis, o sea que la ventana volvia a arrancar en
+        // la lista de columnas — exactamente la presencia que esta rama vino a cerrar. Un fixture,
+        // dos corridas, la unica diferencia `, "from_status"`: con la columna, `ok W015`; sin
+        // ella, W015 enciende. El gate tenia un caso de test que pasaba y una variante de UNA
+        // columna que lo apagaba, sobre la tabla del historial de estados — la mas propensa del
+        // repo a que alguien escriba un backfill.
+        // Se busca el token a NIVEL 0 de parentesis, que resuelve las dos mitades de una: la lista
+        // de columnas es nivel 1, y un `from` adentro de un subselect de proyeccion
+        // (`select (select x from y) as a from z`) tambien — el primero de nivel 0 es `from z`,
+        // que es la fuente. Un `from (select ...)` como fuente sigue siendo nivel 0 y entra.
+        const esInsertValues = esIns && /\bvalues\s*\(/.test(bajo);
         let pasa;
-        if (esIns) {
+        if (esInsertValues) {
           pasa = filtra(cuerpo);
+        } else if (esIns) {
+          const desde = fromDeNivel0(bajo);
+          pasa = desde !== -1 && filtra(cuerpo.slice(desde));
         } else {
           const donde = bajo.lastIndexOf('where');
           pasa = donde !== -1 && filtra(cuerpo.slice(donde).split(/order\s+by|group\s+by|limit/i)[0]);
@@ -391,7 +462,12 @@ must('W011', 'sin console.log de un listing/unit/row entero (CLAUDE.md §2)', sr
         const e = exento(texto, t.index);
         if (e.vale) continue;
         const ln = texto.slice(0, t.index).split('\n').length;
-        hits.push(`${rel}:${ln}: sql crudo (template) sobre '${[...new Set(tocadas)].join(', ')}' sin tenant_id en el where` + (e.marcada ? ' (la marca no explica por que: se piden 30+ caracteres de motivo)' : ''));
+        // El mensaje nombra la ventana que se miro, no "el where" a secas: para un `insert ...
+        // select` la ventana es la FUENTE, y decir "where" mandaria a agregar un where que no es
+        // donde vive el problema.
+        const donde = esIns && !esInsertValues ? 'en la fuente del select (from/where)'
+          : esInsertValues ? 'en la lista de columnas' : 'en el where';
+        hits.push(`${rel}:${ln}: sql crudo (template) sobre '${[...new Set(tocadas)].join(', ')}' sin tenant_id ${donde}` + (e.marcada ? ' (la marca no explica por que: se piden 30+ caracteres de motivo)' : ''));
       }
     }
 

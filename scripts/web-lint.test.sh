@@ -315,6 +315,103 @@ export async function barrer(tx: any, tid: string) {
 EOF
 caso SILENT W015 "sql crudo con tenant_id en el where"
 
+# ── `insert ... select`: la lista de columnas es PRESENCIA, no filtro (S8, 2026-08-28) ────────
+# La vara del `values` —"el tenant viaja como dato, alcanza con que este en la lista"— aplicada a
+# un `insert ... select` dejaba VERDE un insert que escribe UNA FILA POR TENANT. El primer caso
+# es esa mutacion exacta, medida sobre el handler real de S8 antes de tocar la regla; los dos
+# SILENT de abajo son los dos beacons de S4, que atan el tenant en lugares DISTINTOS y los dos
+# tienen que seguir callados: si uno solo encendiera, la regla estaria castigando la forma buena.
+nuevo; fx "$W15" <<'EOF'
+export async function canje(tx: any, nombre: string) {
+  return tx.execute(sql`
+    insert into tradein_leads ("tenant_id", "customer_name")
+    select t.id, ${nombre}::text
+    from tenants t
+  `);
+}
+EOF
+caso FIRES W015 "insert...select sin where: la lista de columnas es presencia, no filtro"
+
+nuevo; fx "$W15" <<'EOF'
+export async function canje(tx: any, nombre: string) {
+  return tx.execute(sql`
+    insert into tradein_leads ("tenant_id", "customer_name")
+    select t.id, ${nombre}::text
+    from tenants t
+    where t.id = (select public.storefront_tenant_id())
+  `);
+}
+EOF
+caso SILENT W015 "insert...select atado en el where (el handler de S8)"
+
+nuevo; fx "$W15" <<'EOF'
+export async function beacon(tx: any, src: string) {
+  return tx.execute(sql`
+    insert into wa_click_events ("tenant_id", "listing_id", "source")
+    select claim.tid, null::uuid, ${src}::wa_click_source
+    from (select (select public.storefront_tenant_id()) as tid) as claim
+    where claim.tid is not null
+  `);
+}
+EOF
+caso SILENT W015 "insert...select atado en el FROM, no en el where (el beacon del footer de S4)"
+
+# Este es el que separa la ventana correcta de la ingenua: PROYECTAR `l.tenant_id` en la lista del
+# select es la misma presencia que ponerlo en la lista de columnas. Si la ventana arrancara en el
+# `select` en vez de en el `from`, este caso pasaria en verde y la regla no habria cerrado nada.
+nuevo; fx "$W15" <<'EOF'
+export async function fuga(tx: any, id: string) {
+  return tx.execute(sql`
+    insert into wa_click_events ("tenant_id", "listing_id", "source")
+    select l.tenant_id, l.id, 'card'::wa_click_source
+    from listings l
+    where l.id = ${id}::uuid
+  `);
+}
+EOF
+caso FIRES W015 "insert...select que PROYECTA tenant_id y no lo filtra: presencia otra vez"
+
+# ── El caso que el harness NO tenia, y que apagaba la rama entera ─────────────────────────────
+# Ningun fixture usaba un identificador que CONTUVIERA la palabra `from`, asi que los tres casos de
+# arriba pasaban con una ventana que buscaba subcadena. `listing_events.from_status` existe hoy en
+# el schema: nombrarla en la lista de columnas movia el arranque de la ventana DENTRO del parentesis
+# y W015 volvia a leer la lista de columnas como si fuera la fuente — verde sobre una escritura
+# cross-tenant. Lo encontro `adversary-reviewer` en S8. Los dos casos van juntos a proposito: el
+# FIRES prueba que la columna ya no apaga la regla, y el SILENT prueba que el arreglo no se llevo
+# puesta la forma correcta moviendo la ventana demasiado lejos.
+nuevo; fx "$W15" <<'EOF'
+export async function backfill(tx: any) {
+  return tx.execute(sql`
+    insert into listing_events ("tenant_id", "listing_id", "from_status")
+    select l.tenant_id, l.id, 'draft'::listing_status
+    from listings l
+  `);
+}
+EOF
+caso FIRES W015 "una columna llamada from_status en la lista NO puede mover la ventana"
+
+nuevo; fx "$W15" <<'EOF'
+export async function backfillAtado(tx: any, t: string) {
+  return tx.execute(sql`
+    insert into listing_events ("tenant_id", "listing_id", "from_status")
+    select l.tenant_id, l.id, 'draft'::listing_status
+    from listings l where l.tenant_id = ${t}
+  `);
+}
+EOF
+caso SILENT W015 "la misma forma, atada por el where de la fuente: from_status no la vuelve falso positivo"
+
+nuevo; fx "$W15" <<'EOF'
+export async function conSubselect(tx: any, t: string) {
+  return tx.execute(sql`
+    insert into listing_events ("tenant_id", "listing_id")
+    select (select x.id from aux x limit 1), l.id
+    from listings l where l.tenant_id = ${t}
+  `);
+}
+EOF
+caso SILENT W015 "un from adentro de un subselect de proyeccion no es la fuente: la ventana es nivel 0"
+
 printf '\n\033[1m── W015 · la marca de excepcion, que es donde se decide declarado vs invisible\033[0m\n'
 
 nuevo; fx "$W15" <<'EOF'
