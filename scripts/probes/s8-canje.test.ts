@@ -193,10 +193,19 @@ beforeAll(async () => {
      on conflict (id) do nothing`,
   );
 
+  // `accepts_trade_in` se prende A PROPOSITO y en el fixture, no en el caso. La `0009` (fila S8.1)
+  // ato la policy `TO anon` a la bandera del tenant, y la columna nace `default false`: sin esta
+  // linea, A no puede recibir un canje y los casos A y F no MIDEN — que es distinto de medir cero.
+  // Asi fallo esta probe la primera vez que se corrio despues de la 0009, y el gate hizo bien en
+  // rechazar la slice: `-1` no es `0`. Lo que esta probe mide es la vidriera de un tenant que SI
+  // acepta canjes; el polo negativo —bandera apagada ⇒ el insert rebota— es R2c-g de
+  // `tests/rls-cross-tenant.test.ts`, de `qa-agent`, y es la auditoria de referencia por §4.
   const [a] = await cliente<{ id: string }[]>`
-    insert into tenants (slug, name, wa_phone) values (${SLUG_A}, 'Probe S8 A', '5490000000081') returning id`;
+    insert into tenants (slug, name, wa_phone, accepts_trade_in)
+      values (${SLUG_A}, 'Probe S8 A', '5490000000081', true) returning id`;
   const [b] = await cliente<{ id: string }[]>`
-    insert into tenants (slug, name, wa_phone) values (${SLUG_B}, 'Probe S8 B', '5490000000082') returning id`;
+    insert into tenants (slug, name, wa_phone, accepts_trade_in)
+      values (${SLUG_B}, 'Probe S8 B', '5490000000082', true) returning id`;
   tenantA = a?.id ?? '';
   tenantB = b?.id ?? '';
   expect(tenantA, 'no se pudo crear el tenant A del fixture').not.toBe('');

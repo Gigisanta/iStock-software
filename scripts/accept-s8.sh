@@ -37,8 +37,15 @@
 #     `costo_en_el_payload_del_seller` se mide sobre el OBJETO que devuelve la lectura y no sobre
 #     su tipo: el tipo lo cumple el compilador, el objeto lo cumple el codigo que corre.
 #  3. e2e. Requiere `next build`. `TEST_MATRIX.md` E5 sigue en rojo y esta declarado alla.
-#  4. Que la PII del visitante no llegue a `packages/ai` ni a un log. Es la primera PII de un
-#     tercero del producto y NO tiene test de fuga. Lo levanto `qa-agent`; queda en el board.
+#  4. Que la PII del visitante no llegue a `packages/ai` ni a un log. Ya NO es un hueco: lo cubre
+#     `tests/la-pii-del-visitante-no-sale-de-la-fila-del-canje.test.ts` (`qa-agent`, T43), que
+#     corre dentro de V4. Se lo deja escrito aca porque era el punto 4 de esta lista y borrarlo
+#     sin decir quien lo cerro es como no haberlo escrito nunca.
+#  5. Lo que V6 NO ve, y hay que decirlo porque V6 se lee como si viera todo: censa el ARBOL de
+#     migraciones commiteado, no la base. Un `DROP TRIGGER` tipeado a mano contra `istock_dev`
+#     deja el gate verde. Es a proposito — el migrador de Drizzle compara `created_at` y no el
+#     hash, asi que la base es la fuente MENOS confiable de las dos (CLAUDE.md §3) — pero la
+#     consecuencia es que V6 defiende el repositorio, no una base en particular.
 # ══════════════════════════════════════════════════════════════════════════════════════════════
 set -uo pipefail
 cd "$(dirname "$0")/.."
@@ -169,6 +176,20 @@ else
   fi
   rm -f "$POUT"
 fi
+
+
+# ── V6 · las dos invariantes que S8.1 mudo al MOTOR siguen ahi ────────────────────────────────
+# La verificacion vive en `scripts/guard-tradein-engine.sh`, con su propio arnes de polaridad
+# (15 fixtures, `guard-tradein-engine.test.sh`), y no inline aca. El motivo es el de siempre en
+# este repo: un gate que solo se vio verde no es evidencia. Inline no se podia falsificar sin
+# ensuciar la columna de `db-agent` con una migracion trucha, ni sin correr `pnpm -r test` una vez
+# por fixture. Parametrizado por directorio, se prueba en las dos direcciones en menos de un
+# segundo — incluido el borde entre archivos, que es donde el censo se rompia de verdad.
+sec 'V6 · `accepts_trade_in` en la policy y el constraint trigger, censados sobre el arbol entero'
+V6OUT=$(./scripts/guard-tradein-engine.sh 2>&1); V6RC=$?
+printf '%s\n' "$V6OUT" | grep '^OK: '    | sed 's/^OK: //'    | while read -r l; do ok "$l"; done
+printf '%s\n' "$V6OUT" | grep -v '^OK: ' | grep -vE '^(GUARD-TRADEIN-ENGINE|$)' | sed 's/^FALLA: //' | sed 's/^/    /'
+[ "$V6RC" = "0" ] || no 'guard-tradein-engine: el motor del canje ya no sostiene lo que S8.1 le mudo (detalle arriba)'
 
 # ══════════════════════════════════════════════════════════════════════════════════════════════
 printf '\n'

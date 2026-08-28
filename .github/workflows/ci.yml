@@ -212,6 +212,20 @@ jobs:
         if: always()
         run: ./scripts/guard-firewall.test.sh
 
+      # S8.1 mudo dos reglas del canje de `apps/web` al MOTOR: el flag `accepts_trade_in` pasa a
+      # estar en la policy de `anon`, y `accepted ⇒ unidad creada` pasa a un CONSTRAINT TRIGGER
+      # diferido. `rls-lint` no las cubre — audita policies, y un trigger no es una policy — asi
+      # que sin esto la invariante mas cara de S8 quedaba sostenida por el test del writer que la
+      # escribio. No toca base a proposito: censa el `.sql` commiteado, porque el migrador de
+      # Drizzle compara `created_at` y no el hash, y por eso la base miente (CLAUDE.md §3).
+      - name: gate del motor del canje (la policy y el trigger que S8.1 bajo a la base)
+        if: always()
+        run: ./scripts/guard-tradein-engine.sh
+
+      - name: polaridad del gate del canje (15 fixtures, incluida la del borde entre archivos)
+        if: always()
+        run: ./scripts/guard-tradein-engine.test.sh
+
       # T27: los dos resolvers de entitlements dicen lo mismo, y el copy del panel no manda a
       # comprar el plan a quien ya lo paga. Va en este job y no en el de Postgres porque no toca
       # base: el certificado es `scripts/probes/t27-un-motivo-una-voz.test.ts`, que mockea
