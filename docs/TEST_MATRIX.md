@@ -83,11 +83,16 @@ convención que la celda de W015. El próximo conteo sale de la próxima corrida
 > (domain 12 · media 9 · db 9 · web 26 · tests 7), y los 63 caen dentro de los `include` de los
 > cinco `vitest.config.ts`. Uno de diferencia sin explicación **no es un número que este doc pueda
 > publicar**: es exactamente el error que ya se cometió dos veces con los 59/69/79 de RLS, contar en
-> un lado y afirmar en el otro. Reportado al LEAD. Aparte de esos 63 hay **7 probes**
+> un lado y afirmar en el otro. Reportado al LEAD. Aparte de esos 63 hay **8 probes**
 > (`scripts/probes/*.test.ts`) que **no** corren con `pnpm test`: los invoca el `accept-*` que los
-> necesita. **Eran 4 y el número quedó viejo el 2026-08-28**: `s6-sweep-head-of-line.test.ts` (T25),
-> `t27-un-motivo-una-voz.test.ts` (T27) y `el-grant-cubre-el-insert-de-drizzle.test.ts` (G6) son de
-> esta fase. Contado con `ls scripts/probes/*.test.ts | wc -l` el 2026-08-28, no copiado.
+> necesita. **El número se movió dos veces en esta fase y por eso se fecha en vez de reescribirse:**
+> eran **4**; `s6-sweep-head-of-line.test.ts` (T25), `t27-un-motivo-una-voz.test.ts` (T27) y
+> `el-grant-cubre-el-insert-de-drizzle.test.ts` (G6) lo llevaron a **7**, y `s7-venta-manual.test.ts`
+> lo dejó en **8**. Contado con `ls scripts/probes/*.test.ts | wc -l` el 2026-08-28, no copiado.
+> **Y desde T33 (`5b6061e`) el censo lo hace un comando en vez de una cuenta a mano:**
+> `guard-gates.sh` §**G5** exige que cada probe tenga un `accept-*.sh` que la corra **y** que compile
+> bajo `scripts/tsconfig.json` — corrido el 2026-08-28: `las 8 probes de scripts/probes/ tienen quien
+> las corra` · `las 8 probes compilan bajo scripts/tsconfig.json`.
 
 > **Este doc dijo 59 cuando eran 69, y decía 69 cuando ya eran 79.** El 59 contaba `it()` literales
 > y se comía el `it.each(sensibles)` sobre 10 columnas sensibles; el 69 era correcto hasta que S4
@@ -123,6 +128,28 @@ convención que la celda de W015. El próximo conteo sale de la próxima corrida
 | R6c | **el invariante propio de `anon`, más estricto que R6:** las policies `TO anon` son **6** — las 5 de lectura de la vidriera **más** el `INSERT` del beacon de S4—, cada una con su comando y su predicado auditados enteros. Una policy `TO anon` nueva rompe la cuenta | ✅ |
 | R7 | **privilegios, no policies**: `anon` no tiene SELECT **de tabla** en ninguna tabla, ni ningún privilegio de escritura (de tabla ni de columna), y su read model es **exactamente** la allowlist — leído del `COMMENT` de la base, no de una lista a mano | ✅ |
 | R8 | `service_role` lee los dos tenants en la misma query: sin eso no hay cron de reservas | ✅ |
+| R9 | **la venta manual: el costo y el margen de un reseller no cruzan al de al lado.** Bloque nuevo de **S7** (`tests/rls-cross-tenant.test.ts:1366`, `qa-agent`, commit `60b3def`), en seis sub-bloques: **R9a** control positivo —el dueño **sí** ve sus ventas con costo y margen, sin esto R9b–R9d serían verdes por vacío— · **R9b** el vecino no **lee** las ventas ajenas, y tampoco las **cuenta ni las suma** (un `count`/`sum` que devuelve un número es lectura aunque no devuelva filas) · **R9c** el vecino no **escribe** una venta en la cuenta ajena · **R9d** no las **modifica** ni las **borra** · **R9e** el margen es **consecuencia** del costo y no un valor que alguien manda (`generatedAlwaysAs`) · **R9f** dos resellers pueden tener una venta cada uno **sobre el mismo uuid de unidad**, o sea que el único de D8 **no** es un oráculo cruzado, y censa que los únicos índices únicos de `sales` son la PK y el par de D8 | ✅ |
+
+> **El `79` de arriba es una cifra de corrida FECHADA, y S7 la movió: no se re-suma acá.** R9 son
+> **24 `it()`**, contados por `docs-keeper` **en el fuente** (`tests/rls-cross-tenant.test.ts`, desde
+> `:1366`), y el número va rotulado como tal a propósito: este archivo ya se equivocó **dos veces**
+> contando en el fuente y afirmando en el runner (los 59/69/79 de más arriba). `79 + 24` es una
+> aritmética que nadie corrió. **El total nuevo sale de la próxima corrida del LEAD**, igual que el
+> 1225; hasta entonces lo que este doc afirma es *qué* cubre R9, no *cuántos* pasaron.
+> **`pnpm e2e` sigue sin correrse** (requiere `next build`) y no se cuenta como verde en ningún lado.
+>
+> **Por qué R9 vive acá y no en `packages/db`** (`CLAUDE.md` §4, el desempate de abajo): es la
+> **auditoría de referencia** del costo y el margen — la afirmación que un gate cita y que queda
+> parada entre una policy aflojada y un merge —, y `db-agent` escribe esas policies. La red de
+> regresión del propio paquete es `packages/db/src/sales-one-sale-per-listing.test.ts`, y **no** es
+> el certificado.
+>
+> **Lo que R9c NO afirma, dicho acá porque un hueco no declarado se lee como cobertura:** el tercer
+> caso —el vecino inserta una venta con **su propio** `tenant_id` apuntando al `listing_id` ajeno—
+> **está deliberadamente ausente**, con el motivo escrito en el docblock del propio bloque
+> (`:1479-1495`): hoy la base lo **acepta**, así que el assert fallaría **por el motivo correcto**, y
+> un rojo permanente con causa conocida enseña a ignorar el archivo entero. Es la fila **P4** del
+> board, y el assert entra el día que entre la migración.
 
 > **R7 no estaba en esta tabla y sí en el código.** Es la mitad *`GRANT`* del invariante que
 > `CLAUDE.md` §2 separa a propósito de la mitad *policy* (*"`GRANT` y RLS son dos capas y se evalúan
@@ -130,6 +157,69 @@ convención que la celda de W015. El próximo conteo sale de la próxima corrida
 >
 > Cada detector de R5/R6/R7 tiene **su trampa plantada** y un test que verifica que la encuentra.
 > Es la regla de método del board —*un gate que nunca se vio fallar no es un gate*— aplicada acá.
+
+## Probes de aceptación — `scripts/probes/**`
+
+Una **probe** no es un test más: es el **certificado** que un `scripts/accept-*.sh` cita como
+evidencia. Por eso es del **LEAD** (`CLAUDE.md` §4: el gate no puede ser del writer que audita) y
+por eso **no corre con `pnpm test`** — la invoca el `accept-*` que la necesita, y desde **T33** el
+censo de que alguien la invoque lo hace `guard-gates.sh` §G5.
+
+**`scripts/probes/s7-venta-manual.test.ts`** — el certificado de **S7**, contra Postgres real,
+citado por `scripts/accept-s7.sh`. Cinco casos, y lo que los hace certificado es que **ninguno
+mockea la base**: la fila de venta la escribe el mismo camino que corre en producción.
+
+| # | aserción | por qué está |
+|---|---|---|
+| PS7-A | vender una unidad disponible escribe **UNA** venta, con el costo de `listings` y **no** el del form | el costo lo copia un subselect adentro del `INSERT`; si el form pudiera dictarlo, el margen sería un dato del cliente |
+| PS7-B | mover el costo y el TC **después** de la venta **no reescribe** la venta | la venta es un hecho congelado, no una vista sobre `listings` |
+| PS7-C | ni el doble submit ni un estado revertido escriben una **segunda** venta | los dos reintentos rebotan en guardianes **distintos** —el doble submit lo para la máquina de estados (`same_state`), el estado revertido a `available` **lo deja pasar**—, así que lo único que queda parado es el índice único de D8. La primera versión hacía sólo el primer caso y **salía verde con el índice borrado** |
+| PS7-D | un tenant **sin TC cargado** vende igual, con `price_ars` en NULL | el TC lo carga el dueño a mano (`CLAUDE.md` §1); no tenerlo no puede bloquear una venta |
+| PS7-E | vender una unidad **reservada** cierra la reserva como `confirmed` | es la transición que ADR-019 dejó explícita: en qué queda una reserva cerrada lo decide la tabla del dominio |
+
+> **Sin conteos de PASS acá.** Los cinco casos están leídos del fuente por `docs-keeper`; el
+> veredicto que cuenta es el del LEAD corriendo `bash scripts/accept-s7.sh` → `S7: ACEPTADA`, con la
+> línea `MEDIDO s7 venta` de **nueve campos** que el gate compara contra literales escritos en el
+> propio gate (ausencia de la línea = FAIL). Ver la fila **S7** del board.
+
+## Integración — `apps/web` contra Postgres real
+
+Tests que viven en la columna de `app-agent` —son el test de su propio código, `CLAUDE.md` §4— pero
+que **no mockean la base**: le piden los errores al motor en vez de fabricarlos.
+
+**`apps/web/app/(app)/_lib/listings/create-listing.test.ts`** (`7fc284a`) — **8 casos**, contados en
+el fuente. El archivo **no existía**, y esa ausencia era el defecto: el discriminador de `23505` de
+`createUnit()` —colisión de slug / IMEI repetido / genérico— **nunca se había ejecutado**, así que
+la colisión de slug no se reintentaba nunca y un IMEI duplicado salía como 500. Se arregló en
+`5bb0d1b`; **el arreglo tampoco tenía test**, y sin este archivo la próxima regresión volvía a ser
+invisible.
+
+| # | aserción | por qué está |
+|---|---|---|
+| IW1 | control positivo: el alta que funciona escribe **las tres filas** (listing + foto + evento) y devuelve el slug que **efectivamente quedó guardado** | sin control positivo, los casos de error serían verdes por vacío |
+| IW2 | `seller`: `cost_usd` **no se escribe** aunque venga en el input | `CLAUDE.md` §0.9, afirmado en la fila que quedó en la base, no en el DTO |
+| IW3 | slug ocupado → **el reintento sucede** y la segunda vuelta entra con otro sufijo | es la rama que estaba muerta |
+| IW4 | slug ocupado en **los tres** intentos → `field: "title"`, **ninguna fila**, y un log **sin PII** | el fallo total no puede dejar basura ni escribir un dato regulado |
+| IW5 | IMEI repetido → `field: "imei"`, y **NO** reintenta | reintentar acá sería pedirle tres veces a Postgres la misma respuesta |
+| IW6 | otro `23505` (`listings_pkey`) → `field: "form"`, el mensaje genérico | las tres ramas llegan como `23505` y lo único que las separa es el **nombre de la constraint** |
+| IW7 | un `23503` (FK del modelo de catálogo) **se propaga** y no se mapea a ningún campo | lo que no es violación de unicidad no se traga |
+| IW8 | si falla el upload de la foto, **no se escribe nada** en Postgres ni se genera un slug | la foto va antes que la fila, a propósito |
+
+> **Lo que hace a este archivo distinto, y es lo que hay que copiar:** no tiene **un solo literal de
+> error de Postgres**. Cada colisión se provoca **insertando la fila que choca**, y el nombre de la
+> constraint lo dice Postgres — además cada caso corre una **sonda** con el cliente de admin que
+> afirma qué constraint contesta la base. Es la lección de `_lib/db/pg-error.test.ts`: un
+> `{ code: '23505' }` escrito a mano es precisamente la forma que el driver **nunca** produce, y un
+> test contra una forma inventada certifica un mapeo que el código no hace — sale verde **por el
+> motivo equivocado**.
+>
+> **La clase todavía existe en un archivo hermano y está anotada, no tapada:**
+> `publish-listing.test.ts` fabrica a mano el error de adentro (el envoltorio `DrizzleQueryError` sí
+> es real). Su propio docblock lo declara y remite a `pg-error.test.ts`. Es la fila **T35** del
+> board, severidad baja, dueño `app-agent`.
+>
+> **Sin conteos de PASS acá tampoco**, por la misma razón que en RLS: el número que vale sale de una
+> corrida, y este doc ya se equivocó dos veces contando en el fuente y afirmando en el runner.
 
 ## e2e — Playwright
 Estado verificado contra `e2e/**` y `scripts/accept-*.sh` el **2026-08-28**, después de **S6.2** y

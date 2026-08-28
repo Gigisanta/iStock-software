@@ -1805,9 +1805,9 @@ esta misma ADR aplicada a la ADR.
 
 ---
 
-## ADR-025 (PENDIENTE DE RATIFICACIÓN DEL LEAD) — La unicidad de la venta la afirma **el motor**, y el `tenant_id` va **adentro** de la clave
+## ADR-025 — La unicidad de la venta la afirma **el motor**, y el `tenant_id` va **adentro** de la clave
 
-- **Estado:** **propuesta — redactada por `docs-keeper`, PENDIENTE de ratificación del LEAD.** No está aceptada. `docs-keeper` **no ratifica**: acá se redacta una decisión que S7 ya ejecutó y commiteó, con su porqué y sus citas; lo que la vuelve `aceptada` es la ratificación del LEAD, igual que las 24 anteriores.
+- **Estado:** **aceptada · ratificada por el LEAD 2026-08-28.** Redactada por `docs-keeper`; ratificada por el LEAD. Las dos mitades quedan escritas a propósito: `docs-keeper` redacta una decisión que S7 ya ejecutó y commiteó —con su porqué y sus citas— y lo que la vuelve `aceptada` es la ratificación del LEAD. **La separación entre redactar y decidir es la que hace que `CLAUDE.md` §4 funcione**, y borrarla al aceptar sería perder justo el dato: dentro de un mes, un ADR sin esa línea se lee como si el escritor hubiera decidido.
 - **Fecha:** 2026-08-28 · **Origen:** S7 (venta manual), commit `6eab611`, migración `packages/db/drizzle/0007_sales_one_sale_per_listing.sql` (`db-agent`)
 - **Por qué es una ADR y no una nota operativa:** tiene alternativa descartada con motivo, tiene un precio aceptado que le queda a otro dueño (**P4**), y el próximo escritor de `sales` —un canje que cierra en venta, un import— va a tomar la misma decisión sin leer el código.
 
@@ -1833,6 +1833,27 @@ Las dos son buenas capas y se quedan. Lo que faltaba es la afirmación **donde n
 | **`unique (listing_id)` a secas** — más fuerte, y es la que sale primero | Convierte al índice en un **oráculo cruzado**: un tenant que adivina o consigue el `id` de una unidad ajena distingue *"ya vendida"* de *"no vendida"* por el `23505` que recibe, **sin haber leído una fila y sin que RLS se entere** — el error del motor se evalúa antes que cualquier policy de lectura. Con el tenant adentro de la clave, ese insert cruzado no colisiona con nada de nadie |
 | **dejar los dos índices** | El nuevo tiene **las mismas dos columnas en el mismo orden**: un btree único no se lee distinto de uno común, sólo verifica de más al escribir. Cubre todo plan que cubría el anterior. Dejar los dos es pagar dos inserciones de índice por fila para servir un único árbol de lectura. **Se buscó antes de borrar, no después:** `sales` no tenía **ninguna** consulta de producción — la tabla nunca tuvo un lector |
 | **dejarlo en la máquina de estados** (statu quo) | Es lo que había, y la medición de arriba muestra qué garantizaba: nada, apenas aparece un segundo camino de escritura |
+
+### La regla reusable, que es lo que hay que llevarse de acá
+
+La fila de arriba dice *por qué no* en el caso de `sales`. **El motivo general no es que la venta sea
+un dato sensible** — si lo fuera, esta ADR no le serviría a nadie más. Es esto, y aplica a **toda**
+tabla de negocio:
+
+> **Un índice único se evalúa antes que cualquier policy de lectura, y no sabe qué es un tenant.**
+> El `23505` sale del motor de almacenamiento; RLS filtra **filas que se leen**, y acá no se leyó
+> ninguna. Un único que no lleva `tenant_id` adentro de la clave es, por construcción, un canal que
+> contesta *"esa fila ajena existe"* a quien la adivine.
+
+Es **la misma clase** que `GRANT` vs RLS, la que `CLAUDE.md` §2 ya cobró con un fallo de slice: dos
+capas distintas, evaluadas en **orden distinto**, y la de abajo no sabe nada de tenants. Ahí el
+síntoma era `42501` sin `GRANT`; acá es `23505` sin haber leído. En los dos casos el error se produce
+**antes** de que la capa que sí entiende de tenants tenga algo que decir.
+
+**Consecuencia operativa, y es la línea que necesita el próximo:** un `unique` sobre una tabla que
+tiene `tenant_id` lleva `tenant_id` **adentro de la clave**, salvo que la unicidad sea genuinamente
+global (un `id` opaco, un hash content-addressed). Si es global a propósito, se dice por qué en el
+schema. **No alcanza con que la policy tape la lectura**: la policy corre después.
 
 ### El precio, dicho para que nadie lo descubra después
 
