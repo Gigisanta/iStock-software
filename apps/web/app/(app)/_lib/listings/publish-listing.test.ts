@@ -118,7 +118,7 @@ vi.mock('../db/session', () => ({
   withTenantDb: (_ctx: unknown, fn: (t: unknown) => unknown) => fn(tx),
 }));
 
-const { transitionUnit } = await import('./publish-listing');
+const { denyReasonText, transitionUnit } = await import('./publish-listing');
 const { listingEvents, listings, reservations } = await import('@istock/db');
 
 const LISTING_ID = '3f2b1a90-7c4d-4e21-9b8a-0c1d2e3f4a5b';
@@ -409,5 +409,101 @@ describe('transitionUnit · el entitlement se lee de verdad', () => {
         'Se te terminó la prueba, así que las reservas quedaron apagadas. Escribinos y lo vemos.',
     });
     expect(db.writes).toHaveLength(0);
+  });
+
+  /**
+   * El otro motivo, por el camino entero: `featureAccess()` → `checkTransition()` → copy. Se afirma
+   * el mensaje **renderizado** y no el `reason`, porque el defecto que esto cierra era de copy: el
+   * enum ya distinguía los casos en `(billing)` y el panel los aplastaba a los dos contra el mismo
+   * texto.
+   */
+  it('con la feature apagada a mano rebota, y tampoco habla del plan', async () => {
+    givenUnit('available');
+    featureAccess.mockResolvedValue({ ok: false, reason: 'flag_off' });
+
+    const result = await transitionUnit(actor, LISTING_ID, 'reserved', NOW);
+
+    expect(result).toEqual({
+      ok: false,
+      message: 'Las reservas están apagadas en tu cuenta. No es el plan: escribinos y te las prendemos.',
+    });
+    expect(db.writes).toHaveLength(0);
+  });
+});
+
+/**
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *  El copy del entitlement: un texto por motivo, y ninguno miente sobre el plan
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * `denyReasonText()` es puro, así que se prueba directo y no a través de una transición. Lo que se
+ * fija acá es el **texto**, no el enum: el defecto que cerró esta slice (2026-08-28, lo reportó
+ * `billing-agent`) era que la fila apagada llegaba como `plan` y salía como *"Eso viene con el plan
+ * Negocio."* a un tenant que tiene el plan Negocio. Un test sobre el `reason` no lo hubiera visto —
+ * el `reason` era coherente con su propio mapeo; el que mentía era el string.
+ *
+ * Por eso cada caso afirma el string exacto **y** que no es el del plan. El día que alguien vuelva a
+ * mapear `flag_off` (o un motivo nuevo) al mensaje del plan, esto se pone rojo en el string, que es
+ * donde se ve el bug.
+ */
+describe('denyReasonText · el copy del entitlement', () => {
+  const PLAN_TEXT = 'Eso viene con el plan Negocio.';
+
+  it('sin el plan contratado: el texto del plan, el único caso donde es cierto', () => {
+    expect(denyReasonText('entitlement_required', { ok: false, reason: 'plan' })).toBe(PLAN_TEXT);
+  });
+
+  it('trial vencido: dice que se terminó la prueba y no lo manda a comprar lo que tenía', () => {
+    const text = denyReasonText('entitlement_required', { ok: false, reason: 'trial_expired' });
+
+    expect(text).toBe(
+      'Se te terminó la prueba, así que las reservas quedaron apagadas. Escribinos y lo vemos.',
+    );
+    expect(text).not.toContain('plan Negocio');
+  });
+
+  it('apagada a mano: dice que está apagada en su cuenta y a quién escribirle', () => {
+    const text = denyReasonText('entitlement_required', { ok: false, reason: 'flag_off' });
+
+    expect(text).toBe(
+      'Las reservas están apagadas en tu cuenta. No es el plan: escribinos y te las prendemos.',
+    );
+    // Las tres partes que el copy tiene que tener, por si alguien lo reescribe "más corto".
+    expect(text).toContain('tu cuenta');
+    expect(text).toContain('No es el plan');
+    expect(text).toContain('escribinos');
+  });
+
+  /** La aserción del bug, escrita como bug: `flag_off` NO puede renderizar el texto del plan. */
+  it('apagada a mano NO renderiza el texto del plan: es el defecto que esta slice cerró', () => {
+    const text = denyReasonText('entitlement_required', { ok: false, reason: 'flag_off' });
+
+    expect(text).not.toBe(PLAN_TEXT);
+    expect(text).not.toContain('plan Negocio');
+  });
+
+  /** Los tres motivos dan tres textos distintos: ninguno se aplasta contra otro. */
+  it('un texto por motivo, sin colisiones', () => {
+    const textos = (['plan', 'trial_expired', 'flag_off'] as const).map((reason) =>
+      denyReasonText('entitlement_required', { ok: false, reason }),
+    );
+
+    expect(new Set(textos).size).toBe(textos.length);
+  });
+
+  /**
+   * El default documentado. `entitlement_required` sin `access` no ocurre hoy —los dos call sites
+   * que pueden producirlo lo pasan—, y si ocurriera el texto del plan es el único que no le
+   * atribuye al negocio algo que nadie verificó.
+   */
+  it('sin `access`, `entitlement_required` cae al texto del plan', () => {
+    expect(denyReasonText('entitlement_required')).toBe(PLAN_TEXT);
+  });
+
+  /** `access` sólo cambia `entitlement_required`: no puede contaminar otro motivo del dominio. */
+  it('un `access` apagado no cambia el texto de un motivo que no es de entitlement', () => {
+    expect(denyReasonText('missing_price', { ok: false, reason: 'flag_off' })).toBe(
+      'Falta el precio en dólares.',
+    );
   });
 });

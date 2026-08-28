@@ -127,13 +127,35 @@ export interface PlanSnapshot {
 }
 
 /**
- * Por qué una feature está apagada. El motivo importa porque el mensaje al dueño cambia: "eso
- * viene con el plan Negocio" es lo correcto para el plan Base y es **mentira** para un trial que se
- * venció ayer, donde lo que pasó es que se terminó la prueba.
+ * Por qué una feature está apagada. El motivo importa porque el mensaje al dueño cambia, y los tres
+ * casos son distintos de verdad:
+ *
+ * | motivo | qué pasó | qué copy sería mentira |
+ * |---|---|---|
+ * | `plan` | su plan no la incluye | ninguno: es el **único** caso donde "viene con el plan Negocio" es cierto |
+ * | `trial_expired` | la tuvo mientras corría el trial y el trial venció | "viene con el plan Negocio": el plan que tenía la incluía |
+ * | `flag_off` | hay una fila en `entitlements` en `false` — alguien se la apagó a mano | "viene con el plan Negocio": puede tenerlo contratado y tenerla apagada igual |
+ *
+ * ── `flag_off` se agregó el 2026-08-28, y no es cosmético ────────────────────────────────────
+ * Hasta entonces la fila apagada devolvía `plan`, y `denyReasonText()` la renderizaba como *"Eso
+ * viene con el plan Negocio."* a un tenant que **tiene** el plan Negocio y al que un operador le
+ * apagó la feature: lo mandaba a comprar lo que ya pagó. Es exactamente el defecto que este mismo
+ * docblock denunciaba para `trial_expired`, con el otro motivo — el argumento estaba escrito y le
+ * faltaba una fila. Lo levantó `billing-agent`: su `hasEntitlement()` ya contestaba `flag_off`
+ * sobre la misma fila, y el desacuerdo entre los dos resolvers estaba medido en un test de
+ * `(billing)` en vez de comentado.
+ *
+ * Que hoy nada del panel escriba esta tabla no lo vuelve hipotético: la fila la siembra
+ * `packages/db/src/seed.ts` y la escribe `setFeatureFlag()` de `(billing)`, y
+ * `packages/ai/src/entitlement.ts` ya **testea** `flag_off` como motivo que espera recibir. El
+ * productor de producción todavía no existe; el consumidor sí.
+ *
+ * El motivo es de **explicación**, nunca de autorización: los tres significan `ok: false` y ninguna
+ * pantalla decide nada mirando cuál es. Quien lo mira es el copy.
  */
 export type FeatureAccess =
   | { readonly ok: true }
-  | { readonly ok: false; readonly reason: 'plan' | 'trial_expired' };
+  | { readonly ok: false; readonly reason: 'plan' | 'trial_expired' | 'flag_off' };
 
 const ACCESS_OK: FeatureAccess = { ok: true };
 
@@ -174,7 +196,11 @@ export async function featureAccess(
   );
 
   const row = rows[0];
-  if (row !== undefined) return row.enabled ? ACCESS_OK : { ok: false, reason: 'plan' };
+  // La fila manda, y también manda sobre el **motivo**: si está en `false`, lo que pasó es que
+  // alguien la apagó a mano, sea cual sea el plan. Contestar `plan` acá sería explicar el veredicto
+  // con la fuente que no lo produjo. Mismo orden y mismo motivo que `hasEntitlement()` de
+  // `(billing)`, que resuelve la misma pregunta sobre la misma fila.
+  if (row !== undefined) return row.enabled ? ACCESS_OK : { ok: false, reason: 'flag_off' };
 
   // El plan no la incluye: el motivo es el plan, aunque el trial además esté vencido. Decirle
   // "se te terminó la prueba" a alguien que nunca tuvo esa feature sería explicar mal.

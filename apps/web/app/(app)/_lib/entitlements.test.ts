@@ -94,6 +94,44 @@ describe('isFeatureEnabled · la fila de entitlements manda', () => {
       ok: true,
     });
   });
+
+  /**
+   * ── El motivo de la fila apagada es `flag_off`, no `plan` (2026-08-28) ─────────────────────
+   *
+   * Estas dos aserciones son el enum del defecto que reportó `billing-agent`; el copy que se
+   * renderizaba se fija en `listings/publish-listing.test.ts`, que es donde vive el texto. Las dos
+   * mitades hacen falta: el bug era de copy, y un test que sólo mire el enum se queda verde el día
+   * que alguien vuelva a mapear `flag_off` al mensaje del plan.
+   */
+  it('la fila apagada dice `flag_off`: el tenant puede TENER el plan que la incluye', async () => {
+    db.rows = [{ enabled: false }];
+    await expect(
+      featureAccess(ctx, paid('negocio'), FEATURE_RESERVATIONS, BEFORE),
+    ).resolves.toEqual({ ok: false, reason: 'flag_off' });
+  });
+
+  /**
+   * Y también cuando el plan tampoco la incluye. Podría argumentarse `plan` acá —las dos cosas son
+   * ciertas— pero el veredicto lo produjo la fila: el plan ni se leyó. Contestar con la fuente que
+   * no decidió es explicar mal, y además desincroniza el motivo con `hasEntitlement()` de
+   * `(billing)`, que resuelve la misma fila en el mismo orden.
+   */
+  it('la fila apagada gana también sobre un plan que no la incluye: decidió la fila', async () => {
+    db.rows = [{ enabled: false }];
+    await expect(featureAccess(ctx, paid('base'), FEATURE_RESERVATIONS, BEFORE)).resolves.toEqual({
+      ok: false,
+      reason: 'flag_off',
+    });
+  });
+
+  /** Ni `trial_expired`: con fila, la vigencia del trial no llega a evaluarse. */
+  it('la fila apagada gana también sobre el trial vencido', async () => {
+    db.rows = [{ enabled: false }];
+    await expect(featureAccess(ctx, TRIAL, FEATURE_RESERVATIONS, AFTER)).resolves.toEqual({
+      ok: false,
+      reason: 'flag_off',
+    });
+  });
 });
 
 describe('isFeatureEnabled · sin fila decide el plan', () => {

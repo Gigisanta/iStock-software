@@ -38,22 +38,28 @@ import { BILLABLE_FEATURES, planIncludes, planLimit } from './plans';
  * planes— y **la promesa estaba mal escrita**: daba por sentado que la única diferencia entre los
  * dos resolvers era el catálogo. Medido, no lo era. Lo que se borra es la promesa, no el módulo.
  *
- * Tres cosas tiene esto que `featureAccess()` no tiene, y ninguna es cosmética:
+ * **Dos** cosas tiene esto que `featureAccess()` no tiene, y ninguna es cosmética:
  *
  * 1. **El techo (`limit`).** El veredicto positivo de allá es `{ ok: true }`; el de acá trae el
  *    número. `planLimit()` no tiene otro lector en el repo (medido con `grep`: este archivo y su
  *    test). Los **3** puntos de retiro de Negocio contra **1** de Base son producto (`CLAUDE.md`
  *    §1), y hoy este es el único código capaz de contestar cuántos le tocan a un tenant. Un
  *    booleano no puede: `pickup_points` no se prende ni se apaga, se cuenta.
- * 2. **`flag_off` como motivo.** Con la **misma** fila apagada, `featureAccess()` contesta `plan` y
- *    esto contesta `flag_off`, y no es un empate de gustos: `plan` renderiza *"eso viene con el
- *    plan Negocio"* a un tenant que **tiene** el plan Negocio y al que un operador le apagó el
- *    chatbot a mano. Es el mismo defecto de copy que el docblock de `FeatureAccess` denuncia para
- *    `trial_expired`. La diferencia está **fijada en `entitlements.test.ts`**, no comentada; el
- *    arreglo vive en el archivo de `app-agent`, así que se reporta y no se toca.
- * 3. **`setFeatureFlag()`.** `featureAccess()` sólo lee. Este es el único escritor de la tabla
+ * 2. **`setFeatureFlag()`.** `featureAccess()` sólo lee. Este es el único escritor de la tabla
  *    `entitlements` en toda la app (el otro es el seed), o sea **el feature flag sin deploy** que
  *    pide el contrato de este agente. Borrar el módulo lo borraba a él también.
+ *
+ * ── Hubo una tercera —`flag_off`— y se cerró el 2026-08-28. Vale contar cómo ─────────────────
+ * Hasta esa fecha, con la **misma** fila apagada `featureAccess()` contestaba `plan` y esto
+ * contestaba `flag_off`. No era un empate de gustos: `plan` renderiza *"eso viene con el plan
+ * Negocio"* a un tenant que **tiene** el plan Negocio y al que un operador le apagó el chatbot a
+ * mano. La diferencia estaba **fijada en `entitlements.test.ts`**, no comentada, y el arreglo vivía
+ * en el archivo de `app-agent`, así que se reportó y no se tocó. El LEAD dictaminó que el defecto
+ * era de allá; hoy `featureAccess()` devuelve `flag_off` sobre esa fila y el copy de `(app)` ya no
+ * manda a comprar lo que el tenant pagó. Este módulo **no cambió una línea** para que eso pasara,
+ * y ese es exactamente el punto: la divergencia se cerró porque estaba medida. El test que la
+ * fijaba se puso rojo y se borró; lo que ocupa su lugar es la coincidencia con fila sembrada, en
+ * las dos direcciones, que mientras hubo desacuerdo no se podía afirmar.
  *
  * ── Lo que hay que decir en voz alta: hoy nadie llama a este módulo ───────────────────────────
  * Cero call sites de producción para `hasEntitlement` / `isEntitled` / `requireEntitlement` /
@@ -63,18 +69,31 @@ import { BILLABLE_FEATURES, planIncludes, planLimit } from './plans';
  * techo o la primera pantalla de soporte que apague algo. **No está muerto: está sin cablear** — se
  * escribe acá para que nadie lo descubra con un `grep` y saque la conclusión contraria.
  *
- * ── Qué lo haría desaparecer de verdad ────────────────────────────────────────────────────────
- * Que `featureAccess()` devuelva el techo, distinga `flag_off` y tenga camino de escritura. Es el
- * archivo de `app-agent` y son tres cambios de semántica, no una línea: **es una decisión del LEAD,
- * no un refactor que yo pueda prometer con fecha.** Por eso este bloque ya no promete un borrado.
+ * ── Qué lo haría desaparecer de verdad, y qué falta hoy ───────────────────────────────────────
+ * La lista era de tres y **quedó en dos**: que `featureAccess()` devuelva el techo (`limit`, hoy
+ * sólo `pickup_points`) y que tenga camino de escritura (`setFeatureFlag()`). El tercero
+ * —distinguir `flag_off`— ya se cumplió, y se tacha de la lista en vez de quedar como deuda
+ * imaginaria.
+ *
+ * Los dos que quedan viven en el archivo de `app-agent` y son cambios de semántica, no una línea:
+ * **es una decisión del LEAD, no un refactor que yo pueda prometer con fecha.** Ratificado el
+ * 2026-08-28 al aterrizar `flag_off`: el `limit` **no** se muda a `(app)` por ahora y no hay fecha
+ * para que se colapsen los dos resolvers. Si se colapsan, esto se borra; mientras tanto la
+ * diferencia está fijada en `entitlements.test.ts` y no comentada. Es una **condición**, no un
+ * plan, y por eso este bloque sigue sin prometer un borrado.
  */
 
 /**
- * Motivo del rechazo. **Superconjunto** del vocabulario de `FeatureAccess` de `app-agent`, a
- * propósito: `plan` y `trial_expired` se conservan con el mismo nombre y el mismo significado
- * —las pantallas ya los saben traducir y un vocabulario paralelo obligaría a un `switch` nuevo en
- * cada call site—, y `flag_off` se agrega porque allá no existe y hace falta. Ver el encabezado:
- * sin él, una fila apagada a mano se le explica al dueño como si fuera su plan.
+ * Motivo del rechazo. **El mismo vocabulario** que `FeatureAccess` de `app-agent`, con los mismos
+ * tres nombres y el mismo significado: las pantallas ya los saben traducir y un vocabulario
+ * paralelo obligaría a un `switch` nuevo en cada call site.
+ *
+ * Fue un **superconjunto** hasta el 2026-08-28 —`flag_off` existía sólo acá, porque sin él una
+ * fila apagada a mano se le explica al dueño como si fuera su plan— y ese día `app-agent` lo
+ * agregó del otro lado. Los dos conjuntos son iguales y lo mide `entitlements.test.ts`: la matriz
+ * de coherencia compara **el motivo**, no sólo el `ok`, con fila y sin fila. Que hoy coincidan no
+ * los fusiona en un tipo compartido a propósito — son dos módulos de dos columnas distintas, y lo
+ * que los ata es una aserción, no un `import`.
  */
 export type EntitlementDenial = 'plan' | 'trial_expired' | 'flag_off';
 

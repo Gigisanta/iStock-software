@@ -229,22 +229,35 @@ describe('las dos capas de tenant', () => {
 
 /**
  * ══════════════════════════════════════════════════════════════════════════════════════════════
- *  Coherencia con `featureAccess()`, y el único desacuerdo que queda — fijado, no escondido
+ *  Coherencia con `featureAccess()`, y lo único que todavía los separa
  * ══════════════════════════════════════════════════════════════════════════════════════════════
  *
- * `app/(app)/_lib/entitlements.ts` (de `app-agent`) resuelve la misma pregunta y es quien hoy
- * autoriza de verdad. Desde el 2026-08-28 los dos leen **el mismo catálogo**, así que el desacuerdo
- * por plan tiene que ser cero: el primer test lo maneja sobre los cuatro snapshots por todas las
- * `BILLABLE_FEATURES`, y compara **también el motivo**, no sólo el `ok`. La versión anterior corría
- * una sola feature (`reservations`) porque era la única que los dos mapas declaraban.
+ * `app/(app)/_lib/entitlements.ts` (de `app-agent`) resuelve la misma pregunta sobre la misma fila
+ * y es quien hoy autoriza de verdad. Desde el 2026-08-28 los dos leen **el mismo catálogo** y
+ * comparten **el mismo vocabulario de motivos**, así que el desacuerdo de veredicto tiene que ser
+ * cero: se maneja sobre los cuatro snapshots por todas las `BILLABLE_FEATURES`, comparando
+ * **también el motivo** y no sólo el `ok`.
  *
- * Lo que **no** es cero es el vocabulario de motivos, y por eso hay un segundo test. Con la misma
- * fila apagada, `featureAccess()` contesta `plan` y `hasEntitlement()` contesta `flag_off`. Este
- * módulo tiene razón —`plan` le diría *"eso viene con el plan Negocio"* a un tenant que **tiene**
- * el plan Negocio—, pero el arreglo vive en el archivo de `app-agent` y no es mío. Así que la
- * diferencia se **fija**: el día que allá se agregue `flag_off`, este test se pone rojo y lo borra
- * quien hizo el cambio, sabiendo qué borra. Una divergencia medida es una decisión; una que ningún
- * test toca es la que aparece en producción, en el copy que lee el dueño del negocio.
+ * ── Qué ocupa el lugar del test que se borró ─────────────────────────────────────────────────
+ * Acá vivía un segundo test que fijaba la única divergencia de motivo que quedaba: con la misma
+ * fila apagada, `featureAccess()` contestaba `plan` y `hasEntitlement()` contestaba `flag_off`.
+ * Su docblock decía que el día que allá se agregara `flag_off` se ponía rojo y lo borraba quien
+ * hiciera el cambio; ese día fue hoy y esto es ese borrado. Lo que **se gana** al borrarlo no es
+ * menos cobertura, es más: mientras el caso con fila era el que discrepaba, la matriz de
+ * coherencia tenía que quedarse del lado de la fila **ausente** —eso es todo lo que se podía
+ * afirmar—. Ahora la fila sembrada entra en la matriz, en las dos direcciones: apagarla da
+ * `flag_off` en los dos resolvers, y prenderla habilita en los dos aun cuando el plan no traiga la
+ * feature y el trial esté vencido. Una divergencia fijada se cambió por una coincidencia medida.
+ *
+ * ── Lo que sigue difiriendo, y por eso sigue fijado: el techo ────────────────────────────────
+ * El veredicto positivo de allá es `{ ok: true }`; el de acá trae `limit`. Es la última razón por
+ * la que este módulo existe (ver el punto 1 de su encabezado) y no es un descuido de nadie: los 3
+ * puntos de retiro de Negocio contra 1 de Base no se prenden ni se apagan, **se cuentan**. Se
+ * afirma por igualdad de los dos lados —y no como "distintos entre sí"— para que no pueda quedar
+ * verde si alguno se mueve a un tercer valor. Si algún día `featureAccess()` devuelve el techo,
+ * este test se pone rojo y lo borra quien haga el cambio, sabiendo qué borra. **Es una condición,
+ * no un plan: nadie se comprometió a esa fecha, y colapsar los dos resolvers es una decisión del
+ * LEAD.**
  */
 describe('coherencia con featureAccess() de app-agent', () => {
   it.each([
@@ -262,21 +275,51 @@ describe('coherencia con featureAccess() de app-agent', () => {
   });
 
   /**
-   * El desacuerdo, con nombre y apellido. Se afirman los dos veredictos por igualdad —y no
-   * "distintos entre sí"— para que el test no pueda quedar verde si alguno de los dos se mueve a
-   * un tercer valor.
+   * **La aserción que antes no se podía escribir.** La palanca es el único caso donde el plan no
+   * decide nada, así que es el que más barato divergía sin que se notara: el motivo se lee en un
+   * copy, no en un `if`. Se afirma por igualdad contra el literal —no `mio.reason === suyo.reason`—
+   * para que los dos resolvers moviéndose juntos hacia un motivo equivocado tampoco pase.
+   *
+   * El `limit` no participa: acá se compara lo que los dos vocabularios comparten. Lo que difiere
+   * está fijado abajo, solo y con nombre.
    */
-  it('la fila apagada: `flag_off` acá, `plan` allá — es el único desacuerdo, y está medido', async () => {
-    db.row = { enabled: false, limitValue: null };
+  it.each([
+    ['base', base],
+    ['negocio', negocio],
+    ['trial vivo', trialVivo],
+    ['trial vencido', trialVencido],
+  ])('con fila sembrada: la palanca manda igual en los dos, en las dos direcciones, para %s', async (caso, snapshot) => {
+    for (const feature of BILLABLE_FEATURES) {
+      db.row = { enabled: false, limitValue: null };
+      expect(await hasEntitlement(ctx, snapshot, feature, NOW), `apagada · ${caso} / ${feature}`).toEqual({
+        ok: false,
+        reason: 'flag_off',
+      });
+      expect(await featureAccess(ctx, snapshot, feature, NOW), `apagada · ${caso} / ${feature}`).toEqual({
+        ok: false,
+        reason: 'flag_off',
+      });
 
-    const mio = await hasEntitlement(ctx, negocio, FEATURE_CHATBOT, NOW);
-    const suyo = await featureAccess(ctx, negocio, FEATURE_CHATBOT, NOW);
+      db.row = { enabled: true, limitValue: null };
+      expect((await hasEntitlement(ctx, snapshot, feature, NOW)).ok, `prendida · ${caso} / ${feature}`).toBe(true);
+      expect((await featureAccess(ctx, snapshot, feature, NOW)).ok, `prendida · ${caso} / ${feature}`).toBe(true);
+    }
+  });
 
-    expect(mio).toEqual({ ok: false, reason: 'flag_off' });
-    expect(suyo).toEqual({ ok: false, reason: 'plan' });
+  /**
+   * La diferencia que queda, con nombre y apellido. Se afirman los dos veredictos por igualdad
+   * —y no "distintos entre sí"— para que el test no pueda quedar verde si alguno de los dos se
+   * mueve a un tercer valor.
+   */
+  it('el techo: `limit` acá, veredicto pelado allá — es lo último que separa a los dos resolvers', async () => {
+    const mio = await hasEntitlement(ctx, negocio, FEATURE_PICKUP_POINTS, NOW);
+    const suyo = await featureAccess(ctx, negocio, FEATURE_PICKUP_POINTS, NOW);
 
-    // Lo que NO puede diferir nunca: la palanca apaga la feature en los dos. El desacuerdo es de
-    // explicación, no de autorización — si algún día lo fuera, sería un incidente.
+    expect(mio).toEqual({ ok: true, limit: 3 });
+    expect(suyo).toEqual({ ok: true });
+
+    // Lo que NO puede diferir nunca: quién puede. La diferencia es de forma del veredicto
+    // positivo, no de autorización — si algún día lo fuera, sería un incidente.
     expect(mio.ok).toBe(suyo.ok);
   });
 });

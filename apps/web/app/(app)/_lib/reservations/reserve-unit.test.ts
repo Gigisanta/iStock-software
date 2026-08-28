@@ -257,6 +257,26 @@ describe('reserveUnit · las puertas', () => {
     expect(invalidateStorefrontUnit).not.toHaveBeenCalled();
   });
 
+  /**
+   * El tercer motivo, por la otra puerta. `reserveUnit()` y `transitionUnit()` renderizan el mismo
+   * `denyReasonText()`, así que esto no repite el mapeo: fija que **este** camino le pasa el
+   * `access` y no se queda con el default del plan. Si alguien sacara el segundo argumento del
+   * `denyReasonText(check.reason, access)` de arriba, el caso volvería a decir "Eso viene con el
+   * plan Negocio" a alguien que lo tiene, y sólo un test de este archivo lo ve.
+   */
+  it('con la feature apagada a mano rebota y el mensaje no habla del plan', async () => {
+    featureAccess.mockResolvedValue({ ok: false, reason: 'flag_off' });
+
+    const result = await reserveUnit(actor, INPUT, NOW);
+
+    expect(result).toEqual({
+      ok: false,
+      message: 'Las reservas están apagadas en tu cuenta. No es el plan: escribinos y te las prendemos.',
+    });
+    expect(db.writes).toHaveLength(0);
+    expect(invalidateStorefrontUnit).not.toHaveBeenCalled();
+  });
+
   it('con una reserva activa ya existente rebota antes de tocar la base', async () => {
     loadActiveReservation.mockResolvedValue({
       id: 'r1',

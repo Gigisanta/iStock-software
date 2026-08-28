@@ -100,18 +100,59 @@ const TRIAL_OVER =
   'Se te terminó la prueba, así que las reservas quedaron apagadas. Escribinos y lo vemos.';
 
 /**
+ * La palanca fina: hay una fila en `entitlements` en `false`, o sea que **alguien se la apagó a mano
+ * a este negocio**. No es lo mismo que no tenerla contratada, y el copy no puede mentir sobre eso:
+ * quien recibe este mensaje puede estar pagando el plan Negocio, así que *"Eso viene con el plan
+ * Negocio"* lo manda a comprar lo que ya tiene. Mismo error que `TRIAL_OVER` corrige para el otro
+ * motivo.
+ *
+ * Por eso el texto no habla de planes: dice **dónde** está apagado (su cuenta), niega la lectura
+ * equivocada antes de que la haga, y termina en lo único accionable parado en un mostrador — hay
+ * alguien a quien escribirle y esto se prende. No promete un plazo: nadie del otro lado se
+ * comprometió a uno.
+ */
+const FEATURE_OFF =
+  'Las reservas están apagadas en tu cuenta. No es el plan: escribinos y te las prendemos.';
+
+/**
  * Motivo del dominio → castellano rioplatense. Le habla a alguien parado en el mostrador.
  *
- * `access` es opcional porque casi ningún motivo depende de él: sólo `entitlement_required`
- * cambia de texto según **por qué** la feature está apagada. Sin el dato, el mensaje es el del
- * plan, que es el caso mayoritario y el que no inventa una explicación que no se verificó.
+ * ── Qué significa que `access` sea opcional (reescrito el 2026-08-28) ────────────────────────
+ * Este párrafo decía que sin el dato se usa el texto del plan *"que es el caso mayoritario"*. Con
+ * dos motivos era una estadística defendible; con tres es adivinar, así que la razón real es otra y
+ * es de call sites: **todo camino que puede terminar en `entitlement_required` pasa `access`** —
+ * `transitionUnit()` y `reserveUnit()`, que ya tuvieron que resolver la feature para armar el
+ * `TransitionContext`, así que no les cuesta una query. Los que lo omiten chequean aristas que **no
+ * piden entitlement**: `cancelReservation()` (soltar), `stock/_ui/unit-row.tsx` y
+ * `stock/[id]/fotos` (publicar un borrador). Ahí `entitlement_required` no es un caso que ocurra.
+ *
+ * Si igual ocurriera, el default es el texto del plan. No por probable, sino porque es el único de
+ * los tres que no le atribuye al negocio algo que no se verificó: `trial_expired` afirma que tuvo la
+ * feature y la perdió, `flag_off` afirma que alguien se la apagó. `plan` sólo afirma lo que ya se
+ * sabe por haber llegado hasta acá — que hoy no la tiene.
  */
 export function denyReasonText(
   reason: TransitionDenyReason,
   access: FeatureAccess = { ok: true },
 ): string {
-  if (reason === 'entitlement_required' && !access.ok && access.reason === 'trial_expired') {
-    return TRIAL_OVER;
+  if (reason === 'entitlement_required' && !access.ok) {
+    switch (access.reason) {
+      case 'trial_expired':
+        return TRIAL_OVER;
+      case 'flag_off':
+        return FEATURE_OFF;
+      case 'plan':
+        // El texto del plan, abajo. Es el único motivo para el que ese texto es cierto.
+        break;
+      default: {
+        // Un motivo nuevo en `FeatureAccess` rompe **en compilación**, acá, y no en el mostrador
+        // con el copy equivocado. Es la única forma de que agregar un motivo obligue a decidir su
+        // texto: sin esto, el motivo nuevo caería en silencio al mensaje del plan, que es
+        // exactamente el bug que `flag_off` vino a cerrar.
+        const exhaustive: never = access.reason;
+        return exhaustive;
+      }
+    }
   }
 
   switch (reason) {
