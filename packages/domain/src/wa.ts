@@ -164,14 +164,29 @@ function appendsUnconditionally(source: NameSource): boolean {
 }
 
 /**
- * `iPhone 14 Pro 256 Grafito (usado A)` — sin campos sensibles, por construcción.
+ * Lo que hace falta para armar el **nombre** de un equipo, y nada más.
+ *
+ * Existe como tipo propio porque el nombre se arma en dos lugares con dos registros de condición
+ * distintos —el mensaje de WhatsApp (`usado A`) y la lista para estados (`usado excelente`,
+ * ver `stock-list.ts`)— y la parte que **no** cambia entre los dos es exactamente ésta. Es un
+ * `Pick` de `WaListing` y no un tipo nuevo para que no puedan divergir.
+ */
+export type ListingNameParts = Pick<WaListing, 'nameSource' | 'modelDisplayName' | 'storageGb' | 'color'>;
+
+/**
+ * `iPhone 14 Pro 256 Grafito` — el nombre **sin** la condición. Sin campos sensibles, por
+ * construcción: el tipo no los tiene.
  *
  * Con `nameSource: 'free_text'` cada atributo se appendea **sólo si no está ya en el nombre**,
  * comparando normalizado (minúsculas, sin acentos, por tokens). No alcanza con no appendear nunca:
  * un título pelado `iPhone 14 Pro` dejaría el mensaje ambiguo para el reseller que tiene tres, y
  * el mensaje no lleva la URL de la ficha, sólo el host.
+ *
+ * **Un solo lugar donde se resuelve el `256 Grafito 256 Grafito`.** Lo llaman `describeListing`
+ * (WhatsApp) y `buildStockListEntry` (lista para estados). Un segundo implementador de esta regla
+ * es un segundo lugar donde el bug de W5 puede volver.
  */
-export function describeListing(listing: WaListing): string {
+export function describeListingName(listing: ListingNameParts): string {
   // ── El agujero donde va el producto ──────────────────────────────────────────────────────────
   // `modelDisplayName` sale, por los dos caminos, de una columna `text not null` **sin CHECK**
   // (`catalog_models.display_name` o `listings.title`): `''` y `'   '` son valores representables
@@ -182,11 +197,13 @@ export function describeListing(listing: WaListing): string {
   // de WhatsApp **es** el producto (`CLAUDE.md` §1, gate de aceptación no negociable): un texto sin
   // el equipo adentro no es un texto degradado, es un texto roto, y se prefiere no emitir nada.
   //
-  // El chequeo vive acá y no sólo en `publicListingDTO` porque `describeListing`, `buildWaMessage`
-  // y `buildWaUrl` son **exports públicos de `@istock/domain`**: cualquier caller puede construir
-  // un `WaListing` a mano sin pasar por el DTO, y el tipo no se lo impide (`modelDisplayName` es
-  // `string`, y `''` es un `string`). Los tres pasan por esta función, así que este es el punto más
-  // bajo del camino y el único que no se puede saltear.
+  // El chequeo vive acá y no sólo en `publicListingDTO` porque `describeListing`, `buildWaMessage`,
+  // `buildWaUrl` y `buildStockList` son **exports públicos de `@istock/domain`**: cualquier caller
+  // puede construir un `WaListing` a mano sin pasar por el DTO, y el tipo no se lo impide
+  // (`modelDisplayName` es `string`, y `''` es un `string`). Los cuatro pasan por esta función, así
+  // que este es el punto más bajo del camino y el único que no se puede saltear. La lista para
+  // estados hereda la defensa gratis, y ahí el agujero sería peor: un renglón sin equipo, con
+  // precio y link, pegado en un estado que ven cien personas.
   //
   // Vacío = `isBlank` = `trim().length === 0`, el **mismo** criterio que usa `resolveModelName`
   // aguas arriba en la vidriera. Ver `text.ts`.
@@ -207,7 +224,18 @@ export function describeListing(listing: WaListing): string {
     parts.push(String(listing.storageGb));
   }
   if (color !== null && (always || !nameHasColor(name, color))) parts.push(color);
-  return `${parts.join(' ')} (${waConditionLabel(listing.condition)})`;
+  return parts.join(' ');
+}
+
+/**
+ * `iPhone 14 Pro 256 Grafito (usado A)` — el nombre más la condición **en registro de reseller**.
+ *
+ * El paréntesis usa `waConditionLabel` porque este string entra al mensaje de WhatsApp, que es un
+ * contrato byte a byte de `CLAUDE.md` §1. La lista para estados usa el otro mapa, a propósito y
+ * también por §1: ver el docblock de `stock-list.ts`.
+ */
+export function describeListing(listing: WaListing): string {
+  return `${describeListingName(listing)} (${waConditionLabel(listing.condition)})`;
 }
 
 /**

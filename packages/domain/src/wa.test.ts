@@ -4,12 +4,14 @@ import { DomainError } from './errors';
 // `assertSlug` se mudó a `./slug` (fuente única del formato del slug); el test lo sigue
 // ejercitando desde acá porque el borde que rompe es `buildWaUrl`.
 import { assertSlug } from './slug';
+import { waConditionLabel } from './types';
 import {
   NAME_SOURCES,
   STOREFRONT_DOMAIN,
   buildWaMessage,
   buildWaUrl,
   describeListing,
+  describeListingName,
   normalizeWaPhone,
   storefrontHost,
   storefrontUrl,
@@ -370,5 +372,33 @@ describe('describeListing — procedencia del nombre (nameSource)', () => {
     const url = buildWaUrl({ ...FREE, modelDisplayName: 'iPhone 14 Pro 256 Grafito' }, 'nortecel', '5492994123456');
     const decoded = decodeURIComponent(url.split('?text=')[1] ?? '');
     expect(decoded).toBe(CANONICAL_TEXT);
+  });
+});
+
+describe('describeListingName — el nombre, sin condición', () => {
+  it('U13n — es exactamente `describeListing` menos el paréntesis de la condición', () => {
+    // Un solo implementador de la regla de storage/color. Si estos dos se separan, el bug
+    // `iPhone 14 Pro 256 Grafito 256 Grafito` vuelve por el lado que no se testeó.
+    const samples: WaListing[] = [
+      CANONICAL,
+      { ...CANONICAL, nameSource: 'free_text', modelDisplayName: 'iPhone 14 Pro 256 Grafito' },
+      { ...CANONICAL, nameSource: 'free_text', modelDisplayName: 'iPhone 14 Pro' },
+      { ...CANONICAL, storageGb: null, color: null },
+      { ...CANONICAL, condition: 'sealed', color: 'Azul Sierra' },
+    ];
+    for (const listing of samples) {
+      expect(describeListing(listing)).toBe(`${describeListingName(listing)} (${waConditionLabel(listing.condition)})`);
+    }
+  });
+
+  it('U13n2 — no lleva condición adentro: el registro lo elige quien arma el texto', () => {
+    // `stock-list.ts` usa el mapa de la ficha (`usado excelente`) y el mensaje de WA usa `usado A`.
+    // Los dos son correctos y por eso la condición no vive acá.
+    expect(describeListingName(CANONICAL)).toBe('iPhone 14 Pro 256 Grafito');
+    expect(describeListingName(CANONICAL)).not.toContain('usado');
+  });
+
+  it('U13n3 — un nombre en blanco tira desde acá, que es el punto más bajo del camino', () => {
+    expect(() => describeListingName({ ...CANONICAL, modelDisplayName: '  ' })).toThrow(DomainError);
   });
 });

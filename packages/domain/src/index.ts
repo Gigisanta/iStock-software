@@ -121,12 +121,32 @@ export {
   buildWaMessage,
   buildWaUrl,
   describeListing,
+  describeListingName,
   normalizeWaPhone,
   storefrontHost,
   storefrontUrl,
+  type ListingNameParts,
   type NameSource,
   type WaListing,
 } from './wa';
+
+/**
+ * Lista de stock para estados de IG / difusión de WhatsApp (S9).
+ * El link de cada unidad va a la **ficha**, y la URL absoluta la arma `apps/web`: este paquete no
+ * conoce el prefijo de la ruta. Ver el docblock de `stock-list.ts`.
+ */
+export {
+  ARGENTINA_UTC_OFFSET_MINUTES,
+  BUSINESS_NAME_MAX_CHARS,
+  DEFAULT_BLOCK_BUDGET_CHARS,
+  WA_MESSAGE_MAX_CHARS,
+  buildStockList,
+  buildStockListEntry,
+  type StockList,
+  type StockListBlock,
+  type StockListInput,
+  type StockListUnit,
+} from './stock-list';
 
 export {
   DEFAULT_MAX_DESCRIPTION_LENGTH,
