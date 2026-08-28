@@ -77,13 +77,16 @@ una fuga.** El panel y sus endpoints viven en el apex; `app` y `api` son labels 
 la respuesta es esta línea: no se "arregla" agregando `/api` a los passthrough — eso haría que la
 API del apex sea alcanzable desde el dominio de cualquier tenant.
 
-**Hueco conocido, todavía abierto: los file conventions de metadata de Next.** Un `icon.png` o
-`apple-icon.png` por tenant se sirve en `/icon.png` → sufijo `.png` → cae en la exclusión por
-extensión del `matcher` → sin rewrite → **el visitante de `acme.maat.work` recibe el ícono del
-apex**. Es la misma clase de bug que `/_media` (el matcher excluye por **sufijo**, el router de
-Next matchea por **segmento**), con la diferencia de que el guard de `qa-agent` hoy **no lo vería**:
-`ROUTE_FILES` enumera sólo `page.*` y `route.*`. `opengraph-image` sí queda cubierto: su URL no
-lleva extensión. Se cierra antes de S3 → ver `SLICE_BOARD.md`, entrada **P2**.
+**Los file conventions de metadata sí se reescriben — cerrado el 2026-08-28 (ADR-015, commit
+`117c4f0`).** El hueco que esta sección declaraba abierto (un `icon.png` por tenant caía en la
+exclusión por extensión del `matcher` y el visitante de `acme.maat.work` recibía el ícono del apex)
+está corregido. **El criterio del matcher ya no es el sufijo: es el nombre**, que es el mismo que
+usa Next para decidir una convención. `/icon.png` es ruta de la app y entra al proxy; `/logo.png` es
+un asset y no entra — por sufijo esas dos URLs son indistinguibles, y ése era el bug. Las 25 URLs de
+metadata siguen entonces la regla general de host, y bajo un host de tenant dan **404 mientras S3 no
+las implemente: eso es correcto y está argumentado en ADR-015**, no es un pendiente. Dato que
+sostiene todo el análisis: **`apps/web/public/` no existe**, así que la exclusión por sufijo que
+había antes no protegía ningún archivo.
 
 ## Cache e invalidación  ·  **cerrado en FASE 1 (ADR-007, R1 PASS)**
 `cacheComponents: true` · `'use cache'` · `cacheTag(...)` · `cacheLife('max')` ·

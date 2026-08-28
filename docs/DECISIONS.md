@@ -543,9 +543,9 @@ esqueleto) y el contenido real al final, dentro de un `<div hidden id="S:…">` 
 inline (`$RC`). Eso rompe:
 
 1. **El status de `notFound()` llega tarde.** Se manda con el shell, antes de que corra
-   `loadUnitWithPhotos()`: la respuesta salía 200 con cuerpo de 404. El cuerpo **nunca** filtró nada
-   —el filtro de tenant siempre corrió—, pero para quien lea el status son dos respuestas distintas.
-   Es la ruta que materializa ADR-013.
+   `loadUnitWithPhotos()`: la respuesta sale 200 con cuerpo de 404. Es la ruta que materializa
+   ADR-013. **Ojo con la mitad que se creía y era falsa:** `instant = false` **no** devuelve el
+   status 404 — está medido abajo, en "Corrección medida". Lo que sí arregla es (2).
 2. **Sin JavaScript la pantalla es un esqueleto permanente.** Si `$RC` no corre, el form de
    `agregar-foto-form.tsx` nunca sale del `<div hidden>`. El form postea sin JS y está bien armado,
    pero **a un form invisible no se lo puede tocar**: la promesa de progressive enhancement era falsa
@@ -583,15 +583,138 @@ invariante.**
 **No se inventa el motivo de nada de lo de arriba: todo está en el código.** Lo que falta son dos
 cosas, y se dejan escritas en vez de rellenarlas:
 
-1. **Nadie midió el status de esta ruta después del cambio.** El docblock de `page.tsx:69-72` afirma
-   que `instant = false` le devuelve el 404 real a la unidad ajena. El encabezado de
-   `e2e/s2-las-fotos-de-un-equipo-ajeno-no-existen.spec.ts:22-36` afirma lo contrario en general
-   —bajo Cache Components el status no se puede fijar— y por eso **no lo asserta**: exige igualdad
-   entre las dos respuestas. Las dos afirmaciones pueden ser ciertas a la vez (la del spec habla del
-   caso con shell; ésta es `blocking/empty`, sin shell), pero **nadie lo midió sobre esta ruta**. Es
-   una medición con `curl`, del mismo tamaño que la que produjo ADR-011, y **no cambia ADR-013** en
-   ninguno de los dos resultados: el invariante sigue siendo la indistinguibilidad.
+1. ~~Nadie midió el status de esta ruta después del cambio.~~ **Cerrado el 2026-08-28 por la
+   medición del LEAD. Ver "Corrección medida" abajo: el hueco se cerró y el número contradice la
+   prosa que había acá.**
 2. **La condición de arriba no la hace cumplir ningún guard.** `guard-routes.sh` fija **el modo** de
    cada ruta, así que un cambio no puede pasar en silencio — pero la regla de cuándo se *permite* la
    excepción vive en prosa. Hoy alcanza, porque la excepción es una sola y agregar la segunda obliga
    a tocar el guard. Si aparece una tercera, esto se convierte en trabajo del LEAD.
+
+### Corrección medida — 2026-08-28 · `instant = false` **no** recupera el status 404
+
+Lo que sigue es medición del LEAD, no interpretación. **Lo que queda contradicho es la
+justificación de esta ADR, no su conclusión:** `instant = false` se queda, por la razón (2) —el form
+sin JavaScript— que sí se cumple y no está en discusión.
+
+**Antes que nada, y es lo primero que hay que leer: esto no es un defecto de seguridad.** El
+invariante que declara ADR-013 es la **indistinguibilidad, nunca el status code**. Las tres
+respuestas —`mine` (mi unidad), `theirs` (unidad de otro tenant) y `ghost` (id que no existe)— dan
+exactamente lo mismo. No hay enumeración de tenants, no hay IDOR y no hay fuga; y ahora el
+invariante está medido en **tres puertas**, que es más de lo que había antes.
+
+**Evidencia A — e2e** (`e2e/s2-las-fotos-de-un-equipo-ajeno-no-existen.spec.ts`, tres puertas):
+
+```
+MEDIDO adr014 status · ruta=/app/stock/{id}/fotos · puerta=browser               · mine=200 theirs=200 ghost=200
+MEDIDO adr014 status · ruta=/app/stock/{id}/fotos · puerta=http-crudo-con-sesion · mine=200 theirs=200 ghost=200
+MEDIDO adr014 status · ruta=/app/stock/{id}/fotos · puerta=sin-sesion            · mine=(no medido) theirs=200 ghost=200
+```
+
+**Evidencia B — `curl` contra `next start` en :3199, sin sesión y sin seguir redirects:**
+
+| id pedido | status | redirects | qué es |
+|---|---|---|---|
+| `…-0201` | 200 | 0 | existe y es del tenant |
+| `…-9999` | 200 | 0 | no existe |
+| `no-es-uuid` | 200 | 0 | id malformado |
+
+**Evidencia C — el cuerpo delata el soft 404.** El caso `no-es-uuid` devuelve 24.216 bytes con
+`<title>Fotos del equipo · iStock</title>` —el título de la **página del panel**— y la cadena `404`
+ocho veces: el shell sale con su propia metadata y el contenido de 404 se renderiza adentro. No hay
+duda de que `notFound()` corre: `no-es-uuid` llega a `notFound()` **incondicionalmente**
+(`page.tsx:115`, el `safeParse` del UUID).
+
+**Registro de la corrección, sin dramatismo.** Esta es la misma afirmación sobre la que el LEAD fue
+corregido en su momento —se aceptó que `instant = false` recuperaba el status— y la medición le da
+la razón a la versión original. Se anota porque un ADR que borra de dónde vino una corrección se
+lee como si nunca hubiera habido un error, no porque importe quién tenía razón.
+
+**Consecuencia operativa, que hoy no está escrita en ningún otro lado y no es un TODO:** un 404 que
+viaja como 200 **no aparece en la tasa de error** de Sentry ni en PostHog. Cuando llegue FASE 8
+(README de operación), la observabilidad del panel **no puede depender del status code** para
+detectar "el dueño está pegando ids que no existen": hay que instrumentarlo por evento, no por
+status. Vale para toda ruta de `/app/*` que herede ADR-013.
+
+**Qué NO decide esta corrección.** Si conviene o no perseguir el status correcto en esta ruta es
+una pregunta aparte, más cara, y la decide el LEAD. `page.tsx` es de `app-agent`: el docblock de
+`page.tsx:69-72` sigue afirmando lo contrario de lo medido y su corrección está anotada en
+`SLICE_BOARD.md` (**S2.4**). `docs-keeper` no propone el arreglo ni lo escribe.
+
+---
+
+## ADR-015 — El proxy excluye por **sufijo salvo que el nombre sea una convención de metadata de Next**
+- **Estado:** aceptada · **Fecha:** 2026-08-28 · **Autor:** LEAD (FASE 4 bis, P1 + P2) · redactada por `docs-keeper`
+- **Implementó:** `storefront-agent` en `apps/web/proxy.ts`, commit `117c4f0`.
+- **Verificó el LEAD:** leyendo el archivo entero y corriendo una prueba propia de **30 URLs** contra
+  el `path-to-regexp` compilado de Next.
+- **Cierra** las dos filas del board que eran requisito previo a S3: **P1** (`robots.txt` /
+  `sitemap.xml` por tenant) y **P2** (metadata file conventions bajo host de tenant).
+
+### Contexto — una sola causa raíz para tres fugas
+El `matcher` del proxy excluía **por sufijo**, el router de Next matchea **por segmento**, y Next
+decide los file conventions de metadata **por nombre de archivo**. Tres criterios distintos para la
+misma pregunta ("¿esta URL es una ruta de la app?"), y de ahí salieron los tres agujeros:
+
+| # | URL | por qué el sufijo no alcanzaba |
+|---|---|---|
+| S1 | `/s/algo.json` | `/s/[slug]` matchea con `slug = "algo.json"` |
+| S2 | `/_media/….webp` | `[...key]`: la extensión la elige quien pide la URL |
+| P2 | `/icon.png`, `/robots.txt`, `/sitemap/1.xml` (25 URLs) | son **nombres**, no sufijos |
+
+Los dos primeros se taparon con una entrada de inclusión por incidente. El tercero no se tapa así:
+son 25 URLs de 8 convenciones, y la lista crece cada vez que Next agrega una.
+
+### Decisión
+La exclusión por sufijo **se conserva, pero no se aplica a los file conventions de metadata de
+Next**. El criterio pasa a ser **el mismo que usa Next: el nombre del archivo**.
+
+**Por qué el nombre y no el sufijo ni la profundidad:** `/icon.png` (ruta de la app, la genera Next)
+y `/logo.png` (asset estático) son **indistinguibles** por sufijo y por profundidad. Sólo los separa
+el nombre. Cualquier regla basada en la extensión vuelve a abrir el mismo agujero con otra ropa, y
+anclar a la raíz lo deja un nivel más abajo esperando a la primera convención anidada.
+
+### P1 se resolvió sin agregar un solo `if`
+Las 25 URLs de metadata siguen la **regla general de host**: bajo el apex pasan derecho, bajo
+`acme.maat.work` se reescriben a `/s/acme/robots.txt`, `/s/acme/icon.png`, etc. Esas rutas todavía
+no existen —las trae S3—, así que **hoy dan 404 en el host de tenant**.
+
+**Ese 404 es la respuesta correcta, no una deuda** (y no lo gobierna ADR-011, que es sobre el slug
+que no resuelve a ningún tenant): un `robots.txt` ausente significa "crawleá todo", que es lo que
+queremos para una vidriera pública; y servir el favicon o el sitemap del apex en `acme.maat.work`
+pone la marca y las URLs de MaatWork adentro de la vidriera de un cliente — en el caso del sitemap,
+además, le declara a Google que las URLs de ese host son las del apex. **El bug nunca fue el 404:
+era el 200 con el archivo de otro.**
+
+### El dato que cambia el análisis de cualquiera que relea esto
+**`apps/web/public/` no existe.** No hay `favicon.ico`, ni `icon.*`, ni `robots.txt`, ni
+`sitemap.xml` en todo el árbol. O sea que la exclusión de 16 sufijos que había antes **protegía cero
+archivos**: su costo real era cero requests ahorradas y tres agujeros producidos. Quien vaya a
+discutir el gasto de invocaciones de este matcher tiene que arrancar por acá, no por la intuición de
+que "excluir assets ahorra".
+
+`_next/static` y `_next/image` **siguen afuera** y ahí está el volumen real (decenas de subrequests
+por pageview). Son el único par que se puede excluir **por prefijo**, o sea sin razonar por sufijo y
+sin reabrir el bug.
+
+### Alternativas descartadas
+- **Agregar una entrada de inclusión por convención** (lo que se hizo en S1 y S2): 25 entradas hoy y
+  una más cada release de Next. Es la estrategia que ya falló tres veces.
+- **Borrar la exclusión por sufijo entera:** el proxy pasaría a correr sobre `public/`… que no
+  existe, así que el beneficio sería nulo, pero deja el precedente de que el matcher no discrimina y
+  se paga el día que haya assets.
+- **Servir el `robots.txt` / favicon del apex bajo el host de tenant** (passthrough): es exactamente
+  el bug que se estaba arreglando.
+
+### Verificación
+`tests/proxy-matcher-no-deja-la-vidriera-sin-vigilar.test.ts` deriva las 25 URLs **ejecutando las
+funciones del propio Next** (`fillStaticMetadataSegment`, `normalizeMetadataRoute`), no de una lista
+escrita a mano: si Next cambia una convención, el guard se pone rojo con el nombre viejo y el nuevo.
+Contra un server real, el control que importa es que `/robots.txt` bajo el apex y bajo un host de
+tenant **no** devuelvan el mismo body (hoy los dos dan 404, y eso es pasar; lo que reprueba es el
+segundo devolviendo 200 con el archivo del apex).
+
+### Consecuencia para S3
+S3 implementa `/s/[slug]/robots.txt` y `/s/[slug]/sitemap.xml` **con su propio perfil de cache**: un
+sitemap que pegue a Postgres por hit de crawler rompe el 95% de `CLAUDE.md` §3. El enrutamiento ya
+está y no se toca.

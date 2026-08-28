@@ -100,10 +100,14 @@ Entidades: `tenants` `users` `memberships(owner\|seller)` `locations` `catalog_m
 
 ## FASE 3 — Skeleton
 
-**No re-ejecutada.** `scripts/accept-fase3.sh` termina en `next build`, y el `next build` **está roto
-ahora mismo** (`usePathname()` fuera de `<Suspense>` en `/app/stock/[id]/fotos`; lo está arreglando
-`app-agent`). El LEAD no promueve filas cuyo gate no pudo correr. Las cinco quedan `todo` hasta que
-el build vuelva y el gate corra entero.
+**No re-ejecutada.** `scripts/accept-fase3.sh` termina en `next build`. El LEAD no promueve filas
+cuyo gate no pudo correr: las cinco quedan `todo` hasta que el gate corra **entero**.
+
+> **Anti-drift, 2026-08-28.** El motivo que este board registró el 2026-08-27 —*"el `next build`
+> está roto"* (`usePathname()` fuera de `<Suspense>`)— **ya no es cierto**: la medición de ADR-014
+> corrió `next start` en :3199 y los e2e del panel, y eso exige un build hecho. Lo que sigue
+> pendiente es **correr el gate**, no compilar. Las filas no se mueven igual, porque el estado lo
+> fija la corrida del gate y nadie la hizo.
 
 | id | título | estado | owner | gate de aceptación | artefacto |
 |---|---|---|---|---|---|
@@ -129,7 +133,7 @@ el build vuelva y el gate corra entero.
 |---|---|---|---|---|
 | S1 | host → hello storefront | doing | `storefront-agent` | `{slug}.local` resuelve al tenant; slug inexistente → página legible con `noindex` (**ADR-011**, el gate viejo "404 real en la primera request" era inalcanzable); se verifica con `bash scripts/accept-s1.sh` |
 | S2 | listing unit + fotos R2 con variantes | todo | `media-agent` → `app-agent` | 3 variantes generadas; `card` ≤150KB medido |
-| S3 | grilla + ficha mínima | todo | `storefront-agent` | los 15 campos de la skill `storefront-ficha`; cero campos prohibidos en el HTML |
+| S3 | grilla + ficha mínima | todo | `storefront-agent` | `bash scripts/accept-s3.sh`: los **15 campos** de `CLAUDE.md` §1; cero campos prohibidos en el HTML; el byte medido es el que **pide el browser** (P3) |
 | S4 | botón `wa.me` + tracking de eventos | todo | `domain-agent` → `storefront-agent` | texto exacto byte a byte; evento registrado sin PII |
 | S5 | FX → precio en ARS | todo | `domain-agent` → `app-agent` | TC del dueño; redondeo testeado; ARS visible en ficha |
 | S6 | reserva + cron de expiración | todo | `app-agent` | reserva 30–120min; cron libera; vidriera revalida |
@@ -143,12 +147,13 @@ el build vuelva y el gate corra entero.
 
 **Cada slice suma al gate:** `adversary-reviewer PASS` + `cost-auditor PASS` ("no agrega costo tonto").
 
-> **Estado de S1 y S2 al 2026-08-27 — medido, no supuesto.**
-> **S1 sigue `doing`** y **S2 sigue `todo`**: los dos gates (`scripts/accept-s1.sh`,
-> `scripts/accept-s2.sh`) terminan en `next build` y **el `next build` no compila**
-> (`usePathname()` fuera de `<Suspense>` en `/app/stock/[id]/fotos`, `app-agent` lo está
-> arreglando). El gate de S2 lo corrió el LEAD y **falló ahí**. Que el código esté escrito no es el
-> gate; el gate es la corrida.
+> **Estado de S1 y S2 al 2026-08-28 — medido, no supuesto.**
+> **S1 sigue `doing`** y **S2 sigue `todo`**, y el motivo cambió: el 2026-08-27 los dos gates
+> (`scripts/accept-s1.sh`, `scripts/accept-s2.sh`) fallaban porque **el `next build` no compilaba**.
+> **Eso ya no es cierto** — la medición de ADR-014 del 2026-08-28 corrió `next start` y los e2e del
+> panel. Lo que falta ahora es **la corrida completa de los dos gates**, que además cambiaron desde
+> entonces (`b5065a4`: la regla del TODO estaba verde por vacío). Que el código esté escrito no es
+> el gate; el gate es la corrida.
 >
 > **El aviso de drift de FASE 2 se cerró.** D1–D4 pasaron a `done` con la re-ejecución registrada
 > arriba, en "Evidencia de la re-ejecución". FASE 3 y S1/S2 no: no se pudieron correr.
@@ -159,22 +164,25 @@ el build vuelva y el gate corra entero.
 
 > Todo lo de esta sección apareció **haciendo** S1 y S2, o **corriendo sus gates**. No estaba en el
 > orden fijo de FASE 4 y no lo reordena: son entradas propias con su propio dueño y su propio
-> bloqueo. Las dos últimas (**T3**, **T4**) salieron de la re-ejecución del LEAD del 2026-08-27 y no
-> son deuda de producto: son deuda **de los instrumentos** — quién es dueño del test que audita las
-> policies, y por qué los cuatro gates no comparten un helper.
+> bloqueo. **T3**, **T4** y **T7** no son deuda de producto: son deuda **de los instrumentos** —
+> quién es dueño del test que audita las policies, por qué los cuatro gates no comparten un helper, y
+> un parser de tests que trunca en silencio. **P1**, **P2** y **P3** están **cerradas** (2026-08-28)
+> y eran las tres condiciones previas a S3.
 
 | id | título | estado | owner | bloqueo | gate de aceptación | artefacto |
 |---|---|---|---|---|---|---|
 | S2.1 | upload directo a R2 por URL prefirmada | blocked | `media-agent` → `app-agent` | **B1** + pregunta abierta de abajo | 8 fotos sin round-trip por foto; el original **nunca** es alcanzable; `card` sigue ≤150KB | `packages/media/src/*`, `apps/web/app/api/**` |
-| P1 | `robots.txt` / `sitemap.xml` por tenant — **decisión de diseño** | todo | `storefront-agent` + `qa-agent` | — | decisión escrita **antes** de arrancar S3 | ADR nueva en `DECISIONS.md` (la escribe `docs-keeper`, la ratifica el LEAD — `architect` está dormido desde FASE 1) |
-| P2 | metadata file conventions bajo host de tenant — **decisión de diseño** | todo | `storefront-agent` + `qa-agent` | — | decisión escrita **antes** de arrancar S3 | ADR + guard ampliado |
+| P1 | `robots.txt` / `sitemap.xml` por tenant — **decisión de diseño** | **done** | `storefront-agent` + `qa-agent` | — | decisión escrita **antes** de arrancar S3 → **ADR-015**, verificada por el LEAD (30 URLs contra el `path-to-regexp` compilado) | `docs/DECISIONS.md` ADR-015 · `apps/web/proxy.ts` (`117c4f0`) |
+| P2 | metadata file conventions bajo host de tenant — **decisión de diseño** | **done** | `storefront-agent` + `qa-agent` | — | ídem P1: misma causa raíz, misma ADR, mismo commit | ADR-015 · `apps/web/proxy.ts` · `tests/proxy-matcher-no-deja-la-vidriera-sin-vigilar.test.ts` |
 | T1 | rate limiting en el edge: las 2 reglas de Vercel Firewall | todo | **LEAD** (`vercel.json`, §4) | — | 2 reglas activas + prueba de que disparan; **cero** contador en Postgres sobre la vidriera | falta definir (no hay `vercel.json` hoy) |
 | T2 | guard estático de "query sin filtro de tenant" | todo | **LEAD** (`scripts/**`, §4) | — | el guard falla sobre una query sin `tenant_id` **y** pasa con la excepción declarada | `scripts/guard-leaks.sh` §16 |
 | T3 | mudar el test de RLS cruzado a `tests/` | todo | `qa-agent` | agendado **después** de que cierre S2 | los 59 `it()` corren desde `tests/` contra Postgres real, verdes, sin perder ninguno; `packages/db/src/rls-cross-tenant.test.ts` deja de existir | `tests/` |
 | T4 | extraer los helpers de los gates a `scripts/_lib.sh` | todo | **LEAD** | — | un solo `none()` en el repo; los **4** gates (`accept-fase2`, `accept-fase3`, `accept-s1`, `accept-s2`) re-corridos y con el mismo veredicto que antes | `scripts/_lib.sh` |
 | S2.2 | `collectOrphanObjects` existe y no lo llama nadie | todo | `media-agent` (función) + `app-agent` (comentarios) | — | se elige **(a)** o **(b)** por escrito: si (a), el job corre y borra un huérfano sembrado; si (b), **ningún** comentario del repo la nombra en presente | `packages/media/src/unlink.ts`, `apps/web/app/(app)/_lib/listings/*.ts` |
 | S2.3 | el `<input type="file">` conserva la foto después de subirla | todo | `app-agent` | — | tras un alta exitosa el input queda vacío; `PhotoActionState` distingue inicial de éxito | `apps/web/app/(app)/app/(panel)/stock/[id]/fotos/*` |
-| P3 | el gate de S3 mide el byte que el browser **pide**, no el que el pipeline generó | todo | **LEAD** escribe el gate · `storefront-agent` implementa | — | escrito **antes** de arrancar S3 — ver abajo | `scripts/accept-s3.sh` (no existe hoy) |
+| P3 | el gate de S3 mide el byte que el browser **pide**, no el que el pipeline generó | **done** (el gate; S3 no) | **LEAD** escribió el gate · `storefront-agent` implementa S3 | — | el gate existe, exige los 15 campos y **nace en rojo a propósito** — ver abajo | `scripts/accept-s3.sh` (`1406c6f`, `d9d7719`) |
+| S2.4 | el docblock de `page.tsx:69-72` afirma un 404 que la medición desmiente | todo | `app-agent` | — | el comentario describe el comportamiento **medido** (ADR-014, "Corrección medida"); alcance = el comentario, no la ruta | `apps/web/app/(app)/app/(panel)/stock/[id]/fotos/page.tsx` |
+| T7 | `readMatchers()` trunca el matcher en el primer `]` | todo | `qa-agent` | — | **nada roto hoy** — trampa conocida, ver abajo | `tests/proxy-matcher-no-deja-la-vidriera-sin-vigilar.test.ts:144` |
 | T5 | concurrencia real del techo de 8 fotos, contra Postgres real | todo | `qa-agent` | comparte harness con **T3** | 7 fotos + dos `addUnitPhoto` en paralelo → exactamente 8 fotos y un `ok:false` de techo | `tests/` |
 | T6 | `SELECT … FOR UPDATE` bajo RLS: verificación pendiente, no bug | todo | `qa-agent` | corre con **T5** | el `for('update')` devuelve la fila con rol `authenticated` y el claim del tenant, sin `42501` | `tests/` |
 
@@ -240,29 +248,33 @@ un PUT directo, y lo dice el propio código: `packages/media/src/upload.ts:6`. M
 trabaja con el driver local (`storage/local.ts`, el default hasta que cierre B1), donde **no hay
 techo de 4 MB** — o sea que lo que S2 entregó es correcto *y* verificable.
 
-### P1 · `robots.txt` y `sitemap.xml` por tenant  ·  decisión previa a S3
+### P1 y P2 · CERRADAS el 2026-08-28 → **ADR-015**  ·  eran requisito previo a S3
 
-Los encontró `storefront-agent` cerrando el agujero de `/_media` en el `matcher`.
+Las dos filas se cierran juntas porque **eran el mismo bug**. Lo implementó `storefront-agent` en
+`apps/web/proxy.ts` (commit `117c4f0`); el LEAD lo verificó leyendo el archivo entero y corriendo
+una prueba propia de **30 URLs** contra el `path-to-regexp` compilado de Next.
 
-Hoy los dos están excluidos **por nombre** en el `matcher` de `apps/web/proxy.ts`, y el guard de
-`qa-agent` (`tests/proxy-matcher-no-deja-la-vidriera-sin-vigilar.test.ts`) **afirma que tienen que
-quedar excluidos**: están en su lista `STATIC` con `expect(proxyRuns(asset, matchers)).toBe(false)`.
+- **Causa raíz, una sola para las tres fugas** (`/s/algo.json` de S1, `/_media/*.webp` de S2 y las
+  25 URLs de metadata de P2): el `matcher` excluía **por sufijo**, el router de Next matchea **por
+  segmento**, y Next decide las metadata file conventions **por nombre**. Tres criterios distintos
+  para la misma pregunta. La corrección no fue borrar la exclusión por sufijo: fue **excluir por
+  sufijo salvo que el nombre sea una convención de metadata de Next** — el mismo criterio que usa
+  Next.
+- **Por qué el nombre y no el sufijo ni la profundidad:** `/icon.png` (ruta de app, la genera Next)
+  y `/logo.png` (asset estático) son **indistinguibles** por sufijo y por profundidad. Sólo los
+  separa el nombre.
+- **P1 se resolvió sin agregar un solo `if`.** Las 25 URLs siguen la regla general de host (apex
+  pasa derecho, tenant reescribe a `/s/{slug}/…`) y hoy eso da **404 en el host de tenant**. Ese 404
+  es **la respuesta correcta, no una deuda** (el argumento completo está en ADR-015): un `robots.txt`
+  ausente significa "crawleá todo", y servir el favicon o el sitemap del apex en `acme.maat.work`
+  pone la marca y las URLs de MaatWork adentro de la vidriera de un cliente. **El bug nunca fue el
+  404: era el 200 con el archivo de otro.**
+- **Dato que cambia el análisis de cualquiera que relea esto:** `apps/web/public/` **no existe**. No
+  hay `favicon.ico`, ni `icon.*`, ni `robots.txt`, ni `sitemap.xml` en todo el árbol. La exclusión
+  de 16 sufijos que había antes **protegía cero archivos**.
 
-Cuando S3 los haga por tenant van a necesitar resolución de host y rewrite a
-`/s/{slug}/robots.txt` — lo que choca **de frente con las dos cosas a la vez**: con la exclusión del
-matcher y con el guard que la sostiene. Es decisión de diseño previa a la slice, **no un parche
-adentro**.
-
-### P2 · metadata file conventions bajo host de tenant  ·  decisión previa a S3
-
-El guard de arriba enumera rutas con `ROUTE_FILES = new Set(['page.tsx', 'page.ts', 'route.ts',
-'route.tsx'])`: **los file conventions de metadata de Next no están ahí**. Un `icon.png` o
-`apple-icon.png` por tenant se sirve, bajo el host del tenant, en `/icon.png` → sufijo `.png` →
-fuera del matcher → sin rewrite → **el visitante de `acme.maat.work` recibe el ícono del apex**.
-
-Es **la misma clase de bug** que el de `/_media` que se acaba de arreglar, con otro sufijo y con un
-guard que hoy no lo vería. (`opengraph-image` sí queda cubierto: su URL no tiene extensión.)
-Detalle en `ARCHITECTURE.md` §"Qué NO se reescribe".
+Lo que queda para S3 es implementar `/s/[slug]/robots.txt` y `/s/[slug]/sitemap.xml` **con su propio
+perfil de cache**. El enrutamiento ya está.
 
 ### T1 · rate limiting: no hay implementación ni test  ·  deuda de S1
 
@@ -336,6 +348,53 @@ cuatro gates** para probar que no se rompió ninguno — por eso no se hizo en e
 encontró el bug: tocar los cuatro auditores a la vez, con el `next build` roto, es cambiar el
 instrumento en medio de la medición.
 
+### Regla de método de los gates — **un gate que nunca se vio fallar no es un gate**
+
+Vigente desde el 2026-08-28. **Toda regla nueva de un gate se prueba en las dos polaridades antes de
+darla por buena:** que falle sobre un caso que tiene que reprobar, y que pase sobre uno que tiene que
+aprobar. No es un principio abstracto — salió de dos hallazgos del LEAD, los dos ya arreglados:
+
+- **`b5065a4` — dos gates estaban verdes por vacío desde S1.** `scripts/accept-s1.sh` y
+  `scripts/accept-s2.sh` chequeaban la prohibición de `TODO: después el RLS/R2/cache` con el helper
+  `none()`, que **filtra las líneas que empiezan con `//`**. Como ese TODO **siempre** es un
+  comentario, la regla no podía disparar nunca. Se arregló con un helper `noneraw()` (idéntico a
+  `none()` menos el filtro de comentarios), y el LEAD verificó **primero** que los dos árboles
+  estuvieran genuinamente limpios, para que el arreglo no produjera un rojo espurio.
+- **`b4b441b` — la regla 15 de `scripts/guard-leaks.sh` exigía citar el ADR equivocado.** Pedía
+  ADR-011 en párrafos del **panel**, donde mandan ADR-013/014. Se arregló **acotando la regla por su
+  propósito** —que ninguna afirmación sobre un 404 quede huérfana de ADR—, no aflojándola: una
+  afirmación sobre la **vidriera** que cite sólo ADR-013 sigue siendo LEAK.
+
+Los dos comparten la moraleja con **T4**: los gates son código y se auditan como código.
+
+### S2.4 · el docblock de `page.tsx` afirma un 404 que la medición desmiente  ·  deuda de S2
+
+El docblock de `apps/web/app/(app)/app/(panel)/stock/[id]/fotos/page.tsx:69-72` justifica el
+`export const instant = false` de la línea 105 diciendo que sin él la respuesta era 200 con cuerpo
+de 404 — implicando que `instant = false` recupera el status. **El LEAD lo midió el 2026-08-28 y la
+implicación es falsa: la respuesta sigue siendo 200.** Tres puertas del e2e y tres `curl` directos
+contra `next start` dan `mine=200 theirs=200 ghost=200`; la evidencia entera está en `DECISIONS.md`,
+ADR-014 §"Corrección medida".
+
+**No es un defecto de seguridad:** el invariante de ADR-013 es la indistinguibilidad, y con las tres
+respuestas en 200 se cumple y ahora está medido en tres puertas.
+
+**Alcance del ítem:** corregir el comentario para que describa el comportamiento medido. **Nada
+más.** Que la ruta devuelva o no el status correcto es una **pregunta abierta, separada y más cara**,
+y la decide el LEAD — no es parte de este ítem. Owner: **`app-agent`** (`docs-keeper` no edita
+`page.tsx` ni propone el arreglo).
+
+### T7 · `readMatchers()` trunca el matcher en el primer `]`  ·  trampa conocida, nada roto hoy
+
+`readMatchers()` (`tests/proxy-matcher-no-deja-la-vidriera-sin-vigilar.test.ts:144`, archivo de
+`qa-agent`) parsea el matcher del proxy con `/matcher\s*:\s*\[([\s\S]*?)\]/u`. Es **no-greedy y
+corta en el primer `]`**, así que cualquier clase de caracteres dentro del matcher trunca el parseo
+**en silencio**. `storefront-agent` se lo comió cerrando P1/P2 (36 tests en rojo) y lo esquivó
+usando `\w+` en vez de una clase.
+
+Se anota porque hoy no rompe nada y por eso mismo nadie lo va a ver venir: **el próximo que meta un
+`[...]` en el matcher pierde una hora.** Owner: `qa-agent`.
+
 ### S2.2 · `collectOrphanObjects` existe, está testeado, y no lo llama nadie  ·  deuda de S2
 
 **Medido el 2026-08-28.** `grep -rn 'collectOrphanObjects' --include='*.ts' .` devuelve la definición
@@ -404,6 +463,24 @@ escrito antes de implementarse**, no un hallazgo de revisión posterior:
 
 **El gate lo escribe el LEAD** (`scripts/**` es suyo por §4, y un gate no puede ser del mismo writer
 que el código que audita). **`storefront-agent` implementa.**
+
+#### El gate ya existe · `scripts/accept-s3.sh` (`1406c6f`, `d9d7719`) · **nació en rojo a propósito**
+
+Escrito **antes** que S3, que es el punto: un gate que se escribe después del código se escribe para
+que el código pase. Exige los **15 campos de la ficha** de `CLAUDE.md` §1. Dos correcciones del LEAD
+que quedan asentadas acá:
+
+1. **Mide el byte que el browser pide, no el que el pipeline generó** — `transferSize` del recurso
+   que el browser eligió en un viewport de 390×844 a DPR 3. Sin eso, un `srcset` sin `sizes` hace
+   que el browser asuma `sizes="100vw"`, pida 1170 px, elija `detail` (128.570 B) en vez de `card`
+   (50.692 B), y **S3 pase el gate sirviendo 2,5× del presupuesto con el gate de S2 en verde**. El
+   gate además detecta el `srcset` sin `sizes` **estáticamente**, no sólo midiendo.
+2. **Los 4 campos que la primera versión daba por diferidos no lo están.** Decía que precio ARS + TC
+   iban a S5, punto de retiro + horario y medios de pago a "settings de tenant", y canje a S8. Los
+   cuatro tienen **schema y seed hoy**: `fx_settings`, `locations` (dos filas activas),
+   `tenants.payment_methods`, `tenants.accepts_trade_in`. **Lo que S5 agrega es la pantalla** para
+   que el dueño cambie el TC y el redondeo, **no el dato**. Este board no los difiere: S3 los
+   renderiza o no pasa.
 
 ### T5 · el techo de 8 fotos está probado por forma, no por efecto  ·  cruza a `qa-agent`
 
