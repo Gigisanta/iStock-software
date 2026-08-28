@@ -122,7 +122,37 @@ export const sales = pgTable(
   (t) => [
     index('sales_tenant_idx').on(t.tenantId),
     index('sales_tenant_sold_at_idx').on(t.tenantId, t.soldAt),
-    index('sales_tenant_listing_idx').on(t.tenantId, t.listingId),
+    /**
+     * D8 · **Una unidad tiene a lo sumo UNA venta, y eso lo afirma el motor.**
+     *
+     * Hoy la invariante la sostienen dos cosas y las dos viven en `apps/web`: `sold` es terminal
+     * (`checkTransition` devuelve `terminal_state` desde `sold`) y el `eq(listings.status, from)`
+     * que `transitionUnit()` usa como guard de concurrencia. Ninguna vive en la base — y el
+     * segundo writer de `sales` que aparezca (un canje que cierra en venta, un import) no va a
+     * re-derivar la regla bien. Misma doctrina de defensa en profundidad por la que este repo
+     * pone el filtro de tenant en la query **además** de RLS.
+     *
+     * **Reemplaza a `sales_tenant_listing_idx`, no convive con él**, y el motivo se midió antes
+     * de borrarlo (S7, `db-agent`): `grep` de `sales` sobre `apps/`, `packages/` y `tests/`
+     * devuelve **cero** consultas de producción — la tabla nunca tuvo un lector. Y aunque los
+     * tuviera: este índice tiene las **mismas columnas en el mismo orden**, así que cubre todo
+     * plan que cubría el anterior (un btree único no lee distinto; sólo verifica de más al
+     * escribir). Dejar los dos sería pagar dos inserciones de índice por fila para servir un
+     * único árbol de lectura. Medido tras aplicar `0007` con `explain`: el plan de
+     * `where tenant_id = $1 and listing_id = $2` es `Index Scan using sales_one_sale_per_listing`.
+     *
+     * **Por qué `(tenant_id, listing_id)` y no `(listing_id)` solo**, que sería más fuerte: un
+     * único global convierte al índice en un **oráculo cruzado**. Un tenant que adivina el `id`
+     * de una unidad ajena distingue "ya vendida" de "no vendida" por el `23505` que recibe, sin
+     * ver una fila. El alcance de la afirmación queda dicho tal cual es: la unicidad es **por
+     * tenant**. Lo que la completa —que la venta y el listing sean del mismo tenant— hoy **no**
+     * lo ata la base: `listing_id` referencia `listings(id)` a secas. Medido en S7 (P4): un
+     * tenant puede insertar una venta propia apuntando al `listing_id` de otro. No leakea datos
+     * (el join contra `listings` lo corta RLS) pero, con `on delete restrict`, **le clava la
+     * unidad al otro tenant**. Cerrarlo pide FK compuesta contra `listings(tenant_id, id)`, o sea
+     * tocar `listings`: es un hallazgo reportado al LEAD, no un cambio de esta slice.
+     */
+    uniqueIndex('sales_one_sale_per_listing').on(t.tenantId, t.listingId),
     check('sales_price_positive', sql`price_usd > 0`),
     ...tenantPolicies('sales'),
   ],

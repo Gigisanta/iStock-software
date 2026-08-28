@@ -21,8 +21,13 @@ import {
   durationLabel,
   reservationCountdown,
 } from '../../../../_lib/reservations/presentation';
+import {
+  PAYMENT_METHOD_OPTIONS,
+  priceInputValue,
+} from '../../../../_lib/sales/presentation';
 import { CancelReservationButton } from './cancel-reservation-button';
 import { ReserveForm, type ReserveFormOption } from './reserve-form';
+import { SellForm } from './sell-form';
 import { StatusButton } from './status-button';
 
 /**
@@ -97,6 +102,17 @@ const RESERVE_OPTIONS: readonly ReserveFormOption[] = RESERVATION_MINUTE_OPTIONS
   label: durationLabel(minutes),
 }));
 
+/**
+ * Los estados desde los que se puede vender. Los dos son aristas declaradas en `EDGES` del dominio:
+ * `available → sold` (venta directa, sin seña) y `reserved → sold` (la seña se convierte en venta).
+ *
+ * Es una lista y no un `checkTransition().ok` a secas porque decide si el formulario se **dibuja**,
+ * y eso no es lo mismo que si la transición se permite: desde `reserved` con la seña vencida el
+ * dominio deniega, y ahí queremos mostrar el motivo —con qué hacer— en vez de esconder el
+ * formulario y dejar a alguien buscando el botón de vender que ayer estaba.
+ */
+const SELLABLE_FROM: readonly ListingStatus[] = ['available', 'reserved'];
+
 function detailLine(unit: UnitRow): string {
   const parts = [conditionLabel(unit.condition)];
   if (unit.storageGb !== null) parts.push(`${String(unit.storageGb)} GB`);
@@ -139,6 +155,23 @@ export function UnitRowCard({
   const canPublish = unit.status === 'draft' && publishCheck.ok;
   const publishBlockedText =
     unit.status === 'draft' && !publishCheck.ok ? denyReasonText(publishCheck.reason) : null;
+
+  /**
+   * El chequeo de venta se hace con la reserva **real** de la fila, no con `DRAFT_PUBLISH_EXTRAS`:
+   * `reserved → sold` es exactamente la arista donde el dominio mira la seña, y evaluarla con
+   * `activeReservation: null` sería mentirle al dominio para que apruebe — el bug de S6, con otro
+   * destino. `reservationsEnabled` va como está: la venta no pide entitlement, pero el mismo
+   * contexto también responde otras preguntas y armarlo a medias es cómo se empieza.
+   */
+  const sellCheck = SELLABLE_FROM.includes(unit.status)
+    ? checkTransition(
+        unit.status,
+        'sold',
+        transitionContextFor(ctx, unit, now, { reservationsEnabled, activeReservation: reservation }),
+      )
+    : null;
+  const sellBlockedText =
+    sellCheck !== null && !sellCheck.ok ? denyReasonText(sellCheck.reason) : null;
 
   return (
     <li
@@ -255,6 +288,24 @@ export function UnitRowCard({
           propio stock. `cancelReservation()` lo dice con todas las letras.
         */}
         {unit.status === 'reserved' ? <CancelReservationButton listingId={unit.id} /> : null}
+
+        {/*
+          Vender: desde la vidriera (venta directa) o desde una reserva viva (la seña se convierte).
+          El precio publicado va prellenado; lo que se archiva es lo que quede en el input.
+        */}
+        {sellCheck !== null && sellCheck.ok ? (
+          <SellForm
+            listingId={unit.id}
+            defaultPrice={priceInputValue(unit.priceUsdCents)}
+            paymentOptions={PAYMENT_METHOD_OPTIONS}
+          />
+        ) : null}
+
+        {sellBlockedText === null ? null : (
+          <p data-testid="venta-bloqueada" className="text-xs text-neutral-500 dark:text-neutral-400">
+            {sellBlockedText}
+          </p>
+        )}
 
         {/*
           El camino a completar las fotos tiene que estar en la fila, no sólo después del alta: un

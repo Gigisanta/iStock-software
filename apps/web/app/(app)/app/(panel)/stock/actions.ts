@@ -2,13 +2,17 @@
 
 import { refresh } from 'next/cache';
 import { redirect } from 'next/navigation';
-import { z } from 'zod';
-import { panelActor, transitionUnit } from '../../../_lib/listings/publish-listing';
+import {
+  panelActor,
+  transitionUnit,
+  type TransitionRequest,
+} from '../../../_lib/listings/publish-listing';
 import { requireTenant } from '../../../_lib/session';
+import { parseStatusForm } from './status-action-schema';
 import type { StatusActionState } from './status-action-state';
 
 /**
- * Publicar / despublicar una unidad.
+ * Publicar, despublicar o marcar vendida una unidad.
  *
  * ── Autorización adentro de la acción (ADR-007) ──────────────────────────────────────────────
  * `requireTenant()` es lo primero. Las Server Functions no son rutas propias en la cadena de
@@ -19,11 +23,11 @@ import type { StatusActionState } from './status-action-state';
  * Sin `z.uuid()` un string cualquiera llega a un `where id = $1` y Postgres responde con un error
  * de sintaxis de UUID que después alguien loguea entero.
  *
- * ── El destino es una allowlist de dos, no un `ListingStatus` cualquiera ─────────────────────
- * Desde esta pantalla sólo se publica y se despublica. `sold`, `reserved` y los laterales tienen
- * su propio flujo (S5/S6) con sus propios efectos: dejar que el enum entero entre por acá sería
- * habilitar "marcar vendido" sin registrar la venta. `checkTransition()` igual lo atajaría, pero
- * la allowlist es más barata y más explícita.
+ * ── El borde vive en `status-action-schema.ts` ─────────────────────────────────────────────
+ * Qué claves se leen del `FormData`, qué destinos se aceptan, qué pide la venta y —sobre todo— qué
+ * NO se lee (el costo, D2) está todo allá, con su motivo. Se mudó para poder testearlo: un módulo
+ * `'use server'` sólo exporta funciones `async`, así que un schema declarado acá no se puede
+ * importar desde un test. Acá queda lo que esta acción decide: a dónde va el dueño después.
  *
  * ── El tenant NO viaja en el form ────────────────────────────────────────────────────────────
  * `tenant.slug` sale de la sesión. Si viniera del request, un `POST` con el slug de otro negocio
@@ -61,37 +65,38 @@ const AFTER_PATHS = {
   stock: '/app/stock',
 } as const;
 
-const schema = z.object({
-  listingId: z.uuid('Ese equipo no existe.'),
-  to: z.enum(['available', 'draft']),
-  after: z.enum(['stay', 'stock']).catch('stay'),
-});
-
 export async function setListingStatusAction(
   _prev: StatusActionState,
   formData: FormData,
 ): Promise<StatusActionState> {
   const session = await requireTenant();
 
-  const parsed = schema.safeParse({
-    listingId: formData.get('listingId'),
-    to: formData.get('to'),
-    after: formData.get('after') ?? 'stay',
-  });
-  if (!parsed.success) {
-    return { error: 'No pudimos identificar el equipo. Recargá la pantalla.' };
+  const parsed = parseStatusForm(formData);
+  if (!parsed.ok) {
+    return { error: parsed.error };
   }
 
   /**
-   * El actor sale entero de la sesión (`panelActor()`). Del form llega **sólo** el id y el destino:
-   * si el slug viniera del request se purgaría la vidriera de otro negocio, y si viniera el plan el
-   * entitlement se compraría escribiendo `negocio` en un hidden.
+   * El actor sale entero de la sesión (`panelActor()`). Del form llega el id, el destino y —cuando
+   * el destino es la venta— lo cobrado y el medio de pago. Nada más: si el slug viniera del request
+   * se purgaría la vidriera de otro negocio, si viniera el plan el entitlement se compraría
+   * escribiendo `negocio` en un hidden, y si viniera el costo se escribiría el margen (D2).
+   *
+   * La rama se arma a mano en vez de pasar `parsed.data` entero porque `TransitionRequest` es una
+   * unión discriminada (D5) y el `after` no es asunto de `transitionUnit()`.
    */
-  const result = await transitionUnit(
-    panelActor(session),
-    parsed.data.listingId,
-    parsed.data.to,
-  );
+  const request: TransitionRequest =
+    parsed.data.to === 'sold'
+      ? {
+          to: 'sold',
+          sale: {
+            priceUsdCents: parsed.data.priceUsdCents,
+            paymentMethod: parsed.data.paymentMethod,
+          },
+        }
+      : { to: parsed.data.to };
+
+  const result = await transitionUnit(panelActor(session), parsed.data.listingId, request);
 
   if (!result.ok) {
     return { error: result.message };

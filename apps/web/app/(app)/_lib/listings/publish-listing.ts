@@ -11,7 +11,7 @@ import {
   type TransitionIntent,
 } from '@istock/domain';
 import { listingEvents, listings, reservations } from '@istock/db';
-import { DEADLOCK, isDeadlock } from '../db/pg-error';
+import { DEADLOCK, isDeadlock, uniqueViolationConstraint } from '../db/pg-error';
 import { withTenantDb, type TenantContext } from '../db/session';
 import {
   FEATURE_RESERVATIONS,
@@ -21,6 +21,8 @@ import {
 } from '../entitlements';
 import { logError, logEvent } from '../log';
 import { loadActiveReservation } from '../reservations/queries';
+import { recordSale } from '../sales/record-sale';
+import type { SaleFields } from '../sales/schema';
 import type { ActiveSession } from '../session';
 import { invalidateStorefrontUnit } from '../tenants/storefront-cache';
 import { loadUnitForTransition, type UnitForTransition } from './queries';
@@ -176,8 +178,18 @@ export function denyReasonText(
       return 'Eso viene con el plan Negocio.';
     case 'reservation_already_active':
       return 'Ya tiene una reserva activa.';
+    /**
+     * Sólo lo produce `checkConfirmSale` (verificado con `grep` sobre `packages/domain`), o sea:
+     * alguien quiso marcar vendida una unidad `reserved` cuya seña **venció** —o que directamente
+     * no tiene fila viva—. El texto anterior ("No tiene una reserva activa") describía el estado y
+     * dejaba a alguien parado en el mostrador, con el comprador enfrente, sin saber qué apretar:
+     * la unidad **dice** "Reservado" en la pantalla, así que la frase encima parecía un error del
+     * sistema. El dominio niega `reserved → sold` a propósito y obliga a pasar por `available`
+     * primero, y `checkRelease()` aprueba esa salida tanto con la reserva vencida como con el
+     * botón de soltar. Ese es el camino, y el copy lo dice.
+     */
     case 'reservation_not_active':
-      return 'No tiene una reserva activa.';
+      return 'Se venció la seña. Soltá la reserva y marcalo vendido de nuevo.';
     case 'reservation_not_expired':
       return 'La reserva todavía no venció.';
     case 'reservation_tenant_mismatch':
@@ -256,6 +268,74 @@ export function transitionContextFor(
 }
 
 /**
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *  D5 · Vender sin datos de venta NO COMPILA
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * El destino y los datos de la venta viajan en **un solo valor**, no en dos parámetros. La unión
+ * está discriminada por `to`, así que el compilador tiene exactamente dos formas de aceptar un
+ * `TransitionRequest`, y ninguna deja pasar el bug de S7:
+ *
+ *   · `{ to: 'sold' }` a secas → `Property 'sale' is missing`. No hay default, no hay `?`.
+ *   · `{ to: 'draft', sale: {...} }` → `sale?: never` lo rechaza. Es el error simétrico y también
+ *     es un bug: datos de venta en una arista que **no** crea venta significa que el call site
+ *     cree que vendió y no vendió.
+ *
+ * ── Por qué no se puede eludir ───────────────────────────────────────────────────────────────
+ *
+ * 1. **No hay un `to: ListingStatus` suelto que sirva.** Un call site que tenga en la mano un
+ *    `ListingStatus` ancho —típicamente salido de un `z.enum` o de un `form.get()`— no es
+ *    asignable a **ninguna** de las dos ramas: `'sold' | 'draft'` no encaja en
+ *    `Exclude<ListingStatus, 'sold'>` ni en `'sold'`. Está obligado a **estrechar**, y en la rama
+ *    en la que estrecha a `'sold'` el compilador le pide `sale`. Ése es todo el mecanismo: el
+ *    lugar donde se decide el destino es el mismo donde hay que tener los datos.
+ * 2. **Un campo opcional en `TransitionExtras` no habría servido**, y es la codificación que la
+ *    spec descarta por su nombre: `sale?: SaleFields` compila igual con y sin el campo, o sea
+ *    reproduce el defecto de origen —un efecto que el dominio declara (`createsSale`) y el call
+ *    site omite en silencio—. La unión no tiene forma de omitirlo en silencio: omitirlo es un
+ *    error de tipos.
+ * 3. **Sobrecargas tampoco**, por otro motivo: una sobrecarga se elude pasando el argumento por
+ *    una variable de tipo ancho, porque la resolución mira el tipo del argumento y no obliga a
+ *    estrechar antes. La unión discriminada obliga en el call site.
+ * 4. **El `as` sigue existiendo, y contra eso no hay tipo que alcance.** Por eso la afirmación no
+ *    vive sólo acá: `transitionUnit()` compara `effects.createsSale` contra los datos que recibió
+ *    **en runtime** (abajo) y aborta si discrepan, y `sales_one_sale_per_listing` la sostiene en
+ *    el motor. El tipo evita el olvido; las otras dos capas evitan la mentira.
+ *
+ * `SaleFields` se reusa de `_lib/sales/schema.ts` a propósito: es exactamente lo que el Zod del
+ * borde produce, así que el tipo de esta función y el parseo del formulario no pueden divergir.
+ * Lo que **no** está acá y no puede estar es el costo — D2/D6: no entra por el request, se copia
+ * de `listings` adentro de la transacción y nunca pasa por el heap de Node.
+ */
+export type TransitionRequest =
+  | { readonly to: Exclude<ListingStatus, 'sold'>; readonly sale?: never }
+  | { readonly to: 'sold'; readonly sale: SaleFields };
+
+/**
+ * La unidad ya tiene una venta registrada. Lo levanta el `23505` de `sales_one_sale_per_listing`
+ * (D8), que es la misma clase de mensaje que `reserveUnit()` da para
+ * `reservations_one_active_per_listing`: no es un error del que aprieta, es que llegó segundo.
+ *
+ * En la práctica casi no se ve —`sold` es terminal y el `eq(status, from)` corta antes—, pero
+ * "casi" no es "nunca": dos pestañas confirmando la misma venta al mismo tiempo pasan las dos por
+ * el `update` sólo si una hace rollback, y el índice es la última palabra.
+ */
+export const ALREADY_SOLD = 'Ese equipo ya figura vendido. Recargá la pantalla.';
+
+/** El índice único de D8. Se nombra una vez para que el `catch` no compare contra un literal suelto. */
+const ONE_SALE_PER_LISTING = 'sales_one_sale_per_listing';
+
+/**
+ * El tipo (D5) y el dominio (`createsSale`) discrepan sobre si esta transición es una venta. No
+ * debería poder pasar: la unión de arriba ata `to === 'sold'` con la presencia de `sale`, y
+ * `transitionEffects()` deriva `createsSale` del mismo `to`. Si igual pasa, es que alguien entró
+ * con un `as` o que el dominio cambió la regla, y en los dos casos la respuesta correcta es **no
+ * mover el listing**: `sold` es terminal, así que una venta a medias no tiene arista de salida
+ * (D1). Se corta antes de abrir la transacción.
+ */
+export const SALE_NOT_RECORDED = 'No pudimos registrar la venta. Probá de nuevo.';
+
+/**
  * Cambia el estado de una unidad. El actor sale de la sesión, no del request: su `slug` es el que
  * se usa para invalidar el cache y uno de otro tenant purgaría la vidriera ajena.
  *
@@ -294,14 +374,42 @@ export function transitionContextFor(
  * sobre el mismo par de tablas es un deadlock ABBA, y con esta función tocando las dos hay **tres**
  * participantes. Un `40P01` que llega igual es una carrera perdida, no un 500: se mapea a
  * `LOST_RACE`, que es lo mismo que ve alguien a quien le ganaron de mano por un milisegundo.
+ *
+ * Desde S7 la cadena es `listings` → `reservations` → `sales`, y el orden no es arbitrario: la
+ * venta necesita el id de la reserva que **esta misma transacción** acaba de cerrar, así que
+ * escribirla antes sería no poder enlazarla.
+ *
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *  El CUARTO efecto: `createsSale` (S7)
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * `transitionEffects()` declara cuatro efectos y esta función ejecutaba tres. `createsSale` se
+ * descartaba en silencio: la unidad quedaba `sold`, la reserva `confirmed`, la vidriera purgada, y
+ * la tabla `sales` vacía. Misma clase que T18 —un efecto que el dominio declara y la aplicación
+ * cumple a medias—, y peor por dónde termina: `sold` es **terminal**, así que la unidad quedaba sin
+ * venta y **sin arista para volver**. Por eso la fila de `sales` va adentro de esta transacción
+ * (D1) y no en una función que se llame después.
+ *
+ * Lo que la venta NO devuelve: `cost_usd`, `margin_usd` ni `internal_notes` (D6). El
+ * `PublishOutcome` de este camino es el mismo `{ ok: true, status }` que el de publicar. No es que
+ * se filtren por rol —`session.role` existe y `stock/nuevo/actions.ts` ya lo usa—: es que **el dato
+ * no sale de Postgres**, así que no hay a quién ocultárselo ni `if` que alguien pueda invertir el
+ * día que S11 rehaga los permisos del panel. Ver `_lib/sales/record-sale.ts`.
  */
 export async function transitionUnit(
   actor: PanelActor,
   listingId: string,
-  to: ListingStatus,
+  request: TransitionRequest,
   now: Date = new Date(),
 ): Promise<PublishOutcome> {
   const { ctx, tenant } = actor;
+  const to: ListingStatus = request.to;
+  /**
+   * Se estrecha **una vez**, acá, y de ahí en más el camino de venta se pregunta por `sale !== null`
+   * en vez de re-comparar `to === 'sold'` en cada punto. Dos derivaciones de la misma regla es
+   * exactamente cómo nació el defecto que esta slice cierra.
+   */
+  const sale: SaleFields | null = request.to === 'sold' ? request.sale : null;
 
   const unit = await loadUnitForTransition(ctx, listingId);
   if (unit === null) return { ok: false, message: NOT_FOUND };
@@ -334,6 +442,22 @@ export async function transitionUnit(
    */
   const effects = transitionEffects(from, to, extras.intent ?? null);
 
+  /**
+   * El dominio y el tipo tienen que estar de acuerdo sobre si esto es una venta. No es un chequeo
+   * defensivo por las dudas: es la misma forma en que `cancelReservation()` trata un
+   * `closesReservationAs === null` inesperado. Un `&&` silencioso acá dejaría pasar justo el bug de
+   * origen —mover el listing a `sold` sin escribir la venta— disfrazado de éxito.
+   */
+  if (effects.createsSale !== (sale !== null)) {
+    logError('listing.transition.sale_effect_mismatch', 'sale_effect_mismatch', {
+      tenantId: ctx.tenantId,
+      listingId,
+      from,
+      to,
+    });
+    return { ok: false, message: SALE_NOT_RECORDED };
+  }
+
   let updated: boolean;
   try {
     updated = await withTenantDb(ctx, async (tx) => {
@@ -359,8 +483,9 @@ export async function transitionUnit(
        * transacción. El guard `status = 'active'` la hace idempotente contra el cron corriendo al
        * mismo tiempo.
        */
+      let closedReservationId: string | null = null;
       if (effects.closesReservationAs !== null) {
-        await tx
+        const closed = await tx
           .update(reservations)
           .set({
             status: effects.closesReservationAs,
@@ -373,7 +498,30 @@ export async function transitionUnit(
               eq(reservations.listingId, listingId),
               eq(reservations.status, 'active'),
             ),
-          );
+          )
+          .returning({ id: reservations.id });
+        /**
+         * El `returning` es lo que ata la venta a **la** reserva que se convirtió, sin una segunda
+         * lectura: el id que se leyó antes de la transacción puede ser de una reserva que el cron
+         * venció mientras tanto. Si el `update` no tocó nada —el cron ganó de mano— queda `null`,
+         * que es lo que `sales.reservation_id` significa: venta directa, sin seña previa. No se
+         * aborta por eso; el estado del listing ya se movió y la venta ocurrió igual.
+         */
+        closedReservationId = closed[0]?.id ?? null;
+      }
+
+      /**
+       * D1 · La venta se escribe **acá adentro**, con el `tx` abierto. `recordSale()` no puede
+       * llamarse de otra forma: recibe la transacción como primer parámetro, así que no existe la
+       * versión "después del commit" de esta línea.
+       */
+      if (sale !== null) {
+        await recordSale(tx, ctx, {
+          listingId,
+          reservationId: closedReservationId,
+          priceUsdCents: sale.priceUsdCents,
+          paymentMethod: sale.paymentMethod,
+        });
       }
 
       await tx.insert(listingEvents).values({
@@ -393,6 +541,21 @@ export async function transitionUnit(
       // lleva la etiqueta del cliente.
       logError('listing.transition.deadlock', DEADLOCK, { tenantId: ctx.tenantId, listingId });
       return { ok: false, message: LOST_RACE };
+    }
+
+    /**
+     * D8 en el motor. Mismo tratamiento que `reserveUnit()` le da a
+     * `reservations_one_active_per_listing`: un `23505` de este índice no es un 500, es que otra
+     * pestaña registró la venta primero. Se compara el **nombre** de la constraint —no se mapea
+     * cualquier `23505`— para no tapar una violación de unicidad distinta con un mensaje que
+     * mentiría sobre lo que pasó.
+     */
+    if (uniqueViolationConstraint(error) === ONE_SALE_PER_LISTING) {
+      logError('listing.transition.already_sold', '23505', {
+        tenantId: ctx.tenantId,
+        listingId,
+      });
+      return { ok: false, message: ALREADY_SOLD };
     }
     throw error;
   }
