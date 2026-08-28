@@ -369,8 +369,13 @@ for PAR in "ficha:$HTML" "grilla:$GRID"; do
   fi
 done
 
-[ -n "$BOOT" ] && kill "$BOOT" 2>/dev/null
-rm -f "$HTML" "$GRID" "$EOUT"
+# El teardown del server y de los dos temporales NO va aca. Estuvo aca una sola corrida y esa
+# corrida es la prueba: M7 necesita las dos cosas —el server para pedir el miss, y `$HTML` para el
+# control de "la ficha real tiene N chars visibles"— asi que matarlas antes de M7 lo dejaba muerto
+# de dos maneras distintas, y la primera tapaba a la segunda ("sin server vivo" nunca llegaba a
+# leer el archivo borrado). Un gate recien escrito que reporta FAIL por su propio orden de lineas
+# es indistinguible de uno que encontro el defecto: por eso el teardown baja hasta despues de M7.
+rm -f "$EOUT"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # ── M7 · la ficha que NO existe le tiene que hablar a una persona en la PRIMERA request ──────
@@ -450,6 +455,10 @@ PYVIS
 
   rm -f "$MISS" "$T_MISS" "$T_OK"
 fi
+
+# Recien aca: M7 fue el ultimo modulo que necesitaba HTTP vivo y el HTML de la ficha real.
+[ -n "$BOOT" ] && kill "$BOOT" 2>/dev/null
+rm -f "$HTML" "$GRID"
 
 sec "M6 · prohibiciones de siempre sobre lo que toco S3"
 none "cero imei/cost/margin/notas internas en (storefront)" \
