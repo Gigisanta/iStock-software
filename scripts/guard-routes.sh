@@ -83,6 +83,19 @@ const ESPERADO = {
   // funciona sin JavaScript, porque todo el contenido viaja escondido detrás del swap de streaming.
   "/app/stock/[id]/fotos":  "blocking/empty",
 
+  // Beacon del click de WhatsApp (S4). `dynamic` es el unico valor aceptable y no por performance:
+  // la ruta ESCRIBE una fila. Una ruta que escribe y aparece prerenderizada significa que se ejecuto
+  // en build time, con el tenant equivocado o con ninguno.
+  //
+  // Se agrega el 2026-08-28, tarde otra vez: entro con `c9611b1` (S4) y el guard quedo rojo desde
+  // entonces. Es la SEGUNDA vez que pasa lo mismo en este archivo — arriba esta escrito el caso de
+  // S3. Pero la causa cambio y conviene no repetir el diagnostico viejo: en S3 fue que el guard no
+  // estaba en CI. Ahora SI esta (`ci.yml:182`), y aun asi nadie se entero, porque **no hay nada
+  // pusheado**: sin push no hay CI, y un gate que solo corre en un runner que nunca arranca es tan
+  // invisible como uno que no esta configurado. El LEAD corre los accept-*; `guard-routes` no esta
+  // en ninguno de ellos, asi que su unica ejecucion posible era la que no ocurria.
+  "/s/[slug]/api/track":    "dynamic",
+
   "/_media/[...key]":       "dynamic",
   "/api/tenants/slug-check":"dynamic",
 };
