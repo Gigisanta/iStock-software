@@ -96,6 +96,28 @@
  * allowlist de columnas **por nombre**. La allowlist está escrita dos veces, en dos archivos, a
  * propósito: si alguien la ensancha en uno para poner algo en verde, el otro sigue en rojo.
  *
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *  S8 · LA SEGUNDA ESCRITURA SIN AUTENTICAR, Y POR QUÉ EL CONTEO SE PARTIÓ EN DOS
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ * `drizzle/0008_storefront_tradein_lead_insert.sql` le da a `anon` un `INSERT` de nueve columnas
+ * sobre `tradein_leads`: el lead de canje que el visitante deja desde la vidriera. Es la **segunda**
+ * escritura sin login del producto —la primera es el beacon de S4— y la **primera con texto libre
+ * y PII de un tercero** adentro. Tres cosas cambiaron acá por eso, y ninguna es un aflojamiento:
+ *
+ *   1. R6c dejó de contar "policies `TO anon`" en un solo entero. En un entero, "6 → 7" no
+ *      distingue *"se publicó una tabla más"* de *"se le dio una lapicera a cualquiera con
+ *      `curl`"*. Ahora son dos superficies —5 de LECTURA, 2 de ESCRITURA— y se afirman aparte,
+ *      más una tercera aserción que dice que **no hay** una tercera superficie (`FOR ALL`, UPDATE,
+ *      DELETE), que es lo que se colaría entre las dos listas sin cambiar ninguna.
+ *   2. R7 enumera 12 columnas escribibles en vez de 3, y suma un detector nuevo (R7c-bis): de las
+ *      columnas marcadas `SENSITIVE`, `anon` escribe **sólo la PII del propio visitante** y ni una
+ *      del dueño. `offer_usd` es el costo de la unidad que nace del canje; que la escriba un `curl`
+ *      es escribir el costo del stock ajeno desde afuera, y era una pregunta que ningún detector de
+ *      este archivo hacía (los de escritura no miran la marca, el de la marca sólo miraba lectura).
+ *   3. R2c es nuevo y es la **auditoría de referencia** del canje: comportamiento contra Postgres
+ *      real, con las tres capas de rechazo (GRANT / POLICY / CHECK) afirmadas por separado y el rol
+ *      efectivo probado en cada caso ({@link Veredicto}).
+ *
  * `qa-agent` no arregla el código bajo test para poner un test en verde, y el owner del paquete no
  * edita este archivo para tapar un fallo (`CLAUDE.md` §4). Si algo de acá se pone rojo, el defecto
  * es del código hasta que se demuestre lo contrario, y se reporta al LEAD.
@@ -193,12 +215,40 @@ interface PgError {
   readonly message: string;
 }
 
+/**
+ * El resultado de una query **junto con el rol que efectivamente la corrió**.
+ *
+ * ── Por qué el canario no es adorno (S8, y ya se cobró una medición) ─────────────────────────
+ * `set local role` sólo tiene efecto DENTRO de un bloque de transacción: emitido fuera de uno,
+ * Postgres lo acepta, no avisa nada y no hace nada. Una primera versión de la medición de R2c
+ * corrió el `set local` afuera y los nueve casos "pasaron" **como superusuario** — que bypassea
+ * `GRANT` y RLS a la vez, o sea nueve verdes que no probaron ni una policy. Que eso no vuelva a
+ * pasar no puede depender de leer con cuidado: cada caso afirma, **desde la misma transacción que
+ * corrió la query**, quién la corrió.
+ *
+ * Y el rechazo viaja como DATO, no como excepción, porque `42501` tapa dos capas que significan
+ * cosas opuestas (ver {@link PgError}) y una tercera —`23514`— que ni siquiera es de seguridad.
+ * Ver {@link capaQueRechazo}.
+ */
+interface Veredicto<T> {
+  /** `current_user`, leído dentro de la transacción y ANTES de la query: un rechazo la aborta. */
+  readonly rol: string;
+  /** `request.jwt.claims` tal como lo vio la query. Vacío = el claim del host no llegó. */
+  readonly claimsEfectivos: string;
+  readonly rows: T[];
+  readonly count: number;
+  /** `null` si la query pasó limpia. */
+  readonly error: PgError | null;
+}
+
 interface Session {
   readonly rows: <T>(text: string) => Promise<T[]>;
   readonly affected: (text: string) => Promise<number>;
   readonly errorCode: (text: string) => Promise<string>;
   /** El rechazo con su mensaje. Ver {@link PgError}: la diferencia ES el invariante. */
   readonly error: (text: string) => Promise<PgError>;
+  /** La query + el rol que la corrió + de qué capa vino el rechazo. Ver {@link Veredicto}. */
+  readonly conCanario: <T>(text: string) => Promise<Veredicto<T>>;
   readonly close: () => Promise<void>;
 }
 
@@ -227,11 +277,47 @@ function openSession(claims: AnyClaims, role: PgRole = 'authenticated'): Session
     throw new Error(`se esperaba que Postgres rechazara la query y pasó limpia: ${text}`);
   }
 
+  /**
+   * Corre `text` con el canario puesto y **sin tirar**: el rechazo vuelve como dato para que el
+   * test pueda afirmar de QUÉ capa vino.
+   *
+   * La query va adentro de un `savepoint` y eso no es cosmético: postgres.js recuerda el primer
+   * error de cualquier query del scope de la transacción y lo **re-tira al cerrar**, aunque el
+   * llamador lo haya atrapado (`node_modules/postgres/src/index.js`, `uncaughtError`). Sin el
+   * subscope, atrapar el `42501` acá adentro no sirve de nada y `conCanario` explota igual.
+   */
+  async function conCanario<T>(text: string): Promise<Veredicto<T>> {
+    return (await sql.begin(async (tx) => {
+      await tx.unsafe(`set local role ${role}`);
+      await tx.unsafe(`select set_config('request.jwt.claims', $1, true)`, [claimsJson]);
+      const canario = (await tx.unsafe(
+        `select current_user as rol,
+                coalesce(current_setting('request.jwt.claims', true), '') as claims`,
+      )) as unknown as Array<{ rol: string; claims: string }>;
+      const visto = { rol: canario[0]?.rol ?? '', claimsEfectivos: canario[0]?.claims ?? '' };
+      try {
+        const result = (await tx.savepoint(async (sp) => sp.unsafe(text))) as unknown as {
+          count: number;
+        };
+        return { ...visto, rows: result as unknown as T[], count: result.count, error: null };
+      } catch (caught) {
+        const failure = caught as { code?: string; message?: string };
+        return {
+          ...visto,
+          rows: [] as T[],
+          count: 0,
+          error: { code: failure.code ?? 'UNKNOWN_ERROR', message: failure.message ?? '' },
+        };
+      }
+    })) as unknown as Veredicto<T>;
+  }
+
   return {
     rows: async <T>(text: string): Promise<T[]> => (await run<T>(text)).rows,
     affected: async (text: string): Promise<number> => (await run<never>(text)).count,
     errorCode: async (text: string): Promise<string> => (await rejected(text)).code,
     error: rejected,
+    conCanario,
     close: async (): Promise<void> => {
       await sql.end({ timeout: 5 });
     },
@@ -248,6 +334,55 @@ function openStorefront(slug: string | null): Session {
   const claims: StorefrontClaims =
     slug === null ? { role: 'anon' } : { role: 'anon', app_metadata: { storefront_slug: slug } };
   return openSession(claims, 'anon');
+}
+
+/**
+ * ── Las TRES capas que pueden frenar una fila, y por qué se nombran por separado ─────────────
+ *
+ * | veredicto | qué lo produce                                  | qué defensa quedó demostrada |
+ * |---|---|---|
+ * | `GRANT`   | `permission denied for table …` (`42501`)       | la columna no está otorgada  |
+ * | `POLICY`  | `new row violates row-level security …` (`42501`)| el `WITH CHECK` de RLS       |
+ * | `CHECK`   | `23514`                                         | tamaño/rango en el motor     |
+ * | `ENTRA`   | ningún error                                    | ninguna: la fila pasó        |
+ *
+ * Un test que sólo afirma *"tiró error"* pasa igual con dos de las tres apagadas, y ése es
+ * exactamente el bug que `CLAUDE.md` §2 nombra dos veces: `GRANT` y RLS son **dos capas y se
+ * evalúan las dos**. Concreto: si mañana el `GRANT INSERT (9 columnas)` de `drizzle/0008` se
+ * ensanchara a un `GRANT INSERT` de tabla, `offer_usd` pasaría a ser escribible desde un `curl`
+ * — y un test que sólo mirara el código seguiría verde, porque el `23514` de `battery_pct` sigue
+ * saliendo cuando corresponde. Nombrar la capa es lo que separa las tres.
+ *
+ * El caso `OTRA_CAPA` existe para que un rechazo inesperado (`23502` de NOT NULL, `22P02` de un
+ * enum mal escrito, `23503` de una FK) no se disfrace de defensa: aparece con su código en el
+ * mensaje del `expect` en vez de contarse como una de las tres.
+ */
+function capaQueRechazo(error: PgError | null): string {
+  if (error === null) return 'ENTRA';
+  if (error.code === '23514') return 'CHECK';
+  if (error.code === '42501' && error.message.includes('permission denied')) return 'GRANT';
+  if (error.code === '42501' && error.message.includes('violates row-level security policy')) {
+    return 'POLICY';
+  }
+  return `OTRA_CAPA(${error.code}): ${error.message}`;
+}
+
+/**
+ * Corre `text` y devuelve **qué capa lo frenó**, después de exigir que el rol efectivo sea el que
+ * el test dice estar probando. Todo caso de R2c pasa por acá: ver {@link Veredicto} para por qué
+ * el canario no se puede saltear ni "una sola vez, para este caso que es obvio".
+ */
+async function veredicto(
+  sesion: Session,
+  rolEsperado: PgRole,
+  text: string,
+): Promise<{ capa: string; filas: number }> {
+  const visto = await sesion.conCanario<never>(text);
+  expect(
+    visto.rol,
+    'el `set local role` no tuvo efecto: esta medición corrió con otro rol y no probó nada',
+  ).toBe(rolEsperado);
+  return { capa: capaQueRechazo(visto.error), filas: visto.count };
 }
 
 // ── Detectores de metadata, parametrizados por schema ───────────────────────────────────────
@@ -414,6 +549,36 @@ function anonReadableSensitiveColumns(schema: string): string {
     order by 1`;
 }
 
+/**
+ * R7c-bis · columnas marcadas `SENSITIVE` que `anon` puede **ESCRIBIR**.
+ *
+ * {@link anonReadableSensitiveColumns} pregunta por `SELECT`, y con eso alcanzaba mientras `anon`
+ * no escribía nada. Desde `drizzle/0008` escribe dos columnas marcadas `SENSITIVE` —
+ * `customer_name` y `customer_wa_phone`— y eso es **correcto**: son la PII del propio visitante,
+ * que él mismo tipea en el formulario de canje. La marca ahí significa *"no sale a la vidriera, ni
+ * al chatbot, ni a un log"*, no *"nadie la escribe"*.
+ *
+ * Lo que no puede pasar es que `anon` escriba una columna `SENSITIVE` **del dueño**: `offer_usd`
+ * es lo que el reseller ofrece pagar, o sea el **costo** de la unidad que nace del canje
+ * (`CLAUDE.md` §0.9), e `internal_notes` son sus notas. Que el visitante las escriba es escribir
+ * el costo del stock ajeno desde afuera, y era una pregunta que ningún detector de este archivo
+ * hacía: los de escritura no miran la marca y el de la marca sólo mira lectura.
+ */
+function anonWritableSensitiveColumns(schema: string): string {
+  return `
+    select c.relname || '.' || a.attname || ':' || w.p as t
+    from pg_class c
+    join pg_namespace n on n.oid = c.relnamespace
+    join pg_attribute a on a.attrelid = c.oid and a.attnum > 0 and not a.attisdropped
+    cross join lateral (
+      select p from unnest(array['INSERT','UPDATE']) as p
+      where has_column_privilege('anon', c.oid, a.attnum, p)
+    ) w(p)
+    where n.nspname = '${schema}' and c.relkind = 'r'
+      and col_description(c.oid, a.attnum) like 'SENSITIVE:%'
+    order by 1`;
+}
+
 /** R7d · el read model público completo, columna por columna, leído del catálogo. */
 function anonReadableColumns(schema: string): string {
   return `
@@ -525,6 +690,13 @@ beforeAll(async () => {
   await admin.unsafe(`create table ${CONTROL_SCHEMA}.leaky_grant_write (id uuid primary key, status text)`);
   await admin.unsafe(`grant delete on table ${CONTROL_SCHEMA}.leaky_grant_write to anon`);
   await admin.unsafe(`grant insert (status) on table ${CONTROL_SCHEMA}.leaky_grant_write to anon`);
+  // …y la MISMA columna marcada `SENSITIVE`, que es la trampa de R7c-bis (S8): una columna del
+  // dueño que `anon` igual puede escribir. Se reusa `status` en vez de plantar otra tabla porque
+  // acá `anon` tiene INSERT y NO tiene SELECT, así que la marca no contamina el control de R7c
+  // —que pregunta por lectura— y las dos aserciones siguen siendo exactas.
+  await admin.unsafe(
+    `comment on column ${CONTROL_SCHEMA}.leaky_grant_write.status is 'SENSITIVE: never in public DTO'`,
+  );
 
   // 3.f · R7c — columna marcada SENSITIVE y otorgada igual a `anon`, por columna. Éste es el
   //       ataque que el invariante VIEJO dejaba pasar en verde: `select id from leaky_grant_col`
@@ -921,6 +1093,324 @@ describe('R2b · el visitante anónimo escribe su click y no puede anotarlo en l
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════════════════
+/**
+ * R2c · EL LEAD DE CANJE. Segunda escritura sin autenticar del producto, primera con PII adentro.
+ *
+ * ── Qué es este bloque, formalmente ─────────────────────────────────────────────────────────
+ * Es la **auditoría de referencia** del canje anónimo (`CLAUDE.md` §4, precisión de S4): la
+ * afirmación que un gate cita y que queda parada entre una policy aflojada y un merge.
+ * `packages/db/src/rls-anon-tradein-lead.test.ts` mira el mismo territorio y está bien que exista,
+ * pero es **red de regresión de `db-agent`**: ningún gate lo cita como evidencia, porque el writer
+ * de la policy no puede firmar el certificado de su propia policy. Si los dos divergen, gana éste
+ * y el que se corrige es el del paquete. La duplicación es deliberada y se paga con dos archivos
+ * que tocar cuando cambia la policy.
+ *
+ * ── Qué mide, y qué NO ──────────────────────────────────────────────────────────────────────
+ * R6c y R7 miran la **forma** del permiso: qué policies existen, qué columnas se otorgaron. Acá se
+ * mide el **comportamiento**, que es otra cosa: una policy puede estar escrita, enumerada y
+ * nombrada y aun así dejar pasar la fila. Postgres real, dos claims distintos, cero mocks — un
+ * mock de RLS prueba que el mock funciona.
+ *
+ * ── Las tres capas se afirman por separado, y ése ES el invariante ──────────────────────────
+ * Ver {@link capaQueRechazo}. `permission denied` (GRANT), `violates row-level security policy`
+ * (POLICY) y `23514` (CHECK) son tres defensas independientes; un test que sólo afirma "tiró
+ * error" da verde con dos de las tres apagadas. Cada `it` de acá abajo nombra la suya.
+ *
+ * ── El canario ──────────────────────────────────────────────────────────────────────────────
+ * Ver {@link Veredicto}: `set local role` fuera de un bloque de transacción es un no-op mudo, y la
+ * conexión de desarrollo es superusuaria. Ya hubo una versión de esta medición donde los nueve
+ * casos "pasaron" sin probar nada. Todo caso pasa por {@link veredicto}, que exige el rol efectivo
+ * leído de la misma transacción.
+ *
+ * Fuente de verdad de lo que se afirma: `packages/db/drizzle/0008_storefront_tradein_lead_insert.sql`.
+ */
+describe('R2c · el visitante deja su canje en la vidriera de A y no toca nada más de la base', () => {
+  /**
+   * El canje mínimo válido, con los campos opcionales sobreescribibles por nombre. Se arma así y
+   * no con `f`-strings sueltas para que los bordes de los CHECK cambien **una** columna por vez:
+   * un insert que cambia dos cosas a la vez no dice cuál de las dos lo frenó.
+   */
+  function canje(
+    campos: Readonly<Record<string, string>> = {},
+    tenant = '(select public.storefront_tenant_id())',
+  ): string {
+    const cols: Record<string, string> = {
+      tenant_id: tenant,
+      customer_name: `'Marcela Quiroga'`,
+      customer_wa_phone: `'5492995558888'`,
+      model_text: `'iPhone 11 64'`,
+      ...campos,
+    };
+    return `insert into tradein_leads (${Object.keys(cols).join(', ')})
+            values (${Object.values(cols).join(', ')})`;
+  }
+
+  /** Todo lo que este bloque escriba se borra acá. `LEAD_A` es del fixture del archivo y no se toca. */
+  afterAll(async () => {
+    await admin.unsafe(
+      `delete from tradein_leads
+       where tenant_id in ('${TENANT_A}', '${TENANT_B}') and id <> '${LEAD_A}'`,
+    );
+  });
+
+  // ── a · el camino feliz, que es el control positivo de todo lo demás ──────────────────────
+  it('CONTROL POSITIVO · el visitante de la vidriera de A deja su canje, y lo escribe el rol `anon`', async () => {
+    // Sin esto, los rechazos de abajo serían verdes por vacío: una tabla a la que `anon` no puede
+    // escribir NADA los cumple todos, y también deja el formulario de canje muerto en producción.
+    const visitante = openStorefront(SLUG_A);
+    try {
+      const visto = await visitante.conCanario<never>(canje());
+      expect(visto.rol, 'no corrió como `anon`: no se probó ni una policy').toBe('anon');
+      expect(visto.claimsEfectivos, 'el claim del host no llegó a la sesión').toContain(SLUG_A);
+      expect(
+        capaQueRechazo(visto.error),
+        'el canje del visitante no entra: el formulario de la vidriera está muerto',
+      ).toBe('ENTRA');
+      expect(visto.count).toBe(1);
+    } finally {
+      await visitante.close();
+    }
+  });
+
+  it('el canje entra en `new` y sin oferta: el visitante no elige su estado ni se pone precio solo', async () => {
+    // Las columnas que quedaron FUERA del `GRANT` no desaparecen: toman su default. Que
+    // `status = 'new'` sea el default es lo que hace que sacarla del privilegio sea suficiente —
+    // si el default fuera otro, el visitante elegiría su estado sin nombrar la columna.
+    const rows = await adminRows<{
+      status: string;
+      offer_usd: string | null;
+      internal_notes: string | null;
+      reciente: boolean;
+    }>(`select status, offer_usd, internal_notes, (created_at > now() - interval '5 minutes') as reciente
+        from tradein_leads where tenant_id = '${TENANT_A}' and id <> '${LEAD_A}'`);
+    expect(rows.length, 'el control positivo dejó una fila y sólo una').toBe(1);
+    expect(rows[0]).toEqual({ status: 'new', offer_usd: null, internal_notes: null, reciente: true });
+  });
+
+  // ── b · el aislamiento: la capa POLICY ────────────────────────────────────────────────────
+  it('un `tenant_id` de B metido en el body cae en la vidriera de A: lo frena la POLICY', async () => {
+    // El tenant sale del claim que `proxy.ts` derivó del host, JAMÁS del body. Si esto entrara,
+    // un `curl` le llenaría el inbox de canje a cualquier reseller del sistema.
+    const visitante = openStorefront(SLUG_A);
+    try {
+      const { capa, filas } = await veredicto(visitante, 'anon', canje({}, `'${TENANT_B}'`));
+      expect(capa, 'no lo frenó el `WITH CHECK`: el aislamiento del canje no está probado').toBe('POLICY');
+      expect(filas).toBe(0);
+    } finally {
+      await visitante.close();
+    }
+  });
+
+  it('sin el claim del host el canje no entra a ningún lado: la vidriera falla CERRADO', async () => {
+    // `storefront_tenant_id()` devuelve NULL sin claim, la comparación da NULL y el insert rebota.
+    // Las tres formas de intentarlo —la función, el tenant literal y el NULL explícito— tienen que
+    // rebotar por el MISMO motivo: si alguna diera `23502` (NOT NULL), la que estaría frenando la
+    // fila sería la forma de la tabla y no la policy, y el día que la columna acepte NULL se abre.
+    const sinClaim = openStorefront(null);
+    try {
+      for (const intento of [canje(), canje({}, `'${TENANT_A}'`), canje({}, 'null')]) {
+        const { capa } = await veredicto(sinClaim, 'anon', intento);
+        expect(capa, `sin claim, este insert no lo frenó la policy: ${intento}`).toBe('POLICY');
+      }
+    } finally {
+      await sinClaim.close();
+    }
+  });
+
+  // ── c · lo que el visitante no puede NOMBRAR: la capa GRANT ───────────────────────────────
+  it('el visitante no se pone precio a sí mismo: nombrar `offer_usd` lo frena el GRANT', async () => {
+    // `offer_usd` es lo que el reseller ofrece pagar por el equipo, o sea el COSTO de la unidad que
+    // va a nacer de este canje (`CLAUDE.md` §9). Que lo escriba el visitante es escribir el costo
+    // del stock ajeno desde afuera. Y el rechazo tiene que ser de la capa GRANT: si viniera de la
+    // policy, querría decir que la columna está otorgada y lo único que la salva es el tenant.
+    const visitante = openStorefront(SLUG_A);
+    try {
+      const { capa } = await veredicto(visitante, 'anon', canje({ offer_usd: '1.00' }));
+      expect(capa, '`offer_usd` está otorgada a `anon`: el costo se escribe desde la vidriera').toBe('GRANT');
+    } finally {
+      await visitante.close();
+    }
+  });
+
+  it('un `curl` no deja su propio canje en `accepted`: nombrar `status` lo frena el GRANT', async () => {
+    // Sin esto, el visitante se saltea la evaluación del dueño entera y se autoaprueba el canje.
+    const visitante = openStorefront(SLUG_A);
+    try {
+      const { capa } = await veredicto(visitante, 'anon', canje({ status: `'accepted'` }));
+      expect(capa, '`status` está otorgada a `anon`: el visitante elige el estado de su lead').toBe('GRANT');
+    } finally {
+      await visitante.close();
+    }
+  });
+
+  it('las notas internas del dueño no las escribe el visitante: `internal_notes` lo frena el GRANT', async () => {
+    const visitante = openStorefront(SLUG_A);
+    try {
+      const { capa } = await veredicto(visitante, 'anon', canje({ internal_notes: `'me lo dejo en 100'` }));
+      expect(capa).toBe('GRANT');
+    } finally {
+      await visitante.close();
+    }
+  });
+
+  it('tampoco forja el `id`, ni antedata el `created_at`, ni se autoasigna el canje aceptado', async () => {
+    // Las cinco que quedan afuera del `GRANT`, cada una por su motivo:
+    //   `id`/`created_at`/`updated_at` salen de sus defaults — un lead antedatado se cuela arriba
+    //   en el inbox—, y `created_listing_id`/`handled_by` son el RESULTADO de una decisión del
+    //   dueño que el visitante no tomó. Las tres capas se distinguen igual que arriba: todas GRANT.
+    const visitante = openStorefront(SLUG_A);
+    try {
+      const forjadas: ReadonlyArray<Readonly<Record<string, string>>> = [
+        { id: `'${INTRUDER_ROW}'` },
+        { created_at: `now() - interval '30 days'` },
+        { updated_at: `now() - interval '30 days'` },
+        { created_listing_id: `'${LISTING_A}'` },
+        { handled_by: `'${USER_A}'` },
+      ];
+      for (const campos of forjadas) {
+        const columna = Object.keys(campos)[0] ?? '';
+        const { capa } = await veredicto(visitante, 'anon', canje(campos));
+        expect(capa, `\`${columna}\` está otorgada a \`anon\` y no debería`).toBe('GRANT');
+      }
+    } finally {
+      await visitante.close();
+    }
+  });
+
+  // ── d · el visitante escribe y NO lee: ni siquiera lo propio ──────────────────────────────
+  it('el visitante no lee ni el canje que acaba de dejar: `insert … returning id` lo frena el GRANT', async () => {
+    // Consecuencia práctica para quien escriba el handler de la vidriera, y no se arregla con un
+    // privilegio más: si el formulario necesita confirmar algo, que confirme sin el id.
+    const visitante = openStorefront(SLUG_A);
+    try {
+      const { capa } = await veredicto(visitante, 'anon', `${canje()} returning id`);
+      expect(capa, 'el `returning` devolvió el id: `anon` tiene SELECT sobre el inbox de canje').toBe('GRANT');
+    } finally {
+      await visitante.close();
+    }
+  });
+
+  it('el inbox de canje no es contenido de la vidriera: leerlo, corregirlo o borrarlo lo frena el GRANT', async () => {
+    // Un `select` acá publicaría el nombre y el WhatsApp de cada persona que ofreció un equipo, en
+    // una URL sin login. Es la PII de un tercero, no del reseller: es el peor dato del producto.
+    const visitante = openStorefront(SLUG_A);
+    try {
+      for (const intento of [
+        `select customer_wa_phone from tradein_leads`,
+        `select count(*) from tradein_leads`,
+        `update tradein_leads set notes = 'me arrepenti'`,
+        `delete from tradein_leads`,
+      ]) {
+        const { capa } = await veredicto(visitante, 'anon', intento);
+        expect(capa, `\`anon\` puede correr esto sobre el inbox de canje: ${intento}`).toBe('GRANT');
+      }
+    } finally {
+      await visitante.close();
+    }
+  });
+
+  // ── e · y del lado autenticado, el canje sigue siendo del tenant que lo recibió ────────────
+  it('el dueño de B no ve el canje que un visitante dejó en la vidriera de A', async () => {
+    // El otro extremo del mismo invariante: la PII del visitante entra sin login pero se lee con
+    // uno, y ese login es de UN tenant. Se compara contra el conteo real de A para que no sea
+    // verde por vacío si alguien deja de escribir leads.
+    const enBase = await adminRows<{ n: string }>(
+      `select count(*)::text as n from tradein_leads where tenant_id = '${TENANT_A}'`,
+    );
+    const veA = await a.rows<{ n: string }>(`select count(*)::text as n from tradein_leads`);
+    expect(Number(enBase[0]?.n ?? '0'), 'no hay ni un canje en A: esta aserción no probaría nada').toBeGreaterThan(0);
+    expect(veA[0]?.n, 'el dueño de A no ve sus propios canjes').toBe(enBase[0]?.n);
+
+    const veB = await b.rows<{ customer_wa_phone: string }>(`select customer_wa_phone from tradein_leads`);
+    expect(veB, 'el reseller de al lado está leyendo la PII de los canjes de A').toEqual([]);
+  });
+
+  it('el dueño de B tampoco corrige ni borra un canje de A, ni le planta uno en el inbox', async () => {
+    expect(await b.affected(`update tradein_leads set offer_usd = 1 where tenant_id = '${TENANT_A}'`)).toBe(0);
+    expect(await b.affected(`delete from tradein_leads where tenant_id = '${TENANT_A}'`)).toBe(0);
+    const { capa } = await veredicto(b, 'authenticated', canje({}, `'${TENANT_A}'`));
+    expect(capa, 'un reseller logueado puede plantar un canje en el inbox del de al lado').toBe('POLICY');
+  });
+
+  // ── f · los CHECK: el borde de adentro Y el de afuera ─────────────────────────────────────
+  //
+  // Un CHECK probado sólo por afuera no distingue *"el límite está en 100"* de *"la columna no
+  // acepta nada"*: las dos versiones dan `23514` para 101. Por eso cada límite se mide dos veces.
+  //
+  // Y se mide como `anon`, que es el caller que importa: entre un `curl` y la tabla, el handler es
+  // la ÚNICA otra capa. Zod en el borde va a exigir lo mismo, pero una afirmación que vive sólo en
+  // el borde se pierde el día que aparece un segundo caller (doctrina de ADR-025).
+  //
+  // Nota de orden de evaluación, medida en PostgreSQL 16.14: con el tenant equivocado **y** un
+  // valor fuera de rango, el que contesta es RLS (`POLICY`), no el CHECK. Por eso todos los casos
+  // de acá abajo usan el tenant correcto: si no, medirían la policy creyendo medir el constraint.
+  describe('R2c-f · los límites de tamaño y rango del canje viven en el motor, no en el formulario', () => {
+    const BORDES: ReadonlyArray<{
+      readonly columna: string;
+      readonly adentro: readonly string[];
+      readonly afuera: readonly string[];
+    }> = [
+      // `length between 1 and 80` — un nombre vacío no es un lead, uno de 80 sí.
+      { columna: 'customer_name', adentro: [`repeat('x', 1)`, `repeat('x', 80)`], afuera: [`''`, `repeat('x', 81)`] },
+      // `between 6 and 25` — ancho para un teléfono argentino con prefijo, sin validar formato:
+      // una regex de teléfono en el motor es la clase de constraint que después nadie puede migrar.
+      { columna: 'customer_wa_phone', adentro: [`repeat('9', 6)`, `repeat('9', 25)`], afuera: [`repeat('9', 5)`, `repeat('9', 26)`] },
+      { columna: 'model_text', adentro: [`repeat('x', 1)`, `repeat('x', 120)`], afuera: [`''`, `repeat('x', 121)`] },
+      // Los cuatro opcionales van detrás de un `is null or`: `null` es un lead legítimo. El
+      // visitante muchas veces no sabe los GB ni el % de batería y el canje igual vale, porque la
+      // evaluación de verdad es presencial.
+      { columna: 'color', adentro: ['null', `repeat('x', 40)`], afuera: [`repeat('x', 41)`] },
+      { columna: 'notes', adentro: ['null', `repeat('x', 500)`], afuera: [`repeat('x', 501)`] },
+      { columna: 'battery_pct', adentro: ['null', '0', '100'], afuera: ['-1', '101'] },
+      { columna: 'storage_gb', adentro: ['null', '1', '4096'], afuera: ['0', '4097'] },
+    ];
+
+    it('el valor JUSTO ADENTRO del límite entra: un CHECK que rechaza todo también pasa el de afuera', async () => {
+      const rebotados: string[] = [];
+      const visitante = openStorefront(SLUG_A);
+      try {
+        for (const borde of BORDES) {
+          for (const valor of borde.adentro) {
+            const { capa } = await veredicto(visitante, 'anon', canje({ [borde.columna]: valor }));
+            if (capa !== 'ENTRA') rebotados.push(`${borde.columna} = ${valor} → ${capa}`);
+          }
+        }
+      } finally {
+        await visitante.close();
+      }
+      expect(rebotados, 'un canje legítimo rebota en la base: el límite quedó más apretado de lo que dice').toEqual([]);
+    });
+
+    it('el valor JUSTO AFUERA rebota con 23514, que es el CHECK y no el GRANT ni la policy', async () => {
+      const colados: string[] = [];
+      const visitante = openStorefront(SLUG_A);
+      try {
+        for (const borde of BORDES) {
+          for (const valor of borde.afuera) {
+            const { capa } = await veredicto(visitante, 'anon', canje({ [borde.columna]: valor }));
+            if (capa !== 'CHECK') colados.push(`${borde.columna} = ${valor} → ${capa}`);
+          }
+        }
+      } finally {
+        await visitante.close();
+      }
+      expect(colados, 'un valor fuera de rango entró, o lo frenó otra capa que la del CHECK').toEqual([]);
+    });
+
+    it('el mismo canje sobredimensionado rebota también para el DUEÑO logueado: el límite es del motor', async () => {
+      // Si el límite viviera en el borde de la vidriera, el panel autenticado —que es otro caller—
+      // lo escribiría sin problema. Un `notes` de 500KB por lead es también una cuenta de Postgres.
+      const { capa } = await veredicto(
+        a,
+        'authenticated',
+        canje({ notes: `repeat('x', 501)` }, `'${TENANT_A}'`),
+      );
+      expect(capa, 'el CHECK no alcanza al lado autenticado: el límite está en el borde, no en el motor').toBe('CHECK');
+    });
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════
 describe('R3 · un reseller no puede MODIFICAR el stock de otro', () => {
   it('B bajándole el precio a la unidad de A afecta 0 filas', async () => {
     expect(await b.affected(`update listings set price_usd = 1.00 where id = '${LISTING_A}'`)).toBe(0);
@@ -1087,7 +1577,19 @@ describe('R6 · ninguna policy es `using (true)`: RLS decorativa es peor que no 
   // comando de cada uno. Una escritura más, o esta misma convertida en `FOR ALL`, o un UPDATE para
   // `anon`, rompen el test igual que antes. La diferencia entre "5" y "6" no es de cantidad: es
   // que el número lo escribió alguien.
-  describe('R6c · las policies `TO anon` son 6: las 5 de lectura de la vidriera y el beacon del click', () => {
+  //
+  // ── S8 volvió a mover la lista, y esta vez además PARTIÓ el número ───────────────────────
+  // `drizzle/0008_storefront_tradein_lead_insert.sql` agrega la SEGUNDA escritura sin autenticar
+  // del producto —el lead de canje— y con eso el total pasa de 6 a 7. El problema no es el número
+  // nuevo: es que en un solo entero, "6 → 7" no distingue *"se publicó una tabla más en la
+  // vidriera"* de *"se le dio una lapicera a cualquiera con `curl`"*. Son dos superficies con dos
+  // riesgos distintos —una filtra un dato, la otra acepta uno— y sumarlas esconde justo la que
+  // este bloque existe para custodiar.
+  //
+  // Así que el conteo se parte en dos y cada mitad se afirma por separado, con su migración
+  // nombrada al lado. Crecer la de ESCRITURA sigue siendo algo que alguien tiene que escribir a
+  // mano acá adentro, que es la fricción entera.
+  describe('R6c · las policies `TO anon` son 7 = 5 de LECTURA + 2 de ESCRITURA, y se cuentan aparte', () => {
     /** Las de `drizzle/0002_storefront_anon_grants.sql` §5. Todas de lectura. */
     const LECTURA = [
       'fx_settings.fx_settings_storefront_anon_select',
@@ -1097,10 +1599,24 @@ describe('R6 · ninguna policy es `using (true)`: RLS decorativa es peor que no 
       'tenants.tenants_storefront_anon_select',
     ];
 
-    /** La de `drizzle/0004_storefront_wa_click_insert.sql`. **Una**, de INSERT, y ni una más. */
-    const ESCRITURA = ['wa_click_events.wa_click_events_storefront_insert'];
+    /**
+     * Las DOS escrituras sin autenticar del producto, cada una con la migración que la creó. No
+     * hay una tercera, y agregarla es editar esta lista a mano.
+     *
+     *  · `wa_click_events` — `drizzle/0004_storefront_wa_click_insert.sql` (S4). El beacon del
+     *    click de WhatsApp. Comportamiento auditado en R2b.
+     *  · `tradein_leads`   — `drizzle/0008_storefront_tradein_lead_insert.sql` (S8). El lead de
+     *    canje que el visitante deja desde la vidriera: `FOR INSERT TO anon`,
+     *    `WITH CHECK (tenant_id = (select public.storefront_tenant_id()))`, `qual` NULL. Es la
+     *    primera escritura sin autenticar que trae **texto libre y PII del visitante**, y su
+     *    comportamiento —no sólo su forma— está auditado en R2c.
+     */
+    const ESCRITURA = [
+      'tradein_leads.tradein_leads_storefront_insert',
+      'wa_click_events.wa_click_events_storefront_insert',
+    ];
 
-    /** `policiesForAnon` ordena por `tabla.policy`, y `wa_click_events` va después de `tenants`. */
+    /** `policiesForAnon` ordena por `tabla.policy`, y las dos de escritura van después de `tenants`. */
     const ESPERADAS = [...LECTURA, ...ESCRITURA];
 
     it('el detector de policies `TO anon` encuentra la trampa plantada, con su comando', async () => {
@@ -1108,12 +1624,36 @@ describe('R6 · ninguna policy es `using (true)`: RLS decorativa es peor que no 
       expect(rows.map((r) => `${r.t}:${r.cmd}`)).toEqual(['leaky_anon_policy.leaky_anon_write:ALL']);
     });
 
-    it('en public son EXACTAMENTE esas 6, por nombre: una policy `TO anon` nueva rompe el test', async () => {
+    it('en public son EXACTAMENTE esas 7, por nombre: una policy `TO anon` nueva rompe el test', async () => {
       const rows = await adminRows<{ t: string }>(policiesForAnon('public'));
       expect(rows.map((r) => r.t)).toEqual(ESPERADAS);
     });
 
-    it('el comando de cada una está fijado: 5 de SELECT y UNA sola de INSERT, la del beacon', async () => {
+    it('la superficie de LECTURA de la vidriera son 5 policies, y las 5 son de SELECT', async () => {
+      // La mitad "publica un dato de más". Una tabla nueva en la vidriera entra por acá.
+      const rows = await adminRows<{ t: string; cmd: string }>(policiesForAnon('public'));
+      expect(rows.filter((r) => r.cmd === 'SELECT').map((r) => r.t)).toEqual(LECTURA);
+    });
+
+    it('la superficie de ESCRITURA SIN LOGIN son 2 policies de INSERT: el beacon (S4) y el canje (S8)', async () => {
+      // La otra mitad, y la cara: acá del otro lado del cable no hay nadie identificado. Este
+      // número se lee solo, sin restarle 5 a un total, que es el punto de haberlo partido.
+      const rows = await adminRows<{ t: string; cmd: string }>(policiesForAnon('public'));
+      expect(
+        rows.filter((r) => r.cmd === 'INSERT').map((r) => r.t),
+        'apareció una escritura sin autenticar que no es ni el beacon del click ni el lead de canje',
+      ).toEqual(ESCRITURA);
+    });
+
+    it('y no hay una TERCERA superficie: `anon` no tiene UPDATE, DELETE ni `FOR ALL` en ningún lado', async () => {
+      // Un `FOR ALL` no cambia la cantidad de policies ni la suma de las dos mitades: entra como
+      // un `cmd` que no es ninguno de los dos, y sin esta aserción pasaría entre las dos listas.
+      const rows = await adminRows<{ t: string; cmd: string }>(policiesForAnon('public'));
+      const otras = rows.filter((r) => r.cmd !== 'SELECT' && r.cmd !== 'INSERT');
+      expect(otras.map((r) => `${r.t}:${r.cmd}`)).toEqual([]);
+    });
+
+    it('el comando de cada una está fijado: 5 de SELECT y 2 de INSERT, el beacon y el canje', async () => {
       // Fijar el par (nombre, comando) es lo que tapa los tres cambios silenciosos que importan:
       // que una de lectura se ensanche a `FOR ALL`, que aparezca un UPDATE o un DELETE para el
       // visitante, y que la de escritura deje de ser sólo de INSERT. Ninguno de los tres cambia la
@@ -1133,7 +1673,7 @@ describe('R6 · ninguna policy es `using (true)`: RLS decorativa es peor que no 
       expect(conCheck.map((r) => r.t)).toEqual([]);
     });
 
-    it('ninguna policy de `anon` es decorativa: las 6 acotan por el claim del host', async () => {
+    it('ninguna policy de `anon` es decorativa: las 7 acotan por el claim del host', async () => {
       // ── Dónde vive el predicado depende del comando, y la diferencia NO es cosmética ──
       // Una policy de INSERT tiene `qual` **NULL por construcción**: no hay filas previas que
       // filtrar, y todo su predicado está en el `with check`. Leer `qual` para las seis reventaría
@@ -1228,34 +1768,75 @@ describe('R7 · el privilegio de `anon` es la allowlist de columnas públicas y 
 
   /**
    * ── La escritura de `anon`, escrita como lista literal ────────────────────────────────────
-   * Antes de S4 esto era `[]` y era fácil de defender. Desde `drizzle/0004` hay exactamente UNA
-   * entrada, y la lista literal es lo único que separa "el beacon escribe" de "`anon` escribe".
-   * Una segunda escritura sin autenticar —de la tabla que sea, del comando que sea— agrega una
-   * entrada y rompe el test. Es el punto entero de mantenerlo así de duro.
+   * Antes de S4 esto era `[]` y era fácil de defender. La lista literal es lo único que separa
+   * "estas dos tablas reciben una escritura" de "`anon` escribe", y cada entrada nombra la
+   * migración que la justifica:
+   *
+   *   · `wa_click_events` — `drizzle/0004_storefront_wa_click_insert.sql` (S4). El beacon del
+   *     click de WhatsApp: 3 columnas.
+   *   · `tradein_leads`   — `drizzle/0008_storefront_tradein_lead_insert.sql` (S8). El lead de
+   *     canje que el visitante deja desde la vidriera: 9 columnas. Es la SEGUNDA escritura sin
+   *     autenticar del producto y la primera con PII adentro.
+   *
+   * Una tercera —de la tabla que sea, del comando que sea— agrega una entrada y rompe el test.
+   * Es el punto entero de mantenerlo así de duro: el número no crece solo, lo crece alguien y
+   * tiene que escribir de dónde sale.
    */
-  const ESCRITURA_DE_ANON = ['wa_click_events:column:INSERT'];
+  const ESCRITURA_DE_ANON = ['tradein_leads:column:INSERT', 'wa_click_events:column:INSERT'];
 
   /**
    * Y las columnas, una por una. `anonWritePrivileges` contesta *"¿hay escritura de columna en esta
    * tabla?"*, así que una columna de más en el MISMO `GRANT` no le cambia la salida ni un carácter.
-   * Estas tres son las que el handler manda; `id` y `created_at` salen de sus defaults **porque no
-   * están acá**, y por eso el visitante no puede forjar el uno ni antedatar el otro.
+   * Acá están las 12, y lo que **no** está es el diseño:
+   *
+   *   · `wa_click_events` (3, `drizzle/0004`) — las que manda el handler del beacon. `id` y
+   *     `created_at` salen de sus defaults **porque no están acá**, y por eso el visitante no
+   *     puede forjar el uno ni antedatar el otro.
+   *   · `tradein_leads` (9, `drizzle/0008`) — el formulario de canje entero. Fuera del `GRANT`
+   *     quedaron, a propósito: `status` (el visitante no deja su propio lead en `accepted` y se
+   *     saltea la evaluación del dueño), `offer_usd` e `internal_notes` (marcadas `SENSITIVE`: son
+   *     el costo y las notas del dueño, `CLAUDE.md` §9), `created_listing_id` y `handled_by` (los
+   *     escribe el lado autenticado al aceptar el canje) e `id`/`created_at`/`updated_at`.
+   *
+   * La FORMA de ese privilegio se mide acá; el COMPORTAMIENTO —que nombrar `offer_usd` rebote en
+   * la capa `GRANT` y no en otra— se mide en R2c, contra Postgres real y con el rol probado.
    */
   const COLUMNAS_ESCRIBIBLES = [
+    'tradein_leads.battery_pct:INSERT',
+    'tradein_leads.color:INSERT',
+    'tradein_leads.customer_name:INSERT',
+    'tradein_leads.customer_wa_phone:INSERT',
+    'tradein_leads.declared_condition:INSERT',
+    'tradein_leads.model_text:INSERT',
+    'tradein_leads.notes:INSERT',
+    'tradein_leads.storage_gb:INSERT',
+    'tradein_leads.tenant_id:INSERT',
     'wa_click_events.listing_id:INSERT',
     'wa_click_events.source:INSERT',
     'wa_click_events.tenant_id:INSERT',
   ];
 
-  it('la ÚNICA escritura de `anon` en public es el INSERT de columna del beacon del click', async () => {
+  /**
+   * `drizzle/0008` · las DOS columnas `SENSITIVE` que `anon` puede escribir, y son sus propios
+   * datos: el nombre y el WhatsApp que el visitante tipea en el formulario de canje. La marca ahí
+   * dice *"no sale a la vidriera, ni al chatbot, ni a un log"*, no *"nadie la escribe"*.
+   * Ni una del dueño: `offer_usd` (el costo de la unidad que nace del canje) e `internal_notes`
+   * están marcadas igual y quedaron **fuera** del GRANT.
+   */
+  const SENSITIVES_ESCRIBIBLES = [
+    'tradein_leads.customer_name:INSERT',
+    'tradein_leads.customer_wa_phone:INSERT',
+  ];
+
+  it('las escrituras de `anon` en public son DOS y de columna: el beacon (S4) y el canje (S8)', async () => {
     const rows = await adminRows<{ t: string }>(anonWritePrivileges('public'));
     expect(
       rows.map((r) => r.t),
-      'apareció una escritura sin autenticar que no es la del beacon de S4',
+      'apareció una escritura sin autenticar que no es ni el beacon de S4 ni el lead de canje de S8',
     ).toEqual(ESCRITURA_DE_ANON);
   });
 
-  it('esa escritura NO es de tabla: `has_table_privilege` sobre wa_click_events sigue en false', async () => {
+  it('ninguna de las dos es de TABLA: `has_table_privilege` de INSERT sigue en false en todo public', async () => {
     // `GRANT INSERT (cols)` y `GRANT INSERT` se leen casi igual en un `.sql` y no son lo mismo: el
     // de tabla alcanza a toda columna **presente y futura**, incluidas `id` y `created_at`. Por eso
     // el privilegio de columna no confiere el de tabla, y por eso este cero es el que separa los
@@ -1276,7 +1857,7 @@ describe('R7 · el privilegio de `anon` es la allowlist de columnas públicas y 
     expect(rows.map((r) => r.t)).toEqual(['leaky_grant_write.status:INSERT']);
   });
 
-  it('las columnas que `anon` puede escribir son esas tres: `id` y `created_at` no se pueden forjar', async () => {
+  it('las 12 columnas que `anon` escribe están enumeradas: `status` y `offer_usd` no son dos de ellas', async () => {
     const rows = await adminRows<{ t: string }>(anonWritableColumns('public'));
     expect(rows.map((r) => r.t)).toEqual(COLUMNAS_ESCRIBIBLES);
   });
@@ -1289,6 +1870,22 @@ describe('R7 · el privilegio de `anon` es la allowlist de columnas públicas y 
   it('ninguna columna marcada SENSITIVE es legible por `anon` (leído del COMMENT de la base)', async () => {
     const rows = await adminRows<{ t: string }>(anonReadableSensitiveColumns('public'));
     expect(rows.map((r) => r.t)).toEqual([]);
+  });
+
+  it('el detector de columnas SENSITIVE ESCRIBIBLES encuentra su propia trampa plantada', async () => {
+    const rows = await adminRows<{ t: string }>(anonWritableSensitiveColumns(CONTROL_SCHEMA));
+    expect(rows.map((r) => r.t)).toEqual(['leaky_grant_write.status:INSERT']);
+  });
+
+  it('de las columnas SENSITIVE, `anon` sólo escribe la PII que el propio visitante tipea', async () => {
+    // La pregunta que ningún detector de este archivo hacía antes de S8: los de escritura no miran
+    // la marca y el de la marca sólo miraba lectura. `offer_usd` es el costo de la unidad que nace
+    // del canje: que lo escriba un `curl` es escribir el costo del stock ajeno desde afuera.
+    const rows = await adminRows<{ t: string }>(anonWritableSensitiveColumns('public'));
+    expect(
+      rows.map((r) => r.t),
+      '`anon` escribe una columna sensible del DUEÑO (costo o notas internas): `CLAUDE.md` §9',
+    ).toEqual(SENSITIVES_ESCRIBIBLES);
   });
 
   it('el read model de `anon` es EXACTAMENTE la allowlist: ni una columna de más', async () => {
