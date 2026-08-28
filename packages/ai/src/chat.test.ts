@@ -24,7 +24,8 @@ import { parseAiEnv } from './env';
 import { isAiError } from './errors';
 import { createDownProvider, createStubProvider, type StubTurn } from './provider';
 import { SOFT_CAP_MESSAGES_PER_TENANT_PER_DAY, usageMeasured, usageUnmeasured } from './entitlement';
-import { MAX_INPUT_TOKENS } from './budget';
+import { MAX_INPUT_TOKENS, MAX_OUTPUT_TOKENS } from './budget';
+import { costPerThousandMessages } from './pricing';
 import { businessPlanListingFixture, listingFixture, reservedListingFixture } from './fixtures/listing';
 import type { SearchHit } from './tools';
 import { UNTRUSTED_CLOSE, UNTRUSTED_OPEN } from '@istock/domain';
@@ -507,6 +508,209 @@ describe('el techo facturable del turno', () => {
 });
 
 /**
+ * ## Un turno que falla igual se facturó
+ *
+ * `generateWithFallback` devolvía la ronda fallida como un `throw` y `answerChat` la atrapaba para
+ * derivar a WhatsApp. Correcto para el comprador y **mudo para la factura**: las llamadas que los
+ * dos proveedores ya habían atendido morían con el stack y el turno se reportaba con
+ * `billed.calls = 0`. El caso no es de laboratorio — la respuesta vacía es «el modo de falla más
+ * común de un modelo barato bajo carga» (`chat.ts`), o sea que bajo carga le pasa a muchos turnos a
+ * la vez: la factura sube y el log no tiene nada que mostrar.
+ *
+ * Lo que estos tests clavan es **el par**: el comprador se va a WhatsApp *y* la medición sobrevive.
+ * Un arreglo que hiciera lo segundo rompiendo lo primero (dejar salir el error) pasaría un test de
+ * `billed` solo, así que cada caso afirma también el `handoff`.
+ *
+ * La sección anterior tenía escrito, en el barrido de «los dos vacíos», que esa subfacturación era
+ * «preexistente y NO decidida acá», con la nota de que la forma del test sobrevivía a cualquier
+ * resolución. Esta es la resolución.
+ */
+describe('un turno que falla igual se facturó', () => {
+  it('los dos vacíos: el comprador se va a WhatsApp y las DOS llamadas quedan en la factura', async () => {
+    const answer = await answerChat(
+      input(),
+      deps({
+        primary: createStubProvider({ id: 'primary', script: [''] }),
+        fallback: createStubProvider({ id: 'fallback', script: [''] }),
+      }),
+    );
+    expect(answer.handoff).toBe('provider_down');
+    expect(answer.provider).toBe('none');
+    // El literal es el punto: antes de 2026-08-28 esto era 0 y el turno costaba lo mismo.
+    expect(answer.billed.calls).toBe(2);
+    expect(answer.billed.primaryServedEmpty).toBe(true);
+  });
+
+  it('la entrada facturada del turno fallido es la SUMA de los prompts que se procesaron', async () => {
+    const answer = await answerChat(
+      input(),
+      deps({
+        primary: createStubProvider({ id: 'primary', script: [''] }),
+        fallback: createStubProvider({ id: 'fallback', script: [''] }),
+      }),
+    );
+    // Los dos proveedores comieron el MISMO prompt, así que la factura es dos veces la cota. Y la
+    // cota se reporta: `promptTokens: 0` diría que no se armó ningún prompt, al lado de un
+    // `billed.calls` que dice que dos proveedores lo procesaron.
+    expect(answer.promptTokens).toBeGreaterThan(0);
+    expect(answer.promptTokens).toBeLessThanOrEqual(MAX_INPUT_TOKENS);
+    expect(answer.billed.tokensIn).toBe(answer.promptTokens * 2);
+    // `tokensIn`/`tokensOut` de primer nivel describen la respuesta SERVIDA, y no hubo ninguna.
+    expect(answer.tokensIn).toBe(0);
+    expect(answer.tokensOut).toBe(0);
+  });
+
+  it('la falla en la ronda de tool arrastra lo que ya había pagado la ronda inicial', async () => {
+    // Ronda 1: el primario pide la tool (1 llamada). Ronda 2: el primario contesta vacío y el
+    // fallback también (2 más). Un turno que no contesta nada y llega igual al TECHO del sistema.
+    const primary = createStubProvider({
+      id: 'primary',
+      script: [{ text: '', toolCalls: [{ name: 'get_open_listing', args: {} }] }, ''],
+    });
+    const answer = await answerChat(input(), deps({ primary, fallback: createStubProvider({ id: 'fallback', script: [''] }) }));
+    expect(answer.handoff).toBe('provider_down');
+    expect(answer.billed.calls).toBe(MAX_BILLED_CALLS_PER_TURN);
+    expect(answer.billed.primaryServedEmpty).toBe(true);
+  });
+
+  it('el primario que TIRA y un fallback vacío: se factura 1, no 2, y no hay degradación del primario', async () => {
+    // El único turno donde el fallback contesta vacío **sin** que el primario haya contestado vacío
+    // antes. Mientras la ronda fallida se tiraba, este caso no era observable desde afuera y
+    // `primaryServedEmpty` podía prenderse con CUALQUIER respuesta vacía sin que nada se pusiera en
+    // rojo (mutación medida por el LEAD: 0 rojos). Ahora el par sale por el borde del paquete.
+    const answer = await answerChat(
+      input(),
+      deps({
+        primary: createDownProvider('gemini'),
+        fallback: createStubProvider({ id: 'fallback', script: [''] }),
+      }),
+    );
+    expect(answer.handoff).toBe('provider_down');
+    // La que tiró no se factura; la vacía del fallback sí.
+    expect(answer.billed.calls).toBe(1);
+    // Y el que sirvió vacío fue el FALLBACK: prenderlo acá sería atribuirle al primario una llamada
+    // que nunca atendió, y `docs/COST.md` cuenta las llamadas del primario a 1,33× las del otro.
+    expect(answer.billed.primaryServedEmpty).toBe(false);
+  });
+
+  it('los dos caídos —sin llamada atendida— siguen facturando CERO', async () => {
+    // El otro extremo, y es la mitad que hace honesto al arreglo: «se facturó» no puede degenerar
+    // en «se cuenta siempre». Dos excepciones no son dos llamadas.
+    const answer = await answerChat(
+      input(),
+      deps({ primary: createDownProvider('gemini'), fallback: createDownProvider('groq') }),
+    );
+    expect(answer.handoff).toBe('provider_down');
+    expect(answer.billed).toEqual({ calls: 0, tokensIn: 0, tokensOut: 0, primaryServedEmpty: false });
+  });
+
+  it('el turno fallido reporta lo que la dieta tuvo que tirar: el prompt se armó', async () => {
+    const answer = await answerChat(
+      input(),
+      deps({
+        primary: createStubProvider({ id: 'primary', script: [''] }),
+        fallback: createStubProvider({ id: 'fallback', script: [''] }),
+      }),
+    );
+    expect(answer.trimmed).not.toBeNull();
+  });
+});
+
+/**
+ * ## El techo de GASTO es el máximo sobre las ramas, no la rama barata
+ *
+ * `chat.ts` publicaba «−29% del techo de gasto» y estaba mal. La cuenta que lo produjo —restarle al
+ * techo viejo una llamada del primario, `0,000672 − 0,000192 = 0,000480`— **está bien hecha sobre
+ * el caso equivocado**: describe una de las dos ramas que entran en 3 llamadas, y la otra sale más
+ * cara. El techo viejo no podía tener este defecto, porque con 4 llamadas hay una sola composición
+ * posible (2 primarias + 2 fallback); el salteo del primario vacío es justo lo que partió el techo
+ * en dos ramas de distinto precio, y el número se publicó como si siguiera habiendo una sola.
+ *
+ * **Por eso este test no cuenta llamadas: pesa cada llamada por lo que cuesta.** Un techo en
+ * llamadas y un techo en plata sólo coinciden si todas las llamadas valen igual, y no valen: al
+ * tope de la dieta una llamada al primario cuesta 1,33× una al fallback.
+ *
+ * **Y las ramas no las enumero yo: las ejerce el orquestador.** Cada caso corre `answerChat` de
+ * verdad y cuenta las llamadas que cada stub recibió; el techo es el máximo de eso. Enumerar
+ * composiciones a mano es exactamente el paso que falló la primera vez, y además admitiría ramas
+ * imposibles (3 primarias necesitarían 3 rondas). Los guiones son deliberadamente **sin
+ * excepciones**: una llamada que tira no se factura, así que ahí «intentada» y «atendida» serían
+ * dos números distintos.
+ *
+ * Las tarifas salen de `PRICE_PER_MTOK` y los techos de `budget.ts`: si mañana cambia el precio del
+ * primario o el techo de salida, este test se mueve solo y el número publicado queda desmentido acá
+ * y no en la factura. `docs/COST.md` §2.8.3b es el análisis y es de `cost-auditor`.
+ */
+describe('el techo de GASTO del turno', () => {
+  /** USD de UNA llamada al tope de la dieta: es el peor caso de tokens, que es lo que acota un techo. */
+  function usdPerCall(model: string): number {
+    const per1000 = costPerThousandMessages(model, MAX_INPUT_TOKENS, MAX_OUTPUT_TOKENS);
+    if (per1000 === null) throw new Error(`sin tarifa conocida para ${model}`);
+    return per1000 / 1000;
+  }
+
+  const PRIMARY_CALL = usdPerCall(env.primaryModel);
+  const FALLBACK_CALL = usdPerCall(env.fallbackModel);
+
+  /**
+   * El techo de antes del salteo: dos rondas × (primario vacío + fallback). **Una sola composición
+   * posible**, y por eso este número nunca estuvo en discusión.
+   */
+  const CEILING_BEFORE_SKIP = 2 * PRIMARY_CALL + 2 * FALLBACK_CALL;
+
+  /** Guiones sin excepciones: cada llamada intentada es una llamada atendida, o sea facturada. */
+  const branches: readonly { readonly name: string; readonly primary: readonly StubTurn[]; readonly fallback: readonly StubTurn[] }[] = [
+    { name: 'sano sin tool', primary: ['La batería está al 89%.'], fallback: ['x'] },
+    { name: 'sano con tool', primary: [{ text: '', toolCalls: [{ name: 'get_open_listing', args: {} }] }, 'USD 620.'], fallback: ['x'] },
+    { name: 'primario vacío sin tool', primary: [''], fallback: ['La batería está al 89%.'] },
+    { name: 'A · primario vacío en la ronda 1 → 1 primaria + 2 fallback', primary: [''], fallback: [{ text: '', toolCalls: [{ name: 'get_open_listing', args: {} }] }, 'USD 620.'] },
+    { name: 'B · primario sano y vacío en la ronda de tool → 2 primarias + 1 fallback', primary: [{ text: '', toolCalls: [{ name: 'get_open_listing', args: {} }] }, ''], fallback: ['USD 620.'] },
+    { name: 'los dos vacíos', primary: [''], fallback: [''] },
+  ];
+
+  async function priceBranch(branch: (typeof branches)[number]) {
+    const primary = createStubProvider({ id: 'primary', script: branch.primary });
+    const fallback = createStubProvider({ id: 'fallback', script: branch.fallback });
+    const answer = await answerChat(input(), deps({ primary, fallback }));
+    const usd = primary.calls.length * PRIMARY_CALL + fallback.calls.length * FALLBACK_CALL;
+    // Coherencia con la otra unidad: la plata se cobra por las mismas llamadas que `billed` cuenta.
+    expect(primary.calls.length + fallback.calls.length, branch.name).toBe(answer.billed.calls);
+    return { name: branch.name, usd };
+  }
+
+  it('una llamada al primario cuesta 1,33× una al fallback: por eso −25% de llamadas NO es −25% de plata', () => {
+    expect(PRIMARY_CALL).toBeCloseTo(0.000192, 9);
+    expect(FALLBACK_CALL).toBeCloseTo(0.000144, 9);
+    expect(PRIMARY_CALL / FALLBACK_CALL).toBeCloseTo(4 / 3, 6);
+  });
+
+  it('el techo es la rama MÁS CARA de las que el orquestador ejerce, y es la B', async () => {
+    const priced = await Promise.all(branches.map(priceBranch));
+    const worst = priced.reduce((a, b) => (b.usd > a.usd ? b : a));
+    expect(worst.name).toContain('B ·');
+    expect(worst.usd).toBeCloseTo(0.000528, 9);
+  });
+
+  it('la rama barata existe y cuesta 0,000480: costearla y llamarla techo es el bug que se corrigió', async () => {
+    const a = await priceBranch(branches.find((b) => b.name.startsWith('A ·'))!);
+    expect(a.usd).toBeCloseTo(0.00048, 9);
+    // El −29% publicado salía de acá. La rama es real; lo que no es real es que sea el techo.
+    expect((1 - a.usd / CEILING_BEFORE_SKIP) * 100).toBeCloseTo(28.6, 1);
+  });
+
+  it('la baja publicada es −21,4% de plata contra −25% de llamadas, y son dos números distintos', async () => {
+    const priced = await Promise.all(branches.map(priceBranch));
+    const ceiling = priced.reduce((max, b) => Math.max(max, b.usd), 0);
+    expect(CEILING_BEFORE_SKIP).toBeCloseTo(0.000672, 9);
+    // El número que `chat.ts` y el README publican, con un decimal, como se publica.
+    expect(Number(((1 - ceiling / CEILING_BEFORE_SKIP) * 100).toFixed(1))).toBe(21.4);
+    // Y el de llamadas, que sí es −25% y sobrevive el mismo examen: 4 y 3 son máximos sobre ramas.
+    expect(Number((((4 - MAX_BILLED_CALLS_PER_TURN) / 4) * 100).toFixed(1))).toBe(25);
+  });
+});
+
+
+/**
  * ## `billed.primaryServedEmpty` · lo que `calls` solo no puede decir
  *
  * Con el techo en {@link MAX_BILLED_CALLS_PER_TURN} = 3, `calls = 3` es inequívocamente degradado
@@ -624,10 +828,12 @@ describe('la degradación facturada se reporta, y `calls` sola no la distingue',
     // Barrido de invariante, no de valores. Un `primaryServedEmpty: true` con `calls < 2` sería
     // incoherente por construcción: la llamada vacía del primario y la del que lo cubrió son dos.
     //
-    // El barrido incluye a propósito «los dos vacíos», que es un turno donde `generateWithFallback`
-    // TIRA y `billed` queda en cero pese a que los dos proveedores atendieron —una subfacturación
-    // preexistente, ajena a este campo y NO decidida acá—. La forma del test sobrevive a cualquier
-    // resolución de eso: mientras el par sea coherente, no hay nada que arreglar de este lado.
+    // El barrido incluye a propósito «los dos vacíos». Cuando se escribió, ese turno TIRABA y
+    // `billed` quedaba en cero pese a que los dos proveedores habían atendido; la nota decía que era
+    // una subfacturación preexistente, ajena a este campo, y que la forma del test sobreviviría a
+    // cualquier resolución. Se resolvió el 2026-08-28 (§«un turno que falla igual se facturó»): hoy
+    // el mismo guion pasa por acá con `calls = 2` y el campo en `true`, y el invariante aguanta sin
+    // que esta línea cambie. Un test que afirma el PAR y no los valores es el que sobrevive.
     const scripts: readonly { readonly name: string; readonly primary: readonly StubTurn[]; readonly fallback: readonly StubTurn[] }[] = [
       { name: 'todo bien', primary: ['La batería está al 89%.'], fallback: ['x'] },
       { name: 'tool + primario sano', primary: [{ text: '', toolCalls: [{ name: 'get_open_listing', args: {} }] }, 'USD 620.'], fallback: ['x'] },

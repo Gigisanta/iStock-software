@@ -36,7 +36,6 @@ import {
   type ChatEntitlement,
   type TenantUsageToday,
 } from './entitlement';
-import { AiError } from './errors';
 import { buildHandoff, detectHandoffIntent, type HandoffReason } from './handoff';
 import { guardAnswer } from './guard';
 import type { ListingPromptView } from './listing-view';
@@ -285,10 +284,11 @@ function requestFor(context: ChatContext, model: string, env: AiEnv, tools: LlmR
   };
 }
 
-/** Lo que una ronda le deja al turno: la respuesta, y lo que esa ronda le va a costar al tenant. */
-interface RoundOutcome {
-  readonly result: LlmResult;
-  readonly provider: 'primary' | 'fallback';
+/**
+ * Lo que una ronda le va a costar al tenant. **Existe aparte de la respuesta a propósito**: es el
+ * único dato de la ronda que vale igual haya contestado alguien o no.
+ */
+interface RoundBilling {
   /**
    * Cuántas llamadas **atendió** un proveedor en esta ronda, y cuánta salida generaron entre todas.
    * Un primario que contesta vacío y obliga a ir al fallback igual se factura: el prompt entró, el
@@ -303,6 +303,42 @@ interface RoundOutcome {
    */
   readonly primaryServedEmpty: boolean;
 }
+
+/**
+ * Lo que una ronda le deja al turno: la factura —siempre— y la respuesta, si hubo.
+ *
+ * ## La ronda que falla se DEVUELVE, no se tira, y eso es la corrección de un bug de plata
+ *
+ * Hasta el 2026-08-28 esto era un solo shape y el camino de falla era un `throw`. La factura de esa
+ * ronda vivía en tres locales de {@link generateWithFallback} y el `throw` los dejaba morir con el
+ * stack: un turno donde primario y fallback contestaban vacío **pagaba dos llamadas y las reportaba
+ * como cero**. Y no es un caso de laboratorio — la respuesta vacía es "el modo de falla más común
+ * de un modelo barato bajo carga" (arriba), o sea que bajo carga le pasa a muchos turnos a la vez:
+ * la factura sube y el log no tiene nada que mostrar, que es el peor de los dos mundos.
+ *
+ * **La forma importa más que el arreglo.** Con un `throw`, facturar es un paso que el `catch` de
+ * turno tiene que acordarse de hacer, y ya se olvidó una vez en los dos `catch` que había. Devuelto
+ * como valor, `answerChat` llama a `addBilled` **antes** de mirar si hubo respuesta, así que el
+ * renglón que cobra está en el camino que corre siempre y no en la rama feliz.
+ *
+ * **Por qué no `BilledUsage` adentro de `AiError`, que era lo obvio.** Porque ese error **nunca
+ * sale de `answerChat`**: los dos call sites lo atrapaban y lo convertían en un handoff
+ * `provider_down`. Un campo público en la clase de errores del paquete cuyo único lector es un
+ * `catch` de este archivo no le sirve al consumidor que todavía no existe (`/api/chat`, `app-agent`,
+ * FASE 5) y encima le miente: le sugiere que tiene que envolver `answerChat` en un `try` para
+ * recuperar la medición, cosa que no va a dispararse nunca. El consumidor ya lee
+ * {@link ChatAnswer.billed}; lo que hacía falta no era un canal nuevo, era que ese campo dijera la
+ * verdad en el turno que falla. Por eso **la firma feliz de `answerChat` no cambia**.
+ *
+ * `failure` se queda adentro del paquete por la misma regla: `ChatAnswer` no gana un campo para
+ * acomodar el caso de error.
+ */
+type RoundOutcome = RoundBilling &
+  (
+    | { readonly ok: true; readonly result: LlmResult; readonly provider: 'primary' | 'fallback' }
+    /** Ningún proveedor contestó. `failure` es la cadena de intentos, en orden, para el log. */
+    | { readonly ok: false; readonly failure: string }
+  );
 
 /**
  * Llama al primario y, si falla **por lo que sea**, al fallback.
@@ -334,9 +370,39 @@ interface RoundOutcome {
  * siguiente del comprador vuelve a empezar por el primario. No hay circuit breaker acá —
  * un estado que sobrevive al turno necesita dueño, ventana y reset, y este paquete no tiene reloj.
  *
- * Lo que compra: el techo facturable del turno baja de 4 a {@link MAX_BILLED_CALLS_PER_TURN} = 3,
- * −25% del peor caso y −29% del techo de gasto mensual del chat, **sin tocar la dieta, ni el soft
- * cap, ni una sola respuesta que hoy se conteste bien.**
+ * ## Lo que compra, en llamadas y en plata — que **no** son el mismo porcentaje
+ *
+ * El techo facturable del turno baja de 4 a {@link MAX_BILLED_CALLS_PER_TURN} = 3 llamadas (−25%)
+ * y, en plata, de USD 0,000672 a **0,000528 por mensaje (−21,4%)**, sin tocar la dieta, ni el soft
+ * cap, ni una sola respuesta que hoy se conteste bien.
+ *
+ * Los dos números son correctos y son distintos, y la brecha no es redondeo: al tope de la dieta
+ * una llamada al primario cuesta **1,33×** una al fallback (USD 0,000192 contra 0,000144, tarifas
+ * de `pricing.ts` × 1200 IN / 180 OUT). Contar llamadas y contar plata dan distinto cuando las
+ * llamadas no valen lo mismo, así que leer el −25% como si fuera de plata es el mismo error que
+ * este docblock publicó hasta el 2026-08-28.
+ *
+ * ## El −29% que decía acá estaba mal, y el motivo es lo que hay que no repetir
+ *
+ * Salía de restarle al techo viejo **una** llamada del primario: `0,000672 − 0,000192 = 0,000480`.
+ * La cuenta está bien hecha; el caso está mal elegido. Esa resta describe exactamente **una** de
+ * las dos ramas que entran en 3 llamadas:
+ *
+ * | rama | composición | USD/mensaje |
+ * |---|---|---:|
+ * | A | primario vacío en la ronda 1 → 1 primaria + 2 fallback | 0,000480 (−28,6%) |
+ * | **B** | primario sano en la ronda 1 y vacío en la de tool → **2 primarias + 1 fallback** | **0,000528 (−21,4%)** |
+ *
+ * **Un techo es el MÁXIMO sobre las ramas, no la más barata.** Gana B, que es la que conserva las
+ * dos llamadas caras. El techo viejo **no podía** tener este defecto y por eso no se vio venir: con
+ * 4 llamadas hay una sola composición posible (2 + 2), así que ahí "costear la rama" y "costear el
+ * techo" eran la misma cuenta. El salteo es justamente lo que partió el techo en dos ramas de
+ * distinto precio — y el número se publicó como si siguiera habiendo una sola.
+ *
+ * La cuenta no vuelve a vivir en un docblock: la rehace `chat.test.ts` §"el techo de GASTO" a
+ * partir de `PRICE_PER_MTOK` (`pricing.ts`) y de las ramas que este orquestador **ejerce de verdad**, en vez
+ * de las que alguien enumeró de memoria. `docs/COST.md` §2.8.3b es el análisis, y es de
+ * `cost-auditor`: el número de acá se cita de allá, no al revés.
  */
 async function generateWithFallback(
   deps: ChatDeps,
@@ -368,12 +434,20 @@ async function generateWithFallback(
         if (attempt.provider === 'primary') primaryServedEmpty = true;
         continue;
       }
-      return { result, provider: attempt.provider, servedCalls, servedTokensOut, primaryServedEmpty };
+      return { ok: true, result, provider: attempt.provider, servedCalls, servedTokensOut, primaryServedEmpty };
     } catch (error) {
       failures.push(`${attempt.provider}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
-  throw new AiError('AI_PROVIDER_FAILED', `primario y fallback fallaron → ${failures.join(' · ')}`);
+  // Los tres contadores viajan también acá: lo que estos proveedores atendieron antes de dejar al
+  // turno sin respuesta se pagó igual. Ver el docblock de `RoundOutcome`.
+  return {
+    ok: false,
+    failure: `primario y fallback fallaron → ${failures.join(' · ')}`,
+    servedCalls,
+    servedTokensOut,
+    primaryServedEmpty,
+  };
 }
 
 /** Contesta. Nunca tira por culpa del modelo: si no puede contestar, deriva a WhatsApp. */
@@ -423,7 +497,7 @@ export async function answerChat(input: ChatInput, deps: ChatDeps): Promise<Chat
   let billed: BilledUsage = NOTHING_BILLED;
   // Toma la ronda entera y no tres escalares sueltos: `primaryServedEmpty` viaja PEGADO a las
   // llamadas que lo causaron, así que no puede quedar desfasado de la ronda que se está sumando.
-  const addBilled = (round: RoundOutcome): void => {
+  const addBilled = (round: RoundBilling): void => {
     billed = {
       calls: billed.calls + round.servedCalls,
       tokensIn: billed.tokensIn + context.budget.tokensIn * round.servedCalls,
@@ -439,23 +513,28 @@ export async function answerChat(input: ChatInput, deps: ChatDeps): Promise<Chat
   // turno y por eso no necesita ventana ni reset (ver `generateWithFallback`).
   let primaryDegraded = false;
 
-  try {
-    const first = await generateWithFallback(deps, context, runtime.specs);
-    result = first.result;
-    provider = first.provider;
-    primaryDegraded = first.primaryServedEmpty;
-    addBilled(first);
-  } catch {
-    // El prompt SÍ se armó acá, así que su recorte se reporta aunque no se haya facturado nada: la
-    // degradación describe lo que la dieta tuvo que tirar, no lo que salió en la factura.
+  const first = await generateWithFallback(deps, context, runtime.specs);
+  // Se cobra ANTES de mirar si contestó, y ese orden es el arreglo: la ronda que se queda sin
+  // respuesta es justo la que más caro sale de perder de vista. Ver `RoundOutcome`.
+  addBilled(first);
+  if (!first.ok) {
+    // El prompt SÍ se armó acá, así que se reportan las dos mediciones que existen: lo que la dieta
+    // tuvo que tirar (`trimmed`) y lo que el turno pagó (`billed`). `promptTokens` es el prompt que
+    // se armó y se midió — dejarlo en 0 diría que no se armó ninguno, y eso ya no se sostiene al
+    // lado de un `billed.calls` mayor a cero. `tokensIn`/`tokensOut` sí quedan en 0: describen la
+    // respuesta que un proveedor sirvió, y no hubo ninguna.
     return answerFromHandoff(input.listing, 'provider_down', {
       provider: 'none',
       model: null,
       ...noTokens,
+      promptTokens,
       trimmed: context.trimmed,
       billed,
     });
   }
+  result = first.result;
+  provider = first.provider;
+  primaryDegraded = first.primaryServedEmpty;
 
   for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
     const call = result.toolCalls[0];
@@ -517,15 +596,11 @@ export async function answerChat(input: ChatInput, deps: ChatDeps): Promise<Chat
     assertWithinBudget(context.budget);
     promptTokens = Math.max(promptTokens, context.budget.tokensIn);
 
-    try {
-      const next = await generateWithFallback(deps, context, runtime.specs, { skipPrimary: primaryDegraded });
-      result = next.result;
-      provider = next.provider;
-      // El `||` no es defensivo de más: con `MAX_TOOL_ROUNDS > 1` la degradación tiene que
-      // arrastrarse a la ronda siguiente, no reevaluarse desde cero en cada vuelta.
-      primaryDegraded = primaryDegraded || next.primaryServedEmpty;
-      addBilled(next);
-    } catch {
+    const next = await generateWithFallback(deps, context, runtime.specs, { skipPrimary: primaryDegraded });
+    // Mismo orden que arriba: primero la factura, después la pregunta de si hubo respuesta. Acá el
+    // turno ya pagó la ronda inicial, así que un `billed` que se pierda se lleva las dos.
+    addBilled(next);
+    if (!next.ok) {
       return answerFromHandoff(input.listing, 'provider_down', {
         provider: 'none',
         model: null,
@@ -537,6 +612,11 @@ export async function answerChat(input: ChatInput, deps: ChatDeps): Promise<Chat
         billed,
       });
     }
+    result = next.result;
+    provider = next.provider;
+    // El `||` no es defensivo de más: con `MAX_TOOL_ROUNDS > 1` la degradación tiene que
+    // arrastrarse a la ronda siguiente, no reevaluarse desde cero en cada vuelta.
+    primaryDegraded = primaryDegraded || next.primaryServedEmpty;
   }
 
   const verdict = guardAnswer(result.text, input.listing, deps.env.maxOutputTokens);

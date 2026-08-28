@@ -171,8 +171,25 @@ cada una llamaba al primario. Si el primario devolvía `200` con texto vacío en
 facturaba **cuatro** llamadas: las dos vacías se pagan igual, porque el proveedor procesó el prompt.
 
 Ahora la ronda de tool **saltea** al primario si ya contestó vacío en la ronda anterior. El techo
-facturable del turno pasa de 4 a **3** (`MAX_BILLED_CALLS_PER_TURN`), −29% del techo de gasto
-mensual del chat, sin tocar la dieta, ni el soft cap, ni una sola respuesta que hoy se conteste bien.
+facturable del turno pasa de 4 a **3** (`MAX_BILLED_CALLS_PER_TURN`) —**−25% de llamadas**— y el
+techo de gasto, de USD 0,000672 a **0,000528 por mensaje: −21,4%**. Sin tocar la dieta, ni el soft
+cap, ni una sola respuesta que hoy se conteste bien.
+
+**Este párrafo decía −29% y estaba mal; el motivo importa más que el dígito.** El −29% salía de
+restarle al techo viejo una llamada del primario (`0,000672 − 0,000192 = 0,000480`): cuenta bien
+hecha sobre el caso equivocado. Con el salteo hay **dos** ramas que entran en 3 llamadas —A: 1
+primaria + 2 fallback = 0,000480; **B: 2 primarias + 1 fallback = 0,000528**— y **un techo es el
+máximo sobre las ramas, no la barata**. Gana B. El techo viejo no podía fallar así porque con 4
+llamadas hay una sola composición posible (2 + 2): el salteo es lo que partió el techo en dos, y el
+número se siguió publicando como si fuera uno. Y ojo con el otro paso: −25% es de **llamadas** y
+−21,4% es de **plata**, y no coinciden porque una llamada al primario cuesta 1,33× una al fallback
+(USD 0,000192 contra 0,000144 al tope de la dieta). La cuenta la rehace `chat.test.ts` §"el techo de
+GASTO" desde `PRICE_PER_MTOK` y desde las ramas que el orquestador ejerce de verdad; el análisis es
+`docs/COST.md` §2.8.3b, de `cost-auditor`.
+
+**El techo facturable no es la factura.** El eval no se movió ni un dígito con el salteo: en el
+corpus el primario contesta siempre a la primera y ningún turno llegó nunca a 3 llamadas. Lo que se
+compró es seguro contra el día malo, no un ahorro de hoy.
 
 **El argumento no es "ahorrar": es que el reintento no compra casi nada.** Dentro de un turno el
 segundo intento no es independiente del primero. El prompt de la ronda de tool **contiene** al de la
@@ -223,6 +240,27 @@ solo, mientras que un `degraded: true` ahí se lee plausible y pasa un review.
 
 **Qué umbral de alarma usa el log no lo decide este paquete** (`T51`, LEAD + `app-agent`). Lo que el
 paquete garantiza es que el dato para decidirlo está en el DTO.
+
+### El turno que falla también se facturó, y `billed` lo dice
+
+Cuando primario y fallback contestan vacío los dos, el comprador se va a WhatsApp (`provider_down`)
+y **las dos llamadas se pagaron igual**: el prompt entró y los dos proveedores lo procesaron. Hasta
+el 2026-08-28 esa medición se perdía entera — `generateWithFallback` tiraba, el `catch` derivaba, y
+`billed` salía en `calls: 0`. Un modo de falla que gasta plata y no deja rastro es el peor de los dos
+mundos, y este no es raro: la respuesta vacía es *el* modo de falla de un modelo barato bajo carga,
+o sea que cuando pasa le pasa a muchos turnos a la vez.
+
+Ahora la ronda se **devuelve como valor** (`RoundOutcome` con `ok: false`) en vez de tirar, y
+`answerChat` la cobra **antes** de preguntar si alguien contestó. La forma es la mitad del arreglo:
+con un `throw`, facturar es un paso que cada `catch` tiene que acordarse de hacer, y los dos `catch`
+que había se olvidaban. **La firma feliz de `answerChat` no cambió y no hay canal nuevo**: el
+consumidor lee el mismo `ChatAnswer.billed` de siempre, que ahora dice la verdad en el turno que
+falla. Se descartó llevar `BilledUsage` adentro de `AiError` justamente por eso — ese error nunca
+salía de `answerChat`, así que el campo no habría tenido lector afuera y le habría sugerido a
+`/api/chat` un `try/catch` que no se dispara nunca.
+
+Lo que **no** cambió: dos proveedores que **tiran** siguen facturando cero. «Se facturó» no puede
+degenerar en «se cuenta siempre»; se cuenta la llamada que un proveedor atendió.
 
 ## Las tres tools
 
