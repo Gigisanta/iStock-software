@@ -44,6 +44,24 @@ none() { local d="$1" re="$2"; shift 2
   if [ -z "${kept//[$'\n\t ']/}" ]; then ok "$d"
   else no "$d"; echo "$kept" | sed 's/^/        /' | cut -c1-200 | head -6; fi; }
 
+# `none()` filtra las lineas que ARRANCAN con marcador de comentario, y eso deja MUERTA a la unica
+# regla cuyo hallazgo ES un comentario: un `TODO: despues el RLS` siempre esta comentado, asi que
+# nunca podia fallar. Estuvo vacuamente en verde desde S1; lo encontro el LEAD el 2026-08-28
+# corriendo la polaridad negativa del gate de S3 contra un fixture con el TODO textual adentro.
+# `noneraw()` es el mismo grep sin ese filtro. Polaridad probada en los dos sentidos ese mismo dia.
+noneraw() { local d="$1" re="$2"; shift 2
+  local o; o=$(grep -rnE --exclude-dir=.next --exclude-dir=node_modules --exclude-dir=dist \
+      --exclude-dir=.turbo --exclude="*.map" "$re" "$@" 2>/dev/null || true)
+  local kept="" line f
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    f="${line%%:*}"
+    git check-ignore -q "$f" 2>/dev/null && continue
+    kept="${kept}${line}"$'\n'
+  done <<< "$o"
+  if [ -z "${kept//[$'\n\t ']/}" ]; then ok "$d"
+  else no "$d"; echo "$kept" | sed 's/^/        /' | cut -c1-200 | head -6; fi; }
+
 DBURL="${DATABASE_URL:-postgresql://localhost:5432/istock_dev}"
 PORT="${E2E_PORT:-3100}"
 MEDIA="packages/media"
@@ -293,7 +311,8 @@ none "sin imei/cost/margin/notas internas en (storefront)" \
 # `--exclude=*lint*.mjs`: los linters de packages/db y packages/media DEFINEN esta misma regla y
 # por lo tanto contienen el patron en su propio codigo. Un gate que marca en rojo al guard que
 # impone la regla del gate no esta midiendo nada.
-none "sin 'despues el RLS/R2/cache'" "TODO[^\n]*(RLS|R2|cache|despu)" \
+noneraw "sin 'despues el RLS/R2/cache' (noneraw: el hallazgo ES un comentario)" \
+     "(TODO|FIXME|XXX)[^\n]*(RLS|R2|cache|caché|despu)" \
      --exclude="*lint*.mjs" apps/web/app packages
 # Vercel Image Optimization se paga por transformacion y el byte ya viene del tamano correcto.
 none "sin next/image sobre las URLs del pipeline (se paga por transformacion)" \
