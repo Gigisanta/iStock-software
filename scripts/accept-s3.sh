@@ -76,6 +76,22 @@ SF="apps/web/app/(storefront)"
 # proveedor, notas internas): si la ficha filtra algo, filtra aca.
 L_SLUG="iphone-14-pro-256-grafito"
 
+# ── MODO FIXTURE ─────────────────────────────────────────────────────────────
+# Existe por una sola razon: **poder ver fallar a M3 y M4**. Un gate que nunca se vio fallar no es un
+# gate, y estas dos secciones necesitan un server vivo, o sea que en la practica no se ejercitaban
+# nunca en la polaridad que importa. Con `S3_FIXTURE_FICHA` + `S3_FIXTURE_GRILLA` apuntando a dos
+# HTML de mentira, M3/M4 leen esos archivos en vez de curl.
+#
+# NO es un bypass, y esto es lo que lo hace no serlo: **en modo fixture el script sale distinto de
+# cero siempre**, aunque todas las reglas den verde. No se puede aceptar S3 con HTML inventado.
+FIXTURE=0
+if [ -n "${S3_FIXTURE_FICHA:-}" ] || [ -n "${S3_FIXTURE_GRILLA:-}" ]; then
+  if [ ! -s "${S3_FIXTURE_FICHA:-}" ] || [ ! -s "${S3_FIXTURE_GRILLA:-}" ]; then
+    echo "modo fixture: hacen falta S3_FIXTURE_FICHA y S3_FIXTURE_GRILLA, los dos y no vacios"; exit 2
+  fi
+  FIXTURE=1
+fi
+
 # ─────────────────────────────────────────────────────────────────────────────
 sec "M1 · P3 estatico: ningun srcset sin sizes en la vidriera"
 # Sin `sizes`, el browser asume `sizes="100vw"`. Un telefono de 390px CSS con DPR 3 pide 1170px de
@@ -126,7 +142,11 @@ fi
 sec "M2 · P3 vivo: el byte que el BROWSER eligio, no el que el pipeline genero  ·  + M5 db-hits"
 # Una sola corrida de la suite e2e: deja el build que M3/M4 reusan y emite las dos lineas MEDIDO.
 EOUT=$(mktemp)
-if node -e "process.exit(require('./e2e/package.json').scripts?.e2e?0:1)" 2>/dev/null; then
+if [ "$FIXTURE" = "1" ]; then
+  inf "MODO FIXTURE: no se corre la suite e2e (M2/M5 se ejercitan con su propio fixture de log)"
+  E2ERC=0
+  [ -n "${S3_FIXTURE_E2ELOG:-}" ] && [ -s "${S3_FIXTURE_E2ELOG:-}" ] && cat "$S3_FIXTURE_E2ELOG" >"$EOUT"
+elif node -e "process.exit(require('./e2e/package.json').scripts?.e2e?0:1)" 2>/dev/null; then
   # Sin --reporter: en la CLI REEMPLAZA los reporters del config y apaga el censo de qa-agent.
   if pnpm --filter @istock/e2e e2e >"$EOUT" 2>&1; then E2ERC=0; else E2ERC=1; fi
   [ "$E2ERC" = "0" ] && ok "la suite e2e termino en verde" || {
@@ -189,7 +209,9 @@ sec "M3/M4 · la ficha, leida de los BYTES servidos (server vivo bajo host de te
 SPORT="$PORT"
 while lsof -nP -iTCP:"$SPORT" -sTCP:LISTEN -t >/dev/null 2>&1; do SPORT=$((SPORT+1)); done
 BOOT=""
-if [ -d apps/web/.next ]; then
+if [ "$FIXTURE" = "1" ]; then
+  inf "MODO FIXTURE: M1/M2/M5/M6 no aplican; M3/M4 leen archivos, no HTTP"
+elif [ -d apps/web/.next ]; then
   NODE_ENV=test DATABASE_URL="$DBURL" AUTH_DRIVER=local MEDIA_DRIVER=local \
     AUTH_LOCAL_SECRET="${AUTH_LOCAL_SECRET:-e2e-local-secret-32-chars-minimum}" \
     pnpm --filter @istock/web exec next start -p "$SPORT" >/tmp/accept-s3-start.log 2>&1 &
@@ -200,8 +222,13 @@ else
 fi
 
 HTML=$(mktemp); GRID=$(mktemp)
-if curl -sf -m 5 "http://127.0.0.1:${SPORT}/api/health" >/dev/null 2>&1; then
-  H="demo.${APEX}:${PORT}"
+if [ "$FIXTURE" = "1" ]; then
+  cat "$S3_FIXTURE_FICHA" >"$HTML"; cat "$S3_FIXTURE_GRILLA" >"$GRID"
+  inf "ficha=$S3_FIXTURE_FICHA  grilla=$S3_FIXTURE_GRILLA"
+elif curl -sf -m 5 "http://127.0.0.1:${SPORT}/api/health" >/dev/null 2>&1; then
+  # OJO: el puerto va de $SPORT, no de $PORT. `normalizeHostname` hace `split(':')` asi que
+  # hoy da igual, pero un Host que miente sobre el puerto es una bomba de tiempo barata de sacar.
+  H="demo.${APEX}:${SPORT}"
   GCODE=$(curl -s -o "$GRID" -w '%{http_code}' -m 15 -H "Host: $H" "http://127.0.0.1:${SPORT}/" || echo 000)
   [ "$GCODE" = "200" ] && ok "la grilla de demo responde 200 bajo $H" \
     || no "la grilla de demo devolvio $GCODE bajo $H"
@@ -231,13 +258,21 @@ if [ -s "$HTML" ]; then
   [ "$FOTOS" -ge 3 ] && ok "campo: 3 fotos reales (hay $FOTOS)" \
     || no "campo: la ficha muestra $FOTOS foto(s) y el minimo del producto es 3"
   campo "condicion (registro de ficha, no el de WhatsApp)" "usado excelente"
-  campo "capacidad GB"        "256"
+  # `256` a secas lo cumplia el SLUG (`iphone-14-pro-256-grafito`), que viaja en el href de la
+  # propia pagina: el assert daba verde con la capacidad sin renderizar. `256 GB` es el string que
+  # el comprador ve (`page.tsx:276` arma `${storageGb} GB`). Lo satisface tambien el title del
+  # seed, y esta bien: el requisito de producto es que el GB SE VEA, y en el title se ve.
+  campo "capacidad GB"        "256 GB"
   campo "color"               "Negro espacial"
   campo "procedencia"         "Compra directa a cliente en Cipolletti"
-  campo "bateria %"           "89"
+  # `89` a secas: dos digitos aparecen en cualquier UUID, build id o payload de RSC. El assert era
+  # verde por accidente. `89%` es lo que renderiza `page.tsx:280`.
+  campo "bateria %"           "89%"
   campo "iCloud (texto explicito)" "Libre de iCloud, verificado en el local"
   campo "garantia"            "90 días de garantía del local"
-  campo "precio USD"          "USD"
+  # `USD` a secas lo cumplia el medio de pago `Efectivo USD`, que M3 ya exige mas abajo: el precio
+  # podia faltar entero. `USD 620` es `formatUsd(usd(620))`, fijado en `money.test.ts:47`.
+  campo "precio USD"          "USD 620"
   grep -aqiE 'pantalla original|pantalla:? *original' "$HTML" \
     && ok "campo: pantalla original" || no "campo FALTANTE en la ficha: pantalla original"
   grep -aqiE 'disponible|reservado|vendido' "$HTML" \
@@ -260,9 +295,14 @@ if [ -s "$HTML" ]; then
   # `ceil_1000` en la practica. No se exige un importe exacto: fijarlo aca haria que el gate del
   # LEAD reimplemente `applyFx` y despues las dos cuentas se separen sin que nadie se entere.
   # El importe exacto lo prueba `packages/domain/src/fx.test.ts`, que es donde vive la funcion.
-  if grep -aqE 'ARS|\$' "$HTML"; then
-    ok "campo: precio ARS presente"
-    grep -aqE '\.000([^0-9]|$)' "$HTML" \
+  # `grep -aqE 'ARS|\$'` lo cumplia el medio de pago `Transferencia ARS`, que M3 exige tres lineas mas
+  # arriba: o sea que el precio en pesos podia no renderizarse nunca y el gate pasaba igual. Ahora se
+  # exige la FORMA de `formatArs` (`$ 923.000`, hand-rolled en `money.ts:73`, ASCII, sin Intl), que
+  # ningun otro texto de la ficha produce. El IMPORTE exacto sigue sin fijarse a proposito: fijarlo
+  # haria que este gate reimplemente `applyFx` y despues las dos cuentas se separan en silencio.
+  if grep -aqE '\$ [0-9]{1,3}(\.[0-9]{3})+' "$HTML"; then
+    ok "campo: precio ARS presente con la forma de formatArs"
+    grep -aqE '\$ [0-9]{1,3}(\.[0-9]{3})*\.000([^0-9]|$)' "$HTML" \
       && ok "el ARS publicado termina en 000 (ceil_1000, el default del tenant)" \
       || no "hay ARS pero no termina en 000: el redondeo publicado no es ceil_1000"
   else
@@ -282,34 +322,70 @@ fi
 # final del body: ahi es donde un objeto crudo se filtra sin aparecer en pantalla. Los valores son
 # los del seed, o sea que un PASS aca significa "el dato existe en la base y NO salio", que es lo
 # unico que interesa. Un grep del fuente daria verde con `{...listing}` en un componente cliente.
-prohibido() { if grep -aqF "$2" "$HTML"; then
-    no "FILTRA $1 en el HTML de la vidriera — rechazo (CLAUDE.md §2)"
-    grep -aoF -m1 -B0 "$2" "$HTML" >/dev/null 2>&1
-  else ok "cero $1 en el HTML"; fi; }
-if [ -s "$HTML" ]; then
-  prohibido "IMEI"           "353915107912345"
-  prohibido "notas internas" "Entró por canje"
-  prohibido "proveedor"      "Canje mostrador"
-  # El costo, en las dos formas en que puede salir: centavos crudos del DTO y pesos formateados.
-  prohibido "costo (centavos)" "5200000"
-  prohibido "costo (formateado)" "52.000"
+prohibido() { local d="$1" aguja="$2" f="$3" donde="$4"
+  if grep -aqF "$aguja" "$f"; then no "FILTRA $d en el HTML de la $donde — rechazo (CLAUDE.md §2)"
+  else ok "cero $d en la $donde"; fi; }
+
+# Los IMEI NO se hardcodean: se leen del seed. Son 15 digitos, unicos, cero falsos positivos, y son
+# la regla mas dura del producto (CLAUDE.md §8: "IMEI nunca en vidriera"). Leerlos de la fuente hace
+# que una fila nueva del seed quede cubierta el dia que se agrega, sin que nadie se acuerde de venir.
+IMEIS=$(grep -aoE "imei: '[0-9]+'" packages/db/src/seed-data.ts 2>/dev/null | grep -aoE '[0-9]{10,}' | sort -u)
+[ -z "$IMEIS" ] && no "no pude leer ningun IMEI del seed: el barrido de IMEI seria vacuo"
+
+# M4 corre sobre la ficha Y sobre la GRILLA. Antes miraba solo la ficha, y la grilla renderiza las
+# 10 filas: una fuga en el componente de card no la veia nadie. La fila 201 esta `available`, asi
+# que sus datos peligrosos viajan a los dos documentos.
+for PAR in "ficha:$HTML" "grilla:$GRID"; do
+  DONDE="${PAR%%:*}"; DOC="${PAR#*:}"
+  if [ ! -s "$DOC" ]; then no "sin HTML de $DONDE: M4 no pudo medir ahi"; continue; fi
+
+  FUGA_IMEI=0
+  for I in $IMEIS; do
+    grep -aqF "$I" "$DOC" && { no "FILTRA el IMEI $I en la $DONDE — rechazo (CLAUDE.md §8)"; FUGA_IMEI=1; }
+  done
+  [ "$FUGA_IMEI" = "0" ] && ok "cero IMEI en la $DONDE ($(echo "$IMEIS" | wc -l | tr -d ' ') buscados)"
+
+  prohibido "notas internas" "Entró por canje"   "$DOC" "$DONDE"
+  prohibido "proveedor"      "Canje mostrador"   "$DOC" "$DONDE"
+  # El costo de la fila 201, en las dos formas en que puede salir.
+  #
+  # ESTAS DOS REGLAS ESTABAN MUERTAS. Buscaban `5200000` y `52.000`, y el costo real es
+  # `usd(520)` = 520 × CENTS_PER_UNIT = **52000** (`money.ts:19`), que se formatea `USD 520`
+  # (`formatUsd`, fijado en `money.test.ts:47`). Ninguna de las dos cadenas viejas existe en
+  # ningun HTML posible, asi que la regla que hace cumplir "seller no ve costo ni margen"
+  # (CLAUDE.md §9) daba verde con el costo entero servido en el payload. Encontrado por el LEAD
+  # el 2026-08-28 leyendo el seed en vez de leer el gate.
+  #
+  # Ningun precio del seed es 520, asi que `USD 520` no puede aparecer legitimamente. (Ojo con el
+  # de al lado: el costo 470 de la fila 206 SI colisiona con el precio 470 de la 208, por eso el
+  # barrido es sobre el costo de 201 y no sobre los diez.)
+  prohibido "costo (centavos crudos del DTO)" "52000"   "$DOC" "$DONDE"
+  prohibido "costo (formateado)"              "USD 520" "$DOC" "$DONDE"
+
   # Y los NOMBRES de campo, que es como se filtra un objeto entero sin que se vea en pantalla.
-  KEYS=$(grep -aoE '\b(imei|cost_?[uU]sd|margin|internal_?[nN]otes|supplier)\b' "$HTML" | sort -u | tr '\n' ' ')
+  # El `[A-Za-z_]*` no es adorno: el campo REAL se llama `costUsdCents` / `cost_usd_cents`, y con el
+  # `\b` pegado a `usd` el barrido no lo agarraba. O sea que la regla no reconocia el unico nombre
+  # con el que el costo puede filtrarse de verdad. Encontrado el 2026-08-28 en la polaridad negativa:
+  # el fixture sucio traia `costUsdCents` y el barrido listo `imei internalNotes supplier` sin el.
+  #
+  # Contrapartida asumida: `margin[A-Za-z_]*` tambien matchea `marginBottom` de un style inline. Se
+  # deja asi. La vidriera es Tailwind y hoy no hay ni uno; el dia que aparezca, un FAIL que obliga a
+  # sacar un style inline de la vidriera es mejor senal que un barrido que no reconoce `marginCents`.
+  KEYS=$(grep -aoE '\b(imei|cost_?[uU]sd[A-Za-z_]*|margin[A-Za-z_]*|internal_?[nN]otes|supplier)\b' "$DOC" | sort -u | tr '\n' ' ')
   if [ -n "${KEYS// /}" ]; then
-    no "aparecen claves prohibidas en el payload servido: $KEYS"
+    no "claves prohibidas en el payload de la $DONDE: $KEYS"
   else
-    ok "ninguna clave prohibida aparece como nombre de campo en el payload"
+    ok "ninguna clave prohibida como nombre de campo en la $DONDE"
   fi
-else
-  inf "sin HTML: M4 no corrio (y eso ya lo conto M3 como FAIL)"
-fi
+done
+
 [ -n "$BOOT" ] && kill "$BOOT" 2>/dev/null
 rm -f "$HTML" "$GRID" "$EOUT"
 
 # ─────────────────────────────────────────────────────────────────────────────
 sec "M6 · prohibiciones de siempre sobre lo que toco S3"
 none "cero imei/cost/margin/notas internas en (storefront)" \
-     '\b(imei|cost_?[uU]sd|margin|internal_?[nN]otes|supplier)\b' "$SF"
+     '\b(imei|cost_?[uU]sd[A-Za-z_]*|margin[A-Za-z_]*|internal_?[nN]otes|supplier)\b' "$SF"
 none "sin console.log de un listing/unit/row entero" \
      'console\.(log|info|debug)\((listing|unit|row|product|item)\b' "$SF"
 noneraw "sin 'despues el RLS/R2/cache' (con noneraw: el hallazgo ES un comentario)" \
@@ -324,5 +400,9 @@ none "PROHIBIDO revalidate:60 por default (x216 el costo)" \
      'revalidate\s*[:=]\s*60\b' "$SF"
 
 # ─────────────────────────────────────────────────────────────────────────────
+if [ "$FIXTURE" = "1" ]; then
+  printf '\n\033[1;33mMODO FIXTURE — esto NO acepta nada.\033[0m reglas en rojo: %s\n' "$fail"
+  exit 3
+fi
 if [ "$fail" = "0" ]; then printf '\n\033[1;32mS3: ACEPTADA\033[0m\n'; else printf '\n\033[1;31mS3: RECHAZADA\033[0m\n'; fi
 exit "$fail"
