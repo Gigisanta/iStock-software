@@ -4,8 +4,16 @@
 #
 # Convencion: se ignoran las lineas de COMENTARIO. Un comentario que dice "prohibido el IMEI"
 # no es una fuga de IMEI, y si lo tratamos como tal, el equipo deja de documentar los peligros.
+#
+# UNA EXCEPCION, y esta declarada porque la convencion de arriba MATO a la regla 3 durante meses:
+# hay una prohibicion de §2 cuyo hallazgo ES un comentario (`TODO: despues el RLS`). Para esa clase
+# se usa `hitsraw()`. Ver el docblock de `hitsraw()`; no la borres pensando que es una inconsistencia.
 set -uo pipefail
 cd "$(dirname "$0")/.."
+# Escotilla para `guard-leaks.test.sh` UNICAMENTE: audita otro arbol. Sin esto el test de polaridad
+# tendria que ensuciar el repo real para verse encender, que es como se rompen los tests de gates.
+# `guard-doc-tables.sh` ya usa el mismo patron (`DOC_TABLES_ROOT`).
+cd "${LEAKS_ROOT:-.}"
 fail=0
 say()  { printf '\033[1m%s\033[0m\n' "$1"; }
 ok()   { printf '  \033[32mok\033[0m    %s\n' "$1"; }
@@ -17,10 +25,49 @@ hits() { # hits <descripcion> <regex> <path...>
         | grep -vE ':[0-9]+:\s*(//|\*|/\*|#|--)' || true)
   if [ -z "$out" ]; then ok "$desc"; else bad "$desc"; echo "$out" | sed 's/^/        /' | head -12; fi
 }
+# `hitsraw` — el mismo grep SIN el filtro de comentarios. Existe para UNA clase de prohibicion:
+# aquella cuyo hallazgo es, siempre, un comentario. Hoy es la regla 3 y nada mas.
+#
+# ─────────────────────────────────────────────────────────────────────────────────────────────
+#  Por que esto no es una duplicacion evitable, medido por el LEAD el 2026-08-28
+# ─────────────────────────────────────────────────────────────────────────────────────────────
+# La regla 3 usaba `hits()`. `hits()` descarta toda linea cuyo CONTENIDO arranca con `//`, `*`,
+# `#` o `--`. Y `TODO: despues el RLS` se escribe, siempre, asi:
+#
+#     // TODO: despues el RLS
+#
+# O sea que la regla que audita la prohibicion mas cara de §2 no podia disparar sobre su forma
+# canonica. Medido, no deducido: con `// TODO: despues el RLS` agregado a `apps/web/proxy.ts`,
+# el gate imprimia `ok  sin TODO/FIXME sobre RLS, R2 o cache` y salia **0**. Con el MISMO texto
+# corrido al final de una linea de codigo (`const x = 1; // TODO: despues el RLS`) imprimia LEAK.
+# El gate veia la forma que nadie escribe y era ciego a la que todos escriben.
+#
+# Es la TERCERA instancia de la misma clase. `b5065a4` la arreglo en `accept-s1.sh` y
+# `accept-s2.sh` agregando `noneraw()` a `scripts/_lib.sh`; este gate no se arreglo entonces
+# porque **no importa `_lib.sh`**: tiene su propio `hits()` privado, asi que el fix de aquella vez
+# no lo podia alcanzar. Un helper copiado se arregla una sola vez y sigue roto en los otros lados.
+#
+# Y la separacion en dos helpers es deliberada, no un paso hacia unificarlos: para las reglas 1 y 2
+# el filtro de comentarios es CORRECTO —un `// nunca loguear listing` no es un `console.log`— y
+# sacarselo castigaria al que documenta el peligro. Son dos preguntas distintas y por eso son dos
+# helpers, exactamente como `none()`/`noneraw()` en `_lib.sh`.
+hitsraw() { # hitsraw <descripcion> <regex> <path...>
+  local desc="$1" re="$2"; shift 2
+  local out
+  out=$(grep -rnE "$re" "$@" 2>/dev/null || true)
+  if [ -z "$out" ]; then ok "$desc"; else bad "$desc"; echo "$out" | sed 's/^/        /' | head -12; fi
+}
 
 SRC_STOREFRONT=$(ls -d apps/web/app/\(storefront\) 2>/dev/null || true)
 SRC_AI=$(ls -d packages/ai 2>/dev/null || true)
 SRC_ALL=$(ls -d apps/web packages 2>/dev/null || true)
+# La regla 3 audita MAS arbol que las otras, y el motivo es que hasta el 2026-08-28 la prohibicion
+# de `TODO: despues el RLS` se chequeaba SLICE POR SLICE (`accept-s1..s4.sh`), sobre los directorios
+# que cada slice nombraba. Todo lo que ninguna slice nombro quedaba sin auditar, y ahi vivia
+# `apps/web/proxy.ts` — el archivo que decide tenant y cache, o sea justo donde un "despues el RLS"
+# es mas caro. Una prohibicion que se audita por slice no cubre al repo: cubre a las slices que se
+# acordaron de escribir la linea.
+SRC_DEBT=$(ls -d apps/web packages e2e tests scripts/probes 2>/dev/null || true)
 [ -z "$SRC_ALL" ] && { echo "nada que auditar todavia"; exit 0; }
 
 say "1 · campos prohibidos en la vidriera y en el chatbot  (§2, DOMAIN.md §Visibilidad)"
@@ -49,9 +96,11 @@ say "3 · deuda diferida sobre seguridad o costo  (§2: 'TODO: despues el RLS' =
 # marcador termine en un caracter no alfabetico deja pasar "TODOS"/"TODAS" y sigue agarrando
 # "TODO:", "TODO ", "FIXME(" y "HACK-". Se usa `[^A-Za-z]` y no `\b` a proposito: `\b` es una
 # extension de GNU y el grep de macOS es BSD; el gate tiene que medir igual en las dos maquinas.
-hits "sin TODO/FIXME sobre RLS, R2 o cache" \
+# `hitsraw` y NO `hits`: el hallazgo de esta regla es siempre un comentario. Ver el docblock de
+# `hitsraw()` arriba — con `hits()` esta regla estuvo verde por construccion y esta medido.
+hitsraw "sin TODO/FIXME sobre RLS, R2 o cache" \
      "(TODO|FIXME|XXX|HACK)[^A-Za-z][^\n]{0,59}(RLS|rls|R2|cache|tenant|policy|policies)" \
-     $SRC_ALL --include='*.ts' --include='*.tsx' --include='*.sql'
+     $SRC_DEBT --include='*.ts' --include='*.tsx' --include='*.sql'
 
 say "4 · Next 16: el archivo se llama proxy.ts  (§3)"
 if [ -f apps/web/middleware.ts ] || [ -f middleware.ts ]; then

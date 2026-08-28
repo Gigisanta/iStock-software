@@ -107,6 +107,14 @@ jobs:
       - name: gate de datos sensibles
         run: ./scripts/guard-leaks.sh
 
+      # Agregado por el LEAD el 2026-08-28 junto con el arreglo de la regla 3. La regla que audita
+      # `TODO: despues el RLS` estuvo VERDE POR CONSTRUCCION: su helper descartaba las lineas que
+      # arrancan con `//`, y ese hallazgo es siempre un comentario. Tercera instancia de la clase
+      # de `b5065a4`. El gate corria en CI desde siempre; lo que faltaba era verlo encender.
+      - name: polaridad del gate de fugas (la regla del TODO se tiene que ver encender)
+        if: always()
+        run: ./scripts/guard-leaks.test.sh
+
       # Agregados por el LEAD el 2026-08-28. guard-grants existia desde el mismo dia pero SOLO
       # corria dentro de accept-s1.sh, que no esta en CI: o sea que la unica auditoria de los
       # GRANT del repo no se ejecutaba en ningun push. Un gate que no corre es un archivo.
