@@ -109,6 +109,22 @@ jobs:
         if: always()
         run: ./scripts/accept-fase2.sh
 
+      # Cuarto caso de la misma familia. El valor ENTERO del censo de rutas de guard-firewall es
+      # "una ruta nueva rompe el gate el dia que se crea"; fuera de CI eso dependia de que alguien
+      # se acordara de correrlo a mano, o sea de lo unico que el censo existe para no depender.
+      # Lo marco `docs-keeper` cerrando T1, y por eso T1 quedo `done — nivel 1`.
+      - name: gate de reglas de WAF (scoping + censo de rutas)
+        if: always()
+        run: ./scripts/guard-firewall.sh
+
+      # Y su polaridad. Existe porque la frase "14 fixtures, 14 rompen" no era reejecutable: se
+      # habia ejercido a mano y fuera del repo. El dia que se volvio un comando encontro que SEIS
+      # reglas de F1 no fallaban nunca — las fixtures mutaban campos en la raiz de la regla y los
+      # limites de Pro viven bajo `rateLimit`. Seis reglas verdes por vacio durante toda T1.
+      - name: polaridad del gate de WAF (cada regla se tiene que ver romper)
+        if: always()
+        run: ./scripts/guard-firewall.test.sh
+
       - name: phantom-file guard (artefacto inexistente o vacio = la tarea no paso)
         if: always()
         run: ./scripts/guard-artifacts.sh --harness

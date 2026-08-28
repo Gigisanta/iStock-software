@@ -8,10 +8,17 @@
 #  que ningun implementador pueda elegir a que se parece la aceptacion despues de haber implementado.
 #
 #  ── La primera mitad ya esta entregada, y este gate NO la vuelve a escribir ───────────────────
-#  "Texto exacto byte a byte" es literalmente lo que afirma M3b de `accept-s3.sh` contra el HTML
-#  SERVIDO: decodifica el `text=` del href y exige precio en USD, dominio de la vidriera, intencion
-#  de compra, `usado A` presente y `usado excelente` ausente (los dos registros de condicion que
-#  CLAUDE.md §1 ratifico en FASE 2), mas que haya UN solo anchor.
+#  "Texto exacto byte a byte" lo cubren DOS gates que miran cosas distintas, y confundirlos es como
+#  se pierde el invariante (lo preciso `docs-keeper` auditando esta misma linea):
+#    · `packages/domain/src/wa.test.ts` (U14) compara el string canonico **byte a byte**
+#      (`expect(text).toBe(CANONICAL_TEXT)`) — pero sobre la funcion pura, que no sabe que hay una
+#      pagina. Prueba el byte; no prueba que alguien lo llame.
+#    · M3b de `accept-s3.sh` decodifica el `text=` del href **en el HTML SERVIDO** y exige, por
+#      substring, precio en USD, dominio de la vidriera, intencion de compra, `usado A` presente y
+#      `usado excelente` ausente (los dos registros de CLAUDE.md §1), mas UN solo anchor. Prueba que
+#      lo que sale de la pagina es lo que arma el dominio; no vuelve a comparar el byte.
+#  Ninguno de los dos alcanza solo: el primero sin el segundo pasa con el boton borrado, el segundo
+#  sin el primero pasa con el mensaje derivando de a un substring por vez. W1 nombra a los dos.
 #
 #  Copiar esas aserciones aca serian dos copias que derivan. Pero un comentario que dice "eso lo
 #  cubre otro archivo" no es una prueba: es exactamente la clase de delegacion que dejo al boton de
@@ -81,6 +88,11 @@ else no "M3b dejo de verificar los dos registros de condicion (CLAUDE.md §1, ra
 if grep -q 'UN solo boton wa.me en la ficha' scripts/accept-s3.sh; then
   ok "M3b sigue contando UN solo boton wa.me en la ficha"
 else no "M3b dejo de contar los anchors de wa.me: la regla 'UN boton' quedo sin gate"; fi
+# El byte exacto vive aca, no en M3b. Si U14 se afloja, "texto exacto byte a byte" deja de ser
+# verdad aunque M3b siga verde: los substrings pasan igual con el mensaje derivando de a poco.
+if grep -q 'expect(text).toBe(CANONICAL_TEXT)' packages/domain/src/wa.test.ts; then
+  ok "U14 sigue comparando el mensaje canonico byte a byte (toBe, no toContain)"
+else no "U14 dejo de comparar el mensaje canonico byte a byte: 'texto exacto' se quedo sin la unica asercion que lo afirma"; fi
 
 # ──────────────────────────────────────────────────────────────────────────────────────────────
 sec "W2 · el evento no puede tener PII, porque no hay donde ponerla"
