@@ -358,10 +358,30 @@ for PAR in "ficha:$HTML" "grilla:$GRID"; do
   # con el que el costo puede filtrarse de verdad. Encontrado el 2026-08-28 en la polaridad negativa:
   # el fixture sucio traia `costUsdCents` y el barrido listo `imei internalNotes supplier` sin el.
   #
-  # Contrapartida asumida: `margin[A-Za-z_]*` tambien matchea `marginBottom` de un style inline. Se
-  # deja asi. La vidriera es Tailwind y hoy no hay ni uno; el dia que aparezca, un FAIL que obliga a
-  # sacar un style inline de la vidriera es mejor senal que un barrido que no reconoce `marginCents`.
-  KEYS=$(grep -aoE '\b(imei|cost_?[uU]sd[A-Za-z_]*|margin[A-Za-z_]*|internal_?[nN]otes|supplier)\b' "$DOC" | sort -u | tr '\n' ' ')
+  # `margin` PELADO ya no se busca en los BYTES, y la razon es una medicion. La version anterior
+  # barria `margin[A-Za-z_]*` con la contrapartida escrita al lado: "tambien matchea `marginBottom`
+  # de un style inline, la vidriera es Tailwind y hoy no hay ni uno". Falso, y no por un style
+  # nuestro. Medido el 2026-08-28 sobre `/p/cargador-20w-usbc` servido: 8 ocurrencias de `margin`,
+  # las 8 de la pagina de error propia de Next, que va serializada en el payload de RSC de
+  # CUALQUIER ficha con codigo 200: `body{...;margin:0}`, `.next-error-h1`, `\"margin\":\"0 20px 0
+  # 0\"`, `\"margin\":0`. Ninguna es nuestra. El gate salia rojo por bytes del framework, y un gate
+  # cronicamente rojo por una causa ajena es peor que no tenerlo: entrena a leer el rojo como ruido.
+  #
+  # Se probaron dos formas de separar los casos y las dos se cayeron contra el archivo servido:
+  # por FORMA de clave no va (Next tambien escribe `\"margin\":`), y por TIPO de valor tampoco
+  # (Next escribe `\"margin\":0`, un numero, igual que nuestros centavos). En este nivel el token
+  # es indistinguible, punto.
+  #
+  # Lo que mantiene el invariante cubierto es que ya se chequea donde SI se puede discriminar:
+  # `packages/domain/src/dto.test.ts` U18 arma una fila cruda que incluye literalmente
+  # `margin: 14_000` y afirma que `publicListingDTO` nunca emite esa clave. Ahi es un objeto con
+  # claves, no un HTML con CSS adentro. Esta regla se queda con los nombres inequivocos:
+  # `margin_usd` (la columna real), `marginUsd`, `marginPct`, `margen*`, que ningun framework
+  # escribe por su cuenta.
+  #
+  # Contrapartida que SI se asume: `margin[A-Z]...` matchea `marginTop` de un style inline. Hoy no
+  # hay ninguno en la vidriera (medido, no supuesto) y un FAIL que obliga a sacarlo es buena senal.
+  KEYS=$(grep -aoE '\b(imei|cost_?[uU]sd[A-Za-z_]*|margin(_[a-z]+|[A-Z][A-Za-z]*)|margen[A-Za-z_]*|internal_?[nN]otes|supplier)\b' "$DOC" | sort -u | tr '\n' ' ')
   if [ -n "${KEYS// /}" ]; then
     no "claves prohibidas en el payload de la $DONDE: $KEYS"
   else
