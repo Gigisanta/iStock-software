@@ -28,8 +28,16 @@ Hola, vi el iPhone 14 Pro 256 Grafito (usado A) a USD 620 en nortecel.maat.work 
 6. **Prohibido en el texto:** IMEI, costo, margen, notas internas, nombre del proveedor.
 7. Precio: el **USD** de la ficha, formateado igual que en pantalla. Si en pantalla dice `620`,
    en el mensaje dice `620`. Discrepancia = bug.
-8. Listing `reserved` → el copy cambia y lo dice ("está reservado, ¿te aviso si se libera?").
-   Nunca prometas disponibilidad que el DTO no respalda.
+8. Listing `reserved` → el copy cambia y lo dice. Dos reglas, no un texto:
+   **(a)** nunca prometas disponibilidad que el DTO no respalda; **(b)** el mensaje declara la
+   intención de compra **en presente**, no pide un favor futuro. El botón de una ficha reservada
+   sigue siendo el de comprar: quien lo aprieta quiere ese equipo ahora, aunque haya una reserva
+   viva. Un mensaje que arranca pidiendo un aviso llega del otro lado como consulta y se archiva.
+   > **Acá no va el texto, a propósito.** Hasta el 2026-08-28 este renglón citaba el copy entre
+   > paréntesis y quedó viejo el día que la vidriera dejó de prometer un aviso que nadie
+   > implementa: un skill que transcribe copy es una segunda fuente de verdad para el copy, y la
+   > segunda fuente siempre es la desactualizada. El texto canónico vive en
+   > `packages/domain/src/wa.ts` y lo fija su test. Si necesitás saber qué dice, leelo ahí.
 
 ## Tracking
 Al click se registra `wa_click_events`: `tenant_id`, `listing_id`, `ts`, `referrer`, hash de IP.

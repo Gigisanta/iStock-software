@@ -59,15 +59,89 @@ describe('buildWaMessage — el botón que factura', () => {
     expect(decoded).toBe(CANONICAL_TEXT);
   });
 
-  it('U16 — un listing reservado cambia el copy y no promete disponibilidad', () => {
+  /**
+   * ══════════════════════════════════════════════════════════════════════════════════════════════
+   *  `reserved`: el botón dice «lo quiero igual», el mensaje tiene que decir lo mismo
+   * ══════════════════════════════════════════════════════════════════════════════════════════════
+   *
+   * El texto viejo era *«... Dice que está reservado, ¿me avisás si se libera?»*. Contra el CTA que
+   * la vidriera fijó en S6 —**«Lo quiero igual — escribir por WhatsApp»**— eso es un botón que
+   * promete una cosa y un mensaje que manda otra: el visitante aprieta declarando compra y del otro
+   * lado llega un pedido de aviso para más adelante, que se archiva.
+   *
+   * Ojo con el matiz, porque **no** es el defecto que se arregló en `status.ts`: acá el aviso se lo
+   * pide el visitante al vendedor, que sí puede cumplirlo. No es una promesa nuestra. Lo que rompe
+   * es `CLAUDE.md` §1 — **UN** `wa.me` por ficha, y el texto que abre es el que cierra la operación.
+   *
+   * Por eso hay dos tests y no uno. `U16` fija el string (se lee, se aprueba, se cambia a
+   * propósito). `U16b` es el que tiene que **sobrevivir al próximo rewrite**: no le importa qué
+   * palabras se usen, le importa la forma — que la intención de compra vaya primero y afirmativa, y
+   * que el mensaje no vuelva a ser un favor pedido en forma de pregunta. Si alguien reescribe el
+   * copy y vuelve a la fórmula del favor, `U16b` se pone rojo aunque `U16` se haya actualizado.
+   *
+   * Alcance a propósito: `U16b` mira **sólo** `reserved`. `sold` sí termina en pregunta
+   * (*«¿Te queda alguno parecido?»*) y está bien que así sea — ahí no hay nada que comprar y la
+   * pregunta es el producto del mensaje, no su debilidad.
+   */
+  const RESERVED_TEXT =
+    'Hola, quiero el iPhone 14 Pro 256 Grafito (usado A) a USD 620 que vi en nortecel.maat.work. Sé que está reservado: si se cae, lo compro yo.';
+
+  it('U16 — un listing reservado declara la compra sin prometer disponibilidad', () => {
     const text = buildWaMessage({ ...CANONICAL, status: 'reserved' }, 'nortecel');
-    expect(text).toBe(
-      'Hola, vi el iPhone 14 Pro 256 Grafito (usado A) a USD 620 en nortecel.maat.work. Dice que está reservado, ¿me avisás si se libera?',
-    );
+    expect(text).toBe(RESERVED_TEXT);
+    // Reconoce el estado (no vende algo que está señado) sin ser el copy de `available`.
+    expect(text).toContain('reservado');
     expect(text).not.toContain('y lo quiero');
+    // `available` es intocable: está fijado literalmente en `CLAUDE.md` §1.
+    expect(buildWaMessage(CANONICAL, 'nortecel')).toBe(CANONICAL_TEXT);
   });
 
-  it('U16b — un listing vendido no ofrece comprar lo que ya no está', () => {
+  it('U16b — estructural: la variante reserved no es un favor pedido en forma de pregunta', () => {
+    const text = buildWaMessage({ ...CANONICAL, status: 'reserved' }, 'nortecel');
+
+    /** Compra declarada en primera persona del presente. Ni condicional, ni pregunta. */
+    const COMPRA = /\b(quiero|compro|me lo quedo|lo llevo)\b/u;
+    /** Pedido de favor: el vendedor tiene que hacer algo más adelante para que el mensaje sirva. */
+    const FAVOR = /\b(avisame|avisáme|me avisás|me avisas|me avisarías|podés avisarme)\b/u;
+    /** Hasta el primer punto seguido. El host no corta: `nortecel.maat.work` no lleva espacio. */
+    const primeraOracion = text.split(/(?<=\.)\s/u)[0] ?? text;
+
+    // (1) No es una pregunta. Ni al final, ni en el medio.
+    expect(text).not.toMatch(/[?¿]/u);
+    // (2) La intención de compra está, y está en el primer renglón.
+    expect(primeraOracion).toMatch(COMPRA);
+    // (3) Y va PRIMERO: antes de cualquier mención al estado reservado.
+    expect(text.search(COMPRA)).toBeGreaterThanOrEqual(0);
+    expect(text.search(COMPRA)).toBeLessThan(text.search(/reserv/u));
+    // (4) El aviso puede quedar como consecuencia, nunca como pedido.
+    expect(text).not.toMatch(FAVOR);
+    // (5) Registro de reseller intacto (`CLAUDE.md` §1, ratificado): `usado A`, no `usado excelente`.
+    expect(text).toContain('(usado A)');
+    expect(text).not.toContain('usado excelente');
+  });
+
+  it('U16c — el mensaje de reservado no filtra un solo dato de la reserva', () => {
+    // El visitante no sabe quién señó ni hasta cuándo, y el mensaje no puede enseñárselo.
+    // `WaListing` no tiene esos campos: la prohibición es de tipos. Esto es el cinturón.
+    const contaminado = {
+      ...CANONICAL,
+      status: 'reserved',
+      customer_label: 'Sofía G.',
+      reservedBy: 'Sofía G.',
+      reservedUntil: '2026-08-28T19:30:00Z',
+      reservation_expires_at: '2026-08-28T19:30:00Z',
+      internal_notes: 'seña 100 en efectivo',
+    } as WaListing;
+    const text = buildWaMessage(contaminado, 'nortecel');
+    const url = buildWaUrl(contaminado, 'nortecel', '5492994123456');
+    for (const secret of ['Sofía', 'Sofia', '19:30', '2026-08-28', 'seña', 'efectivo', '100']) {
+      expect(text).not.toContain(secret);
+      expect(decodeURIComponent(url)).not.toContain(secret);
+    }
+    expect(text).toBe(RESERVED_TEXT);
+  });
+
+  it('U16d — un listing vendido no ofrece comprar lo que ya no está', () => {
     const text = buildWaMessage({ ...CANONICAL, status: 'sold' }, 'nortecel');
     expect(text).toContain('dice que está vendido');
     expect(text).not.toContain('y lo quiero');

@@ -22,6 +22,38 @@ import type { PublicStatus } from '@istock/domain';
  * `sold` se sigue mostrando porque `PUBLIC_STATUSES` de `@istock/domain` lo incluye: el equipo
  * vendido es prueba social y la ficha vieja sigue teniendo URL. Lo que **no** hace es ofrecerlo
  * como si estuviera a la venta — el botón cambia de promesa, no desaparece (ver `ctaLabel`).
+ *
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *  El copy sólo puede afirmar lo que la vidriera puede sostener
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * Hasta S6 el texto de `reserved` decía *«si la reserva se cae, avisamos»*. **No existe nada que
+ * avise.** No hay lista de espera, no hay notificación, no se guarda un solo dato del visitante:
+ * la vidriera es anónima y cacheada, no tiene DB propia y no la va a tener. Era una promesa hecha
+ * a un desconocido que nadie iba a poder cumplir, y el que quedaba mal no éramos nosotros — era el
+ * reseller, en su propio dominio.
+ *
+ * Peor de lo que parece: una reserva vencida cuyo barrido falla deja la unidad en `reserved`. El
+ * cron ya tiene techo, contador de intentos y devuelve 500 con una unidad abandonada, pero el caso
+ * *«esto quedó reservado más de lo esperable»* sigue existiendo y se resuelve a mano. Con el copy
+ * viejo, esa ficha le prometía un aviso a cada visitante que la abriera, una vez por pageview.
+ *
+ * La regla que queda, y que el test hace fallar: **ningún texto de acá compromete una acción futura
+ * nuestra.** Puede describir el presente (*"otra persona lo reservó"*), puede describir cómo
+ * funciona el mundo (*"una reserva a veces se cae"*) y puede pedirle algo al visitante
+ * (*"decíselo"*). No puede decir "avisamos", "te escribimos" ni "quedás anotado".
+ *
+ * Corolario sobre el botón: la degradación del CTA a *«Preguntar por WhatsApp si se libera»* era el
+ * mismo error por otra vía. `CLAUDE.md` §1 da **un** botón `wa.me` por ficha y ese botón es el que
+ * vende; un CTA que se disculpa convierte la única conversación del producto en una consulta tibia
+ * que arranca perdida. El visitante que igual quiere ese equipo tiene que poder decirlo en un
+ * mensaje que el vendedor pueda contestar — y decidir él si la seña se cae o no, que es lo único
+ * que efectivamente puede pasar.
+ *
+ * Lo que **no** cambia, y es la mitad que protege al que ya señó: el badge sigue diciendo
+ * `Reservado` —ni "disponible", ni "no disponible", ni "vendido"— y el payload público no crece.
+ * Quién reservó y hasta cuándo son datos del panel: que la ficha diga que está reservado es todo
+ * lo que un visitante anónimo puede saber.
  */
 
 export type StatusTone = 'available' | 'reserved' | 'sold';
@@ -56,11 +88,20 @@ export function statusBadge(status: PublicStatus): StatusBadge {
         ctaLabel: 'Lo quiero — escribir por WhatsApp',
       };
     case 'reserved':
+      // Dos frases y ninguna promesa. Ver el bloque «El copy sólo puede afirmar lo que la vidriera
+      // puede sostener», arriba: acá se dice qué pasa (otra persona lo reservó), qué NO va a pasar
+      // (no hay lista de espera) y qué puede hacer el visitante ahora (decirlo). Nada de esto
+      // necesita que después ocurra algo nuestro para seguir siendo verdad.
       return {
         label: 'Reservado',
-        detail: 'Alguien lo está por comprar. Preguntá igual: si la reserva se cae, avisamos.',
+        detail:
+          'Otra persona lo reservó y una reserva a veces se cae. No hay lista de espera: si lo ' +
+          'querés igual, decíselo ahora al vendedor.',
         tone: 'reserved',
-        ctaLabel: 'Preguntar por WhatsApp si se libera',
+        // El CTA no se disculpa: es el mismo verbo que `available` con un «igual» adelante. El
+        // estado ya lo dijo el badge dos veces (color y texto) — repetirlo acá sólo serviría para
+        // que el visitante que igual lo quiere se sienta un colado.
+        ctaLabel: 'Lo quiero igual — escribir por WhatsApp',
       };
     case 'sold':
       return {

@@ -17,7 +17,8 @@
  * - Prohibido en el texto: IMEI, costo, margen, notas internas, proveedor. El input de esta función
  *   **no tiene** esos campos: la prohibición es de tipos, no de disciplina.
  * - El precio se formatea con `formatUsd`, la misma función que usa la pantalla. Discrepancia = bug.
- * - `reserved` cambia el copy: nunca prometemos disponibilidad que el DTO no respalda.
+ * - `reserved` cambia el copy: nunca prometemos disponibilidad que el DTO no respalda. Lo que sí
+ *   hace es **declarar la compra en presente** — ver `buildWaMessage`.
  */
 
 import { DomainError } from './errors';
@@ -212,6 +213,35 @@ export function describeListing(listing: WaListing): string {
 /**
  * Texto exacto del mensaje. **Sin** URL-encoding: eso lo hace `buildWaUrl`.
  * El copy depende del estado público del listing.
+ *
+ * ── `reserved`: la intención va primero, el aviso es consecuencia ────────────────────────────────
+ *
+ * Hasta S6 este mensaje terminaba en *«Dice que está reservado, ¿me avisás si se libera?»*, y eso
+ * dejó de cerrar el día que la vidriera arregló su mitad: el único botón de la ficha reservada dice
+ * **«Lo quiero igual — escribir por WhatsApp»** (`apps/web/app/(storefront)/_lib/status.ts`). El
+ * visitante apretaba con una intención y mandaba otra. Del lado del vendedor no llegaba un
+ * comprador: llegaba un favor para más adelante, que se archiva.
+ *
+ * El defecto **no** es el de la vidriera. Acá el aviso se lo pide el visitante al vendedor, que sí
+ * puede cumplirlo: no es una promesa nuestra. Lo que rompe es `CLAUDE.md` §1 — la ficha tiene **UN**
+ * `wa.me` y el texto que abre es el que cierra la operación. Un mensaje que arranca pidiendo un
+ * favor futuro arranca perdido, y arranca perdido en el peor momento: mientras la reserva sigue
+ * viva y todavía se puede caer.
+ *
+ * Lo que se sostiene, y por qué:
+ * - **Primer renglón afirmativo.** `quiero el ...` antes que cualquier mención al estado. El
+ *   vendedor tiene que leer que hay alguien que quiere ese equipo, no alguien preguntando.
+ * - **El estado se reconoce, no se pregunta.** `Sé que está reservado` evita la venta duplicada y
+ *   le dice al vendedor que este es el segundo en la fila, no un cliente confundido por el badge.
+ * - **El aviso queda como consecuencia:** `si se cae, lo compro yo`. No se pide nada; se declara qué
+ *   pasa si la seña no entra. El vendedor deduce solo que tiene a quién llamar.
+ * - **Registro de reseller intacto** (`usado A`, no `usado excelente`): `CLAUDE.md` §1, ratificado.
+ *   Son dos mapas a propósito — la ficha le habla a un comprador, este texto a un reseller.
+ * - **Cero datos de la reserva.** Ni quién señó, ni hasta cuándo. `WaListing` no los tiene: la
+ *   prohibición es de tipos. Que la ficha diga que está reservado es todo lo que un visitante
+ *   anónimo puede saber.
+ *
+ * `available` **no se toca**: ese string está fijado literalmente en `CLAUDE.md` §1.
  */
 export function buildWaMessage(listing: WaListing, slug: string): string {
   const host = storefrontHost(slug);
@@ -222,7 +252,7 @@ export function buildWaMessage(listing: WaListing, slug: string): string {
     case 'available':
       return `Hola, vi el ${what} a ${price} en ${host} y lo quiero.`;
     case 'reserved':
-      return `Hola, vi el ${what} a ${price} en ${host}. Dice que está reservado, ¿me avisás si se libera?`;
+      return `Hola, quiero el ${what} a ${price} que vi en ${host}. Sé que está reservado: si se cae, lo compro yo.`;
     case 'sold':
       return `Hola, vi el ${what} en ${host} y dice que está vendido. ¿Te queda alguno parecido?`;
     default: {
