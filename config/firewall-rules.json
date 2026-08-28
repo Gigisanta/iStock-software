@@ -33,6 +33,32 @@
       "$covers": "El WAF matchea /api/track sobre {slug}.maat.work; proxy.ts lo reescribe a /s/{slug}/api/track, que es donde vive el handler. El tenant llega como SEGMENTO DE PATH escrito por el proxy desde el host, no como header ni como campo del body: una sola fuente y ya es la que usa toda pagina de vidriera."
     },
     {
+      "name": "storefront-tradein-rl",
+      "why": "S8 agrega la SEGUNDA escritura sin autenticar del producto, y es mas cara que la primera en las dos monedas que importan. En Postgres: el beacon de /api/track escribe tres columnas sin PII y de ancho fijo; un lead de canje escribe texto libre de un anonimo (model_text, notes) y ademas es una fila que el dueno LEE en su inbox, o sea que un flood no solo infla la tabla, le arruina la herramienta. Y en atencion humana: cada fila falsa es un WhatsApp que alguien de Cipolletti va a mandar a un numero inventado. El techo es mas duro que el de /api/track a proposito — 60/60s ahi es un beacon que un comprador real dispara varias veces por sesion; un canje real se manda UNA vez. 5/600s deja lugar a corregir un typo y reenviar, y no deja lugar a un for-loop.",
+      "route": "/api/tradein",
+      "condition": {
+        "type": "path",
+        "op": "eq",
+        "value": "/api/tradein"
+      },
+      "rateLimit": {
+        "window": 600,
+        "requests": 5,
+        "keys": [
+          "ip"
+        ],
+        "algo": "fixed_window",
+        "action": "deny"
+      },
+      "status": "planned",
+      "lands_with": "S8",
+      "covers": [
+        "/s/[slug]/api/tradein"
+      ],
+      "$covers": "Mismo mecanismo que storefront-track-rl: el WAF matchea /api/tradein sobre {slug}.maat.work y proxy.ts lo reescribe a /s/{slug}/api/tradein. El tenant llega como SEGMENTO DE PATH escrito por el proxy desde el host, nunca del body — y del lado de Postgres lo vuelve a exigir el WITH CHECK de la policy TO anon, que compara contra storefront_tenant_id(). Son las mismas dos capas que S4.",
+      "$por_que_no_es_una_server_action": "El formulario publico postea a un route handler y no a una Server Action, y la razon es este archivo: una Server Action postea a la URL de la PAGINA, asi que el unico path que el WAF podria condicionar seria la ficha misma — o sea le pondria techo a los pageviews de vidriera, que es exactamente lo que $scoping de este archivo prohibe por facturarse por allowed requests. Un endpoint con path propio es lo que hace que el techo se pueda poner donde esta el costo y no encima del comprador."
+    },
+    {
       "name": "chatbot-rl",
       "why": "Cada request al chat es un token pagado a Gemini/Groq, y es el UNICO vector del producto con costo por uso. El techo viejo (12/min/IP) esta medido y no alcanzaba: 12/min = 17.280 msgs/dia = 518.400/mes, que a USD 0,00008032/msg son USD 41,64 esperados (USD 99,53 con los tokens en el techo estructural) desde UNA sola IP, contra un plan Negocio de USD 35. O sea que la regla nunca fue el techo de la factura: era el techo de un for-loop ingenuo. 20/600s deja pasar cualquier conversacion real (nadie pregunta 20 veces en diez minutos por un telefono) y baja el peor caso por IP a ~USD 6,94/mes. El techo de la FACTURA es el contador por tenant/dia, que hoy NO EXISTE: packages/ai tiene softCapReached() y la constante de 40/dia, pero messagesToday es un parametro que solo escriben los tests. Ver docs/COST.md 2.6 y el ADR del contador (C1).",
       "route": "/api/chat",
