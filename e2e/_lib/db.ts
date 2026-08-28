@@ -40,6 +40,7 @@
 import { createHash } from 'node:crypto';
 import postgres from 'postgres';
 import type { Sql } from 'postgres';
+import { assertPublicVariantKey } from '../../packages/media/src/keys';
 
 /** Mismo default que `packages/db/src/env.ts` (`scripts/pg-local.sh`). */
 const DATABASE_URL = process.env['DATABASE_URL'] ?? 'postgresql://localhost:5432/istock_dev';
@@ -439,32 +440,6 @@ export async function seedDraftUnit(unit: SeedDraftUnit): Promise<string> {
  *
  * **No se usa donde se miden bytes.** Una key sin objeto detrás devuelve 404 y 404 pesa poco: un
  * spec de presupuesto que midiera esto daría verde midiendo la nada.
- *
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- *  Por qué el hash se re-tira con sal (y por qué eso NO es tapar un bug)
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- * `assertPublicVariantKey` (`packages/media/src/keys.ts`) rechaza toda key que matchee `/\d{15}/`
- * como "posible IMEI", y la corre **dos veces**: en el upload (`upload.ts:85`) y otra vez al armar
- * la URL en el render de la ficha (`url.ts:31`). Un sha256 en hexadecimal cae en esa regex
- * **1 de cada ~156 veces** (medido, 3M de muestras), así que un fixture que copia la forma real
- * de la key hereda la lotería.
- *
- * En el pipeline de verdad esa key nunca llega a la base: la rechaza el upload. Este helper
- * saltea el upload —inserta directo— así que sí puede plantar una key que el producto habría
- * rechazado, y entonces lo que revienta es el **render**. Bajo `cacheComponents` un throw adentro
- * de un render cacheado no es un 500: es un 200 que nunca cierra el stream (ver `_lib/http.ts`),
- * o sea que la ficha **cuelga** y el spec muere por timeout de hook con un mensaje que no habla
- * de media. Costó una corrida entera de `pnpm e2e` diagnosticarlo.
- *
- * La sal hace que este fixture siembre sólo keys **que el pipeline real habría aceptado**, que es
- * la única clase de key que puede existir en `listing_photos` en producción. Sigue siendo
- * determinista: mismo `listingId` + `sortOrder` + variante ⇒ misma key en toda corrida.
- *
- * Lo que la sal **no** hace es arreglar el defecto que destapó, y a propósito: que el 1.9% de las
- * fotos reales sea imposible de subir para siempre —la key es content-addressed, reintentar da el
- * mismo hash— es de `packages/media`, y `qa-agent` no edita el código bajo test (`CLAUDE.md` §4).
- * Está reportado al LEAD. Si algún día se arregla, esta sal queda sin efecto sola: no habrá hash
- * que re-tirar.
  */
 export async function seedListingPhoto(
   tenantId: string,
@@ -472,23 +447,22 @@ export async function seedListingPhoto(
   sortOrder = 0,
 ): Promise<void> {
   const q = sql();
-  /** El mismo guard que corre el producto, replicado acá para no importar `packages/media`. */
-  const pareceImei = /\d{15}/u;
-  const digest = (tag: string): string => {
-    for (let sal = 0; sal < 64; sal += 1) {
-      const hash = createHash('sha256')
-        .update(`qae2e/${listingId}/${String(sortOrder)}/${tag}/${String(sal)}`)
-        .digest('hex')
-        .slice(0, 32);
-      // `v1/` y `.webp` no pueden alargar una corrida de dígitos (los separadores la cortan), así
-      // que chequear el hash equivale a chequear la key entera.
-      if (!pareceImei.test(hash)) return hash;
-    }
-    throw new Error(`64 hashes seguidos parecen un IMEI para ${listingId}/${tag}: es imposible`);
-  };
+  const digest = (tag: string): string =>
+    createHash('sha256')
+      .update(`qae2e/${listingId}/${String(sortOrder)}/${tag}`)
+      .digest('hex')
+      .slice(0, 32);
+  /**
+   * La key se arma con la MISMA forma que la del pipeline real (`v1/{ab}/{sha256_32}.webp`) y se
+   * pasa por el gate del producto antes de tocar la base: este helper es el único lugar del repo
+   * que inserta en `listing_photos` salteando el upload, o sea el único que puede plantar una key
+   * que el producto nunca habría producido —y esa key no falla acá, cuelga el render de la ficha.
+   */
   const key = (tag: string): string => {
     const hash = digest(tag);
-    return `v1/${hash.slice(0, 2)}/${hash}.webp`;
+    const candidate = `v1/${hash.slice(0, 2)}/${hash}.webp`;
+    assertPublicVariantKey(candidate);
+    return candidate;
   };
 
   await q`
