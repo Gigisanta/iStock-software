@@ -369,7 +369,7 @@ sec 'V10b · el parte del barrido existe y sus numeros son los esperados'
 HOL=$(grep -aoE 'MEDIDO cron barrido · .*' /tmp/s6-hol.txt | head -1 || true)
 if [ -z "$HOL" ]; then
   no 'no hay linea "MEDIDO cron barrido": la probe no dejo parte de lo que midio y el gate NO pasa por ausencia de medicion'
-  inf 'Formato: MEDIDO cron barrido · corridas=<N> · envenenadas=<N> · sanas=<N> · sanas_vencidas_c2=<N> · intentos_tras_fallo=<N> · reintento_tras_recuperarse=<N> · tope=<N> · abandonadas_en_el_tope=<N> · unrecorded=<N> · skipped_sobre_vencidas=<N> · status_base_sana=<N> · status_con_abandonada=<N>'
+  inf 'Formato: MEDIDO cron barrido · corridas=<N> · envenenadas=<N> · sanas=<N> · sanas_vencidas_c2=<N> · intentos_tras_fallo=<N> · reintento_tras_recuperarse=<N> · tope=<N> · abandonadas_en_el_tope=<N> · unrecorded=<N> · skipped_sobre_vencidas=<N> · status_base_sana=<N> · status_con_abandonada=<N> · status_primer_fallo=<N> · status_segundo_fallo=<N> · lineas_log_por_envenenada=<N>'
 else
   inf "$HOL"
   campo_hol() { printf '%s' "$HOL" | sed -nE "s/.*[[:space:]]$1=([^ ·]*).*/\1/p"; }
@@ -398,6 +398,9 @@ else
     'skipped_sobre_vencidas:0:el dominio dijo "nada que hacer" sobre una reserva vencida: esa fila se cuenta como atendida y vuelve manana igual' \
     'status_base_sana:200:el cron NO contesta 200 con la base sana. Un handler que contesta siempre lo mismo no distingue nada, y medir solo el 500 no lo detecta' \
     'status_con_abandonada:500:el cron contesta 200 con una unidad trabada. Un cron verde mientras nada se vence es la falla que se descubre semanas despues y del lado del cliente' \
+    'status_primer_fallo:200:la PRIMERA falla de una fila pinto el cron de rojo. A 0,12 expiraciones por corrida eso es rojo permanente por una carrera perdida, y un rojo permanente se ignora igual que un verde vacio' \
+    'status_segundo_fallo:500:la SEGUNDA falla de la MISMA fila devolvio 200: el predicado del 500 se quedo en `abandoned > 0` y calla la unidad trabada durante cinco corridas, que es toda la ventana en la que salia barata' \
+    'lineas_log_por_envenenada:5:una fila envenenada no cuesta exactamente `tope` lineas. Mas = el techo no la saca del lote (8.640 lineas identicas por mes, para siempre); menos = dejo de entrar antes de tiempo y el reintento legitimo tampoco pasa' \
   ; do
     N=${PAR%%:*}; RESTO=${PAR#*:}; E=${RESTO%%:*}; POR=${RESTO#*:}
     V=$(campo_hol "$N")

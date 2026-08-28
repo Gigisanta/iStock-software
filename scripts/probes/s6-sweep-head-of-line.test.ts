@@ -66,9 +66,24 @@ vi.mock('../../apps/web/app/(app)/_lib/tenants/storefront-cache', () => ({
   invalidateStorefrontUnit: vi.fn(),
   invalidateListing: vi.fn(),
 }));
+/**
+ * El logger no se silencia: se **anota**. La version anterior lo mockeaba con dos `vi.fn()` y por
+ * eso las lineas del barrido no existian en ningun lado — un espia sobre `console.error` capturaba
+ * cero y el conteo del caso G medía la nada. Es la misma familia de defecto que esta probe audita:
+ * una medicion que da 0 porque el sujeto esta apagado, no porque el sujeto no haya hecho nada.
+ *
+ * `vi.hoisted` porque el array tiene que existir antes que el factory, y **compartido** porque los
+ * casos F y G hacen `vi.resetModules()`: sin eso el factory vuelve a correr y cada re-import se
+ * lleva su propio `vi.fn()`, con lo cual el test miraria un mock y el barrido escribiria en otro.
+ */
+const registroLogs = vi.hoisted(() => [] as { event: string; fields: Record<string, unknown> }[]);
 vi.mock('../../apps/web/app/(app)/_lib/log', () => ({
-  logEvent: vi.fn(),
-  logError: vi.fn(),
+  logEvent: (event: string, fields: Record<string, unknown> = {}) => {
+    registroLogs.push({ event, fields });
+  },
+  logError: (event: string, code: string, fields: Record<string, unknown> = {}) => {
+    registroLogs.push({ event, fields: { code, ...fields } });
+  },
 }));
 
 /**
@@ -178,6 +193,9 @@ const medido: Record<string, number> = {
   skipped_sobre_vencidas: -1,
   status_base_sana: -1,
   status_con_abandonada: -1,
+  status_primer_fallo: -1,
+  status_segundo_fallo: -1,
+  lineas_log_por_envenenada: -1,
 };
 
 /**
@@ -462,5 +480,88 @@ describe('S6 · el barrido no se traba detrás de una fila rota', () => {
         'contesta 200. Un cron verde mientras nada se vence es la falla que se descubre semanas ' +
         'después y del lado del cliente.',
     ).toBe(500);
+  });
+  /**
+   * ── G · el predicado del 500, y el costo en lineas de log ───────────────────────────────────
+   *
+   * F mide las dos salidas del handler, pero el 500 se lo saca por la pata `abandoned`. Ese no es
+   * el predicado que la slice discutio. `T23` del board eligió a propósito **`stuck`** —una fila
+   * que falla teniendo ya `sweep_attempts >= 1`— y descartó `failed > 0` a secas por una razón
+   * medida: a 0,12 expiraciones por corrida la mayoría trae **una** fila, así que una sola carrera
+   * perdida contra el dueño cancelando desde el panel pintaría el cron de rojo permanente. Un rojo
+   * permanente enseña a ignorar el rojo, que es el mismo defecto que un verde vacío.
+   *
+   * Con sólo F en el archivo, un `degraded = sweep.abandoned > 0` —o sea el arreglo sin la mitad
+   * cross-run— pasa. Y pasa callado durante **cinco corridas**: la fila trabada recién grita cuando
+   * llega al techo. Este caso mide las dos puntas del predicado sobre la misma fila:
+   *
+   *   corrida 1 → 200 · la fila falla por PRIMERA vez. No es un incidente, es una carrera.
+   *   corrida 2 → 500 · la misma fila falla con el intento ya anotado. Dos veces no es una carrera.
+   *
+   * Y de paso cuenta lo único que el techo existe para acotar: **cuántas líneas de log cuesta una
+   * fila envenenada en toda su vida**. Sin techo son 8.640 por mes, para siempre, idénticas. Con
+   * techo son `MAX_SWEEP_ATTEMPTS` y después silencio — la fila deja de entrar al lote. Esa es la
+   * economía del arreglo y acá se cuenta, no se argumenta.
+   */
+  it('la SEGUNDA falla de la misma fila es 500, la primera es 200, y cuesta `tope` lineas de log', async () => {
+    process.env.CRON_SECRET = 'probe-hol-8c1f4a92be7d0356af41cc2e';
+    vi.resetModules();
+    const { GET } = await import('../../apps/web/app/api/cron/expire-reservations/route');
+    const pedir = (): Promise<Response> =>
+      GET(
+        new Request('https://istock-software.vercel.app/api/cron/expire-reservations', {
+          headers: { authorization: `Bearer ${process.env.CRON_SECRET ?? ''}` },
+        }),
+      );
+
+    const rota = await unidadVencida(uuidVenenoso(9400), 400);
+    // Una sana atrás, para que la corrida 1 tenga trabajo util ademas del fallo: un 200 sobre una
+    // corrida que no vencio nada no distingue "toleró la carrera" de "no hizo nada".
+    const sana = await unidadVencida(uuidSano(), 100);
+
+    const desde = registroLogs.length;
+    medido.status_primer_fallo = (await pedir()).status;
+    medido.status_segundo_fallo = (await pedir()).status;
+    // Hasta el techo, y DOS corridas de mas: si el techo no la sacara del lote, esas dos corridas
+    // sumarian lineas y el conteo se pasaria de `tope`. Es la mitad que hace que el numero mida.
+    for (let i = 2; i < MAX_SWEEP_ATTEMPTS + 2; i += 1) await pedir();
+
+    medido.lineas_log_por_envenenada = registroLogs
+      .slice(desde)
+      .filter(
+        (l) => l.event === 'reservation.expire.failed' && l.fields['listingId'] === rota.listingId,
+      ).length;
+
+    expect(
+      (await estado(sana.reservationId)).status,
+      'la corrida 1 no vencio la reserva sana: el fixture no separa "tolero la carrera" de "no hizo nada"',
+    ).toBe('expired');
+
+    expect(
+      medido.status_primer_fallo,
+      'la PRIMERA falla de una fila devolvio 500. A 0,12 expiraciones por corrida eso es rojo ' +
+        'permanente por una carrera perdida contra el panel, y un rojo permanente se ignora igual ' +
+        'que un verde vacio.',
+    ).toBe(200);
+
+    expect(
+      medido.status_segundo_fallo,
+      'la SEGUNDA falla de la MISMA fila devolvio 200. El predicado del 500 se quedo en ' +
+        '`abandoned > 0`: la unidad trabada existe desde ahora y el cron la calla durante cinco ' +
+        'corridas, que es toda la ventana en la que alguien podia arreglarla barata.',
+    ).toBe(500);
+
+    expect(
+      (await estado(rota.reservationId)).attempts,
+      'la fila no llego al techo: el `+1` dejo de avanzar y el conteo de lineas de abajo no mide nada',
+    ).toBe(MAX_SWEEP_ATTEMPTS);
+
+    expect(
+      medido.lineas_log_por_envenenada,
+      'una fila envenenada no cuesta `MAX_SWEEP_ATTEMPTS` lineas de log sino ' +
+        String(medido.lineas_log_por_envenenada) +
+        '. Si es mas, el techo no la saca del lote y son 8.640 lineas identicas por mes, para ' +
+        'siempre; si es menos, dejo de entrar antes de tiempo y el reintento legitimo tampoco pasa.',
+    ).toBe(MAX_SWEEP_ATTEMPTS);
   });
 });
