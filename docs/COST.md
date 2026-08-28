@@ -27,6 +27,15 @@ ficha del **plan Negocio**. Nada se encareció. **El techo estructural del turno
 (USD 0,000384) — lo que cambió es el esperado. Dos hallazgos nuevos, los dos medidos: el código
 permite **4 llamadas facturadas en un turno**, no 2, y la ficha que el plan Negocio vende mide
 **1374 tokens** contra un techo de 1200, así que hoy entra tirando el historial completo._
+_**Re-medido el 2026-08-28 contra `89ab7c0`** (§2.8.3b): `ai-agent` cerró **C11** y **el techo de
+llamadas facturadas por turno bajó de 4 a 3**, ahora como constante **derivada**
+(`MAX_BILLED_CALLS_PER_TURN = TURN_ROUNDS + 1`) y no como número suelto. El techo absoluto del chat
+pasa de **USD 0,8064 a 0,6336/tenant/mes** (−21,4 %, **no** el −29 % que yo había estimado: la resta
+de C11 describía una de las dos ramas de 3 llamadas, no la cara — 2 primarios + 1 fallback). **El
+esperado no se movió ni un dígito** (USD 0,1186/mes): lo que se compró es seguro contra el día malo,
+no un ahorro de hoy. En la misma pasada se partió la celda de dueño de **C6**, que decía `ai-agent`
+sola y **violaba `CLAUDE.md` §4** — el consumidor del `ContextTrimReport` vive en la columna de
+`app-agent` y **espera FASE 5**._
 
 ## Objetivo duro
 > **Base ≤ USD 0,50 · Negocio ≤ USD 1,50** por tenant activo, hasta 100 tenants, donde el 1,50 es
@@ -87,7 +96,7 @@ directamente de ese margen.
 > | plan | esperado `[CALC-STUB]` | techo `[ESTRUCTURAL]` | contra el objetivo |
 > |---|---|---|---|
 > | **Base** | USD 0,025 – 0,026 | igual (no tiene chat) | 0,50 → **19×** |
-> | **Negocio** | **USD 0,145** (0,026 no-chat + 0,119 chat) | **USD 0,488** (turno con tool) · **USD 0,833** (las 4 llamadas de §2.8.3) | 1,50 → **10,3× / 3,1× / 1,8×** |
+> | **Negocio** | **USD 0,145** (0,026 no-chat + 0,119 chat) | **USD 0,488** (turno con tool) · **USD 0,660** (las 3 llamadas de §2.8.3b; decía 0,833 con las 4 de antes de `89ab7c0`) | 1,50 → **10,3× / 3,1× / 2,3×** |
 > | **Negocio, hoy en producción** | **USD 0,026** | — | nada invoca `@istock/ai` (§2.6.4) |
 >
 > **El techo pasó de 0,257 a 0,488 el 2026-08-28 y no es que algo se haya encarecido (§2.7):** un
@@ -100,10 +109,11 @@ directamente de ese margen.
 > del turno en vez de sumarlos. Con `ChatAnswer.billed` puesto por C8, el esperado medido es
 > **USD 0,1186/mes** y el mensaje de vidriera **USD 0,00009885**. **El techo del turno con tool no
 > se mueve** (0,000384/msg): lo que se movió es el esperado. Lo que sí es nuevo es un techo **más
-> arriba** que no estaba escrito: el código permite **4 llamadas facturadas en un turno** —el
-> primario que contesta `200` vacío se factura igual, en las dos rondas— y ahí el mensaje vale
-> **USD 0,000672** y el mes **USD 0,8064**, o sea **1,24×** bajo el presupuesto de chat en vez de
-> 2,2×. Sigue siendo PASS; deja de ser holgado.
+> arriba** que no estaba escrito: el código permite llamadas facturadas de más porque el primario
+> que contesta `200` vacío se factura igual. Eran **4 por turno**; desde `89ab7c0` son **3**, y ahí
+> el mensaje vale **USD 0,000528** y el mes **USD 0,6336**, o sea **1,58×** bajo el presupuesto de
+> chat en vez de 2,2× (era 1,24× con las 4). Sigue siendo PASS; deja de ser holgado. **Y el eval no
+> se movió con el arreglo:** el techo facturable no es la factura (§2.8.3b).
 >
 > **Y el turno con tool no aguanta el techo de dieta: lo aguanta degradando.** Medido sobre el
 > corpus del propio gate, **2 de los 18 turnos con resultado de tool tiran el historial completo**
@@ -206,9 +216,10 @@ supuesto y sin él el vector de Postgres no se puede calcular (§2.4.4).
 > **Los dos renglones de LLM de esta tabla son de FASE 1 y están superados.** «1.200 msgs ×
 > USD 0.000144–0.000192 = 0.17 – 0.23» calcula con la dieta **en el techo** y con **una** llamada
 > por turno. Medido: el chat esperado es **USD 0,1186/tenant/mes** (§2.8) y el techo del turno con
-> tool **USD 0,4608** — o **USD 0,8064** contando las 4 llamadas que el código permite (§2.8.3).
-> Con eso, el **Marginal Negocio VIGENTE es USD 0,145 esperado · 0,488 techo con tool · 0,833 techo
-> absoluto**, contra los `0.196 – 0.257` que dice la fila. El **Marginal Base no se toca**: no tiene
+> tool **USD 0,4608** — o **USD 0,6336** contando las 3 llamadas que el código permite (§2.8.3b;
+> eran 4 y USD 0,8064 hasta `89ab7c0`). Con eso, el **Marginal Negocio VIGENTE es USD 0,145
+> esperado · 0,488 techo con tool · 0,660 techo absoluto**, contra los `0.196 – 0.257` que dice la
+> fila. El **Marginal Base no se toca**: no tiene
 > chat. Las filas se dejan escritas porque este documento no borra sus errores; el estado es §2.8.
 
 La línea vieja de R2 decía **«~140 MB → ~0.001»** y estaba baja **4,7×**, no por el storage
@@ -1918,9 +1929,10 @@ el mismo cuadro con el TECHO estructural 0,000192/msg — el que hay que usar pa
 > ⚠️ **Los dos cuadros son de la corrida de 174 casos, §2.7 los rehízo el mismo día y §2.8 los
 > volvió a rehacer con `billed`.** Vigente: el esperado **medido** es `0,00009885` (**337 msgs/día**
 > se comen el 1,00, no 417 ni 399), el techo del turno con tool es `0,000384` (**87 msgs/día**) y el
-> techo absoluto de las 4 llamadas que el código permite es `0,000672` (**50 msgs/día**, §2.8.3). La
-> escalera con la fracción de turnos con tool como variable está en §2.7 §4. **Para planificar, el
-> número es 50** — y son 1,24× el propio soft cap de 40.
+> techo absoluto de las **3** llamadas que el código permite es `0,000528` (**63 msgs/día**,
+> §2.8.3b; eran 4 llamadas, `0,000672` y 50 msgs/día hasta `89ab7c0`). La escalera con la fracción
+> de turnos con tool como variable está en §2.7 §4. **Para planificar, el número es 63** — y son
+> 1,58× el propio soft cap de 40.
 
 **Respuestas concretas a las tres preguntas:**
 
@@ -1981,12 +1993,15 @@ una sola IP, una sola región, sostenida dentro de lo que la regla PERMITE hoy (
    promedio FACTURADO medido   (0,0001257)                     : USD  10,86 /mes
    techo de una llamada        (0,000192)                      : USD  16,59 /mes
    techo con tool, 2 llamadas  (0,000384)                      : USD  33,18 /mes  ← 95% del plan
-   techo con tool y primario vacío, 4 llamadas (0,000672)      : USD  58,06 /mes  ← CRUZA el plan
+   techo con tool y primario vacío, 3 llamadas (0,000528)      : USD  45,62 /mes  ← CRUZA el plan
+      (era USD 58,06 con las 4 llamadas de antes de `89ab7c0` — §2.8.3b)
 ```
 > **Los tres precios que cita hoy el `why` de `chatbot-rl` en `config/firewall-rules.json` son
 > 10,86 · 16,59 · 33,18 y los verifiqué: se sostienen.** Lo que agrega §2.8.6 son los dos extremos.
-> El de arriba importa: a 4 llamadas por turno esa misma IP —sin violar la regla ni una vez— cuesta
-> **USD 58,06 contra USD 33,97 de ingreso neto, o sea USD 24,09 de pérdida**. La frase de abajo
+> El de arriba importa: con el primario degradado esa misma IP —sin violar la regla ni una vez—
+> cuesta **USD 45,62 contra USD 33,97 de ingreso neto, o sea USD 11,65 de pérdida** *(era USD 58,06
+> y 24,09 con las 4 llamadas de antes de `89ab7c0`: el agujero se redujo a la mitad y no se cerró)*.
+> La frase de abajo
 > («el tenant abusado ya no es pérdida por sí solo») vale para 4 de los 5 precios y no para el
 > quinto.
 
@@ -2472,10 +2487,28 @@ METRICA_A_VIGILAR: **`turnsDropped + chunksDropped + descriptionDropped` de `Con
 
 | # | qué | dueño | por qué es de costo |
 |---|---|---|---|
-| **C6** | emitir `ContextTrimReport` al log estructurado cuando algo se cae, y contarlo. Hoy se construye y se tira | `ai-agent` | es la única señal de que la dieta se está pasando; sin ella, el síntoma es "el bot contesta peor" |
+| **C6** *(partida el 2026-08-28)* | **(a)** contar la degradación **sobre el corpus**, adentro de `packages/ai` · **(b)** emitir el `ContextTrimReport` al log estructurado en producción y contarlo ahí. Hoy se construye y **no lo lee ningún consumidor** | **(a)** `ai-agent` (`packages/ai/**`) · **(b)** `app-agent` (`apps/web/app/api/**` y `(app)/**`) | es la única señal de que la dieta se está pasando; sin ella, el síntoma es "el bot contesta peor" |
 | **C7** | ~~un caso con tool call en el corpus~~ **CUMPLIDA el 2026-08-28**: 12 casos (t01–t12), 18 turnos con resultado de tool, y la eval ahora parte `tokensInWithTool` / `tokensInWithoutTool`. El bloque del README quedó unas horas en la corrida vieja y `ai-agent` lo regeneró el mismo día: hoy dice `198/198` y `sin tool 1078 / con tool 1193`, idéntico a lo que mido yo por separado | `ai-agent` | el gate ya publica el turno más caro del producto, y el archivo lo dice |
 | **C8** | que el reporte de costo **sume** los prompts de las dos vueltas en vez de tomar el máximo (o que emita los dos por separado). `promptTokens` como cota de dieta está bien; como línea de factura subcontabiliza 2,2× el turno con tool y **11,8% el corpus entero** | `ai-agent` | el día que haya `usage` real del proveedor (C4) la diferencia se va a ver en la factura, no en el reporte |
 | **C9** | decidir **explícitamente** qué se sacrifica cuando el turno con tool no entra en 1200: hoy lo decide el orden de la escalera (historial primero) sin que nadie lo haya elegido para este caso. **El precio ya está medido y está en §2.7 §2b: subir `MAX_INPUT_TOKENS` de 1200 a 1260 elimina las 390 degradaciones que barrí, y cuesta entre USD 0,0006 y USD 0,0144/tenant/mes** (0,06%–1,4% del presupuesto de chat). La otra rama es achicar el digest de `reserved` | `ai-agent`, con los números de acá | es la única palanca donde costo y calidad se cruzan de frente, y hoy se resuelve por default. Costo **no tiene objeción a ninguna de las dos**: las dos ramas son ruido en la factura, y por eso esta decisión no la puede arbitrar la factura |
+
+> **Por qué `C6` va con dos dueños y no con uno, corregido el 2026-08-28.** Esta celda decía
+> `ai-agent` sola y eso **viola `CLAUDE.md` §4**: la mitad que importa es *emitir al log*, y el sink
+> (`apps/web/app/(app)/_lib/log.ts`) y la ruta que emitiría viven en la columna de `app-agent`.
+> `ai-agent` sólo puede hacer lo que cabe en `packages/ai`. La partición es la misma que el board ya
+> le hizo a `C10` (`docs/SLICE_BOARD.md`, fila `T53`, que es el alias de esta recomendación):
+>
+> | mitad | dueño | estado |
+> |---|---|---|
+> | **(a)** contar la degradación sobre el corpus de la eval | `ai-agent` | **se puede hacer hoy**, no depende de nada |
+> | **(b)** emitirlo al log en producción y contarlo ahí | `app-agent` | **espera FASE 5** |
+>
+> **La mitad (b) NO es hacible hoy**, y no es una opinión: `apps/web/app/api` tiene exactamente
+> `cron`, `health` y `tenants` — **`/api/chat` no existe** —, y `answerChat` no tiene un solo
+> llamador fuera de `packages/ai/src` (censado por `cost-auditor` contra HEAD `89ab7c0`, mismo
+> resultado que el censo del board). Lo que falta **no es exponer**: `index.ts` ya exporta
+> `ContextTrimReport` y `ChatAnswer.trimmed` ya viaja en la respuesta. Falta **contar**, y en (b)
+> falta antes que eso el borde que llame.
 
 
 ### 2.8 Re-medido el 2026-08-28 (S8.1) — la factura después de C8, y la ficha que el plan Negocio vende
@@ -2551,6 +2584,13 @@ era correcta; lo que no podía saber era qué casos iban a entrar después.
 
 #### 3. El techo estructural del turno con tool no cambia. El que el código **enforcea** es el doble, y eso es nuevo.
 
+> ⚠️ **La segunda mitad de esta sección —el techo de 4 llamadas— quedó SUPERADA el mismo día por
+> `89ab7c0`, que la cerró en el código. El techo vigente es 3 y está en §2.8.3b.** El bloque se deja
+> escrito entero porque describe correctamente el código anterior y porque es de donde salió `C11`:
+> un documento de costo que borra el hallazgo cuando lo arreglan deja de poder mostrar qué se compró.
+> **La primera mitad no se movió:** los USD 0,000384 del turno con tool con el primario sano siguen
+> siendo el precio de referencia.
+
 **Lo que no cambia, y lo verifiqué:** el peor turno con tool **con el primario sano** sigue
 costando `2 × 1200 IN + 2 × 180 OUT = ` **USD 0,000384/mensaje** → **USD 0,4608/mes** al soft cap.
 La medición lo respalda por arriba y por abajo: el `billed.tokensIn` **máximo** de los 206 casos es
@@ -2597,6 +2637,96 @@ no es una constante: es que **`generateWithFallback` tenga exactamente dos inten
 tercer proveedor de respaldo —que suena a robustez y a nadie se le ocurriría llamarlo cambio de
 costo— lleva el turno a **6 llamadas facturadas**: USD 0,000960/mensaje si el tercero cuesta como el
 fallback, **+43 %**, sin tocar ni una constante de `budget.ts`.
+
+#### 3b. El techo bajó a 3 llamadas — y el peor caso en PLATA no es el que la constante hace pensar
+
+`ai-agent` cerró **C11** en `89ab7c0`. Leído del código de hoy (`packages/ai/src/chat.ts:50-83`), el
+techo dejó de ser un número suelto y pasó a ser una constante **derivada**:
+
+```
+export const MAX_TOOL_ROUNDS = 1;
+const TURN_ROUNDS = 1 + MAX_TOOL_ROUNDS;              // 2 rondas de modelo por turno
+export const MAX_BILLED_CALLS_PER_TURN = TURN_ROUNDS + 1;   // = 3
+```
+
+El mecanismo es `generateWithFallback({ skipPrimary })` más `RoundOutcome.primaryServedEmpty`: un
+primario que **atiende y contesta vacío** queda salteado por lo que reste del turno, así que la
+segunda llamada de más se paga **una vez por turno y no una por ronda** — de ahí el `+ 1`. Un
+primario que **tira excepción** no prende el salteo, y está bien que no lo prenda: una excepción no
+se factura, saltearla no ahorraría un centavo y resignaría el modelo mejor.
+
+**Medí las dos formas que tiene un turno de llegar a 3, porque no cuestan lo mismo**, con stubs
+sobre `answerChat` (script propio, `tsx`, importando el paquete; no `pnpm eval`, que reescribe
+`packages/ai/README.md` y no es mi columna):
+
+```
+A) ronda 1: primario VACÍO (facturado) → fallback pide la tool (facturado)
+   ronda 2: primario SALTEADO          → fallback contesta      (facturado)
+   medido: billed.calls = 3 · primario 1 · fallback 2 · billed.tokensIn = 2687
+
+B) ronda 1: primario contesta la tool   (facturado, y contestó bien)
+   ronda 2: primario VACÍO (facturado) → fallback contesta      (facturado)
+   medido: billed.calls = 3 · primario 2 · fallback 1 · billed.tokensIn = 2794   ← el CARO
+```
+
+**B es el techo de plata y A es el que ejerce el test.** No es un defecto del test —`chat.test.ts`
+afirma `billed.calls`, que en las dos ramas es 3, y ahí acierta— pero **la factura no cuenta
+llamadas, cuenta llamadas ponderadas por proveedor**, y el primario es el caro de los dos
+(USD 0,10/0,40 por millón contra 0,075/0,30 del fallback). El salteo elimina la **segunda** llamada
+al primario sólo cuando el primario ya falló; si el primario contestó bien en la ronda 1, nada lo
+saltea en la ronda 2, y ahí el turno paga **dos** primarios.
+
+```
+techo del mensaje con MAX_BILLED_CALLS_PER_TURN = 3, en la composición más cara (B)
+  2 llamadas al primario  2 × (1200 × USD 0,10/1M  + 180 × USD 0,40/1M)  = USD 0,000384
+  1 llamada al fallback   1 × (1200 × USD 0,075/1M + 180 × USD 0,30/1M)  = USD 0,000144
+                                                                           ─────────────
+                                                                           USD 0,000528 /mensaje
+  1.200 msgs/mes al soft cap → USD 0,6336/mes   contra el 1,00 de chat → 1,58× (era 1,24×)
+  msgs/día que se comen el USD 1,00 → 63/día    contra un soft cap de 40 → 1,58×
+```
+
+**La baja es −21,4 %, no −29 %, y la diferencia tiene nombre.** `C11` estimó el techo nuevo como
+`0,000672 − 0,000192 = 0,000480/msg` → USD 0,5760/mes, que es restarle **una llamada del primario**
+al techo viejo. Esa resta describe exactamente la rama **A**; la rama **B** también entra en 3
+llamadas y conserva los dos primarios, así que el máximo real es USD 0,000528 y no 0,000480. El
+docblock de `chat.ts:284-286` publica el −29 % por el mismo motivo. **Es el mismo defecto de forma
+que C8, un nivel más abajo:** un número bien calculado sobre el caso equivocado. La conclusión no
+cambia —la palanca sigue siendo la más barata del documento y sigue siendo PASS—, pero el número que
+este documento multiplica es **0,000528**.
+
+| | antes de `89ab7c0` | **vigente** | delta |
+|---|---:|---:|---:|
+| llamadas facturadas, techo | 4 | **3** | −25 % |
+| USD / mensaje | 0,000672 | **0,000528** | **−21,4 %** |
+| USD / tenant Negocio / mes al soft cap | 0,8064 | **0,6336** | −21,4 % |
+| headroom contra el 1,00 de chat | 1,24× | **1,58×** | |
+| msgs/día que se comen el 1,00 | 50 | **63** | |
+
+**Y lo que hay que decir para que el número sea honesto: el techo facturable no es la factura.** El
+eval **no se movió ni un dígito** con este cambio — el esperado sigue siendo USD 0,00009885/msg y
+USD 0,1186/tenant/mes, porque en el corpus el primario contesta siempre a la primera y ningún turno
+llegó nunca a 3 llamadas. Lo que se compró no es un ahorro de hoy: es **seguro contra el día malo**,
+el día en que «el modo de falla más común de un modelo barato bajo carga» le pasa a muchos turnos a
+la vez. Escribirlo como ahorro sería cobrarle a la slice una plata que nadie estaba gastando.
+
+**Corolario para §6, actualizado.** Las aserciones que sostienen la cota son ahora **cinco**: las
+tres constantes (`assertWithinBudget` con IN ≤ 1200, `env.ts` con OUT ≤ 180, `MAX_TOOL_ROUNDS = 1`),
+**que `generateWithFallback` tenga exactamente dos intentos**, y **el salteo del primario vacío**.
+Las dos últimas no se ven como cambios de costo y cuestan lo mismo que un cambio de constante:
+
+```
+sacar el salteo (volver a 4 llamadas)                       0,000528 → 0,000672 /msg   +27,3 %
+agregar un TERCER proveedor de respaldo                     0,000528 → 0,000768 /msg   +45,5 %
+   (peor caso: ronda 1 primario vacío + f1 vacío + f2 contesta = 3 llamadas;
+    ronda 2 primario salteado + f1 vacío + f2 = 2 → 5 llamadas facturadas)
+```
+**Y el tercer proveedor tiene una trampa nueva que el techo viejo no tenía:** `TURN_ROUNDS + 1` no
+tiene ningún término que cuente proveedores, así que la constante **seguiría diciendo 3** mientras el
+turno paga 5. La derivación cubre la deriva de rondas, no la de proveedores; lo que cubre esa otra es
+que agregar un proveedor obliga a tocar `ChatDeps` y a que alguien firme el diff. `[ESTRUCTURAL]`,
+no medido: hoy la cadena tiene dos entradas y no hay forma de ejercer la tercera sin cambiar el
+código.
 
 #### 4. La ficha que el plan Negocio VENDE mide 1374, y hoy entra tirando el historial
 
@@ -2661,14 +2791,17 @@ subir MAX_INPUT_TOKENS de 1200 a 1374 (el mínimo que limpia el corpus)
   2 × 174 tok × USD 0,10/1M = +USD 0,0000348 /msg
   × 1.200 msgs/mes            (0,4608 → 0,5026)             = +USD 0,0418  /tenant/mes
 
-[TECHO ESTRUCTURAL, las 4 llamadas que el código permite — §2.8.3]
-  2 × 174 × USD 0,10/1M + 2 × 174 × USD 0,075/1M = +USD 0,0000609 /msg
-  × 1.200 msgs/mes            (0,8064 → 0,8795)             = +USD 0,0731  /tenant/mes
+[TECHO ESTRUCTURAL, las 3 llamadas que el código permite — §2.8.3b, VIGENTE desde `89ab7c0`]
+  2 × 174 × USD 0,10/1M + 1 × 174 × USD 0,075/1M = +USD 0,00004785 /msg
+  × 1.200 msgs/mes            (0,6336 → 0,6910)             = +USD 0,0574  /tenant/mes
+     (con las 4 llamadas de antes de `89ab7c0` este renglón decía +USD 0,0731 y 0,8064 → 0,8795)
 ```
 
-**Contra el USD 1,00 de asignación de chat del plan Negocio: entre 0,05 % y 7,3 %.** Contra los
-USD 35 de lista: entre 0,001 % y 0,2 %. A 100 tenants Negocio, el peor caso son **USD 7,31/mes** de
-flota entera. **Es ruido en la factura, y ruido es exactamente lo que hay que decir**, porque tiene
+**Contra el USD 1,00 de asignación de chat del plan Negocio: entre 0,05 % y 5,7 %.** Contra los
+USD 35 de lista: entre 0,001 % y 0,2 %. A 100 tenants Negocio, el peor caso son **USD 5,74/mes** de
+flota entera. *(La rama del techo se abarató sola el 2026-08-28: con las 4 llamadas anteriores a
+`89ab7c0` el extremo era 7,3 % y USD 7,31. **La decisión sigue exactamente igual de abierta** — lo
+único que cambió es que la rama cara de su precio es un 21 % más barata.)* **Es ruido en la factura, y ruido es exactamente lo que hay que decir**, porque tiene
 una consecuencia que no es de plata:
 
 > **Si subir el techo cuesta ruido, entonces el 1200 no se está pagando con plata: se está pagando
@@ -2684,9 +2817,10 @@ tres acotaciones que la decisión necesita:
 1. **1374 es un piso, no el número final.** Sale de las cuatro fixtures del corpus, no de fichas
    reales: una descripción de dueño más larga o un cuarto punto de retiro lo suben. `listing-view.ts`
    recorta la descripción, así que hay una cota superior — **no la medí**.
-2. **El techo de 4 llamadas se acerca al objetivo antes que el de 2.** Con 1374, el peor caso
-   absoluto queda en **USD 0,8795 contra 1,00: 1,14× de headroom.** Subir el techo es barato; subir
-   el techo *y* no tener contador del soft cap ya no lo es tanto.
+2. **El techo de llamadas se acerca al objetivo antes que el de la dieta.** Con 1374, el peor caso
+   absoluto queda en **USD 0,6910 contra 1,00: 1,45× de headroom** *(era 0,8795 y 1,14× con las 4
+   llamadas de antes de `89ab7c0`; §2.8.3b)*. Subir el techo es barato; subir el techo *y* no tener
+   contador del soft cap ya no lo es tanto.
 3. **C6 antes que el techo.** Hoy `buildChatContext` devuelve un `ContextTrimReport` que **no lee
    ningún consumidor** — cero llamadores de `.trimmed` fuera de los tests, re-verificado hoy. Un
    techo más alto sin contador te deja en el mismo lugar la próxima vez que la ficha crezca 200
@@ -2714,16 +2848,24 @@ porque el peor caso por IP **es un rango y citar un punto es lo que produjo la d
   USD 10,86   promedio FACTURADO re-medido        (0,0001257/msg)   ← el que cita la regla
   USD 16,59   techo de un turno de UNA llamada    (0,000192/msg)    ← el que cita la regla
   USD 33,18   techo del turno con tool, 2 llamadas (0,000384/msg)   ← el que cita la regla · MI HALLAZGO, SE SOSTIENE
-  USD 58,06   techo con tool y el primario contestando vacío, 4 llamadas (0,000672/msg)  ← §2.8.3, nuevo
+  USD 45,62   techo con tool y el primario contestando vacío, 3 llamadas (0,000528/msg)  ← §2.8.3b, VIGENTE
+              (decía USD 58,06 con las 4 llamadas de antes de `89ab7c0`; el extremo bajó, no desapareció)
 ```
 
 **Los USD 33,18 de §2.6.6 quedan intactos** y su lectura también: dejan al tenant abusado en
 USD 33,18 de costo contra USD 33,97 de ingreso neto, o sea USD 0,79 de margen. **Lo que agrega
-§2.8.3 es que el extremo del rango cruza el precio del plan:** a 4 llamadas por turno, esa misma IP
-—sin violar la regla ni una vez— cuesta **USD 58,06 contra USD 33,97 de ingreso: pérdida de
-USD 24,09**. No es el escenario esperado y requiere un primario degradado, pero es el techo que el
+§2.8.3 es que el extremo del rango cruza el precio del plan:** con el primario degradado, esa misma
+IP —sin violar la regla ni una vez— cuesta **USD 45,62 contra USD 33,97 de ingreso: pérdida de
+USD 11,65**. No es el escenario esperado y requiere un primario degradado, pero es el techo que el
 código permite, y §2.6.6 afirmaba que *«el tenant abusado ya no es pérdida por sí solo»*. **Con el
 rango completo, esa frase vale para 4 de los 5 precios y no para el quinto.**
+
+> **`89ab7c0` bajó el quinto precio y no lo borró, que es la parte que importa.** Con las 4 llamadas
+> anteriores la pérdida era USD 24,09; con 3 es **USD 11,65**. El salteo del primario vacío se llevó
+> puesta la mitad del agujero, **no el agujero**: el extremo del rango sigue estando arriba del
+> precio del plan, y lo seguiría estando aunque el techo fuera de 2 llamadas (USD 33,18 contra
+> 33,97 deja USD 0,79). Lo que acota esto no es el techo por turno, es el contador del soft cap, que
+> sigue sin existir.
 
 **Lo que no cambia, y es el punto entero:** el WAF no es el techo de la factura. Los contadores son
 por región (`$per_region`), así que una IP repartida sobre ~5 regiones multiplica las cinco líneas
@@ -2739,7 +2881,9 @@ COST_VERDICT: PASS
 DELTA_POR_TENANT_MES:  hoy en producción              USD 0,00      (nada invoca `@istock/ai`)
                        Negocio al soft cap, esperado  USD 0,1186    [CALC-STUB, MEDIDO con `billed`]
                        Negocio al soft cap, techo     USD 0,4608    [ESTRUCTURAL, turno con tool]
-                       Negocio al soft cap, techo abs USD 0,8064    [ESTRUCTURAL, las 4 llamadas de §2.8.3]
+                       Negocio al soft cap, techo abs USD 0,6336    [ESTRUCTURAL, las 3 llamadas de §2.8.3b]
+                         (decía 0,8064 con las 4 llamadas de antes de `89ab7c0`; −21,4 %, y el eval
+                          no se movió ni un dígito: se compró seguro, no ahorro — §2.8.3b)
 
   0,00009885 /msg = (1173 tok IN × USD 0,10/1M + 21 tok OUT × USD 0,40/1M) × (162/206)
   0,1186 /mes     = 0,00009885 × 40 msgs/día × 30 días
@@ -2751,20 +2895,26 @@ SUPUESTOS: 40 msgs/tenant/día [EST, sin medición — sigue siendo el supuesto 
            `gemini-2.5-flash-lite` primario / `openai/gpt-oss-20b` fallback · derivación 162/206
            MEDIDA sobre corpus, no sobre tráfico · driver `stub`: el OUT=21 lo produce el stub (B4) ·
            fracción de turnos con tool: 14,8 % en el corpus, DESCONOCIDA en producción y casi seguro
-           más alta · **el primario contesta siempre a la primera** (si no, §2.8.3: hasta 4 llamadas)
+           más alta · **el primario contesta siempre a la primera** (si no, §2.8.3b: hasta 3
+           llamadas facturadas, y la composición cara son 2 primarios + 1 fallback)
 
 VECTOR_MAS_RIESGOSO: **la llamada facturada que nadie contaba: el primario que devuelve `200` con
-           texto vacío.** No tira, no aparece en Sentry, no rompe ningún test y **duplica la factura
-           del turno** — `billed.calls = 4` medido, techo USD 0,000672/msg, USD 0,8064/mes al soft
-           cap, 1,24× bajo el presupuesto de chat en vez de 2,2×. Es peor que el soft cap sin
+           texto vacío.** No tira, no aparece en Sentry, no rompe ningún test y **encarece el turno
+           un 37 %** — `billed.calls = 3` medido, techo USD 0,000528/msg, USD 0,6336/mes al soft
+           cap, 1,58× bajo el presupuesto de chat en vez de 2,2×. Es peor que el soft cap sin
            contador en una propiedad: el soft cap ausente es un techo que falta, éste es un techo
-           que **creíamos tener**. Y correlaciona: «modelo barato bajo carga» le pasa a muchos turnos
+           que **creíamos tener**. *(Este renglón decía `calls = 4`, USD 0,000672 y 1,24×.
+           `89ab7c0` cerró C11 —el primario vacío no se reintenta en la misma vuelta— y el techo
+           bajó a 3 llamadas; §2.8.3b. **El vector no desapareció:** la llamada de más se sigue
+           facturando, sólo que una vez por turno en vez de una por ronda. Lo que sí cambió es que
+           ahora hay una constante exportada y un test que la clavan, así que dejó de ser un techo
+           que sólo existía en la cabeza del que leyó el archivo.)* Y correlaciona: «modelo barato bajo carga» le pasa a muchos turnos
            a la vez. La degradación silenciosa de §2.7 sigue vigente y sigue ocurriendo —hoy en 9 de
            162 prompts armados, y **7 de esos 9 son la ficha del plan Negocio**—; ésta la desplaza
            sólo porque cuesta plata además de calidad.
 
 METRICA_A_VIGILAR: **`billed.calls` por turno. Alarma en cualquier valor > 2.**
-           Es la única que separa el techo de USD 0,000384 del de USD 0,000672, ya la **calcula**
+           Es la única que separa el techo de USD 0,000384 del de USD 0,000528, ya la **calcula**
            `chat.ts` (no hay que construir nada, hay que emitirla) y avisa **antes** que la factura:
            un primario que contesta vacío se ve como `calls: 2` donde debería haber `1`, sin un solo
            error en el log. Un dashboard de tokens no la puede detectar: los tokens por llamada
@@ -2778,9 +2928,9 @@ METRICA_A_VIGILAR: **`billed.calls` por turno. Alarma en cualquier valor > 2.**
 
 | # | qué | dueño | por qué es de costo |
 |---|---|---|---|
-| **C10** | emitir `billed.calls` / `billed.tokensIn` al log estructurado, y alarmar en `calls > 2`. El campo ya existe y se descarta en el borde | `ai-agent` (el campo) · `app-agent` (el log, cuando exista `/api/chat`) | es el único indicador que distingue el techo real del techo que creíamos tener; sin él, un primario degradado duplica la factura en silencio |
-| **C11** | decidir qué pasa cuando el primario contesta vacío **dos veces en el mismo turno**: hoy son 4 llamadas facturadas y ninguna constante lo dice. Una opción es no reintentar el primario en la segunda ronda si ya falló en la primera — cuesta una línea y baja el techo absoluto de 0,8064 a **USD 0,5760/mes** (3 llamadas: `0,000672 − 0,000192 = 0,000480/msg`) | `ai-agent` | es la palanca más barata del documento: **−29 % del techo absoluto del chat**, sin tocar la dieta ni el soft cap ni la calidad de una sola respuesta |
-| **C9** *(actualizado)* | el precio de comprar la degradación entera **se re-midió con la ficha del plan Negocio adentro**: subir `MAX_INPUT_TOKENS` de 1200 a **1374** (no 1260) elimina las degradaciones del corpus y cuesta entre **USD 0,00047 y USD 0,0731/tenant/mes** (§2.8.5). **Decisión humana pendiente:** el 1200 es del goal | humano, con los números de acá | las dos ramas son ruido en la factura, así que la factura no puede arbitrarla |
+| **C10** | emitir `billed.calls` / `billed.tokensIn` al log estructurado, y alarmar en `calls > 2`. El campo ya existe y **no lo lee nadie** — *«se descarta en el borde» era generoso: todavía no hay borde, `answerChat` no tiene un solo llamador fuera del paquete* | `ai-agent` (el campo, **hecho**: `index.ts` exporta `BilledUsage`, `ChatAnswer` y `MAX_BILLED_CALLS_PER_TURN`) · `app-agent` (el log, **espera FASE 5**: `/api/chat` no existe) | es el único indicador que distingue el techo real del techo que creíamos tener; sin él, un primario degradado encarece la factura en silencio. **El umbral `> 2` no se movió con `89ab7c0`**: 2 sigue siendo el camino feliz con tool y ahora el único valor por encima es 3, que es exactamente `MAX_BILLED_CALLS_PER_TURN` — o sea que el log puede alarmar contra la constante exportada en vez de contra un literal. **Y el umbral tiene un punto ciego que conviene escribir antes de que alguien escriba el emisor:** `calls = 2` son **dos historias** —el camino feliz con tool, y un turno de una sola ronda donde el primario contestó vacío y lo cubrió el fallback—, así que un turno degradado barato **no cruza el umbral**. Lo que lo desambigua es un booleano al lado de `calls`, no un número más alto. *(`ai-agent` tiene exactamente eso en vuelo —`BilledUsage.primaryServedEmpty`— **sin commitear** al momento de esta medición; lo anoto porque cambia la condición de alarma, no ningún precio de este documento.)* |
+| ~~**C11**~~ **CUMPLIDA el 2026-08-28 (`89ab7c0`)** | ~~decidir qué pasa cuando el primario contesta vacío **dos veces en el mismo turno**: hoy son 4 llamadas facturadas y ninguna constante lo dice~~ **Hecho, y con la constante:** el primario que atiende y contesta vacío no se reintenta en lo que queda del turno (`skipPrimary` + `primaryServedEmpty`), y el techo dejó de ser un literal — `MAX_BILLED_CALLS_PER_TURN = TURN_ROUNDS + 1 = 3`, derivado de `MAX_TOOL_ROUNDS` | `ai-agent` | **la palanca más barata del documento, y salió más barata de lo que rinde: −21,4 % del techo absoluto (0,8064 → USD 0,6336/mes), no el −29 % que yo estimé.** Mi cuenta restaba una llamada del primario y eso vale para una de las dos ramas de 3 llamadas, no para la cara (§2.8.3b). **Y el eval no se movió ni un dígito:** lo que se compró es seguro contra el día malo, no un ahorro de hoy |
+| **C9** *(actualizado)* | el precio de comprar la degradación entera **se re-midió con la ficha del plan Negocio adentro**: subir `MAX_INPUT_TOKENS` de 1200 a **1374** (no 1260) elimina las degradaciones del corpus y cuesta entre **USD 0,00047 y USD 0,0574/tenant/mes** (§2.8.5 — la rama cara decía 0,0731 hasta `89ab7c0`, que bajó el techo de llamadas; **la decisión no se movió, sólo su precio**). **Decisión humana pendiente, y sigue abierta:** el 1200 es del goal | humano, con los números de acá | las dos ramas son ruido en la factura, así que la factura no puede arbitrarla |
 
 ## 3. Techo de LLM a 50 tenants `negocio`
 
@@ -2807,10 +2957,12 @@ techo de FASE 0 se cumple.
    los otros 12.816 se derivan antes          : USD 0,00
 
    [TECHO con tool, 2 llamadas]  60.000 × USD 0,000384  =  USD 23,04 /mes · 144M in · 21,6M out
-   [TECHO absoluto, 4 llamadas]  60.000 × USD 0,000672  =  USD 40,32 /mes  (§2.8.3)
+   [TECHO absoluto, 3 llamadas]  60.000 × USD 0,000528  =  USD 31,68 /mes  (§2.8.3b; era 40,32
+                                 con las 4 llamadas de antes de `89ab7c0`)
 ```
 **USD 5,93/mes para los 50 tenants juntos** — o sea **USD 0,1186 por tenant**, 3,9× abajo del techo
-con tool y **6,8× abajo** del techo absoluto.
+con tool y **5,3× abajo** del techo absoluto *(era 6,8× cuando el techo absoluto eran 4 llamadas: el
+techo bajó, así que el esperado quedó **más cerca** de él, no más lejos)*.
 
 > Los renglones viejos de este bloque decían `0,00008501 → USD 5,10` y `0,00009498 → USD 5,70`. El
 > primero **subfacturaba** (`Math.max` en vez de suma) y el segundo era mi **estimación** de la
@@ -2876,9 +3028,9 @@ ser gratis. Deployar en pico de tráfico es un evento de costo.
 | imágenes | bytes de la variante que el browser **elige** (no la que el gate mide) | que `sizes` falte y la grilla baje `detail` (128.570 B) donde el modelo dice `card` (50.692 B) — §2.2.7 |
 | imágenes | `MEDIA_DRIVER` y `NEXT_PUBLIC_MEDIA_BASE_URL` del deploy de producción | **cualquier valor que no sea `r2` / `https://img.maat.work`** — es la única forma de que un byte de foto salga por Vercel (§2.2.2) |
 | storage | GB por tenant | huérfanos de listings borrados — hoy **crecen sin techo**: `collectOrphanObjects` existe y **no tiene caller** |
-| **LLM (la que avisa antes)** | **mensajes de chat por tenant por día** | **> 40** (el soft cap) y **FAIL de costo > 50** — donde el chat se come su presupuesto de 1,00 entero en el peor caso que el código permite (§2.8.3: 4 llamadas facturadas por turno). *(Esta fila decía 174, que salía del techo de una sola llamada; con el turno con tool son 87 y con las 4 llamadas, 50. **Para planificar, el número es 50**, y son 1,24× el propio soft cap.)* **Hoy NO EXISTE**, y no por olvido: es el mismo objeto que el contador del soft cap, que tampoco existe (§2.6.4). Construir la métrica **es** implementar el cap. El techo del WAF que hoy la sustituye deja pasar **2.880/día/IP/región** (20/600s), o sea 72× la alarma |
+| **LLM (la que avisa antes)** | **mensajes de chat por tenant por día** | **> 40** (el soft cap) y **FAIL de costo > 50** — donde el chat se comía su presupuesto de 1,00 entero con el peor caso que el código permitía hasta `89ab7c0` (4 llamadas facturadas por turno). *(Esta fila decía 174, que salía del techo de una sola llamada; con el turno con tool son 87 y con las 4 llamadas, 50.)* **El 50 se DEJA como está y ahora es conservador a propósito:** con el techo de 3 llamadas de §2.8.3b el punto de FAIL se corrió a **63/día**, así que alarmar en 50 avisa **1,26× antes** de que duela. Bajar una alarma porque el código mejoró sería gastarse la mejora. **Hoy NO EXISTE**, y no por olvido: es el mismo objeto que el contador del soft cap, que tampoco existe (§2.6.4). Construir la métrica **es** implementar el cap. El techo del WAF que hoy la sustituye deja pasar **2.880/día/IP/región** (20/600s), o sea 72× la alarma |
 | LLM | **tokens reales/turno por tenant** | > 1200 in o > 180 out, o modelo frontier en el log. El techo está **enforced** (`assertWithinBudget` tira; `env.ts` deja bajar `LLM_MAX_OUTPUT_TOKENS`, nunca subirlo), así que esta métrica no vigila el techo: vigila que el `usage` real del proveedor coincida con nuestro estimador. Alarma práctica el día que cierre B4: **OUT p95 > 60** (3× el promedio del stub) |
-| **LLM (la más barata de emitir)** | **`billed.calls` por turno** | **> 2** — es la única métrica que separa el techo de USD 0,000384 del de USD 0,000672 (§2.8.3). Un primario que devuelve `200` con texto vacío **se factura igual**, manda al fallback y duplica el turno **sin un solo error en el log**. `chat.ts` ya la calcula y la descarta en el borde: emitirla es cablear un campo que existe, no construir un contador. Un dashboard de tokens no la puede ver — cada llamada sigue bajo 1200 por construcción |
+| **LLM (la más barata de emitir)** | **`billed.calls` por turno** | **> 2** — es la única métrica que separa el techo de USD 0,000384 del de USD 0,000528 (§2.8.3b). Desde `89ab7c0` el único valor posible por encima de 2 es **3**, que es `MAX_BILLED_CALLS_PER_TURN`: la alarma se escribe contra la constante exportada, no contra un literal. **El umbral es necesario pero no suficiente:** `calls = 2` es a la vez el camino feliz con tool y el turno de una ronda que pagó un primario vacío, así que la degradación barata pasa por abajo — la condición completa necesita un booleano al lado del contador. Un primario que devuelve `200` con texto vacío **se factura igual**, manda al fallback y duplica el turno **sin un solo error en el log**. `chat.ts` ya la calcula y la descarta en el borde: emitirla es cablear un campo que existe, no construir un contador. Un dashboard de tokens no la puede ver — cada llamada sigue bajo 1200 por construcción |
 | **LLM** | **`null` de `priceFor(modelId)` en el reporte de costo** | **cualquiera** — significa que `LLM_PRIMARY_MODEL` cambió a un ID que `pricing.ts` no conoce y el costo dejó de estar contabilizado. El módulo hace lo correcto (devuelve `null`, no cero), pero un `null` que nadie mira es un cero con otro nombre |
 | proxy | CPU-ms del proxy por pageview | **> 2 ms**, o cualquier llamada de red |
 | edge | Edge Requests/mes | acercarse a 10M (≈ 80 tenants) |
@@ -2947,11 +3099,13 @@ reporte de costo devuelve `null` (bien) y nadie lo mira (mal), o sea que el vect
 producto deja de estar contabilizado sin que se caiga nada ·
 **aflojar la dieta**: subir `MAX_INPUT_TOKENS`/`MAX_OUTPUT_TOKENS` de `budget.ts`, o sacar el
 `assertWithinBudget` del camino al proveedor, o subir `MAX_TOOL_ROUNDS`, o **agregar un intento más
-a `generateWithFallback`**. Son **cuatro** aserciones, no tres (§2.8.3 encontró la cuarta), y
-sostienen dos cotas: **USD 0,000384** por mensaje con el primario sano y **USD 0,000672** contando
-las 4 llamadas que el código permite hoy. Un tercer proveedor de respaldo lo lleva a
-**USD 0,000960** sin tocar ni una constante — es la única de las cuatro que no se ve como un cambio
-de costo. Esas cotas son lo único de §2.6 que no depende del stub ·
+a `generateWithFallback`**, o **sacar el salteo del primario vacío**. Son **cinco** aserciones, no
+tres (§2.8.3 encontró la cuarta y §2.8.3b la quinta), y sostienen dos cotas: **USD 0,000384** por
+mensaje con el primario sano y **USD 0,000528** contando las 3 llamadas que el código permite hoy
+(eran 4 y USD 0,000672 hasta `89ab7c0`). Sacar el salteo vuelve a 0,000672 (**+27,3 %**) y un tercer
+proveedor de respaldo lleva a **USD 0,000768** (**+45,5 %**) — y encima **`MAX_BILLED_CALLS_PER_TURN`
+seguiría diciendo 3**, porque la derivación no tiene ningún término que cuente proveedores. Son las
+dos que no se ven como cambios de costo. Esas cotas son lo único de §2.6 que no depende del stub ·
 **más de un round de tools** (`MAX_TOOL_ROUNDS > 1`): cada vuelta paga el prompt entero de nuevo y
 el context caching no aplica a esta dieta (R3 §1)
 
@@ -2967,10 +3121,11 @@ unitario del Base no está calculado en ningún artefacto — ver §7.)
   lo produjo el stub** y es el término que sostiene toda la diferencia entre el esperado (0,096) y
   el techo (0,230). Hasta que B4 cierre, **el número prudente para presupuestar es el techo.**
   Lo que **no** depende del stub, y por eso se puede afirmar hoy: la cota de USD 0,000192 por
-  mensaje **de una sola llamada** —USD 0,000384 si el turno usa una tool (§2.7) y **USD 0,000672**
-  contando las 4 llamadas que el código permite cuando el primario contesta vacío (§2.8.3)—, que
-  sale de `assertWithinBudget` (IN ≤ 1200, tira), de `env.ts` (OUT ≤ 180, la env sólo puede
-  bajarlo), de `MAX_TOOL_ROUNDS = 1` y de que `generateWithFallback` tenga **dos** intentos. Cierra
+  mensaje **de una sola llamada** —USD 0,000384 si el turno usa una tool (§2.7) y **USD 0,000528**
+  contando las 3 llamadas que el código permite cuando el primario contesta vacío (§2.8.3b; eran 4
+  y USD 0,000672 hasta `89ab7c0`)—, que sale de `assertWithinBudget` (IN ≤ 1200, tira), de `env.ts`
+  (OUT ≤ 180, la env sólo puede bajarlo), de `MAX_TOOL_ROUNDS = 1`, de que `generateWithFallback`
+  tenga **dos** intentos y del salteo del primario que ya contestó vacío. Cierra
   con C4 de §2.6.8: instrumentar el `usage` real del proveedor.
   *(Los «USD 0,0800/1000 mensajes» y el `avgIn = 991` de este ítem son de la corrida de 174 casos.
   Vigente: **USD 0,0989/1000** de vidriera con `billed.tokensIn` promedio **1173** — §2.8.)*
@@ -3277,25 +3432,28 @@ SUBFACTURABA** — ver §2.8. Corrí la medición yo, importando `runEval()` del
    respalda la medición por arriba —el `billed.tokensIn` máximo del corpus es 2386 contra un techo
    de 2400— y lo que cambió es el **esperado**, no la **cota**. **Pero hay una cota más arriba que
    no estaba escrita:** el primario que devuelve `200` con texto vacío se factura igual y manda al
-   fallback, y con dos rondas eso son **4 llamadas facturadas en un turno**. Medido:
-   `billed.calls = 4`. Techo **USD 0,000672/msg → USD 0,8064/mes**, o sea **1,24× bajo el
-   presupuesto de chat, no 2,2×**. §2.7 decía que la cota la sostenían tres aserciones; son cuatro,
-   y la cuarta es que `generateWithFallback` tenga dos intentos.
+   fallback, y con dos rondas eso eran **4 llamadas facturadas en un turno**. Medido:
+   `billed.calls = 4`. Techo **USD 0,000672/msg → USD 0,8064/mes**. §2.7 decía que la cota la
+   sostenían tres aserciones; son cuatro, y la cuarta es que `generateWithFallback` tenga dos
+   intentos. **`89ab7c0` cerró esto el mismo día (§2.8.3b): el techo es 3 llamadas,
+   USD 0,000528/msg → USD 0,6336/mes, 1,58× bajo el presupuesto de chat**, y la constante ahora se
+   deriva de `MAX_TOOL_ROUNDS` en vez de vivir en la cabeza del que leyó el archivo.
 3. **La ficha que el plan Negocio VENDE no entra en 1200: mide 1374 sin degradar.** 3 puntos de
    retiro, 6 medios de pago, descripción al tope. Hoy entra porque la escalera le tira **los 6
    medios de pago y los 4 turnos de historial**: **el tenant que más paga es el único al que el
    chatbot se le olvida la conversación**, y **7 de los 9 prompts que degradan en todo el corpus son
    esa ficha**. Subir el techo a 1374 —el mínimo que limpia el corpus; 1350 **no** alcanza— cuesta
-   entre **USD 0,00047 y USD 0,0731/tenant/mes** según se mida el esperado o el techo absoluto, o
-   sea 0,05 %–7,3 % del presupuesto de chat. **Ruido.** Y por eso mismo: **el 1200 no se está
+   entre **USD 0,00047 y USD 0,0574/tenant/mes** según se mida el esperado o el techo absoluto, o
+   sea 0,05 %–5,7 % del presupuesto de chat *(la rama cara decía 0,0731 y 7,3 % hasta `89ab7c0`)*. **Ruido.** Y por eso mismo: **el 1200 no se está
    pagando con plata, se está pagando con calidad, así que la decisión no la puede arbitrar la
    factura.** `PENDIENTE DE DECISIÓN HUMANA` — el 1200 lo fijó el goal (§2.8.5). Costo **no tiene
    objeción a ninguna rama**.
 4. **El peor caso por IP del WAF es un rango de cinco precios y ahora está escrito como tal**
    (§2.8.6). Los tres que cita `config/firewall-rules.json` se sostienen —USD 10,86 al promedio
    facturado, 16,59 al techo de una llamada, **33,18 al techo con tool, que es mi hallazgo**— y les
-   agrego los dos extremos: **USD 8,54** (esperado de vidriera) y **USD 58,06** (las 4 llamadas).
-   Ese último **cruza el precio del plan**: USD 58,06 de costo contra USD 33,97 de ingreso neto.
+   agrego los dos extremos: **USD 8,54** (esperado de vidriera) y **USD 45,62** (las 3 llamadas de
+   §2.8.3b; era USD 58,06 con las 4 de antes de `89ab7c0`). Ese último **sigue cruzando el precio
+   del plan**: USD 45,62 de costo contra USD 33,97 de ingreso neto.
    §2.6.6 afirmaba que el tenant abusado ya no es pérdida por sí solo; con el rango completo, eso
    vale para 4 de los 5 precios y no para el quinto.
 
@@ -3311,18 +3469,24 @@ que impide inventar el contador del soft cap** (§2.6.4 — el contador en sí s
 **Abierto desde S8 (§2.7, actualizado en §2.8):** la fracción **real** de turnos que llama una tool
 (en el corpus es **14,8 %**; en producción es `[UNVERIFIED]` y casi seguro más alta) · el
 `ContextTrimReport` que nadie lee, que **hoy ya daría distinto de cero en 9 de 162 prompts armados,
-7 de ellos la ficha del plan Negocio** (C6) · qué se sacrifica cuando el turno con tool no entra en
+7 de ellos la ficha del plan Negocio** (C6 — **partida en dos dueños el 2026-08-28**: contar sobre
+el corpus es de `ai-agent` y se puede hacer hoy; emitirlo al log en producción es de `app-agent` y
+**espera FASE 5**, porque `/api/chat` no existe) · qué se sacrifica cuando el turno con tool no entra en
 1200, que hoy lo decide el orden de la escalera y no una decisión (C9, con el precio ya medido y la
 decisión pendiente del humano).
 **Abierto desde S8.1 (§2.8):** **`billed.calls` no lo emite nadie** (C10) — el campo existe, se
-calcula y se descarta en el borde, y es lo único que distingue el techo de USD 0,000384 del de
-USD 0,000672 · **el primario que contesta vacío dos veces en el mismo turno paga 4 llamadas y
-ninguna constante lo dice** (C11: no reintentarlo en la segunda ronda baja el techo absoluto un
-29 %, de USD 0,8064 a 0,5760/mes, sin tocar la dieta ni el soft cap ni la calidad de una sola
-respuesta) · **cuánto sube el piso de 1374 con fichas reales** en vez de las cuatro fixtures del
-corpus.
+calcula y **no lo lee ningún consumidor**, y es lo único que distingue el techo de USD 0,000384 del
+de USD 0,000528. La mitad de `ai-agent` está hecha (el paquete exporta el campo y la constante); la
+de `app-agent` **espera FASE 5**, porque `/api/chat` no existe · **cuánto sube el piso de 1374 con
+fichas reales** en vez de las cuatro fixtures del corpus.
 **Cerrado en S8:** **C7**, el caso de tool que le faltaba al corpus. El bloque de
 `packages/ai/README.md` **ya está regenerado** por `ai-agent` y hoy dice 206 casos.
+**Cerrado el 2026-08-28 (`89ab7c0`):** **C11** — el primario que atiende y contesta vacío no se
+reintenta en lo que queda del turno, y el techo facturable pasó a ser una constante **derivada**
+(`MAX_BILLED_CALLS_PER_TURN = TURN_ROUNDS + 1 = 3`). Techo absoluto del chat **USD 0,8064 →
+0,6336/mes, −21,4 %** — **no** el −29 % que estimé: mi resta valía para una de las dos ramas de 3
+llamadas y no para la cara, que conserva **dos** llamadas al primario (§2.8.3b). **El eval no se
+movió ni un dígito: se compró seguro contra el día malo, no un ahorro de hoy.**
 **Cerrado en S8.1:** **C8** — `ChatAnswer.billed` suma las llamadas **atendidas** de un turno (una
 que tira no se factura; una que contesta vacío, sí), así que el reporte de costo dejó de
 subfacturar el turno con tool. Es el hallazgo de §2.7 §3 cerrado en el código, y el motivo por el
