@@ -33,11 +33,43 @@ apps/web
   app/(billing)        /billing/*   MP + webhooks
   app/api/*                         handlers, Zod en el borde
   proxy.ts                          host → tenant (storefront-agent)
-packages/db            Drizzle, migraciones, RLS, seed        (db-agent)
+packages/db            Drizzle, migraciones, RLS, seed        (db-agent; scripts/ del LEAD)
 packages/domain        TS puro, cero I/O                      (domain-agent)
-packages/ai            chatbot, dieta, tools, evals           (ai-agent)
+packages/ai            chatbot, dieta, tools, evals           (ai-agent; scripts/ del LEAD)
 packages/media         R2 + variantes                         (media-agent)
 ```
+**Los `scripts/` de un paquete no son del paquete.** Es del **LEAD** todo script que un
+`package.json` del repo corra como `lint`, `guard`, `check`, `verify` o `audit`, viva donde viva
+(`CLAUDE.md` §4, **ADR-022** + su enmienda del 2026-08-28). **La regla no mira el nombre del archivo,
+mira qué hace** — y por eso es censable en un comando en vez de ser una lista que hay que recordar.
+Censado el 2026-08-28 son **seis**, y **cinco viven adentro del directorio del writer que auditan**:
+
+| gate | lo corre | audita el código de | lo escribió | se declara |
+|---|---|---|---|---|
+| `apps/web/scripts/web-lint.mjs` | `apps/web` `lint` | `app-agent` + `storefront-agent` | LEAD (`d37e6b3`) | `gate-owner: LEAD` |
+| `packages/db/scripts/rls-lint.mjs` | `packages/db` `lint` | `db-agent` | `db-agent` (`63abcb7`) | `gate-owner: LEAD` |
+| `packages/ai/scripts/ai-lint.mjs` | `packages/ai` `lint` | `ai-agent` | `ai-agent` (`d42fac9`) | `gate-owner: LEAD` |
+| `packages/media/scripts/media-lint.mjs` | `packages/media` `lint` | `media-agent` | `media-agent` (`2027fc9`) | `gate-owner: LEAD` |
+| `tests/scripts/qa-lint.mjs` | `tests` y `e2e` `lint` | `qa-agent` | `qa-agent` (`81da33f`) | `gate-owner: LEAD` |
+| `packages/domain/scripts/purity-check.mjs` | `packages/domain` `lint` | `domain-agent` | `domain-agent` (`9843902`, slice D1) | `gate-owner: LEAD` |
+
+**La sexta fila es la que obligó a reescribir la regla.** `purity-check.mjs` **no termina en
+`-lint.mjs`**, así que la versión anterior de ADR-022 —que nombraba ese sufijo— no lo alcanzaba y lo
+dejaba adentro de `packages/domain/**`, o sea del writer cuya pureza audita. Una regla que nombra un
+sufijo falla igual que la que nombraba un archivo.
+
+Los cinco de abajo son **anteriores** a `6952393`, así que ninguno es una infracción; desde ese
+commit los seis son del LEAD y sus autores **piden en vez de editar**. El corte no es jerárquico: un
+gate no puede ser del writer que audita.
+
+**Y no se sostiene en que alguien lea este párrafo.** Los seis llevan la marca literal
+`gate-owner: LEAD` en su encabezado, y la exige la sección **G3** de `scripts/guard-gates.sh`, que
+enumera los `package.json`, resuelve el target de cada script de gate y falla si la marca no está en
+las primeras 40 líneas. Censa **siete** targets: los seis de acá más `scripts/guard-artifacts.sh`
+—que corre desde el `guard` de la raíz y está **exento** de marca, porque `scripts/**` ya es del LEAD
+por fila propia de §4—. También es `FAIL` el gate fantasma (el `package.json` lo corre y el archivo
+no está) y el censo vacío. Un gate nuevo escrito por el writer que audita rompe **el día que nace**.
+Al 2026-08-28 esto está **en el árbol de trabajo, sin commitear** (fila **T28** del board).
 
 ## Resolución host → tenant  ·  **cerrado en FASE 1 (ADR-007, R1 PASS)**
 ```
@@ -219,6 +251,15 @@ que rote su token.
 **Gate de merge, sin excepción:** los seis lints de Supabase de severidad ERROR — `0002`, **`0007`**,
 `0010`, `0013`, `0015`, `0023`. `0007` (policies escritas + RLS apagado) es el que más se parece a
 "ya está hecho"; es el que hay que mirar primero.
+
+**Quién lo sostiene del lado del repo, y de quién es.** Los seis se afirman sobre las migraciones con
+`packages/db/scripts/rls-lint.mjs`. **Ese archivo es del LEAD, no de `db-agent`** — `CLAUDE.md` §4 y
+**ADR-022**: todo script de gate, viva donde viva, es del LEAD, porque el gate no puede ser del mismo
+writer que el código que audita. Consecuencia práctica para el que va a escribir una policy:
+**`db-agent` pide una regla nueva, no la agrega.** El caso que lo cerró vale como advertencia
+concreta: hasta `63abcb7` el lint leía sólo `CREATE POLICY`, y `0006` trajo el primer `ALTER POLICY`
+del repo — un `ALTER POLICY … WITH CHECK (true)` pasaba en verde por la regla `0007`, que es
+justamente la que esta sección llama la más engañosa.
 
 **Defensa en profundidad además de RLS:** DAL único en `server-only` · DTOs como `class`, para que
 bajar el objeto entero **rompa el build** · `experimental.taint: true` · filtro de tenant explícito

@@ -944,6 +944,37 @@ FASE 5, con el modo de falla más caro que hay: no falla nada, funciona gratis.
 - El mensaje al dueño dice **qué pasó**, no *"no autorizado"*: no hizo nada mal, se le terminó la
   prueba.
 
+### Addendum 2026-08-28 — la palanca del punto 6 existe, está sin cablear, y hay que decirlo así
+
+El punto 6 llama a la fila de `entitlements` *"una palanca que alguien movió a mano"*. Verificado
+contra `main`, la palanca tiene mecanismo y **no tiene mano**:
+
+- **`setFeatureFlag()` de `app/(billing)/_lib/entitlements.ts:182` es el único escritor de la tabla
+  `entitlements` en toda la app.** El otro `insert` sobre la tabla es
+  `packages/db/src/seed.ts:173`, que es el seed del demo. Censado con `grep` sobre `apps/web` y
+  `packages`: dos escritores, uno de producto y uno de seed.
+- **Ese único escritor no tiene call sites de producción.** Tampoco los tienen `hasEntitlement`,
+  `isEntitled` ni `requireEntitlement`. Los tres consumidores vivos —`publish-listing.ts`,
+  `reserve-unit.ts` y `stock/page.tsx`— usan `featureAccess()` / `isFeatureEnabled()`, que **sólo
+  leen**.
+
+Se escribe acá por una razón concreta y no por prolijidad: **es el dato que decidió que el módulo de
+`(billing)` no se borrara.** Su docblock prometía autodestruirse el día que `(app)` tuviera un
+resolver real; ese día llegó el 2026-08-28 y la promesa estaba mal escrita, porque daba por sentado
+que la única diferencia entre los dos resolvers era el catálogo. No lo era: el techo (`limit`) y el
+camino de escritura viven sólo de este lado. **Borrar el módulo borraba el feature flag sin deploy.**
+
+**Lo que este addendum NO dice:** que el feature flag sin deploy esté disponible. Está **cableado a
+medias** — hay función, hay tabla, hay policy, y no hay pantalla ni script que la llame. Cualquier
+doc que lo ofrezca como capacidad del producto estaría prometiendo algo que hoy sólo se puede hacer
+con un `update` a mano contra Postgres.
+
+**Y hay una divergencia abierta que toca directamente al punto 6:** con la misma fila apagada, los
+dos resolvers dan motivos distintos (`flag_off` vs `plan`), y el que se muestra al dueño es el que
+le ofrece comprar el plan que ya tiene. Es la fila **T27** del board, `app-agent`, arreglo en vuelo.
+Esta ADR no cambia: la precedencia del punto 6 es correcta y lo que falla es el vocabulario del
+rechazo.
+
 ### Verificación
 `bash scripts/accept-s6.sh` **V4** (el entitlement se chequea **adentro** de la Server Action) +
 `apps/web/app/(app)/_lib/entitlements.test.ts`.
@@ -1359,6 +1390,266 @@ emite la sentencia.
 Arregla este caso y deja el mecanismo intacto: la lista tecleada envejece con la próxima columna y
 vuelve a divergir del caller **en silencio**, que es exactamente lo que pasó. La lista se deriva del
 schema o no se escribe.
+
+---
+
+## ADR-022 — Un gate no puede crecer de la mano del código que audita: todo script de gate es del LEAD  ·  **enmendada el 2026-08-28** (el título original decía *todo `*-lint.mjs`*, y ese sufijo dejaba un gate afuera)
+- **Estado:** aceptada · **Fecha:** 2026-08-28 · **Autor:** LEAD (`CLAUDE.md` §4, commit `6952393`) · redactada por `docs-keeper`
+- **La levantó el agente auditado:** `db-agent`, que preguntó si le correspondía ampliar el lint que mira sus propias policies. Le correspondía preguntar; la respuesta es no.
+- **Relación con ADR-020 y ADR-021:** las tres son de la misma familia y ninguna contiene a las otras. ADR-020 dice **qué afirma** un gate (conducta, no identificador); ADR-021 dice **sobre quién** (el caller, no un sujeto inventado); ésta dice **quién lo escribe**.
+
+### Contexto — la fila nombraba un archivo donde tenía que nombrar una clase
+
+`CLAUDE.md` §4 decía `apps/web/scripts/*-lint.mjs` es del LEAD. Nombraba **un** lint. Por ese hueco,
+`packages/db/scripts/rls-lint.mjs` —el gate que sostiene *"sin RLS no hay merge"*, la invariante más
+cara del producto— quedaba adentro de `packages/db/**`, o sea del **mismo writer cuyas policies
+audita**.
+
+No es teoría, y el precio está medido. La migración `0006` trajo el **primer `ALTER POLICY` del
+repo**. `rls-lint.mjs` leía sólo `CREATE POLICY`. Medición del LEAD sobre el archivo real, antes del
+arreglo:
+
+| versión del lint | `0006` con `ALTER POLICY … WITH CHECK (true)` | salida |
+|---|---|---|
+| la vieja (sólo `CREATE POLICY`) | no la ve | `rls-lint OK · 74 policies` · **exit 0** |
+| con la sección **3b** | la ve | `0007 reservations.reservations_tenant_insert (ALTER) deja WITH CHECK (true)` · **exit 1** |
+
+La regla `0007` es la que `CLAUDE.md` §2 nombra como fallo de merge. Tenía una puerta al lado sin
+cerrar, y la puerta la abrió la primera migración que usó la sintaxis nueva.
+
+### Decisión
+
+**Todo `*-lint.mjs`, viva donde viva, es del LEAD.** No `apps/web/scripts/*-lint.mjs`: la clase
+entera, por la misma razón que `scripts/probes/**` y que `config/firewall-rules.json` — el gate no
+puede ser del mismo writer que el código que audita.
+
+**Corolario operativo, y es el que cuesta: `db-agent` pide, no edita.** Escribe policies todo el
+tiempo y ya no puede ampliar el lint que las mira. Es exactamente el mismo trato que tiene con los
+techos del WAF.
+
+**Lo que 3b NO exige, y no es un olvido que haya que "arreglar":** un `ALTER POLICY` que **omite**
+`WITH CHECK` no es un hallazgo. En Postgres la cláusula omitida queda como estaba, así que pedirla
+sería un falso positivo — y un gate que enrojece sobre código correcto es el modo de falla que
+ADR-020 nombra en su caso M1.
+
+### Alternativa descartada
+
+**Dejar `rls-lint.mjs` con `db-agent` y confiar en la revisión.** El argumento a favor era real: es
+el agente que más rápido se entera de que hace falta una regla nueva, y de hecho ésta la escribió
+él. El argumento en contra es estructural y gana: **un lint que crece de la mano del código que
+audita es un lint que nunca lo va a contradecir.** El costo de que la regla llegue un día más tarde
+—porque hay que pedirla— es menor que el de un gate que sólo sabe afirmar lo que su autor ya cree.
+
+### Consecuencias
+
+- `packages/db/**` deja de ser un directorio de un solo owner: `db-agent` escribe todo menos
+  `scripts/`. Es la primera excepción de esa forma y está aceptada.
+- La regla se aplica **hacia adelante sin lista**: un gate nuevo en cualquier paquete nace siendo
+  del LEAD, sin que haya que agregar una fila. (Decía `*-lint.mjs`; la enmienda del 2026-08-28 lo
+  cambió por *todo script que un `package.json` corra como gate*, que es lo que la frase quería decir.)
+- **El alcance real es más ancho de lo que el commit hacía suponer, y lo censó `docs-keeper` el
+  2026-08-28 al aplicar la regla.** `find . -name '*-lint.mjs'` sin `node_modules` devuelve
+  **cinco**, y **cuatro los escribió el writer que auditan**: `rls-lint.mjs` (`db-agent`, `63abcb7`),
+  `ai-lint.mjs` (`ai-agent`, `d42fac9`), `media-lint.mjs` (`media-agent`, `2027fc9`) y `qa-lint.mjs`
+  (`qa-agent`, `81da33f`). El único escrito por el LEAD es `web-lint.mjs`. Los cuatro son
+  **anteriores** a `6952393`, así que **ninguno es una infracción de nadie** — y son la evidencia de
+  que enumerar no habría alcanzado: el commit nombró un caso y la clase tenía cuatro. La tabla vive
+  en `ARCHITECTURE.md` §"Mapa del monorepo", no acá, para que no haya dos censos.
+- **~~Lo que esto abre y `docs-keeper` no decide: si los cuatro se mudan a `scripts/`.~~ Decidido
+  por el LEAD el 2026-08-28: NO se mudan.** El argumento de mudarlos —*un archivo dentro de
+  `packages/x/**` se lee como del owner de `packages/x/**` aunque §4 diga otra cosa*— era correcto,
+  y se contestó con una marca y un gate en vez de con una mudanza. Ver la **enmienda** al final.
+- **~~No hay gate que verifique esta regla, y no puede haberlo por construcción.~~ Falso, y lo
+  demostró el gate.** Lo que no se puede auditar es la *intención* de un owner; lo que sí se puede
+  es que el archivo **declare** a su dueño y que alguien lo cense. Es la sección **G3** de
+  `scripts/guard-gates.sh`. Ver la enmienda.
+- Un contrato de `.claude/agents/*.md` que reclame un `*-lint.mjs` está **derogado en esa línea**:
+  `CLAUDE.md` §4 ya fija que un contrato de agente puede **acotar** lo que su dueño escribe, nunca
+  ampliarlo.
+
+### Verificación
+
+`git show HEAD:packages/db/scripts/rls-lint.mjs` trae la sección **3b** en `:176` (`63abcb7`), y
+`CLAUDE.md` §4 trae la fila generalizada (`6952393`). Del lado del efecto, la medición de las dos
+polaridades está en la tabla de arriba y la hizo el LEAD sobre el archivo real.
+
+### Enmienda del 2026-08-28 — el sujeto de la regla es la **función** del script, no su nombre
+
+Ratificada por el LEAD el mismo día, después de censar la clase que esta ADR dice cubrir y encontrar
+que **no la cubre**.
+
+`find . -name '*-lint.mjs' -not -path '*/node_modules/*'` devuelve **cinco** (la tabla del censo, en
+`ARCHITECTURE.md`). Pero el `lint` de `packages/domain` es **`packages/domain/scripts/purity-check.mjs`**
+—`packages/domain/package.json`: `"lint": "node ./scripts/purity-check.mjs"`—, que **no termina en
+`-lint.mjs`**. La regla tal como estaba escrita no lo alcanzaba, así que quedaba adentro de
+`packages/domain/**`, o sea de `domain-agent`, **el writer cuya pureza audita**. Es el mismo agujero
+que esta ADR vino a tapar, reabierto un nivel más arriba: **una regla que nombra un sufijo falla
+igual que la que nombraba un archivo.**
+
+**Regla vigente** (`CLAUDE.md` §4): es del LEAD **todo script que un `package.json` del repo corra
+como `lint`, `guard`, `check`, `verify` o `audit`**, además de `scripts/**` y `scripts/probes/**`.
+El sujeto es **lo que el script hace**, no cómo se llama — y, el punto entero, la definición es
+**censable en un comando**. Hoy son **seis**: `web-lint.mjs`, `rls-lint.mjs`, `ai-lint.mjs`,
+`media-lint.mjs`, `qa-lint.mjs` y `purity-check.mjs`.
+
+**Alternativa descartada: mudar los seis a `scripts/`.** Es editar seis `package.json` en cinco
+columnas ajenas y reescribir la resolución de paths de cada uno, todo para arreglar un problema de
+**rótulo** — y no lo arreglaría. `purity-check.mjs` muestra que el fallo no es *dónde vive el
+archivo* sino *cómo la regla identifica a su sujeto*: una regla apoyada en la ubicación tendría el
+mismo hueco de sufijo el día que alguien ponga un gate en otro lado.
+
+**Lo que sí se hizo, porque el argumento de la lectura era correcto:** los seis llevan la marca
+literal **`gate-owner: LEAD`** en su encabezado (línea 3 de cada uno, verificado archivo por
+archivo), y **hay un gate que la exige**. Sección **G3** de `scripts/guard-gates.sh`: enumera los
+`package.json` del repo, resuelve el target de cada script de gate y falla si el archivo no declara
+la marca en sus primeras 40 líneas. Un gate nuevo escrito por el writer que audita **rompe el día
+que nace**, no la vez que a alguien se le ocurra censar.
+
+**Qué exime G3 y por qué:** un gate bajo `scripts/**` no necesita la marca — ese path ya es del LEAD
+por fila propia de §4 y no hay ambigüedad de lectura que resolver. La marca existe para el archivo
+que vive **adentro de la columna de otro**. Por eso G3 censa **siete** targets y no seis: los seis de
+paquete más `scripts/guard-artifacts.sh`, que corre desde el `guard` del `package.json` raíz, entra
+al censo y queda exento de marca. Y G3 falla **también por ausencia**: un `package.json` que corre un
+gate que no existe es `FAIL` (gate fantasma), y **cero gates censados es hallazgo, no veredicto
+verde** — la regla de ADR-020 aplicada al censo mismo.
+
+### Verificación de la enmienda
+
+Corrida del LEAD, **re-verificada por `docs-keeper` el 2026-08-28 ejecutando los dos comandos**:
+
+```
+bash scripts/guard-gates.sh
+  G3 · todo gate de paquete se declara del LEAD (CLAUDE.md §4 · ADR-022)
+    PASS  los 7 gates que corren desde un package.json existen y se declaran del LEAD
+  GUARD-GATES: PASS
+
+bash scripts/guard-gates.test.sh   → "guard-gates.sh: OK (se vio encender y se vio callar)"
+```
+
+Los **7 casos nuevos de G3** incluyen los cuatro que lo ven **encender**: gate de paquete sin marca ·
+**el gate que NO se llama `*-lint.mjs`** (el agujero que dejaba la regla vieja) · gate fantasma ·
+censo vacío. Los dos comandos ya son steps de CI (`ci.yml:101` y `:105`), así que G3 entra sin tocar
+`ci.yml` — con la salvedad de nivel de siempre: **el CI declara el step y nunca corrió** (ver
+`TEST_MATRIX.md`).
+
+**Estado en `main` al momento de escribir esto: NO está commiteado.** `git show HEAD:scripts/guard-gates.sh | grep -c 'G3 ·'`
+→ **0**, y `git show HEAD:CLAUDE.md | grep -c 'guard-gates.sh'` → **0**. Lo medido es el árbol de
+trabajo. Fila **T28** del board.
+
+---
+
+## ADR-023 — Una comparación de mismo origen no audita el contenido: se declara, y va acompañada de una aserción por literal
+- **Estado:** **aceptada** · **Fecha:** 2026-08-28 · **Ratificada por el LEAD**, que corrigió lo que la propuesta exigía (ver §"Decisión") · redactada por `docs-keeper`. Se escribe acá y no en cinco archivos porque la clase apareció tres veces en un mes y cada vez se documentó en el archivo donde molestaba, sin nombre común.
+- **Autor del hallazgo que la dispara:** `billing-agent`, midiéndolo por mutación sobre su propio test.
+- **Relación con ADR-020 y ADR-021:** tercera hermana, y **ninguna de las dos la cubre**. Ver §"Por qué no es ADR-020 ni ADR-021".
+
+### Contexto — tres casos, la misma forma, ningún nombre
+
+| caso | la aserción | por qué no auditaba |
+|---|---|---|
+| `plans.test.ts`, bloque *"coherencia con el resolver"* | *"el resolver coincide con el catálogo"* | los **dos** lados derivan de `PLAN_CATALOG`: el esperado es `planIncludes(tier, feature)` = `PLAN_CATALOG[tier].features.includes(feature)`, y el observado es `featureAccess()` → `planFeatures(tier).includes(feature)` = **la misma expresión**. El contenido se cancela |
+| el control de polaridad de la probe **G6** | *"el censo sabe encontrar una tabla rota"* | el control re-inlineaba el SQL en vez de llamar al predicado del censo. Mutar el predicado real dejaba el censo **verde** y el control verde con él |
+| el censo de `guard-gates.sh` | *"los 21 scripts resuelven todos los helpers"* | el número salía de un `ls` y los barridos auditaban 20. La población medida y la población declarada tenían orígenes distintos, y el que se imprimía era el cómodo |
+
+Los tres pasan las cuatro reglas de ADR-020 —miden conducta, no identificadores— y los tres pasan
+ADR-021 —el sujeto es el caller real—. Y los tres son verdes que no afirman nada.
+
+**Precisión sobre la primera fila, para que la tabla no se lea de más:** lo que no audita contenido
+es **ese bloque**, no el archivo. `plans.test.ts` lleva además el bloque de literales y dice en prosa
+cuál es cuál, así que **cumple la forma ratificada más abajo** — es el ejemplo positivo de esta ADR.
+Los otros dos casos de la tabla sí eran defectos: no tenían acompañante.
+
+**La medición que lo hace concreto**, hecha por `billing-agent` sobre `plans.test.ts` y verificada
+por `docs-keeper` leyendo las dos rutas de derivación: sacarle `chatbot` a `negocio` en
+`PLAN_CATALOG` pone **rojos los 4 tests de contenido** y deja el bloque de coherencia **verde**. Y
+el bloque de coherencia es el que se había *ensanchado* —de una feature a
+`PLAN_TIERS × BILLABLE_FEATURES`— con la intención de reforzarlo. Ensancharlo lo **debilitó**: la
+versión angosta comparaba dos mapas escritos por separado; la ancha compara un mapa consigo mismo,
+**12 veces** (3 planes × 4 features).
+
+### Decisión — y la corrección del LEAD, que cambia lo que la regla EXIGE
+
+La propuesta se leía como una **prohibición** de la comparación de mismo origen. **Eso está mal y la
+habría hecho dañina.** Un chequeo de coherencia entre dos writers es exactamente lo que caza a
+`billing-agent` y a `app-agent` separándose, y **sólo se puede escribir comparando un lado con el
+otro**. Prohibirlo borra la única prueba de que las dos columnas siguen diciendo lo mismo.
+
+**Lo que está mal no es la aserción de mismo origen. Es que sea lo único que hay en la sala.**
+
+**Forma ratificada, y es lo que hay que cumplir:** un archivo que contiene una comparación de mismo
+origen tiene que contener además, **sobre el mismo sujeto**, al menos una aserción cuyo valor
+esperado sea un **literal escrito en el test**; y tiene que **decir en prosa** cuál de sus bloques
+lleva el contenido y cuál lleva sólo la coherencia. Una comparación de mismo origen sin ese
+acompañante no es un test débil: es un test que **reporta salud que nadie midió**, que es la misma
+familia de ADR-020 y ADR-021.
+
+**Una aserción sólo audita el contenido si su valor esperado y su valor observado tienen orígenes
+independientes.** Tres preguntas, en orden, para un test o un gate nuevo:
+
+1. **¿De dónde sale el esperado?** Si sale de la misma constante, del mismo módulo o del mismo
+   `select` que el observado, la aserción es una tautología y su verde es incondicional.
+2. **¿El control de polaridad llama al código bajo prueba, o a una copia suya?** Una copia hace que
+   el control certifique un predicado que no es el que corre. Es la forma más cara porque el
+   arnés—lo que se supone que protege—es el que miente.
+3. **¿La población medida es la población declarada?** Un conteo que sale de una fuente y un barrido
+   que sale de otra no se auditan mutuamente: se contradicen en silencio y gana el que se imprime.
+
+**Y una consecuencia que hay que escribir porque va contra el instinto: ensanchar una matriz no
+refuerza un chequeo, y a veces lo rompe.** Ensanchar es correcto cuando los dos lados siguen siendo
+independientes. Cuando la unificación de fuentes ya ocurrió —que es justo lo que se estaba
+celebrando en `plans.ts`— la matriz ancha mide la unificación, no el contenido. **Las dos cosas se
+afirman por separado o no se afirman.**
+
+**Lo que esta ADR NO pide, y conviene leerlo dos veces:** borrar el bloque de coherencia de
+`plans.test.ts`. Afirma algo real
+y valioso —que el catálogo es **uno**, que `app-agent` no volvió a forkear su mapa, y que el camino
+completo *fila ausente → catálogo → vigencia* da `ok`— y hoy su docblock lo dice con todas las
+letras. Lo que se propone es que eso se **declare** en el test, como ya está declarado ahí, y que
+la corrección del contenido tenga su propia aserción por **igualdad literal**, que es donde un
+cambio de producto no querido tiene que enrojecer.
+
+### Por qué no es ADR-020 ni ADR-021
+
+- **ADR-020** ataca *aserción sobre conducta / evidencia sobre un identificador*. Acá la evidencia
+  **es** conducta: `plans.test.ts` ejecuta `featureAccess()` de verdad.
+- **ADR-021** ataca *el sujeto no es el caller*. Acá el sujeto **es** el caller real, con su código
+  real.
+- Lo que falla es la **independencia entre el esperado y el observado**, que ninguna de las dos
+  nombra. Merece número propio por el mismo motivo por el que ADR-021 no fue una sección de
+  ADR-020: las reglas de las otras dos le habrían dado verde a los tres casos de la tabla.
+
+### Dónde vive
+
+**Acá y sólo acá**, con punteros desde `TEST_MATRIX.md` (una sexta pregunta en la lista de *¿hay
+chequeo? · ¿lo corre alguien? · ¿está en `main`? · ¿corrió el CI? · ¿qué afirma?*) y desde
+`SLICE_BOARD.md` cuando una fila la invoque. **No se re-explica en cada archivo**: una regla de
+método copiada en cinco lugares es la misma clase de defecto que la regla describe.
+
+### La pregunta que quedaba abierta, contestada por el LEAD
+
+Era: **si `plans.test.ts` necesita además una aserción de contenido por igualdad literal contra
+`PLAN_CATALOG`, o si alcanza con que el primer bloque del mismo archivo ya la tenga.**
+
+**No necesita que se le agregue nada. `plans.test.ts` es el caso MODELO de esta ADR, no el
+infractor**, y una ADR que sale con su ejemplo positivo adentro se aplica sola. Verificado por el
+LEAD leyendo el archivo y re-verificado por `docs-keeper` sobre
+`apps/web/app/(billing)/_lib/plans.test.ts`:
+
+- **El primer bloque (`:43-91`) es todo literal**, y ahí nace el esperado: `PLAN_TIERS` →
+  `toEqual(['trial','base','negocio'])` · `planFeatures('base')` → `toEqual([])` ·
+  `planLimit('negocio', PICKUP)` → `toBe(3)` · `planLimit('base', PICKUP)` → `toBe(1)` ·
+  `toBeNull()` · `monthlyUsdCents` → `1900 / 3500 / 0` · `formatMonthlyUsd` → `'USD 19' / 'USD 35'`.
+  El esperado lo escribe el test; el observado sale de `plans.ts`. **Orígenes independientes.**
+- **El segundo bloque (`:132-156`) es la matriz de coherencia**, y **el propio archivo ya declara en
+  prosa** lo que no afirma (`:114`): *"el contenido se cancela: esto NO afirma que Negocio traiga
+  chatbot"*. Lo que sí afirma —que el catálogo es uno, que `app-agent` no volvió a forkear su mapa,
+  y que el camino *fila ausente → catálogo → vigencia* da `ok`— está escrito ahí mismo.
+
+**La línea de `TEST_MATRIX.md` se queda** (la séptima pregunta), y deja de estar condicionada a una
+ratificación pendiente.
+
+**Corolario para el que escribe el próximo test:** no borres tu bloque de coherencia. Ponele al lado
+la aserción por literal, y escribí arriba cuál es cuál.
 
 ---
 

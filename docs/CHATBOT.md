@@ -11,9 +11,15 @@ que ya se corrigió en `PRODUCT.md`, `DOMAIN.md`, `ARCHITECTURE.md`, `DECISIONS.
 `TEST_MATRIX.md`**: `ai-agent` es dueño de `packages/ai`, no de este archivo. **Se diseña en
 FASE 1, se codea después de S4/S8.** Ver skill `chatbot-diet`._
 
-> **Este doc está sin revisar desde FASE 1 y `packages/ai` no existe (fila `T19` del board).**
-> Lo único que se tocó desde entonces es el ID de modelo muerto de acá abajo. Todo lo demás es
-> diseño de FASE 1 y hay que releerlo contra `docs/research/llm-pricing.md` antes de codear.
+> **Este doc está sin revisar desde FASE 1.** Lo único que se tocó desde entonces es el ID de modelo
+> muerto de acá abajo. Todo lo demás es diseño de FASE 1 y hay que releerlo contra
+> `docs/research/llm-pricing.md` antes de codear.
+>
+> **Y ahora urge, porque el código llegó primero: `packages/ai` existe en `main` desde `d42fac9`**
+> (fila `T19`). Este archivo decía *"no existe"* hasta el 2026-08-28. La consecuencia práctica no es
+> el drift de una línea: es que el diseño de FASE 1 escrito acá **no se re-verificó contra lo que
+> `ai-agent` implementó**, así que hasta que alguien lo haga, **manda el código y este doc es una
+> hipótesis**. Lo re-verifica `docs-keeper` cuando el árbol se aquiete.
 
 ## Qué es y qué no es
 El chatbot **no es el producto**. El producto es que el visitante llegue **informado** al WhatsApp

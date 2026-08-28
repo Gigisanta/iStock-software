@@ -43,6 +43,13 @@ La **vidriera no tiene DB propia**: lee el mismo Postgres a través de cache/ISR
 
 **Landing custom = upsell humano**, se cotiza aparte. En el signup **siempre** se crea la genérica.
 
+**La tabla de arriba es el default, no la última palabra.** Una feature se puede prender o apagar
+por tenant sin tocarle el plan: es una fila en `entitlements`, y manda sobre el plan en las **dos**
+direcciones (ADR-018 §6) — cortesía a un `base` mientras se cierra una venta, o kill switch sobre un
+`negocio` que abusa. **Hoy eso no tiene pantalla:** el único escritor de esa tabla es
+`setFeatureFlag()` y no lo llama nadie en producción, así que en la práctica se hace con un `update`
+a mano contra Postgres. Se anota acá para que la palanca no se lea como una capacidad del panel.
+
 ## Fuera de alcance (Capa 1) — no negociable
 ARCA/AFIP · WhatsApp Business API · sync con MercadoLibre · carrito · checkout de ventas del
 reseller · POS · landing custom en el signup · LLM dentro de WhatsApp.
