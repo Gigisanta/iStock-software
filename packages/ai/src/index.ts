@@ -166,6 +166,8 @@ export {
 } from './pricing';
 
 export {
+  MAX_BILLED_CALLS_PER_TURN,
+  MAX_TOOL_ROUNDS,
   answerChat,
   chatRequestSchema,
   type BilledUsage,

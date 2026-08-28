@@ -84,6 +84,22 @@ el modelo acaba de pedir y conservarlo parece correcto—; lo que cambió es que
 lo dice por su nombre, con el número puesto, y que se pone en rojo si alguien la reordena sin
 querer.
 
+### El techo de entrada no tiene perilla, y es a propósito
+
+`LLM_MAX_INPUT_TOKENS` sólo puede **bajar** el techo: `env.ts` lo valida con un `.max()` contra
+`MAX_INPUT_TOKENS` y el error dice *«la dieta se baja por env, nunca se sube»*. O sea que **subir el
+techo no es una variable de entorno: es un commit en `budget.ts`**, revisado y con un diff.
+
+Se escribe acá porque la confusión es cara en las dos direcciones. Alguien que crea que hay perilla
+va a "probar" un techo más alto en producción, que es exactamente lo que un techo constitucional no
+admite; y alguien que quiera moverlo de verdad va a buscar una env var, no encontrarla y concluir
+que el número no se puede tocar. Se puede: se toca donde se ve.
+
+**Y el 1200 es del humano, no de este paquete** (`CLAUDE.md` §Dieta: `≤1200 in`). Hay una medición
+que dice que **1374** es el mínimo que deja los 162 prompts del corpus sin degradar, con un precio
+de +USD 0,00047/tenant/mes al soft cap — o sea ruido. **`ai-agent` no lo mueve por su cuenta.**
+La fila está abierta y es `T52` del board.
+
 ## Costo medido
 
 Lo mide `pnpm --filter @istock/ai eval`, no una estimación — y **lo escribe la eval, no una
@@ -148,6 +164,47 @@ LLM_FALLBACK_MODEL  Groq gpt-oss-20b      en el camino de ejecución y ejercido 
 devolviendo texto vacío (el modo de falla más común de un modelo barato bajo carga) y con los dos
 caídos, que termina en handoff a WhatsApp.
 
+### Un primario que contestó vacío no se reintenta en el mismo turno
+
+Decidido el 2026-08-28 (`C11` / `T50`). Un turno son hasta dos rondas —la inicial y la de tool— y
+cada una llamaba al primario. Si el primario devolvía `200` con texto vacío en las dos, el turno
+facturaba **cuatro** llamadas: las dos vacías se pagan igual, porque el proveedor procesó el prompt.
+
+Ahora la ronda de tool **saltea** al primario si ya contestó vacío en la ronda anterior. El techo
+facturable del turno pasa de 4 a **3** (`MAX_BILLED_CALLS_PER_TURN`), −29% del techo de gasto
+mensual del chat, sin tocar la dieta, ni el soft cap, ni una sola respuesta que hoy se conteste bien.
+
+**El argumento no es "ahorrar": es que el reintento no compra casi nada.** Dentro de un turno el
+segundo intento no es independiente del primero. El prompt de la ronda de tool **contiene** al de la
+ronda inicial —mismo system, misma ficha, mismo historial, más el resultado— así que si el vacío
+vino de un filtro de contenido (`SAFETY` / `RECITATION` / `OTHER` devuelven 200 sin candidatos), el
+disparador sigue adentro. Y si vino de descarte por capacidad, la constante de tiempo de un
+incidente son minutos, no el segundo que separa las dos rondas. Encima la calidad ya se degradó: si
+el primario contestó vacío en la ronda 1, el que contestó fue el fallback, así que el turno **ya**
+se está sirviendo con el modelo chico y volver al primario a mitad de camino mezcla dos voces en la
+misma respuesta en vez de reparar algo.
+
+Dos límites del salteo, los dos deliberados:
+
+- **Es por turno, no persistente.** El mensaje siguiente del comprador vuelve a empezar por el
+  primario. Un estado que sobreviva al turno es un circuit breaker, y un circuit breaker necesita
+  dueño, ventana y reset; este paquete no tiene reloj y no lo va a inventar en un `let`.
+- **Una excepción del primario NO lo saltea.** Una llamada que tira no se factura, así que
+  saltearla no ahorra nada y sí resigna la respuesta del modelo mejor. El salteo se dispara con la
+  señal que cuesta plata, no con la que cuesta cero.
+
+### El techo facturable es una aserción, no un comentario
+
+`MAX_BILLED_CALLS_PER_TURN = 3` sale de la topología (`1 + MAX_TOOL_ROUNDS` rondas, y sólo una
+puede pagar dos proveedores) y lo afirma `chat.test.ts` armando el peor caso real y comparando
+`billed.calls` contra el **literal** `3`, no contra la constante: un tercer proveedor de respaldo
+movería las dos puntas a la vez y el test seguiría verde mientras la factura sube 43%. Con el
+literal, el día que el número suba, sube en un diff que alguien firma.
+
+`ChatAnswer.billed` sale por el borde del paquete y `MAX_BILLED_CALLS_PER_TURN` también, para que
+el log de `/api/chat` alarme contra la constante en vez de contra un `2` mágico. **Ese log todavía
+no existe** — la ruta es de `app-agent` y llega con FASE 5 (`T51`).
+
 ## Las tres tools
 
 `get_open_listing()` · `search_listings(query)` (máx 5, campos mínimos) · `handoff_whatsapp(reason)`.
@@ -168,6 +225,27 @@ turno, porque cada vuelta paga el prompt entero de nuevo.
                     y "disponible" sobre una unidad `reserved` → se descarta la respuesta y se deriva
 8. siempre          `waUrl` + `waMessage` del DTO
 ```
+
+### El texto del dueño: todo adentro de un bloque, y el prefijo de rol anclado
+
+**Todo** lo que escribió el dueño —nombre del equipo, color, iCloud, garantía, procedencia, punto
+de retiro, medios de pago y descripción— entra al prompt adentro de **un** bloque delimitado, no
+uno por campo: el envoltorio cuesta 30 tokens cada vez y con uno solo el costo marginal de proteger
+los otros siete campos es cero. El mismo reparto vale para el digest de `get_open_listing`, que es
+el único canal que devuelve texto de un tercero *a pedido del modelo*.
+
+`chat.test.ts` §"el título hostil" lo afirma **por el camino y no por la función**: entra por
+`answerChat` y mira las dos requests que recibió el proveedor, porque lo que le importa al producto
+no es que `listingPromptView` limpie, es que el prompt que sale por el puerto no lleve el payload.
+
+**El prefijo de rol se neutraliza al principio de línea y no a mitad de frase, y es una decisión.**
+Un `SYSTEM:` finge un límite de turno, y un límite sólo es creíble donde empieza una línea — con la
+bandera `m` el ataque real (salto de línea + prefijo) cae. Desanclarlo se comería copy legítimo del
+rubro: `sistema`, `usuario` y `asistente` están en la alternancia, así que *"un solo usuario:
+impecable"* y *"Sistema: iOS 18"* saldrían mutiladas, y un filtro que se come el texto real es un
+filtro que alguien apaga. El argumento largo está en el docblock de `listing-view.ts` y lo pinnea
+`listing-view.test.ts` §"el prefijo de rol". El regex vive en `packages/domain` (columna de
+`domain-agent`): acá se afirma el **contrato del que depende este prompt**, no el regex.
 
 ### El paso 1b: el contador es el techo de la factura
 

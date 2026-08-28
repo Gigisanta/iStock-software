@@ -47,7 +47,40 @@ import { createToolRuntime, type SearchPort } from './tools';
 import { CHAT_ROLES, type ChatTurn } from './turns';
 
 /** Un solo round: el modelo pide una tool, la contesta, y con eso cierra. */
-const MAX_TOOL_ROUNDS = 1;
+export const MAX_TOOL_ROUNDS = 1;
+
+/** Rondas de modelo que puede tener un turno: la inicial más las de tool. */
+const TURN_ROUNDS = 1 + MAX_TOOL_ROUNDS;
+
+/**
+ * Techo estructural de llamadas **facturadas** por turno. Es un número del producto, no una
+ * curiosidad de implementación: `docs/COST.md` §2.8 costea el chat multiplicando por él.
+ *
+ * **Se DERIVA de la topología, y esa derivación es la mitad del punto.** Son `TURN_ROUNDS` rondas
+ * y cada una paga al menos un proveedor; **una sola** puede pagar dos, porque el primario que
+ * contesta vacío queda salteado por lo que reste del turno ({@link generateWithFallback}). De ahí
+ * el `+ 1`, que es literalmente "el vacío del primario, una vez por turno". Antes del salteo el
+ * término era `2 * TURN_ROUNDS` y el techo daba 4.
+ *
+ * **Estaba escrito como el literal `3` y eso era un bug de diseño, falsificado por el LEAD el
+ * 2026-08-28.** El docblock afirmaba que vivir en el mismo archivo que `MAX_TOOL_ROUNDS` alcanzaba
+ * para que el techo se enterara si alguien subía las rondas. No alcanza: **co-locar dos constantes
+ * no crea una dependencia entre ellas.** Mutando `MAX_TOOL_ROUNDS = 1 → 2` el techo real pasaba a
+ * 4, esta constante se quedaba en `3`, y la sección de tests del techo quedaba **entera en verde**;
+ * el único rojo era un test de la sección de tools —una aserción sobre cuántas rondas hay, no
+ * sobre la factura—, o sea justo el que quien sube las rondas a propósito va a actualizar, porque
+ * su fallo se lee como "actualizame". Ahora el `=` lo hace el compilador y no la buena memoria.
+ *
+ * La derivación sola tampoco alcanza, y por eso hay dos aserciones y no una: si el número se
+ * deriva, un cambio de topología lo mueve **en silencio**. `chat.test.ts` §"el techo facturable"
+ * clava el literal `3` aparte y arma el peor caso ejerciendo `MAX_TOOL_ROUNDS` rondas de verdad,
+ * así que subir las rondas o agregar un tercer proveedor pone en rojo la sección que habla de
+ * plata. Si el número sube, sube en un diff que alguien firma.
+ *
+ * Lo exporta el paquete para que el log de `/api/chat` pueda alarmar contra él en vez de contra un
+ * `2` mágico (C10). Un turno por encima de este número es un bug de control de flujo, no tráfico.
+ */
+export const MAX_BILLED_CALLS_PER_TURN = TURN_ROUNDS + 1;
 
 /**
  * Borde no confiable del paquete: lo único que escribe el visitante son `userMessage` y `turns`.
@@ -137,6 +170,12 @@ export interface ChatAnswer {
    * primario que contesta vacío paga una tercera. `promptTokens` es el máximo y `billed.tokensIn`
    * es la suma: son dos preguntas distintas y confundirlas es subcontar. `calls: 0` = el turno se
    * resolvió sin llamar a nadie y **cuesta cero**, que es la defensa más barata del sistema.
+   *
+   * `calls` está acotado por {@link MAX_BILLED_CALLS_PER_TURN} y es el campo que el log
+   * estructurado de `/api/chat` tiene que emitir: `calls >= 3` es un turno que pagó una llamada
+   * degradada (alguien contestó vacío), y `calls > MAX_BILLED_CALLS_PER_TURN` es imposible por
+   * construcción, o sea un bug de control de flujo. Esa ruta todavía no existe y el campo la
+   * espera armado.
    */
   readonly billed: BilledUsage;
 }
@@ -193,19 +232,8 @@ function requestFor(context: ChatContext, model: string, env: AiEnv, tools: LlmR
   };
 }
 
-/**
- * Llama al primario y, si falla **por lo que sea**, al fallback.
- *
- * "Por lo que sea" incluye la respuesta vacía, no sólo la excepción: un 200 con `text: ""` es el
- * modo de falla más común de un modelo barato bajo carga, y tratarlo como éxito deja al comprador
- * mirando un globo vacío. R3 le da al primario riesgo de apagado en octubre 2026: **este camino se
- * ejerce en `chat.test.ts`, no se documenta y se espera lo mejor.**
- */
-async function generateWithFallback(
-  deps: ChatDeps,
-  context: ChatContext,
-  tools: LlmRequest['tools'],
-): Promise<{
+/** Lo que una ronda le deja al turno: la respuesta, y lo que esa ronda le va a costar al tenant. */
+interface RoundOutcome {
   readonly result: LlmResult;
   readonly provider: 'primary' | 'fallback';
   /**
@@ -216,15 +244,67 @@ async function generateWithFallback(
    */
   readonly servedCalls: number;
   readonly servedTokensOut: number;
-}> {
-  const attempts: readonly { readonly provider: 'primary' | 'fallback'; readonly llm: LlmProvider; readonly model: string }[] =
+  /**
+   * El primario atendió y devolvió vacío. **No** se prende cuando el primario tira: una excepción
+   * no se factura, así que saltearla no ahorra nada y sí resigna la respuesta del modelo mejor.
+   */
+  readonly primaryServedEmpty: boolean;
+}
+
+/**
+ * Llama al primario y, si falla **por lo que sea**, al fallback.
+ *
+ * "Por lo que sea" incluye la respuesta vacía, no sólo la excepción: un 200 con `text: ""` es el
+ * modo de falla más común de un modelo barato bajo carga, y tratarlo como éxito deja al comprador
+ * mirando un globo vacío. R3 le da al primario riesgo de apagado en octubre 2026: **este camino se
+ * ejerce en `chat.test.ts`, no se documenta y se espera lo mejor.**
+ *
+ * ## `skipPrimary`: un primario que ya contestó vacío no se reintenta en el mismo turno
+ *
+ * Decidido acá y a propósito, contra la lectura de que un vacío es transitorio (C11, 2026-08-28).
+ * Dentro de un turno el reintento **no es un experimento independiente**, por tres motivos que se
+ * acumulan:
+ *
+ * 1. **El prompt de la segunda ronda contiene al de la primera.** Es el mismo system, la misma
+ *    ficha y el mismo historial, más el resultado de la tool. Si el vacío vino de un filtro de
+ *    contenido —`SAFETY` / `RECITATION` / `OTHER` devuelven 200 sin candidatos— el disparador
+ *    sigue adentro del prompt más largo. La probabilidad condicional de éxito no es la de base.
+ * 2. **El otro modo de falla es descarte por capacidad, y su constante de tiempo es de minutos**,
+ *    no del segundo que separa las dos rondas. Reintentar tan rápido es preguntar dos veces
+ *    durante el mismo incidente.
+ * 3. **La calidad ya se degradó y el reintento no la recupera.** Si el primario contestó vacío en
+ *    la ronda 1, el que contestó fue el fallback: el turno YA se está sirviendo con el modelo
+ *    chico. Volver al primario en la ronda 2 no repara la ronda 1, mezcla dos voces en la misma
+ *    respuesta y encima paga una llamada entera por el intento.
+ *
+ * El costo del salteo está acotado a propósito: **es por turno, no persistente.** El mensaje
+ * siguiente del comprador vuelve a empezar por el primario. No hay circuit breaker acá —
+ * un estado que sobrevive al turno necesita dueño, ventana y reset, y este paquete no tiene reloj.
+ *
+ * Lo que compra: el techo facturable del turno baja de 4 a {@link MAX_BILLED_CALLS_PER_TURN} = 3,
+ * −25% del peor caso y −29% del techo de gasto mensual del chat, **sin tocar la dieta, ni el soft
+ * cap, ni una sola respuesta que hoy se conteste bien.**
+ */
+async function generateWithFallback(
+  deps: ChatDeps,
+  context: ChatContext,
+  tools: LlmRequest['tools'],
+  options: { readonly skipPrimary: boolean } = { skipPrimary: false },
+): Promise<RoundOutcome> {
+  const chain: readonly { readonly provider: 'primary' | 'fallback'; readonly llm: LlmProvider; readonly model: string }[] =
     [
       { provider: 'primary', llm: deps.primary, model: deps.env.primaryModel },
       { provider: 'fallback', llm: deps.fallback, model: deps.env.fallbackModel },
     ];
-  const failures: string[] = [];
+  const attempts = options.skipPrimary ? chain.filter((attempt) => attempt.provider !== 'primary') : chain;
+  // El salteo entra al mensaje de error: si los dos caminos mueren, el que lea el log tiene que ver
+  // que el primario no se intentó y por qué, no una lista de un solo proveedor sin explicación.
+  const failures: string[] = options.skipPrimary
+    ? ['primario: salteado, ya había contestado vacío en este turno']
+    : [];
   let servedCalls = 0;
   let servedTokensOut = 0;
+  let primaryServedEmpty = false;
   for (const attempt of attempts) {
     try {
       const result = await attempt.llm.generate(requestFor(context, attempt.model, deps.env, tools));
@@ -232,9 +312,10 @@ async function generateWithFallback(
       servedTokensOut += result.tokensOut;
       if (result.text.trim().length === 0 && result.toolCalls.length === 0) {
         failures.push(`${attempt.provider}: respuesta vacía`);
+        if (attempt.provider === 'primary') primaryServedEmpty = true;
         continue;
       }
-      return { result, provider: attempt.provider, servedCalls, servedTokensOut };
+      return { result, provider: attempt.provider, servedCalls, servedTokensOut, primaryServedEmpty };
     } catch (error) {
       failures.push(`${attempt.provider}: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -296,11 +377,15 @@ export async function answerChat(input: ChatInput, deps: ChatDeps): Promise<Chat
   };
   let provider: 'primary' | 'fallback' = 'primary';
   let result: LlmResult;
+  // Estado del primario DENTRO del turno. Nace en `false` en cada `answerChat`: no sobrevive al
+  // turno y por eso no necesita ventana ni reset (ver `generateWithFallback`).
+  let primaryDegraded = false;
 
   try {
     const first = await generateWithFallback(deps, context, runtime.specs);
     result = first.result;
     provider = first.provider;
+    primaryDegraded = first.primaryServedEmpty;
     addBilled(first.servedCalls, first.servedTokensOut);
   } catch {
     // El prompt SÍ se armó acá, así que su recorte se reporta aunque no se haya facturado nada: la
@@ -375,9 +460,12 @@ export async function answerChat(input: ChatInput, deps: ChatDeps): Promise<Chat
     promptTokens = Math.max(promptTokens, context.budget.tokensIn);
 
     try {
-      const next = await generateWithFallback(deps, context, runtime.specs);
+      const next = await generateWithFallback(deps, context, runtime.specs, { skipPrimary: primaryDegraded });
       result = next.result;
       provider = next.provider;
+      // El `||` no es defensivo de más: con `MAX_TOOL_ROUNDS > 1` la degradación tiene que
+      // arrastrarse a la ronda siguiente, no reevaluarse desde cero en cada vuelta.
+      primaryDegraded = primaryDegraded || next.primaryServedEmpty;
       addBilled(next.servedCalls, next.servedTokensOut);
     } catch {
       return answerFromHandoff(input.listing, 'provider_down', {
