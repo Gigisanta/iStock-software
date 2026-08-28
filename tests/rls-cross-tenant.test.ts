@@ -127,6 +127,22 @@ const SALE_A = '00000000-0000-4000-9000-0000000000c4';
 const LEAD_A = '00000000-0000-4000-9000-0000000000c5';
 const INTRUDER_ROW = '00000000-0000-4000-9000-0000000000e9';
 
+// ── R9 (S7 · venta manual) ──────────────────────────────────────────────────────────────────
+// Fixture propio, montado en el `beforeAll` de R9 y NO acá arriba: `sales.listing_id` es
+// `ON DELETE RESTRICT`, así que una venta de B colgando de `LISTING_B` desde el arranque haría
+// fallar con `23503` al `delete from listings` de R4 — que es un test de aislamiento, no de FKs.
+// Un fixture que rompe otro test es un fixture que se paga con un rojo que no dice nada.
+const SALE_B = '00000000-0000-4000-9000-0000000000d4';
+/** La venta que B intenta plantar en la cuenta de A. Nunca tiene que existir. */
+const SALE_INTRUSA = '00000000-0000-4000-9000-0000000000e8';
+/** El uuid de unidad que las DOS ventas de R9f comparten: es el punto entero de R9f. */
+const LISTING_MISMO_UUID = '00000000-0000-4000-9000-0000000000c6';
+const VENTA_PAR_A = '00000000-0000-4000-9000-0000000000c7';
+const VENTA_PAR_B = '00000000-0000-4000-9000-0000000000d7';
+
+/** El costo de la venta de B. Si este número aparece en una sesión de A, es fuga (y al revés). */
+const COST_VENTA_B = '300.00';
+
 /** Los slugs del host: `{slug}.maat.work`. Son el claim de la vidriera anónima (`0002`). */
 const SLUG_A = 'qa-rls-a';
 const SLUG_B = 'qa-rls-b';
@@ -1318,5 +1334,377 @@ describe('R8 · el rol de los jobs (service_role) ve todos los tenants: sin eso 
     } finally {
       await job.close();
     }
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+/**
+ * R9 · LA VENTA MANUAL (S7). El hecho contable no cruza de tenant, y el margen lo deriva el motor.
+ *
+ * `sales` existe desde `0000` y tiene policies desde `0001`, pero **hasta S7 no la escribió nunca
+ * código de producción**: un privilegio que nunca se ejerció es una suposición, no una garantía.
+ * S7 la enciende (`apps/web/app/(app)/_lib/sales/record-sale.ts`) y con eso aparece la fila más
+ * cara del producto: la única que lleva `cost_usd` **y** `margin_usd` juntos, o sea el número que
+ * `CLAUDE.md` §0.9 dice que ni el propio seller del tenant puede ver. Que ese número no cruce a
+ * otro reseller no es una preferencia: es el peor incidente posible de este SaaS.
+ *
+ * Este bloque es la **auditoría de referencia** de `sales` (`CLAUDE.md` §4, precisión de S4).
+ * `packages/db/src/sales-one-sale-per-listing.test.ts` §e tiene casos cruzados como red de
+ * regresión de `db-agent`, y eso está bien: la duplicación es deliberada. Lo que no puede pasar es
+ * que un gate cite el test del paquete como evidencia — el writer de las policies estaría firmando
+ * su propio certificado. **Si los dos divergen, gana éste.**
+ *
+ * Los seis invariantes, y por qué ninguno se deduce de otro:
+ *   a · A lee lo suyo (control positivo). Una policy que no deja leer a NADIE cumple b, c y d.
+ *   b · B no lee, no cuenta y no suma las ventas de A. El `count(*)` es su propio invariante:
+ *       devolver "3" ya dice cuántos equipos vendió el competidor sin mostrar una columna.
+ *   c · B no escribe en la cuenta de A. Dos capas distintas, medidas por separado.
+ *   d · B no actualiza ni borra las ventas de A, ni muda las suyas al tenant de A.
+ *   e · `margin_usd` no se escribe **ni siendo dueño**: es `GENERATED ALWAYS`.
+ *   f · el índice único es el PAR `(tenant_id, listing_id)`, no `(listing_id)`.
+ */
+describe('R9 · la venta manual: el costo y el margen de un reseller no cruzan al de al lado', () => {
+  /** Igual que `Session.error`, pero para la conexión de operador: R9f mide el MOTOR (un índice),
+   *  no una policy, así que el insert tiene que llegar sin que RLS opine nada por el medio. */
+  async function adminRechaza(text: string): Promise<PgError> {
+    try {
+      await admin.unsafe(text);
+    } catch (caught) {
+      const failure = caught as { code?: string; message?: string };
+      return { code: failure.code ?? 'UNKNOWN_ERROR', message: failure.message ?? '' };
+    }
+    throw new Error(`se esperaba que Postgres rechazara la query y pasó limpia: ${text}`);
+  }
+
+  beforeAll(async () => {
+    // B vende su propia unidad. Sin una venta de B, "B ve 1 fila y no 2" sería verde por vacío:
+    // una policy que devuelve cero a todo el mundo lo cumpliría igual, con el panel roto.
+    await admin.unsafe(`
+      insert into sales (id, tenant_id, listing_id, price_usd, cost_usd, payment_method)
+      values ('${SALE_B}', '${TENANT_B}', '${LISTING_B}', 480.00, ${COST_VENTA_B}, 'transferencia')`);
+    // La unidad cuyo uuid comparten los dos tenants en R9f. Vive en A y no tiene venta todavía.
+    await admin.unsafe(`
+      insert into listings (id, tenant_id, slug, title, condition, price_usd, status)
+      values ('${LISTING_MISMO_UUID}', '${TENANT_A}', 'iphone-15-256', 'iPhone 15 256 Negro',
+              'sealed', 900.00, 'available')`);
+  });
+
+  afterAll(async () => {
+    // El `or listing_id = …` no es redundancia: `sales.listing_id` es `ON DELETE RESTRICT`, así
+    // que UNA venta inesperada colgando de esta unidad convierte el `delete` de abajo en un
+    // `23503` y el fixture queda a medio desmontar. Lo encontró la prueba de falsificación M4
+    // (`margin_usd` sin `GENERATED ALWAYS`): ahí R9e deja de rechazar y la fila entra con un `id`
+    // que esta lista no conoce. Un limpiador que sólo sabe borrar lo que él mismo creó falla justo
+    // el día que algo salió mal, que es el día en que hace falta.
+    await admin.unsafe(
+      `delete from sales
+        where id in ('${SALE_B}', '${SALE_INTRUSA}', '${VENTA_PAR_A}', '${VENTA_PAR_B}')
+           or listing_id = '${LISTING_MISMO_UUID}'`,
+    );
+    await admin.unsafe(`delete from listings where id = '${LISTING_MISMO_UUID}'`);
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────────────────────
+  describe('R9a · CONTROL POSITIVO: el dueño SÍ ve sus propias ventas, con costo y margen', () => {
+    // La punta que se olvida. Las cuatro negativas de abajo las cumple, sin despeinarse, una tabla
+    // a la que nadie puede leer — que es un producto roto con la suite en verde.
+    it('A lee su venta entera: precio, costo y el margen que derivó Postgres', async () => {
+      const rows = await a.rows<{ price_usd: string; cost_usd: string; margin_usd: string }>(
+        `select price_usd, cost_usd, margin_usd from sales where id = '${SALE_A}'`,
+      );
+      expect(rows.length, 'el dueño no ve su propia venta: la policy es un candado total').toBe(1);
+      expect(rows[0]?.price_usd).toBe('620.00');
+      expect(rows[0]?.cost_usd).toBe(COST_A);
+      expect(rows[0]?.margin_usd, 'price_usd - cost_usd, derivado por el motor').toBe('208.00');
+    });
+
+    it('y el `select *` del panel sobre sus ventas devuelve exactamente las de su tenant', async () => {
+      const rows = await a.rows<{ tenant_id: string }>(`select * from sales`);
+      expect(rows.map((r) => r.tenant_id)).toEqual([TENANT_A]);
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────────────────────
+  describe('R9b · un reseller no LEE —ni cuenta, ni suma— las ventas del reseller de al lado', () => {
+    it('B pide la venta de A por id y recibe cero filas, no un error', async () => {
+      const rows = await b.rows<{ id: string }>(`select id from sales where id = '${SALE_A}'`);
+      expect(rows).toEqual([]);
+    });
+
+    it('el `select` sin `where` sobre sales devuelve sólo el tenant propio', async () => {
+      const rows = await b.rows<{ tenant_id: string }>(`select distinct tenant_id from sales`);
+      expect(rows.map((r) => r.tenant_id)).toEqual([TENANT_B]);
+    });
+
+    it('un `count(*)` que devolviera el número de A ya sería fuga aunque no muestre columnas', async () => {
+      // Cuántos equipos vendió el competidor este mes es inteligencia comercial. Un contador no es
+      // una lectura menos peligrosa: es la misma fuga con menos bytes.
+      const total = await b.rows<{ n: string }>(`select count(*)::text as n from sales`);
+      expect(total[0]?.n, 'B está contando ventas que no son suyas').toBe('1');
+
+      const deA = await b.rows<{ n: string }>(
+        `select count(*)::text as n from sales where tenant_id = '${TENANT_A}'`,
+      );
+      expect(deA[0]?.n, 'preguntar de prepo por el tenant ajeno tampoco lo cuenta').toBe('0');
+    });
+
+    it('el costo y el margen de A no se filtran por agregación: sumar es leer', async () => {
+      const rows = await b.rows<{ costo: string; margen: string }>(
+        `select coalesce(sum(cost_usd), 0)::text as costo,
+                coalesce(sum(margin_usd), 0)::text as margen
+           from sales`,
+      );
+      // Lo suyo: 480 - 300 = 180. Si el costo de A entrara, esto daría 712.00 / 388.00.
+      expect(rows[0]?.costo).toBe(COST_VENTA_B);
+      expect(rows[0]?.margen).toBe('180.00');
+    });
+
+    it('B no confirma el costo de A ni buscándolo de prepo por su valor exacto', async () => {
+      // El ataque del oráculo: no hace falta LEER la columna si se puede preguntar por ella. Con
+      // 60 intentos se adivina un costo de tres cifras.
+      const rows = await b.rows<{ id: string }>(`select id from sales where cost_usd = ${COST_A}`);
+      expect(rows).toEqual([]);
+    });
+
+    it('B no ve al vendedor ni las notas internas de una venta de A (dato personal + margen)', async () => {
+      const rows = await b.rows<{ sold_by: string }>(
+        `select sold_by from sales where listing_id = '${LISTING_A}'`,
+      );
+      expect(rows).toEqual([]);
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────────────────────
+  /**
+   * R9c · los dos vectores del INSERT, medidos por separado porque son DOS cosas distintas.
+   *
+   * El `WITH CHECK` de la policy y la FK a `listings` pueden estar mal una sin la otra: la policy
+   * mira `tenant_id` y no sabe nada de `listing_id`; la FK mira `listing_id` y no sabe nada de
+   * tenants. Un test que los mezcla en un solo insert no puede decir cuál de las dos lo frenó, y
+   * el día que una se caiga el test va a seguir verde porque la otra tapa el agujero.
+   *
+   * ── Lo que este bloque NO afirma, y está declarado a propósito ──────────────────────────────
+   * Falta un tercer caso: B insertando una venta con **su propio** `tenant_id` y el `listing_id`
+   * de A. Hoy la base la ACEPTA — el `with check` mira `tenant_id` (que es el suyo, legítimo) y la
+   * FK es `sales.listing_id → listings(id)` **a secas, sin el tenant en el par**. No filtra datos
+   * (todo join contra `listings` lo corta RLS), pero con `on delete restrict` le clava la unidad al
+   * otro tenant. Está medido y reportado: es la fila **P4** del board, junto con las otras seis FKs
+   * a `listings.id` sin `tenant_id`, y el LEAD la sacó del alcance de esta ola. No se escribe el
+   * assert acá porque **fallaría, y fallaría por el motivo correcto**: un rojo permanente con causa
+   * conocida enseña a ignorar el archivo entero, que es la única forma de perder este gate.
+   */
+  describe('R9c · un reseller no ESCRIBE una venta en la cuenta del reseller de al lado', () => {
+    it('vector 1 · B con el tenant_id de A: lo frena la POLICY, y el mensaje lo dice', async () => {
+      // La unidad es `LISTING_MISMO_UUID` y NO `LISTING_A`, y la diferencia la encontró la propia
+      // prueba de falsificación de este bloque: `LISTING_A` ya tiene `SALE_A`, así que con la
+      // policy aflojada a `with check (true)` este insert recibía `23505` del índice de D8 en vez
+      // de entrar. O sea que el test de abajo —"la fila no quedó en la base"— quedaba VERDE con la
+      // policy apagada, tapado por un índice que no tiene nada que ver con el aislamiento.
+      // Con una unidad sin venta previa, lo único que puede frenar la fila es la policy.
+      const error = await b.error(
+        `insert into sales (id, tenant_id, listing_id, price_usd, cost_usd)
+         values ('${SALE_INTRUSA}', '${TENANT_A}', '${LISTING_MISMO_UUID}', 1.00, 1.00)`,
+      );
+      expect(error.code).toBe('42501');
+      expect(
+        error.message,
+        'el rechazo no vino de la policy: quien frenó la fila fue otra cosa',
+      ).toContain('violates row-level security policy');
+      expect(
+        error.message,
+        'esto es "faltó el GRANT", no "la policy rechazó la fila": el aislamiento sigue sin probarse',
+      ).not.toContain('permission denied');
+    });
+
+    it('el rechazo del vector 1 no fue un unique disfrazado: la fila no quedó en la base', async () => {
+      const rows = await adminRows<{ id: string }>(`select id from sales where id = '${SALE_INTRUSA}'`);
+      expect(rows).toEqual([]);
+    });
+
+    it('vector 2 · la FK a `listings` no es decorativa: una unidad inventada da 23503', async () => {
+      // La otra capa. Si la FK se cayera (un `drop constraint` en una migración de limpieza), una
+      // venta podría apuntar a cualquier uuid del universo y `sales` dejaría de ser historia
+      // contable auditable. El 42501 del vector 1 no dice nada sobre esto.
+      const error = await b.error(
+        `insert into sales (tenant_id, listing_id, price_usd)
+         values ('${TENANT_B}', '${INTRUDER_ROW}', 1.00)`,
+      );
+      expect(error.code).toBe('23503');
+      expect(error.message).toContain('sales_listing_id_listings_id_fk');
+    });
+
+    it('B tampoco puede registrar la venta de A pasando por la unidad de A y su propio tenant fake', async () => {
+      // El claim forjado, otra vez: `user_metadata` lo escribe el propio usuario (`CLAUDE.md` §2).
+      // Si la policy de `sales` lo mirara, cualquiera se anotaría ventas —y margen— en el tenant
+      // ajeno editando su perfil.
+      const forjada = openSession({
+        sub: USER_B,
+        role: 'authenticated',
+        app_metadata: { tenant_id: TENANT_B },
+        ...{ user_metadata: { tenant_id: TENANT_A } },
+      } as Claims);
+      try {
+        const error = await forjada.error(
+          `insert into sales (id, tenant_id, listing_id, price_usd)
+           values ('${SALE_INTRUSA}', '${TENANT_A}', '${LISTING_A}', 1.00)`,
+        );
+        expect(error.code).toBe('42501');
+        expect(error.message).toContain('violates row-level security policy');
+      } finally {
+        await forjada.close();
+      }
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────────────────────
+  describe('R9d · un reseller no MODIFICA ni BORRA las ventas del reseller de al lado', () => {
+    it('B bajándole el precio a la venta de A afecta 0 filas, y el precio queda intacto', async () => {
+      expect(await b.affected(`update sales set price_usd = 1.00 where id = '${SALE_A}'`)).toBe(0);
+      const rows = await adminRows<{ price_usd: string }>(`select price_usd from sales where id = '${SALE_A}'`);
+      expect(rows[0]?.price_usd).toBe('620.00');
+    });
+
+    it('el `update sales` masivo sin where —el accidente de las 3am— toca sólo lo propio', async () => {
+      expect(await b.affected(`update sales set payment_method = 'efectivo'`)).toBe(1);
+      const rows = await adminRows<{ payment_method: string }>(
+        `select payment_method from sales where id = '${SALE_A}'`,
+      );
+      expect(rows[0]?.payment_method, 'B pisó el medio de pago de una venta de A').toBe(null);
+    });
+
+    it('B no puede reescribir el costo de A: pisar el margen ajeno también es tocar el margen', async () => {
+      // Un `update` que afecta 0 filas es la respuesta correcta. Si afectara 1, B estaría
+      // falsificando la contabilidad de A sin haber leído nunca una fila suya.
+      expect(await b.affected(`update sales set cost_usd = 1.00 where id = '${SALE_A}'`)).toBe(0);
+      const rows = await adminRows<{ margin_usd: string }>(`select margin_usd from sales where id = '${SALE_A}'`);
+      expect(rows[0]?.margin_usd).toBe('208.00');
+    });
+
+    it('B borrando la venta de A afecta 0 filas, y el `delete` sin where sólo se lleva la suya', async () => {
+      expect(await b.affected(`delete from sales where id = '${SALE_A}'`)).toBe(0);
+      const rows = await adminRows<{ n: string }>(
+        `select count(*)::text as n from sales where tenant_id = '${TENANT_A}'`,
+      );
+      expect(rows[0]?.n).toBe('1');
+    });
+
+    it('B no puede MUDAR su propia venta al tenant de A: el `with check` del update ata las dos puntas', async () => {
+      // El `using` deja pasar la fila (es de B) y el `with check` mira la fila NUEVA. Sin el
+      // segundo, un tenant plantaría filas en la cuenta ajena sin un solo INSERT.
+      const error = await b.error(`update sales set tenant_id = '${TENANT_A}' where id = '${SALE_B}'`);
+      expect(error.code).toBe('42501');
+      expect(error.message).toContain('violates row-level security policy');
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────────────────────
+  /**
+   * R9e · `margin_usd` la deriva el motor y NADIE la escribe, ni el dueño del tenant.
+   *
+   * Por qué vale escribirlo: `record-sale.ts` no nombra la columna, así que hoy nada la escribe
+   * **por convención**. El día que alguien la pase a `GENERATED BY DEFAULT` para "arreglar" un
+   * import o un backfill, el margen deja de ser una consecuencia del costo y pasa a ser un número
+   * que viaja en un request — y no hay ningún otro test del repo que se ponga rojo por eso. Es una
+   * afirmación sobre lo que Postgres RECHAZA, y esas son justamente las que nadie escribe.
+   */
+  describe('R9e · el margen es una consecuencia del costo, no un valor que alguien manda', () => {
+    it('ni el dueño del tenant puede nombrar margin_usd en un INSERT: Postgres da 428C9', async () => {
+      const error = await a.error(
+        `insert into sales (tenant_id, listing_id, price_usd, cost_usd, margin_usd)
+         values ('${TENANT_A}', '${LISTING_MISMO_UUID}', 900.00, 400.00, 500.00)`,
+      );
+      expect(error.code, 'margin_usd dejó de ser GENERATED ALWAYS: el margen ahora se manda').toBe('428C9');
+      expect(error.message).toContain('margin_usd');
+    });
+
+    it('ni en un UPDATE: la columna sólo se puede llevar a DEFAULT, o sea a lo que el motor derive', async () => {
+      const error = await a.error(`update sales set margin_usd = 1.00 where id = '${SALE_A}'`);
+      expect(error.code).toBe('428C9');
+      expect(error.message).toContain('margin_usd');
+    });
+
+    it('y el margen sigue al costo solo: cambiar cost_usd lo recalcula sin que nadie lo escriba', async () => {
+      // El control positivo de los dos rechazos de arriba. Sin esto, una columna que simplemente
+      // no existiera —o que fuera NULL siempre— también daría error al nombrarla, y las dos
+      // negativas quedarían verdes sobre una tabla que no deriva nada.
+      expect(await a.affected(`update sales set cost_usd = 500.00 where id = '${SALE_A}'`)).toBe(1);
+      const cambiado = await a.rows<{ margin_usd: string }>(
+        `select margin_usd from sales where id = '${SALE_A}'`,
+      );
+      expect(cambiado[0]?.margin_usd, '620.00 - 500.00').toBe('120.00');
+
+      expect(await a.affected(`update sales set cost_usd = ${COST_A} where id = '${SALE_A}'`)).toBe(1);
+      const vuelto = await a.rows<{ margin_usd: string }>(`select margin_usd from sales where id = '${SALE_A}'`);
+      expect(vuelto[0]?.margin_usd).toBe('208.00');
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────────────────────
+  /**
+   * R9f · el índice único de D8 es el PAR `(tenant_id, listing_id)`, y el par es el invariante.
+   *
+   * `(listing_id)` a secas parece la afirmación más fuerte —"una unidad se vende una sola vez en
+   * todo el sistema"— y es la que alguien va a proponer el día que "simplifique" el índice: los
+   * uuid son únicos, ¿para qué el tenant? Para esto: un único GLOBAL convierte al índice en un
+   * **oráculo cruzado**. El `23505` del motor se evalúa ANTES que cualquier policy de lectura, así
+   * que un tenant que consigue el uuid de una unidad ajena distinguiría "ya vendida" de "no
+   * vendida" por el error que recibe, sin haber leído una fila y sin que RLS se entere.
+   *
+   * Se mide con la conexión de operador y no con dos sesiones: acá el sujeto es **el motor**, no
+   * una policy. Que B pueda o no llegar a referenciar el `listing_id` de A desde su sesión es otra
+   * pregunta, es P4, y está fuera del alcance de esta ola (ver R9c).
+   */
+  describe('R9f · dos resellers pueden tener una venta cada uno sobre el mismo uuid de unidad', () => {
+    it('la primera venta del par (tenant A, unidad) entra sin chistar', async () => {
+      await admin.unsafe(
+        `insert into sales (id, tenant_id, listing_id, price_usd, cost_usd)
+         values ('${VENTA_PAR_A}', '${TENANT_A}', '${LISTING_MISMO_UUID}', 900.00, 600.00)`,
+      );
+      const rows = await adminRows<{ n: string }>(
+        `select count(*)::text as n from sales where id = '${VENTA_PAR_A}'`,
+      );
+      expect(rows[0]?.n).toBe('1');
+    });
+
+    it('el MISMO listing_id en OTRO tenant también entra: no hay oráculo cruzado', async () => {
+      await admin.unsafe(
+        `insert into sales (id, tenant_id, listing_id, price_usd, cost_usd)
+         values ('${VENTA_PAR_B}', '${TENANT_B}', '${LISTING_MISMO_UUID}', 850.00, 550.00)`,
+      );
+      const rows = await adminRows<{ tenant_id: string }>(
+        `select tenant_id from sales where listing_id = '${LISTING_MISMO_UUID}' order by tenant_id`,
+      );
+      expect(
+        rows.map((r) => r.tenant_id),
+        'el índice es (listing_id) solo: un 23505 le revela a un tenant que la unidad ajena se vendió',
+      ).toEqual([TENANT_A, TENANT_B]);
+    });
+
+    it('y la SEGUNDA venta del mismo par sí choca: D8 la frena el motor, con el índice por nombre', async () => {
+      const error = await adminRechaza(
+        `insert into sales (tenant_id, listing_id, price_usd)
+         values ('${TENANT_A}', '${LISTING_MISMO_UUID}', 10.00)`,
+      );
+      expect(error.code).toBe('23505');
+      expect(error.message).toContain('sales_one_sale_per_listing');
+    });
+
+    it('en el catálogo, los únicos índices ÚNICOS de sales son la PK y el par de D8', async () => {
+      // La aserción ancha: un `unique index` nuevo sobre `(listing_id)` restauraría el oráculo sin
+      // tocar `sales_one_sale_per_listing`, así que los tres tests de arriba seguirían verdes.
+      const rows = await adminRows<{ idx: string; cols: string }>(`
+        select c.relname as idx,
+               (select string_agg(a.attname, ',' order by k.ord)
+                  from unnest(i.indkey) with ordinality as k(attnum, ord)
+                  join pg_attribute a on a.attrelid = i.indrelid and a.attnum = k.attnum) as cols
+        from pg_index i
+        join pg_class c on c.oid = i.indexrelid
+        where i.indrelid = 'public.sales'::regclass and i.indisunique
+        order by 1`);
+      expect(rows).toEqual([
+        { idx: 'sales_one_sale_per_listing', cols: 'tenant_id,listing_id' },
+        { idx: 'sales_pkey', cols: 'id' },
+      ]);
+    });
   });
 });
