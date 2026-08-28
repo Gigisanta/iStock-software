@@ -13,6 +13,20 @@ rm -rf "$T"; mkdir -p "$T/scripts"
 trap 'rm -rf "$T"' EXIT
 cp scripts/_lib.sh "$T/scripts/_lib.sh"
 
+# G3 audita los gates que un `package.json` corre. Sin ninguno el censo mide cero y —bien— reporta
+# FAIL, lo que pondria rojo cada fixture de G1/G2 por un motivo ajeno a lo que ese fixture prueba.
+# Asi que el arbol arranca con UN gate de paquete sano, y los casos de G3 lo mutan.
+mkdir -p "$T/pkg/scripts"
+printf '{"name":"fixture-pkg","scripts":{"lint":"node ./scripts/pkg-lint.mjs"}}\n' > "$T/pkg/package.json"
+printf '/**\n * gate-owner: LEAD\n */\n' > "$T/pkg/scripts/pkg-lint.mjs"
+
+# G4 audita que cada gate de `scripts/` este nombrado en `ci.yml`. Mismo razonamiento que arriba:
+# sin `ci.yml` el censo mide cero, reporta FAIL —bien— y pondria rojo cada fixture de G1/G2/G3 por
+# un motivo ajeno. El arbol arranca con UN gate censable y un `ci.yml` que lo nombra.
+mkdir -p "$T/.github/workflows"
+printf 'jobs:\n  x:\n    steps:\n      - run: ./scripts/guard-baseline.sh\n' > "$T/.github/workflows/ci.yml"
+printf '#!/usr/bin/env bash\necho baseline\n' > "$T/scripts/guard-baseline.sh"
+
 tfail=0
 caso() { # caso <que> <esperado:PASS|FAIL>
   local que="$1" esperado="$2" visto salida
@@ -75,6 +89,75 @@ have = 2
 PY
 FIX
 caso "el cuerpo de un heredoc no es codigo del gate" PASS
+
+printf '\n\033[1m── G3: el gate de un paquete no puede ser del writer que audita\033[0m\n'
+
+printf '#!/usr/bin/env bash\n. scripts/_lib.sh\nok "sano"\n' > "$T/scripts/fixture.sh"
+caso "el baseline: un gate de paquete que se declara del LEAD" PASS
+
+printf '/**\n * un lint cualquiera, sin dueno declarado\n */\n' > "$T/pkg/scripts/pkg-lint.mjs"
+caso "ATRAPA un gate adentro de un paquete que no se declara del LEAD" FAIL
+
+# El bug real del 2026-08-28: el `lint` de `packages/domain` es `purity-check.mjs`, que NO termina
+# en `-lint.mjs`. Una regla apoyada en el SUFIJO no lo veia — mismo agujero que ADR-022 vino a
+# tapar, un nivel mas arriba. G3 se apoya en el `package.json`, no en el nombre del archivo.
+printf '{"name":"fixture-pkg","scripts":{"lint":"node ./scripts/purity-check.mjs"}}\n' > "$T/pkg/package.json"
+mv "$T/pkg/scripts/pkg-lint.mjs" "$T/pkg/scripts/purity-check.mjs"
+caso "ATRAPA el gate que NO se llama *-lint.mjs (el agujero que dejaba la regla vieja)" FAIL
+
+printf '/**\n * gate-owner: LEAD\n */\n' > "$T/pkg/scripts/purity-check.mjs"
+caso "el mismo archivo ya declarado: el gate se calla" PASS
+
+printf '{"name":"fixture-pkg","scripts":{"lint":"node ./scripts/no-existe.mjs"}}\n' > "$T/pkg/package.json"
+caso "ATRAPA el gate fantasma: el package.json lo corre y el archivo no esta" FAIL
+
+# La exencion de `scripts/**` tiene que verse CALLAR, no solo existir en un comentario: esos gates
+# ya son del LEAD por fila propia de §4 y no hay ambiguedad de lectura que resolver. Si este caso
+# diera FAIL, la exencion seria un agujero; si nadie lo corriera, seria una promesa.
+printf '#!/usr/bin/env bash\n. scripts/_lib.sh\nok "sano"\n' > "$T/scripts/fixture.sh"
+printf '{"name":"fixture-pkg","scripts":{"guard":"../scripts/fixture.sh"}}\n' > "$T/pkg/package.json"
+caso "un gate bajo scripts/ no necesita la marca: ya es del LEAD por §4" PASS
+
+# Medir cero no es aprobar. Si el censo se rompe, el sintoma es indistinguible de "no hay gates".
+rm -f "$T/pkg/package.json"
+caso "ATRAPA el censo vacio: cero gates censados es hallazgo, no veredicto verde" FAIL
+printf '{"name":"fixture-pkg","scripts":{"lint":"node ./scripts/purity-check.mjs"}}\n' > "$T/pkg/package.json"
+
+printf '\n\033[1m── G4: un gate que no corre en CI se pone rojo y nadie se entera\033[0m\n'
+
+printf '#!/usr/bin/env bash\n. scripts/_lib.sh\nok "sano"\n' > "$T/scripts/fixture.sh"
+caso "el baseline: el unico gate censable esta nombrado en ci.yml" PASS
+
+# El bug real, cuatro veces: guard-routes, guard-grants, accept-fase2 y accept-fase3 existieron
+# fuera del workflow. `accept-fase2` estuvo ROJO semanas sin que nadie lo viera.
+printf '#!/usr/bin/env bash\necho hola\n' > "$T/scripts/guard-huerfano.sh"
+caso "ATRAPA el gate que existe y no aparece en ci.yml" FAIL
+
+# Una exencion sin motivo es la exencion invisible con mas pasos: mismo criterio que
+# `web-lint:sin-tenant`, 30+ caracteres.
+printf '#!/usr/bin/env bash\n# ci-exento: porque si\necho hola\n' > "$T/scripts/guard-huerfano.sh"
+caso "ATRAPA la exencion con motivo de menos de 30 caracteres" FAIL
+
+printf '#!/usr/bin/env bash\n# ci-exento: pide una credencial de Mercado Pago que CI no tiene ni va a tener\necho hola\n' > "$T/scripts/guard-huerfano.sh"
+caso "una exencion escrita con motivo de verdad: el gate se calla" PASS
+rm -f "$T/scripts/guard-huerfano.sh"
+
+# Nombrarlo en ci.yml tambien alcanza, y por cualquiera de las formas de invocacion.
+printf '#!/usr/bin/env bash\necho hola\n' > "$T/scripts/accept-tX.sh"
+caso "ATRAPA un accept-*.sh nuevo que nadie agrego al workflow" FAIL
+printf 'jobs:\n  x:\n    steps:\n      - run: ./scripts/guard-baseline.sh\n      - run: bash scripts/accept-tX.sh\n' > "$T/.github/workflows/ci.yml"
+caso "el mismo gate, ya nombrado en ci.yml: se calla" PASS
+rm -f "$T/scripts/accept-tX.sh"
+printf 'jobs:\n  x:\n    steps:\n      - run: ./scripts/guard-baseline.sh\n' > "$T/.github/workflows/ci.yml"
+
+# `_lib.sh` NO se censa: es libreria, no se ejecuta. Si G4 la exigiera en ci.yml pediria correr un
+# archivo que aborta a proposito cuando se lo ejecuta.
+caso "_lib.sh no se exige en ci.yml: es libreria, no gate" PASS
+
+# Medir cero no es aprobar, igual que en G3.
+rm -f "$T/.github/workflows/ci.yml"
+caso "ATRAPA el arbol sin ci.yml: no se puede afirmar que ningun gate corra" FAIL
+printf 'jobs:\n  x:\n    steps:\n      - run: ./scripts/guard-baseline.sh\n' > "$T/.github/workflows/ci.yml"
 
 if [ "$tfail" = "0" ]; then printf '\n\033[1;32mguard-gates.sh: OK (se vio encender y se vio callar)\033[0m\n'
 else printf '\n\033[1;31mguard-gates.sh: ROTO\033[0m\n'; fi

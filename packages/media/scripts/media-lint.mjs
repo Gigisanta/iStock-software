@@ -1,5 +1,17 @@
 #!/usr/bin/env node
 /**
+ * gate-owner: LEAD
+ *
+ * Este archivo es un **gate**, no codigo del paquete: `CLAUDE.md` §4 y **ADR-022** — el gate no
+ * puede ser del mismo writer que el codigo que audita. Vive en este directorio por resolucion de
+ * paths y porque `pnpm -r lint` lo encuentra ahi, no por pertenencia. Un lint que crece de la mano
+ * del codigo que mira es un lint que nunca lo va a contradecir.
+ *
+ * El owner del paquete **pide, no edita** — igual que con los techos del WAF. La marca de arriba
+ * la censa `scripts/guard-gates.sh` (G3), que enumera los `package.json` en vez de confiar en el
+ * nombre del archivo: la version anterior de la regla decia `*-lint.mjs` y por ese sufijo se le
+ * escapaba `purity-check.mjs`, que es exactamente este mismo agujero un nivel mas arriba.
+ *
  * Lint de `packages/media`. Chequea las trampas concretas de ADR-006 y de `CLAUDE.md` §2 que un
  * typecheck no ve. Corre con `pnpm --filter @istock/media lint`.
  *

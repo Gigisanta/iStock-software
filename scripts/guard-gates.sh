@@ -192,6 +192,170 @@ else
   echo "$SALIDA" | grep -vE '^TOTAL|^AUDITADOS' | sed 's/^/        /'
 fi
 
+sec "G3 · todo gate de paquete se declara del LEAD (CLAUDE.md §4 · ADR-022)"
+
+# ── Por que esta seccion existe, LEAD 2026-08-28 ────────────────────────────────────────────────
+# ADR-022 dice "todo `*-lint.mjs` es del LEAD, viva donde viva". Censar la clase mostro que la
+# regla no la cubre: el `lint` de `packages/domain` es `scripts/purity-check.mjs`, que NO termina
+# en `-lint.mjs` y por lo tanto quedaba adentro de `packages/domain/**` — o sea de `domain-agent`,
+# el writer cuya pureza audita. Mismo agujero que ADR-022 vino a tapar, reabierto un nivel arriba:
+# una regla que nombra un SUFIJO en vez de la clase falla igual que la que nombraba un archivo.
+#
+# Asi que el sujeto de esta seccion no es el nombre del archivo, es **que un `package.json` lo
+# corra como gate**. Eso se censa, no se recuerda — y es la unica forma de que un gate nuevo
+# escrito por el writer que audita rompa el dia que nace y no la vez que a alguien se le ocurra
+# mirar. Lo que se exige es una marca, `gate-owner: LEAD`, en el encabezado del archivo: barata de
+# poner, imposible de poner sin querer.
+#
+# Los que viven bajo `scripts/` estan exentos y no por comodidad: `scripts/**` YA es del LEAD por
+# fila propia de §4, y ahi no hay ambiguedad de lectura que resolver. La marca existe para el
+# archivo que vive adentro de la columna de otro.
+
+SALIDA3=$(python3 - <<'PY3'
+import os, re, sys, json
+
+RAIZ = os.environ.get('GATES_ROOT', '.')
+CLAVES = ('lint', 'guard', 'check', 'verify', 'audit')
+MARCA = 'gate-owner: LEAD'
+EXT = ('.mjs', '.cjs', '.js', '.sh')
+
+pkgs = []
+for dirpath, dirnames, filenames in os.walk(RAIZ):
+    dirnames[:] = [d for d in dirnames if d not in ('node_modules', '.git', '.next', 'dist')]
+    if 'package.json' in filenames:
+        pkgs.append(os.path.join(dirpath, 'package.json'))
+pkgs.sort()
+
+if not pkgs:
+    print("FAIL\tno hay ningun package.json bajo %s. Ausencia de medicion = FAIL, nunca PASS." % RAIZ)
+    print("CENSADOS\t0"); sys.exit(0)
+
+raiz_scripts = os.path.normpath(os.path.join(RAIZ, 'scripts'))
+vistos, roto = {}, 0
+
+for pkg in pkgs:
+    try:
+        scripts = (json.load(open(pkg, encoding='utf-8')) or {}).get('scripts') or {}
+    except Exception as e:
+        print("FAIL\t%s no se puede leer (%s). Un package.json ilegible esconde sus gates." % (pkg, e))
+        roto += 1
+        continue
+    base = os.path.dirname(pkg)
+    for k, cmd in scripts.items():
+        if k not in CLAVES and not k.startswith('lint:'):
+            continue
+        # El target es el unico token del comando que parece un archivo del repo. `pnpm audit` y
+        # `tsc -p ...` no nombran ninguno: no tienen archivo que marcar y no se cuentan.
+        for tok in re.split(r'\s+', str(cmd).strip()):
+            if not tok.endswith(EXT) or ('/' not in tok):
+                continue
+            dest = os.path.normpath(os.path.join(base, tok))
+            if dest in vistos:      # `e2e` y `tests` comparten `qa-lint.mjs`
+                continue
+            vistos[dest] = '%s (%s)' % (pkg, k)
+            if not os.path.isfile(dest):
+                print("FAIL\t%s corre `%s` -> %s, que NO EXISTE. Un gate fantasma reporta salud que nadie midio." % (pkg, k, dest))
+                roto += 1
+                continue
+            if os.path.normpath(dest).startswith(raiz_scripts + os.sep):
+                continue            # `scripts/**` ya es del LEAD por fila propia de §4
+            cab = ''.join(open(dest, encoding='utf-8', errors='replace').readlines()[:40])
+            if MARCA not in cab:
+                print("FAIL\t%s no declara `%s` en sus primeras 40 lineas. Lo corre %s, vive en la columna de otro writer, y el gate no puede ser del writer que audita (§4, ADR-022)." % (dest, MARCA, vistos[dest]))
+                roto += 1
+
+print("CENSADOS\t%d" % len(vistos))
+PY3
+)
+
+CEN=$(echo "$SALIDA3" | sed -nE 's/^CENSADOS\t([0-9]+)$/\1/p' | head -1)
+HALL3=$(echo "$SALIDA3" | grep -c '^FAIL' || true)
+if [ -z "$CEN" ]; then
+  no "el censo de gates no emitio CENSADOS: no se sabe sobre cuantos se esta afirmando"
+elif [ "$CEN" = "0" ]; then
+  # Medir cero no es aprobar. Un repo sin un solo `package.json` que corra un gate es un repo sin
+  # gates de paquete, y eso es el hallazgo, no el veredicto verde.
+  no "cero gates de paquete censados: o el censo se rompio o no hay ninguno. Las dos cosas son FAIL"
+  echo "$SALIDA3" | grep -v '^CENSADOS' | sed 's/^/        /'
+elif [ "$HALL3" = "0" ]; then
+  ok "los $CEN gates que corren desde un package.json existen y se declaran del LEAD"
+else
+  no "$HALL3 de $CEN gates de paquete sin dueno declarado o inexistentes"
+  echo "$SALIDA3" | grep -v '^CENSADOS' | sed 's/^/        /'
+fi
+
+sec "G4 · todo gate del repo corre en CI (o dice por escrito por que no)"
+
+# ── Por que existe, LEAD 2026-08-28 ─────────────────────────────────────────────────────────────
+# `ci.yml` tiene CUATRO comentarios distintos contando la misma historia con distinto nombre:
+# `guard-routes`, `guard-grants`, `accept-fase2` y `accept-fase3` se escribieron, quedaron afuera
+# del workflow, y estuvieron ROJOS —o vacuamente verdes— sin que nadie se enterara. `accept-fase2`
+# llevaba semanas. Cada vez lo encontro un humano mirando, y cada vez se arreglo agregando ESE
+# archivo. Cuatro instancias arregladas de a una es la firma de una clase sin gate.
+#
+# Es literalmente el defecto de T28 un nivel mas arriba. Alli el dueno de un gate se recordaba en
+# vez de censarse; aca la EJECUCION de un gate se recuerda en vez de censarse. La forma de la
+# solucion es la misma: enumerar la clase con un comando en vez de confiar en que alguien mire.
+#
+# La exencion se declara, no se omite — mismo idioma que `web-lint:sin-tenant`. Un gate que a
+# proposito no corre en CI (porque pide una credencial que CI no tiene, porque tarda 40 minutos)
+# escribe `ci-exento: <motivo>` en sus primeras 40 lineas, con 30+ caracteres de motivo. La
+# alternativa a una exencion escrita no es "sin exencion": es la exencion invisible, que es
+# exactamente lo que estas cuatro veces fueron.
+SALIDA4=$(python3 - <<'PY4'
+import os, re, sys
+
+RAIZ = os.environ.get('GATES_ROOT', '.')
+CI   = os.path.join(RAIZ, '.github', 'workflows', 'ci.yml')
+MARCA = 'ci-exento:'
+
+if not os.path.isfile(CI):
+    print("FAIL\tno existe %s: no se puede afirmar que ningun gate corra en CI." % CI)
+    print("CENSADOS\t0"); sys.exit(0)
+
+ci = open(CI, encoding='utf-8', errors='replace').read()
+
+# Los gates del repo: `scripts/accept-*.sh` y `scripts/guard-*.sh`, mas sus arneses `*.test.sh`.
+# `_lib.sh` NO entra: es libreria, no se ejecuta (y su propio arnes `_lib.test.sh` si entra).
+d = os.path.join(RAIZ, 'scripts')
+gates = sorted(f for f in os.listdir(d)
+               if f.endswith('.sh') and f != '_lib.sh'
+               and (f.startswith('accept-') or f.startswith('guard-') or f.endswith('.test.sh')))
+
+roto = 0
+for f in gates:
+    # Se busca el nombre del archivo en el yml, no la linea entera: da igual si lo invoca
+    # `./scripts/x.sh`, `bash scripts/x.sh` o desde un `if:`. Lo que se afirma es que CI lo NOMBRA.
+    if re.search(r'(^|[/\s])' + re.escape(f) + r'(\s|$)', ci, re.M):
+        continue
+    cab = ''.join(open(os.path.join(d, f), encoding='utf-8', errors='replace').readlines()[:40])
+    m = re.search(re.escape(MARCA) + r'[ \t]*(.+)', cab)
+    if m and len(m.group(1).strip()) >= 30:
+        continue
+    if m:
+        print("FAIL\tscripts/%s declara `%s` con un motivo de %d caracteres; se piden 30+. Un motivo que no explica nada es una exencion invisible con mas pasos." % (f, MARCA, len(m.group(1).strip())))
+    else:
+        print("FAIL\tscripts/%s no aparece en ci.yml y no declara `%s <motivo>`. Un gate que no corre se pone rojo y nadie se entera: paso cuatro veces (guard-routes, guard-grants, accept-fase2, accept-fase3)." % (f, MARCA))
+    roto += 1
+
+print("CENSADOS\t%d" % len(gates))
+PY4
+)
+
+CEN4=$(echo "$SALIDA4" | sed -nE 's/^CENSADOS\t([0-9]+)$/\1/p' | head -1)
+HALL4=$(echo "$SALIDA4" | grep -c '^FAIL' || true)
+if [ -z "$CEN4" ]; then
+  no "el censo de ejecucion no emitio CENSADOS: no se sabe sobre cuantos gates se esta afirmando"
+elif [ "$CEN4" = "0" ]; then
+  no "cero gates censados en scripts/: o el censo se rompio o no hay ninguno. Las dos cosas son FAIL"
+  echo "$SALIDA4" | grep -v '^CENSADOS' | sed 's/^/        /'
+elif [ "$HALL4" = "0" ]; then
+  ok "los $CEN4 gates de scripts/ estan nombrados en ci.yml o declaran su exencion"
+else
+  no "$HALL4 de $CEN4 gates no corren en CI ni dicen por que"
+  echo "$SALIDA4" | grep -v '^CENSADOS' | sed 's/^/        /'
+fi
+
 echo
 if [ "$fail" -eq 0 ]; then printf '\033[32mGUARD-GATES: PASS\033[0m\n'; else printf '\033[31mGUARD-GATES: FAIL\033[0m\n'; fi
 exit "$fail"

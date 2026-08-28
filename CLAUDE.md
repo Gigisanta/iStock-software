@@ -230,7 +230,7 @@ Rutas: `/` marketing · `/demo` · `/onboarding` · `/app/*` panel · **`proxy.t
 | `docs/research/**` | `researcher` (uno por topic-file) | ✅ |
 | `docs/COST.md` | `cost-auditor` | ✅ |
 | `CLAUDE.md`, `AGENTS.md`, `.claude/**` | **LEAD** | ✅ |
-| `scripts/**`, `vercel.json`, **cualquier `*/scripts/*-lint.mjs`** (incluido `packages/db/scripts/rls-lint.mjs`) | **LEAD** | ✅ |
+| `scripts/**`, `vercel.json`, **todo script que un `package.json` corra como `lint`/`guard`/`check`/`verify`/`audit`** (hoy seis: los cinco `*-lint.mjs` más `packages/domain/scripts/purity-check.mjs`) | **LEAD** | ✅ |
 | `config/**` (reglas de WAF y demás config de plataforma) | **LEAD** | ✅ |
 | `apps/web/instrumentation.ts` | `app-agent` | ✅ |
 | `apps/web/next.config.ts`, `apps/web/app/layout.tsx` | **LEAD** | ✅ |
@@ -267,6 +267,51 @@ queda como estaba y pedirla sería falso positivo.
 El precio del corte está aceptado: `db-agent` escribe policies todo el tiempo y ya no puede
 ampliar el lint que las mira. **Pide, no edita** — igual que con los techos del WAF. Un lint que
 crece de la mano del código que audita es un lint que nunca lo va a contradecir.
+
+**Y la regla se dejó de apoyar en el nombre del archivo, LEAD, 2026-08-28.** Censé la clase que
+ADR-022 dice cubrir y resultó que no la cubre. `find . -name '*-lint.mjs'` devuelve **cinco**
+archivos, pero el `lint` de `packages/domain` es **`scripts/purity-check.mjs`**: no termina en
+`-lint.mjs`, así que la regla anterior **no lo alcanzaba**, y quedó adentro de `packages/domain/**`
+— o sea de `domain-agent`, el writer cuya pureza audita. Es el mismo agujero que ADR-022 vino a
+tapar, reabierto un nivel más arriba: **una regla que nombra un sufijo en vez de la clase falla
+igual que la que nombraba un archivo.**
+
+**La regla vigente no mira cómo se llama el archivo, mira qué hace:** es del LEAD **todo script que
+un `package.json` del repo corra como `lint`, `guard`, `check`, `verify` o `audit`**, además de
+`scripts/**` y `scripts/probes/**`. La definición es **censable en un comando**, y ese es el punto:
+enumerar los `package.json` da la lista sin que nadie tenga que acordarse de ella. Hoy son seis
+— `web-lint.mjs`, `rls-lint.mjs`, `ai-lint.mjs`, `media-lint.mjs`, `qa-lint.mjs`, `purity-check.mjs`.
+
+**No se mudan a `scripts/`, y la alternativa se evaluó.** Mover los seis es editar seis
+`package.json` en cinco columnas ajenas y reescribir la resolución de paths de cada uno, todo para
+arreglar un problema de **rótulo**. Y no lo arreglaría: `purity-check.mjs` muestra que el fallo no
+es *dónde vive el archivo* sino *cómo la regla identifica a su sujeto*. Una regla apoyada en la
+ubicación tendría el mismo hueco de sufijo el día que alguien ponga un gate en otro lado. Se quedan
+donde están; lo que cambia es que la definición ahora se puede correr.
+
+**Corolario, y es el que hace la diferencia:** esto no puede depender de que un agente haya leído
+este párrafo. Va a `guard-gates.sh` — censar los `package.json`, resolver el target de cada script
+de gate, y exigir que el archivo declare al LEAD como owner. Un gate nuevo escrito por el writer que
+audita tiene que romper **el día que nace**, no la vez que a alguien se le ocurra censar. Fila
+**`T28`** del board.
+
+**Y el mismo defecto, un nivel más arriba: la EJECUCIÓN de un gate también se censa. LEAD,
+2026-08-28.** `ci.yml` tiene cuatro comentarios distintos contando la misma historia con distinto
+nombre — `guard-routes`, `guard-grants`, `accept-fase2` y `accept-fase3` se escribieron, quedaron
+afuera del workflow, y estuvieron rojos o vacuamente verdes sin que nadie se enterara;
+`accept-fase2` llevaba semanas. Cada vez lo encontró un humano mirando, y cada vez se arregló
+agregando **ese** archivo. Cuatro instancias arregladas de a una es la firma de una clase sin gate,
+y es literalmente T28 corrido un escalón: allá el *dueño* de un gate se recordaba en vez de
+censarse, acá se recuerda la *corrida*.
+
+**Sección `G4` de `guard-gates.sh`:** todo `scripts/accept-*.sh`, `scripts/guard-*.sh` y
+`scripts/*.test.sh` tiene que estar **nombrado en `.github/workflows/ci.yml`**, o declarar
+`ci-exento: <motivo>` de 30+ caracteres en sus primeras 40 líneas — mismo idioma que
+`web-lint:sin-tenant`, y por la misma razón: la alternativa a una exención escrita no es "sin
+exención", es la exención invisible, que es exactamente lo que esas cuatro veces fueron. `_lib.sh`
+queda afuera del censo a propósito: es librería, y exigirla en CI sería pedir que se ejecute un
+archivo que aborta cuando se lo ejecuta. Cero gates censados o `ci.yml` ausente es **FAIL**, no
+PASS. Ocho fixtures en `guard-gates.test.sh`, cuatro de ellos viéndolo encender. Fila **`T30`**.
 
 **El rate limit no entra en `vercel.json`.** El archivo **sí existe desde S6** (2026-08-28) y
 declara **una sola cosa: el `crons` que dispara `GET /api/cron/expire-reservations` cada 5 min**.
