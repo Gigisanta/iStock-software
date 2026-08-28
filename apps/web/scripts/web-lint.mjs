@@ -389,6 +389,46 @@ must('W011', 'sin console.log de un listing/unit/row entero (CLAUDE.md §2)', sr
   }
 }
 
+// ── W016 · el techo de abuso de la vidriera es el WAF, no una query ───────────────────────────
+// La ultima prohibicion de §2 que no tenia gate ejecutable, y la mas barata de violar sin darse
+// cuenta: un contador de requests en Postgres son tres lineas de Drizzle y "anda". Lo que rompe
+// no es la query, es la premisa: `CLAUDE.md` §3 dice que el 95% de los hits de vidriera no tocan
+// Postgres, y un contador los hace tocar el 100%. La mitad de afuera ya estaba cubierta
+// (`guard-firewall.sh` exige que exista la regla de WAF); nada impedia escribir el contador igual
+// y quedarse con las dos capas, pagando la cara.
+//
+// Dos brazos, porque la infraccion tiene dos formas y ninguna implica la otra:
+//   (a) un archivo de (storefront) que ABRE Postgres y ademas NOMBRA el concepto en codigo;
+//   (b) la forma del contador —incremento o upsert— aunque no se llame "rate limit".
+// El brazo (a) mira el archivo entero para la puerta y la LINEA para el concepto: `track/route.ts`
+// abre Postgres y explica la prohibicion en su docblock, y una regla que se encienda ahi seria
+// una regla que castiga por documentarse. `scan` ya saltea comentarios; de eso depende.
+//
+// No hay marcador de exencion, a diferencia de W015. §2 dice "rechazo", sin condicion, y W015
+// tiene marcador porque existen preguntas legitimamente cross-tenant. Acá no existe la vidriera
+// que legitimamente cuente en Postgres: si alguna vez existe, la excepcion la escribe el LEAD en
+// esta regla, con nombre y motivo, no una marca que se copia y pega.
+{
+  const CONCEPTO = /\b(rate.?limit|ratelimit|throttl|leaky.?bucket|token.?bucket|sliding.?window|fixed.?window)/i;
+  const PUERTA = /withStorefrontDb|createDb|from\s+['"]@istock\/db['"]|from\s+['"]drizzle-orm['"]/;
+  const CONTADOR = /onConflictDoUpdate\b|\+\s*1\s*`|\bincrement\b|\b\w*count\w*\s*=\s*\w*count\w*\s*\+/i;
+
+  if (store.length === 0) {
+    // Ausencia de medicion es FAIL, nunca PASS: una lista vacia aprueba cualquier cosa.
+    bad('W016', 'no hay un solo archivo de (storefront) para auditar: la regla mediria cero y saldria verde', ['(storefront) vacio']);
+  } else {
+    const hits = [];
+    for (const f of store) {
+      if (!PUERTA.test(f.src)) continue;
+      hits.push(...scan([f], CONCEPTO).map((h) => `${h}   ← y este archivo abre Postgres`));
+    }
+    hits.push(...scan(store, CONTADOR));
+    hits.length
+      ? bad('W016', 'rate limiting con contador en Postgres sobre la vidriera (CLAUDE.md §2): el techo lo pone config/firewall-rules.json, no una query', hits)
+      : ok(`W016 ninguno de los ${store.length} archivos de (storefront) cuenta requests en Postgres (el techo es el WAF)`);
+  }
+}
+
 console.log('');
 if (failed) { console.log(`WEB-LINT: FAIL (${failed} regla${failed > 1 ? 's' : ''})`); process.exit(1); }
-console.log('WEB-LINT: PASS (15 reglas)');
+console.log('WEB-LINT: PASS (16 reglas)');

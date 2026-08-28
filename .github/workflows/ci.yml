@@ -150,10 +150,10 @@ jobs:
       # limites de Pro viven bajo `rateLimit`. Seis reglas verdes por vacio durante toda T1.
       # Hermano del de abajo, y por el mismo motivo. Va aca —job sin base, sin build— porque no
       # necesita ninguna de las dos: arma su propio arbol de fixtures en un temporal y le apunta
-      # el linter con `WEB_LINT_ROOT`. Las 15 reglas se ven encender contra su ID, no contra el
-      # exit code: 15 reglas sobre un mismo arbol hacen que un fixture pueda salir rojo por la
+      # el linter con `WEB_LINT_ROOT`. Las 16 reglas se ven encender contra su ID, no contra el
+      # exit code: 16 reglas sobre un mismo arbol hacen que un fixture pueda salir rojo por la
       # regla equivocada, y eso reportaria cobertura sin haber ejercido nada.
-      - name: polaridad de web-lint (las 15 reglas se tienen que ver encender)
+      - name: polaridad de web-lint (las 16 reglas se tienen que ver encender)
         if: always()
         run: ./scripts/web-lint.test.sh
 

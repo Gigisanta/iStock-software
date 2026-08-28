@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ══════════════════════════════════════════════════════════════════════════════════════════════
-#  Polaridad de `apps/web/scripts/web-lint.mjs`. Las 15 reglas se tienen que ver ENCENDER.
+#  Polaridad de `apps/web/scripts/web-lint.mjs`. Las 16 reglas se tienen que ver ENCENDER.
 #
 #  Hermano de `guard-firewall.test.sh` y por el mismo motivo. La diferencia es cuanto pesa: W015
 #  es la regla que sostiene "Query sin filtro de tenant ademas de RLS -> rechazo", o sea la
@@ -12,7 +12,7 @@
 #
 #  ── Por que este arnes verifica el ID de la regla y no el exit code ──────────────────────────
 #  `guard-firewall.test.sh` mira el exit code, y le alcanza porque audita UN archivo. Aca no:
-#  el linter corre 15 reglas sobre el mismo arbol, asi que un fixture puede salir en rojo por una
+#  el linter corre 16 reglas sobre el mismo arbol, asi que un fixture puede salir en rojo por una
 #  regla distinta de la que se quiso probar y el caso daria "ok" sin haber ejercido nada. Es la
 #  misma falla que tuvieron los fixtures de F1 del arnes de WAF —siete casos PASS por mutar la
 #  raiz en vez de `rateLimit`— y que ese archivo encontro sobre si mismo. Aca se pide que la regla
@@ -129,7 +129,7 @@ caso() { # caso <FIRES|SILENT> <regla> <descripcion>
 
 # ── el arbol base tiene que estar LIMPIO ──────────────────────────────────────────────────────
 # Sin esto todo lo de abajo es humo: un base sucio hace que cada caso salga rojo por herencia.
-printf '\n\033[1m── base · el arbol de fixtures pasa las 15 reglas\033[0m\n'
+printf '\n\033[1m── base · el arbol de fixtures pasa las 16 reglas\033[0m\n'
 correr "$B"
 if printf '%s\n' "$SALIDA" | grep -q 'WEB-LINT: PASS'; then
   printf '  \033[32mok\033[0m    el arbol base esta limpio (si no, todo caso de abajo seria rojo por herencia)\n'
@@ -371,6 +371,69 @@ export async function cual(tx: any, userId: string) {
 EOF
 caso FIRES W015 "el docblock del MODULO no exime: los import lo separan de la declaracion"
 
+printf '\n\033[1m── W016 · el techo de abuso de la vidriera es el WAF, no una query\033[0m\n'
+
+# Par 1 · el brazo (a): abre Postgres + nombra el concepto. El SILENT es el caso REAL de
+# `track/route.ts`, que abre Postgres y explica la prohibicion en su docblock: una regla que se
+# encienda ahi castiga por documentarse. El gemelo prueba que el archivo si se estaba mirando.
+nuevo; fx 'app/(storefront)/_lib/beacon.ts' <<'EOF'
+import { createDb } from '@istock/db';
+
+/**
+ * No hay contador de abuso propio: §2 prohibe rate limiting con contador en Postgres sobre la
+ * vidriera. El techo lo pone el WAF (60/min por IP en config/firewall-rules.json).
+ */
+export function abrir(url: string) {
+  return createDb(url);
+}
+EOF
+caso SILENT W016 "el archivo abre Postgres y NOMBRA la prohibicion en un comentario: documentarse no es violarla"
+
+ap 'app/(storefront)/_lib/beacon.ts' <<'EOF'
+export const rateLimit = { ventana: 60 };
+EOF
+caso FIRES W016 "gemelo: el mismo archivo, el mismo concepto, pero en codigo"
+
+# Par 2 · nombrar el concepto NO alcanza si el archivo no abre Postgres: leer el veredicto del WAF
+# desde un header es exactamente lo que queremos que haga la vidriera.
+nuevo; fx 'app/(storefront)/_lib/waf.ts' <<'EOF'
+export function techoDelWaf(h: Headers) {
+  const rateLimitRestante = h.get('x-vercel-rate-limit-remaining');
+  return rateLimitRestante === null ? null : Number(rateLimitRestante);
+}
+EOF
+caso SILENT W016 "nombra rate limit pero no abre Postgres: leer el veredicto del WAF es lo correcto"
+
+ap 'app/(storefront)/_lib/waf.ts' <<'EOF'
+import { createDb } from '@istock/db';
+export const db = createDb(process.env.DATABASE_URL ?? '');
+EOF
+caso FIRES W016 "gemelo: el mismo concepto, ahora con la puerta a Postgres abierta"
+
+# Par 3 · el brazo (b): la FORMA del contador, aunque no se llame rate limit. Es como se escribe
+# de verdad —nadie nombra la variable `rateLimiter`— y es el brazo que ataja la version astuta.
+nuevo; fx 'app/(storefront)/_lib/hits.ts' <<'EOF'
+import { sql } from 'drizzle-orm';
+
+export function apexDe(hostname: string, apex: string) {
+  return hostname.slice(0, -(apex.length + 1));
+}
+export const q = sql`select 1`;
+EOF
+caso SILENT W016 "aritmetica de strings con + 1 no es un contador: el shape real de _lib/host.ts"
+
+ap 'app/(storefront)/_lib/hits.ts' <<'EOF'
+export const contar = (t: any) => sql`${t.hits} + 1`;
+EOF
+caso FIRES W016 "gemelo: el mismo + 1, adentro de un template de sql"
+
+nuevo; fx 'app/(storefront)/_lib/upsert.ts' <<'EOF'
+export async function marcar(tx: any, tabla: any, ip: string) {
+  await tx.insert(tabla).values({ ip }).onConflictDoUpdate({ target: tabla.ip, set: { n: 2 } });
+}
+EOF
+caso FIRES W016 "upsert en la vidriera sin nombrar el concepto: el contador que no se declara"
+
 printf '\n\033[1m── F0 · ausencia de medicion es FAIL, nunca PASS\033[0m\n'
 nuevo
 correr_schema() {
@@ -384,6 +447,11 @@ else
   tfail=1
 fi
 
+# Mismo principio para W016: si `(storefront)` no existe, la regla mira una lista vacia. Una lista
+# vacia no tiene infracciones, asi que la regla saldria VERDE justo cuando dejo de medir.
+nuevo; rm -rf "$T/w/app/(storefront)"
+caso FIRES W016 "sin un solo archivo de (storefront), W016 FALLA (medir cero no es aprobar)"
+
 printf '\n\033[1m── el arbol real\033[0m\n'
 if node "$LINT" >/dev/null 2>&1; then
   printf '  \033[32mok\033[0m    apps/web pasa su propio lint\n'
@@ -392,7 +460,7 @@ else
 fi
 
 if [ "$tfail" = "0" ]; then
-  printf '\n\033[1;32mPOLARIDAD WEB-LINT: OK\033[0m — las 15 reglas se vieron encender.\n'
+  printf '\n\033[1;32mPOLARIDAD WEB-LINT: OK\033[0m — las 16 reglas se vieron encender.\n'
 else
   printf '\n\033[1;31mPOLARIDAD WEB-LINT: MAL\033[0m\n'
 fi
