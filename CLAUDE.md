@@ -230,8 +230,10 @@ Rutas: `/` marketing · `/demo` · `/onboarding` · `/app/*` panel · **`proxy.t
 | `docs/research/**` | `researcher` (uno por topic-file) | ✅ |
 | `docs/COST.md` | `cost-auditor` | ✅ |
 | `CLAUDE.md`, `AGENTS.md`, `.claude/**` | **LEAD** | ✅ |
-| `scripts/**`, `vercel.json`, `apps/web/scripts/*-lint.mjs` | **LEAD** | ✅ |
+| `scripts/**`, `vercel.json`, **cualquier `*/scripts/*-lint.mjs`** (incluido `packages/db/scripts/rls-lint.mjs`) | **LEAD** | ✅ |
 | `config/**` (reglas de WAF y demás config de plataforma) | **LEAD** | ✅ |
+| `apps/web/instrumentation.ts` | `app-agent` | ✅ |
+| `apps/web/next.config.ts`, `apps/web/app/layout.tsx` | **LEAD** | ✅ |
 
 Conflicto de ownership = el LEAD reasigna. Un agente **nunca** edita fuera de su columna.
 
@@ -243,6 +245,28 @@ es jerárquico sino de independencia: **el gate no puede ser del mismo writer qu
 audita.** Por la misma regla, **`config/firewall-rules.json` es del LEAD** (fila nueva, FASE 4):
 las reglas de rate limit deciden qué endpoints de `app-agent` y de `storefront-agent` tienen techo,
 así que no pueden ser de ninguno de los dos.
+
+**Generalizado a los lints de paquete, LEAD, 2026-08-28, y lo pidió el agente auditado.** La fila
+decía `apps/web/scripts/*-lint.mjs`, o sea nombraba **un** lint en vez de la clase, y por ese hueco
+`packages/db/scripts/rls-lint.mjs` —el gate que sostiene *"sin RLS no hay merge"*— quedaba adentro
+de `packages/db/**`, o sea del mismo writer cuyas policies audita. No es teoría: en esta misma
+slice `db-agent` **le agregó una sección** (3b, `ALTER POLICY`) y lo reportó preguntando si le
+correspondía. Le correspondía preguntar, y la respuesta es no. **Todo `*-lint.mjs`, viva donde
+viva, es del LEAD**, por la misma razón que `scripts/probes/**`: el gate no puede ser del writer
+que audita.
+
+El agujero que destapó vale escribirlo porque explica el costo de haberlo tenido: `rls-lint.mjs`
+leía sólo `CREATE POLICY`, y `0006` trajo el **primer `ALTER POLICY` del repo**. Medido por el LEAD
+sobre el archivo real: con `ALTER POLICY … WITH CHECK (true)` agregado a `0006`, la versión vieja
+imprimía `rls-lint OK · 74 policies` y salía **0** — la regla `0007`, la que este archivo nombra
+como fallo, tenía una puerta al lado sin cerrar. Con 3b: `exit=1` y
+`0007 reservations.reservations_tenant_insert (ALTER) deja WITH CHECK (true)`. Detalle a no
+"arreglar": 3b **no** exige `WITH CHECK` en un `ALTER`, porque en Postgres la cláusula omitida
+queda como estaba y pedirla sería falso positivo.
+
+El precio del corte está aceptado: `db-agent` escribe policies todo el tiempo y ya no puede
+ampliar el lint que las mira. **Pide, no edita** — igual que con los techos del WAF. Un lint que
+crece de la mano del código que audita es un lint que nunca lo va a contradecir.
 
 **El rate limit no entra en `vercel.json`.** El archivo **sí existe desde S6** (2026-08-28) y
 declara **una sola cosa: el `crons` que dispara `GET /api/cron/expire-reservations` cada 5 min**.
@@ -266,6 +290,23 @@ Y una regla que condicione sólo por `host` está **prohibida**: se facturan los
 que le cobraría peaje a cada pageview de vidriera — que es exactamente lo que `ARCHITECTURE.md` dice
 que no defendemos. Para abuso masivo del HTML la palanca es Attack Challenge Mode, que es gratis. Por eso `scripts/probes/s2-media-measure.test.ts` vive afuera de `packages/media` aunque
 mida a `packages/media`, y por eso un agente que quiere cambiar un techo pide, no edita.
+
+**Tres filas nuevas, LEAD, 2026-08-28, y el motivo del corte.** Las levantó `app-agent`: creó
+`apps/web/instrumentation.ts` —el hook de bootstrap de Next, donde se cablea el reporter de
+incidentes de `@istock/media`— y **no tenía dueño**, porque la tabla cubría `app/(app)/**` y
+`app/api/**` pero no la raíz de `apps/web`. Mismo hueco que `app/layout.tsx`, que se había tapado
+escribiéndolo el LEAD sin anotarlo, que es tapar sin cerrar.
+
+El corte no es por jerarquía, es por **qué decide cada archivo**. `instrumentation.ts` cablea
+observabilidad del server y lee `_lib/env.ts`, que ya es de `app-agent`: partirlo en dos writers
+haría que quien agrega una variable de entorno no pueda usarla. Va a `app-agent`.
+`next.config.ts` es otra cosa: decide runtime, cache y build **para las tres caras a la vez** —
+marketing, panel y vidriera—, así que un writer de una cara ahí decide por las otras dos. Es config
+de plataforma, hermana de `vercel.json` y de `config/**`, y va al LEAD por la misma razón que ellas.
+`app/layout.tsx` acompaña a `next.config.ts` por ser el shell común de las tres caras.
+
+Corolario que ya aplica: `instrumentation.ts` **no puede** convertirse en el lugar donde una columna
+mete efectos que no le corresponden. Es bootstrap, no un patio trasero.
 
 ### `architect` es un rol de FASE 1, y está dormido
 `docs/ARCHITECTURE.md` y `docs/DECISIONS.md` son de **`docs-keeper`** desde que cerró FASE 1, como
