@@ -54,6 +54,9 @@ factura 3 contra un techo de 3, y calla en el turno quemado, que reporta `calls:
 `throw` descarta la medición—. Quedan **tres condiciones con tres trabajos**:
 `billed.primaryServedEmpty` (degradación) · `handoff === 'provider_down'` (turno quemado) ·
 `calls > MAX_BILLED_CALLS_PER_TURN` (aserción de control de flujo, **no** alarma de costo).
+El `throw` que descartaba la medición **está cerrado en el árbol de hoy** (§2.8.7): el arbitraje no
+depende de eso —la pata «enciende con tráfico legal» vale igual— pero el `calls: 0` de arriba es el
+comportamiento de entonces, no algo que hoy se reproduzca.
 Actualizados `C10` (§2.8), el `METRICA_A_VIGILAR` de §2.8.7 y la fila de LLM de §5; §6 suma el fallo
 automático de la **clase**: una alarma de costo se acepta mostrando que enciende con el caso
 patológico **y** calla con el tráfico legal. **Ningún precio se movió con esto.**_
@@ -306,14 +309,21 @@ un CDN sirviendo 30 días por encima de un perfil que declara 300 s. El perfil c
 **compra exactamente lo que dice comprar**, y ahora está verificado en el header, no en el docblock.
 
 La aritmética que lo cierra, para que no haya que creerme. `getCacheControlHeader` de Next
-(`node_modules/next/dist/server/lib/cache-control.js:12-19`) emite
+(`dist/server/lib/cache-control.js`, medido contra **`next@16.3.3`**) emite
 `s-maxage=<revalidate>, stale-while-revalidate=<expire − revalidate>`. Con eso, cada header medido
 se deriva de un perfil y de uno solo:
 
 | perfil | `stale` / `revalidate` / `expire` | header que produce | medido en |
 |---|---|---|---|
-| `'max'` de Next (`config-shared.js:179`) | 300 / **2.592.000** / 31.536.000 | `s-maxage=2592000, stale-while-revalidate=28944000` | **el polo positivo (`demo`)**, hoy |
+| `'max'` de Next (`defaultConfig.cacheLife.max`, `dist/server/config-shared.js`) | 300 / **2.592.000** / 31.536.000 | `s-maxage=2592000, stale-while-revalidate=28944000` | **el polo positivo (`demo`)**, hoy |
 | `STOREFRONT_MISS_LIFE` (`_lib/cache-life.ts`) | 60 / **300** / 900 | `s-maxage=300, stale-while-revalidate=600` | **el miss**, hoy |
+
+> **Las dos referencias a Next apuntan a `node_modules`, que no está en git.** Por eso van por
+> símbolo y con la versión pegada, no por línea: una línea de `node_modules` no se puede reproducir
+> en un clon limpio ni sostener con un gate, y se mueve entera con cada upgrade. Se verifican
+> después de `pnpm install` con `grep -n 'getCacheControlHeader' node_modules/next/dist/server/lib/cache-control.js`
+> y `grep -n 'max: {' node_modules/next/dist/server/config-shared.js`, y **valen para `next@16.3.3`**.
+> El día que un upgrade mueva el emisor o el perfil, esta aritmética deja de valer y se sabe por qué.
 
 `28.944.000 = 31.536.000 − 2.592.000`, y `600 = 900 − 300`. **El header viejo del renglón 87 era,
 byte por byte, el perfil `'max'` aplicado al camino negativo**: era la huella del hallazgo MEDIUM-C,
@@ -1122,9 +1132,14 @@ Esta es la respuesta a la pregunta que importa, y no es la que el commit message
 storefront:{slug}   ·   tenant-config:{slug}   ·   listing:{uuid}
 ```
 
-Y la **ficha** registra **esos mismos tres** (`(storefront)/_lib/listings.ts:424` y `:468`); la
-grilla registra los dos primeros (`:330`). Un tag de Vercel es un **OR**: la entrada muere si se
-purga **cualquiera** de los suyos.
+Y la **ficha** registra **esos mismos tres** (`getStorefrontListing()` y `listingMiss()`, en
+`(storefront)/_lib/listings.ts`); la grilla registra los dos primeros (`getStorefrontCatalog()`).
+Un tag de Vercel es un **OR**: la entrada muere si se purga **cualquiera** de los suyos.
+
+> **Estado de S6, no de hoy.** §2.5.1 accionó la palanca: en el árbol de ahora
+> `invalidateStorefrontUnit()` emite dos tags y `getStorefrontListing()` registra
+> `tenant-config:{slug}` + `listing:{uuid}` — el radio es **2**, no 61. El párrafo se conserva
+> porque es la aritmética que explica por qué había que accionarla.
 
 > **Con 60 equipos, una reserva purga 61 páginas cacheadas, no 1.** Con 200, purga 201.
 
@@ -1340,7 +1355,7 @@ apps/web/app/(app)/_lib/tenants/storefront-cache.ts:166-169
 apps/web/app/(storefront)/_lib/listings.ts:532
     getStorefrontListing()      →  registra listing:{uuid}                        (cayó storefront:{slug})
 apps/web/app/(storefront)/_lib/listings.ts:360
-    la grilla                   →  registra storefront:{slug} + tenant-config:{slug}
+    getStorefrontCatalog()      →  registra storefront:{slug} + tenant-config:{slug}
 apps/web/app/(storefront)/_lib/listings.ts:556  (listingMiss)
     el miss de la ficha         →  conserva storefront:{slug}, a propósito
 ```
@@ -1836,7 +1851,7 @@ de dos aserciones del código y de ninguna medición:
 - **IN ≤ 1200**: `assertWithinBudget()` **tira** `AI_BUDGET_EXCEEDED` si el prompt armado se pasa, y
   `chat.ts` no tiene un solo camino al proveedor que la saltee. No se recorta en el proveedor: se
   recorta acá o no se manda.
-- **OUT ≤ 180**: `env.maxOutputTokens` viaja en el `LlmRequest` (`chat.ts:133`) y `env.ts` lo valida
+- **OUT ≤ 180**: `env.maxOutputTokens` viaja en el `LlmRequest` que arma `requestFor()` (`chat.ts`) y `env.ts` lo valida
   con `tokenCeiling(MAX_OUTPUT_TOKENS)` — **la env puede bajarlo, nunca subirlo.**
 - Y `countTokens()` es un estimador **deliberadamente conservador** (3 chars/token contra los 3,5–4,5
   de un BPE real), con la dirección del error fijada como invariante en `tokens.test.ts`. Sobrecontar
@@ -1898,10 +1913,10 @@ fuera un dato. Queda marcado como lo que es.
 
 | pieza | estado en HEAD `6952393` | evidencia |
 |---|---|---|
-| la constante `40` | ✅ existe | `entitlement.ts:29` |
-| la **decisión** `softCapReached(count)` | ✅ existe, pura y testeada | `entitlement.ts:88`, `entitlement.test.ts` |
-| el **gate** en el orquestador | ✅ existe | `chat.ts:178` — paso 2 de 8, antes de armar el prompt |
-| el **tipo** que impide inventar el `count` | ✅ **existe desde el 2026-08-28** | `ChatInput.usage: TenantUsageToday` (`chat.ts:86`) + `requireMeasuredUsage` (`chat.ts:190`). La marca es un `unique symbol` no exportado: afuera del paquete **no hay literal posible**, y sin parte el chat tira `AI_USAGE_UNMEASURED` en vez de contestar gratis. **C2 cumplida** |
+| la constante `40` | ✅ existe | `entitlement.ts` · `SOFT_CAP_MESSAGES_PER_TENANT_PER_DAY` |
+| la **decisión** `softCapReached(count)` | ✅ existe, pura y testeada | `entitlement.ts` · `softCapReached()`, `entitlement.test.ts` |
+| el **gate** en el orquestador | ✅ existe | `chat.ts` · `softCapReached(messagesToday)` — paso 2 de 8, antes de armar el prompt |
+| el **tipo** que impide inventar el `count` | ✅ **existe desde el 2026-08-28** | `ChatInput.usage: TenantUsageToday` + `requireMeasuredUsage()`, los dos en `chat.ts`. La marca es un `unique symbol` no exportado: afuera del paquete **no hay literal posible**, y sin parte el chat tira `AI_USAGE_UNMEASURED` en vez de contestar gratis. **C2 cumplida** |
 | el **contador** que produce `count` | ❌ **SIGUE SIN EXISTIR** | nadie construye un `usageMeasured(n)` fuera de los tests y de la eval. Lo que cambió es que ahora **no compila el `0` fijo**: hay que escribir `usageUnmeasured('motivo')`, que falla ruidoso en el primer request |
 | la **tabla** donde vivirían los mensajes de hoy | ❌ **NO EXISTE** | `grep -rn 'chat_message\|chat_usage\|messages_today' packages/db` → **0 resultados** |
 | la **ruta** `/api/chat` | ❌ **NO EXISTE** | `find apps/web/app -path '*chat*'` → **0 resultados** |
@@ -2678,8 +2693,8 @@ fallback, **+43 %**, sin tocar ni una constante de `budget.ts`.
 
 #### 3b. El techo bajó a 3 llamadas — y el peor caso en PLATA no es el que la constante hace pensar
 
-`ai-agent` cerró **C11** en `89ab7c0`. Leído del código de hoy (`packages/ai/src/chat.ts:50-83`), el
-techo dejó de ser un número suelto y pasó a ser una constante **derivada**:
+`ai-agent` cerró **C11** en `89ab7c0`. Leído del código de hoy (`packages/ai/src/chat.ts` · `MAX_TOOL_ROUNDS` / `TURN_ROUNDS` /
+`MAX_BILLED_CALLS_PER_TURN`, ~:82), el techo dejó de ser un número suelto y pasó a ser una constante **derivada**:
 
 ```
 export const MAX_TOOL_ROUNDS = 1;
@@ -2728,9 +2743,14 @@ techo del mensaje con MAX_BILLED_CALLS_PER_TURN = 3, en la composición más car
 `0,000672 − 0,000192 = 0,000480/msg` → USD 0,5760/mes, que es restarle **una llamada del primario**
 al techo viejo. Esa resta describe exactamente la rama **A**; la rama **B** también entra en 3
 llamadas y conserva los dos primarios, así que el máximo real es USD 0,000528 y no 0,000480. El
-docblock de `chat.ts:338` (HEAD `89ab7c0`) publica el −29 % por el mismo motivo *(y `packages/ai/README.md:174`
-con él; el LEAD re-hizo la aritmética por separado y da −21,4 %, y `ai-agent` los está corrigiendo —
-son su columna, no la mía)*. **Es el mismo defecto de forma
+docblock de `chat.ts` (`MAX_BILLED_CALLS_PER_TURN`, ~:375) **publicaba** el −29 % por el mismo
+motivo, y `packages/ai/README.md` con él; el LEAD re-hizo la aritmética por separado y da −21,4 %.
+*(Ese era el estado en `89ab7c0`.* ***Ya no.*** *Verificado en el árbol de hoy: los dos publican
+**−25 % de llamadas y −21,4 % de plata** y explican por qué no son el mismo porcentaje — `chat.ts`
+en la sección «El −29% que decía acá estaba mal, y el motivo es lo que hay que no repetir» y el
+README en el párrafo «Este párrafo decía −29% y estaba mal; el motivo importa más que el dígito».
+**No queda ningún −29 % publicado en `packages/ai`**, y este renglón es historia, no un pendiente
+ajeno.)* **Es el mismo defecto de forma
 que C8, un nivel más abajo:** un número bien calculado sobre el caso equivocado. La conclusión no
 cambia —la palanca sigue siendo la más barata del documento y sigue siendo PASS—, pero el número que
 este documento multiplica es **0,000528**.
@@ -3000,20 +3020,28 @@ METRICA_A_VIGILAR: **`billed.primaryServedEmpty` por turno. Alarma en cualquier 
 | ~~**C11**~~ **CUMPLIDA el 2026-08-28 (`89ab7c0`)** | ~~decidir qué pasa cuando el primario contesta vacío **dos veces en el mismo turno**: hoy son 4 llamadas facturadas y ninguna constante lo dice~~ **Hecho, y con la constante:** el primario que atiende y contesta vacío no se reintenta en lo que queda del turno (`skipPrimary` + `primaryServedEmpty`), y el techo dejó de ser un literal — `MAX_BILLED_CALLS_PER_TURN = TURN_ROUNDS + 1 = 3`, derivado de `MAX_TOOL_ROUNDS` | `ai-agent` | **la palanca más barata del documento, y salió más barata de lo que rinde: −21,4 % del techo absoluto (0,8064 → USD 0,6336/mes), no el −29 % que yo estimé.** Mi cuenta restaba una llamada del primario y eso vale para una de las dos ramas de 3 llamadas, no para la cara (§2.8.3b). **Y el eval no se movió ni un dígito:** lo que se compró es seguro contra el día malo, no un ahorro de hoy |
 | **C9** *(actualizado — **es la entrada VIGENTE**; la de §2.7 quedó marcada `SUPERADA`, y con ella el dueño `ai-agent` que decía)* | el precio de comprar la degradación entera **se re-midió con la ficha del plan Negocio adentro**: subir `MAX_INPUT_TOKENS` de 1200 a **1374** (no 1260) elimina las degradaciones del corpus y cuesta entre **USD 0,00047 y USD 0,0574/tenant/mes** (§2.8.5 — la rama cara decía 0,0731 hasta `89ab7c0`, que bajó el techo de llamadas; **la decisión no se movió, sólo su precio**). **Decisión humana pendiente, y sigue abierta:** el 1200 es del goal | humano, con los números de acá | las dos ramas son ruido en la factura, así que la factura no puede arbitrarla |
 
-> **El turno que falla entero subfactura, y el precio de eso no es plata: es que la alarma de `C10`
-> queda ciega justo donde importa.** Leído hoy en `packages/ai/src/chat.ts`, cuando primario **y**
-> fallback contestan `200` vacío, `generateWithFallback` acumula `servedCalls` y después **tira**
-> (`AI_PROVIDER_FAILED`); el `catch` de arriba deriva a WhatsApp con `handoff: 'provider_down'` y
-> reporta el `billed` **de las rondas anteriores**, perdiendo las de la ronda que falló — en el turno
-> de una sola ronda, que es el caso normal, eso es `calls: 0`. Las dos llamadas **se pagaron**.
-> `ai-agent` lo está cerrando, y lo anoto acá porque el
-> encargo preguntó si tiene consecuencia de costo que yo no esté viendo. **Tiene una, y no es el
+> **El turno que falla entero subfacturaba, y el precio de eso no era plata: era que la alarma de
+> `C10` quedaba ciega justo donde importa.** Cuando primario **y** fallback contestaban `200` vacío,
+> `generateWithFallback` acumulaba `servedCalls` en locales y después **tiraba**
+> (`AI_PROVIDER_FAILED`); el `catch` de arriba derivaba a WhatsApp con `handoff: 'provider_down'` y
+> reportaba el `billed` **de las rondas anteriores**, perdiendo las de la ronda que falló — en el
+> turno de una sola ronda, que es el caso normal, eso era `calls: 0`. Las dos llamadas **se pagaron**.
+>
+> **CERRADO en el árbol de hoy, y lo verifiqué leyéndolo, no de memoria.** La ronda que falla se
+> **devuelve** en vez de tirarse (`RoundOutcome` con `ok: false`), y `answerChat` llama a `addBilled`
+> **antes** de mirar si hubo respuesta, en las dos rondas; los dos `return answerFromHandoff(...
+> 'provider_down' ...)` pasan el `billed` acumulado. El turno que se quema ahora reporta las llamadas
+> que pagó. Lo de abajo se conserva porque es el argumento que mató al umbral, y **el arbitraje del
+> LEAD no depende de este arreglo**: la pata «por arriba» —el turno degradado normal factura 3 y
+> cruza con tráfico legal— vale igual. Lo anoto acá porque el
+> encargo preguntó si tiene consecuencia de costo que yo no esté viendo. **Tiene una, y no era el
 > techo:**
 >
 > 1. **El techo no se mueve y no se movía.** Ese camino factura **2** llamadas y termina el turno,
 >    así que está por debajo de `MAX_BILLED_CALLS_PER_TURN = 3`. Ningún número de §2.8.3b cambia.
 > 2. **La alarma sí, y se llevó puesto el umbral.** `C10` proponía alarmar en `calls > 2`, y el
->    turno completamente fallado reporta `0`: no cruza el umbral **por abajo**. Un umbral por arriba
+>    turno completamente fallado reportaba `0` (hoy ya no, ver arriba): no cruzaba el umbral **por
+>    abajo**. Un umbral por arriba
 >    no puede detectar una medición que se pierde. **El LEAD lo arbitró el 2026-08-28** (`CLAUDE.md`
 >    §5) y el veredicto es más fuerte que mi reporte: `calls > 2` falla también **por arriba**,
 >    porque con el techo en 3 el turno degradado normal factura 3 y cruza con **tráfico legal**. O
@@ -3029,18 +3057,18 @@ METRICA_A_VIGILAR: **`billed.primaryServedEmpty` por turno. Alarma en cualquier 
 >    pregunta, ahora con el signo invertido.
 >
 > **Corolario para quien escriba el emisor en FASE 5, escrito para sobrevivir al arreglo.** Yo había
-> propuesto cruzar `calls` con `handoff` porque hoy *«`calls = 0` con `provider_down` es plata
-> quemada y `calls = 0` con `soft_cap` es plata no gastada»*. Eso es correcto **hoy y sólo hoy**:
-> `ai-agent` está cerrando la pérdida de la medición en **los dos** sitios donde ocurre —el `catch`
-> de `answerChat` y el del loop de rondas de tool—, y cuando cierre, el mismo turno quemado va a
-> reportar **`calls: 2` con `provider_down`** en vez de `calls: 0`. **La firma estable del turno
+> propuesto cruzar `calls` con `handoff` porque *«`calls = 0` con `provider_down` es plata quemada y
+> `calls = 0` con `soft_cap` es plata no gastada»*. Eso era correcto sólo mientras la medición se
+> perdía. **Ya no se pierde:** `ai-agent` cerró los dos sitios donde ocurría —el camino de falla de
+> `answerChat` y el del loop de rondas de tool— devolviendo la ronda fallada como valor
+> (`RoundOutcome`) y cobrando con `addBilled` antes de preguntar si hubo respuesta, así que el turno
+> quemado reporta **`calls: 2` con `provider_down`**, no `calls: 0`. **La firma estable del turno
 > quemado es `handoff === 'provider_down'`, no el valor del contador**, y así hay que escribir la
 > condición: el cruce con `handoff` sigue haciendo falta —distingue quemado de derivado— pero el
-> `calls = 0` deja de ser su firma. **Dependencia nombrada, no asumida cerrada:** mientras ese
-> arreglo esté en vuelo, el reporte **subfactura el turno quemado**, así que cualquier promedio de
-> `billed` medido en producción antes de que aterrice está sesgado hacia abajo justo en los turnos
-> caros. No cambia ningún precio de este documento —el techo ya contaba esas llamadas—; cambia qué
-> se va a poder medir en producción, que es lo que dice §7 (B4).
+> `calls = 0` ya no es su firma y no hay que esperarlo. El sesgo hacia abajo que este párrafo
+> anunciaba **no llega a producción**: se cerró antes de que existiera `/api/chat`. No cambia ningún
+> precio de este documento —el techo ya contaba esas llamadas—; cambia qué se va a poder medir en
+> producción, que es lo que dice §7 (B4).
 
 ## 3. Techo de LLM a 50 tenants `negocio`
 
@@ -3350,7 +3378,8 @@ unitario del Base no está calculado en ningún artefacto — ver §7.)
   **(texto original de S6)** El 39,4% del vector de DB es `[EST]`, no `[MEDIDO]`. Sale de un modelo de
   renovación (`I/(λ+I)` por página) sobre dos supuestos míos: el reparto **50% grilla / 50% fichas**
   de los 3.000 pageviews y las **~25 reservas/mes/tenant**. El **radio de purga sí es un hecho leído
-  del código** (`listings.ts:330/424/468` contra `storefront-cache.ts`), y es el que manda: con radio
+  del código** (`getStorefrontCatalog()` / `getStorefrontListing()` / `listingMiss()` de
+  `listings.ts`, contra `invalidateStorefrontUnit()` de `storefront-cache.ts`), y es el que manda: con radio
   61 el porcentaje es alto para cualquier reparto razonable, porque una ficha de 25 visitas/mes se ve
   menos de una vez por día. **El modelo se puede volver medición barato** y esa es la deuda concreta:
   `e2e/_lib/s6-measure.ts` ya calienta una ficha hasta `x-nextjs-cache: HIT`; falta reservar **otra**
