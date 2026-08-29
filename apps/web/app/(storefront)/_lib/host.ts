@@ -245,6 +245,194 @@ export function resolveHost(rawHost: string | null | undefined, options: Resolve
 }
 
 /**
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *  S13 · el alias `/{demo}` del apex, y por qué es un REDIRECT y no un rewrite
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * `maat.work/demo` es el link que se pega en un WhatsApp a un prospecto. Lo que tiene que abrir es
+ * **la vidriera del tenant demo**, que ya tiene una URL canónica y ratificada:
+ * `demo.maat.work` — `TENANT_SERVED_RESERVED_SLUGS` de `@istock/domain` existe exactamente para
+ * eso (`demo` sirve vidriera y a la vez nadie lo puede registrar).
+ *
+ * ── Por qué NO se reescribe `/demo` → `/s/demo` ────────────────────────────────────────────────
+ * Tres consecuencias, y la primera sola ya alcanza:
+ *
+ * 1. **Toda URL interna de la vidriera está anclada al HOST, no a un prefijo de path.** Lo declara
+ *    `_lib/routes.ts`: `STOREFRONT_HOME_PATH` es `/`, `listingPath()` devuelve `/p/{listing}`,
+ *    `TRADEIN_PATH` es `/canje` y `TRADEIN_ENDPOINT_PATH` es `/api/tradein` — y el 303 del canje
+ *    contesta con un `Location` **relativo** a propósito, porque leer el host desde `(storefront)`
+ *    es lo que prohíbe `web-lint` W002. Servida bajo `maat.work/demo`, esa misma grilla linkea a
+ *    `maat.work/p/…`, que bajo el apex no es vidriera de nadie: **el demo sería una grilla donde
+ *    ninguna card abre**. Arreglarlo obliga a enhebrar un base path por toda la vidriera y a
+ *    mantener dos espacios de URL sincronizados para siempre.
+ * 2. **El texto del `wa.me` es byte a byte** (`CLAUDE.md` §1) y termina en `{slug}.maat.work`. Bajo
+ *    `maat.work/demo` el HTML le diría al comprador una URL que no es la que tiene en la barra: o
+ *    miente, o aparece una segunda variante del único string que la constitución fija exacto.
+ * 3. **Un rewrite por PATH es la puerta de la fuga entre tenants.** Un `if (pathname === '/demo')`
+ *    puesto antes de resolver el host sirve la vidriera del demo bajo **cualquier** host, incluido
+ *    `acme.maat.work`. Es la clase de bug de ADR-007 ley 2, con el agravante de que acá el
+ *    contenido servido sí existe. Por eso la decisión vive **dentro de la rama `marketing`** del
+ *    proxy y esa ubicación está afirmada por test (`demo.test.ts`).
+ *
+ * ── Qué se paga y qué se compra ────────────────────────────────────────────────────────────────
+ * Se paga **un round trip** (~150–400 ms en 4G malo) la primera vez. Se compra:
+ * - **cero** consultas a Postgres en el alias — no el 95% de `CLAUDE.md` §3: el 100%, porque el
+ *   redirect es una función pura de `(host, path)` y ni siquiera invoca la app;
+ * - **cero** entradas de cache nuevas y **cero** caminos de render nuevos: el demo lo sirve el
+ *   mismo `/s/[slug]` que cualquier tenant, con su propio `storefront:demo`. El demo demuestra el
+ *   producto porque **es** el producto, no una segunda copia que puede divergir;
+ * - una sola URL canónica por tenant, que es la regla que `isStorefrontInternalPath` ya sostiene.
+ *
+ * ── `308` y no `307`, con el costo declarado ───────────────────────────────────────────────────
+ * `308` es permanente: los navegadores lo cachean y Google consolida las señales en
+ * `demo.maat.work`. Es cierto lo que afirma —que `demo.maat.work` es el hogar canónico del demo ya
+ * está decidido en `packages/domain`, no lo decide esta slice—. **El costo es real y va escrito:**
+ * un `308` cacheado por el browser es difícil de revertir, así que el día que alguien quiera una
+ * landing de marketing *en* `maat.work/demo` va a tener clientes que nunca la ven. Se acepta porque
+ * ese `/demo` ya está gastado como alias, y porque `307` no ahorraría nada del otro lado: la
+ * respuesta del proxy no entra al CDN de Vercel en ninguno de los dos casos.
+ *
+ * ── Por qué tampoco va en `redirects` de `next.config.ts` ──────────────────────────────────────
+ * La doc de `proxy.md` sugiere preferir `redirects` para un redirect simple, y este no lo es por
+ * dos motivos: (a) el host destino **se deriva del host entrante** —`maat.work` → `demo.maat.work`,
+ * pero `127.0.0.1.nip.io:3100` → `demo.127.0.0.1.nip.io:3100`, que es el host con el que corren los
+ * e2e y el `next start` del gate—, así que un `destination` fijo rompe todo lo que no sea
+ * producción, exactamente como advierte `STOREFRONT_HOME_PATH`; y (b) `next.config.ts` es del LEAD
+ * y decide para las tres caras a la vez (`CLAUDE.md` §4).
+ */
+
+/**
+ * El slug del tenant demo. **`packages/db/src/seed.ts` lo siembra con este nombre y
+ * `TENANT_SERVED_RESERVED_SLUGS` de `@istock/domain` lo declara irregistrable.**
+ *
+ * Sí, es un segundo literal `'demo'` en el repo, y no me gusta: el lugar canónico de esta constante
+ * es `packages/domain`, al lado del Set que la protege — pero ese paquete es de `domain-agent` y
+ * esta columna pide, no edita (`CLAUDE.md` §4). Mientras tanto la copia **no** queda atada por una
+ * promesa de review: `demo.test.ts` afirma las tres propiedades que la hacen correcta —que está en
+ * `TENANT_SERVED_RESERVED_SLUGS`, que está en `RESERVED_SLUGS` (nadie lo registra) y que
+ * `resolveHost('demo.<apex>')` devuelve `storefront('demo')`—, así que si el Set cambia el rojo
+ * llega en el commit y no con el primer prospecto.
+ */
+export const DEMO_TENANT_SLUG = 'demo';
+
+/** El alias del demo bajo el apex: `maat.work/demo`. */
+export const DEMO_ALIAS_PATH = `/${DEMO_TENANT_SLUG}`;
+
+/**
+ * ¿Este path es el alias del demo, o algo colgado debajo?
+ *
+ * El corte es por **segmento** y no por prefijo de string: `/demostracion` no es el alias. Es la
+ * misma discrepancia sufijo/segmento que produjo los cuatro agujeros del `matcher` (S1, S2, P2,
+ * S8), así que acá se escribe del lado correcto desde el principio.
+ *
+ * `/demo/**` entra a propósito: un alias parcial que funciona en la home y muere en
+ * `/demo/p/iphone-14` es un callejón sin salida para la única persona que usa esta URL. Total o
+ * nada; total cuesta un `slice`.
+ */
+export function isDemoAliasPath(pathname: string): boolean {
+  return pathname === DEMO_ALIAS_PATH || pathname.startsWith(`${DEMO_ALIAS_PATH}/`);
+}
+
+/**
+ * `/demo` → `/` · `/demo/p/iphone-14` → `/p/iphone-14` · `/demo/` → `/`.
+ *
+ * Lo que queda es el path **tal como lo vería un visitante en `demo.maat.work`**, o sea el mismo
+ * espacio de URLs que ya declara `_lib/routes.ts`. No se toca el querystring: lo preserva el
+ * `clone()` del proxy, y un `?utm_source=ig` en el link que se le manda a un prospecto es
+ * justamente lo que no hay que perder.
+ */
+export function demoAliasTargetPath(pathname: string): string {
+  if (!isDemoAliasPath(pathname)) {
+    throw new Error(`demoAliasTargetPath: "${pathname}" no es el alias del demo`);
+  }
+  const rest = pathname.slice(DEMO_ALIAS_PATH.length);
+  return rest === '' || rest === '/' ? '/' : rest;
+}
+
+/**
+ * El **apex con wildcard** de este host, o `null` si esta familia de hosts no tiene subdominios de
+ * tenant. Es la mitad de abajo de {@link tenantHostFor}; ver allá el argumento entero.
+ */
+function wildcardApexOf(hostname: string, rootDomain: string): string | null {
+  if (hostname.length === 0) return null;
+
+  // Preview de Vercel: el wildcard `*.maat.work` no cubre `*.vercel.app`, y el certificado del
+  // deploy tampoco. `demo.istock-git-main-x.vercel.app` no resuelve: mandar ahí a alguien es peor
+  // que no tener alias. Sin apex.
+  for (const suffix of PASSTHROUGH_SUFFIXES) {
+    if (hostname === suffix.slice(1) || hostname.endsWith(suffix)) return null;
+  }
+
+  const wildcardSuffix = ['.nip.io', '.sslip.io'].find((s) => hostname.endsWith(s));
+  if (wildcardSuffix !== undefined) {
+    const rest = hostname.slice(0, -wildcardSuffix.length).split('.');
+    const first = rest[0];
+    if (first === undefined || first === '') return null;
+    // `127.0.0.1.nip.io` / `127-0-0-1.nip.io`: el apex de dev **es** el host entero.
+    // El orden importa: la forma con guiones es UN solo label, así que un chequeo de largo puesto
+    // antes la descartaría y `demo` no andaría en `127-0-0-1.nip.io`, que es la mitad del uso real.
+    if (NUMERIC_LABEL_RE.test(first) || DASHED_IPV4_RE.test(first)) return hostname;
+    if (rest.length < 2) return null;
+    return hostname.slice(first.length + 1);
+  }
+
+  for (const apex of LOCAL_APEX) {
+    if (hostname === apex || hostname.endsWith(`.${apex}`)) {
+      // `demo.localhost` lo resuelve todo browser moderno a loopback. `demo.127.0.0.1` **no**: no se
+      // le antepone un label a un literal IP. Devolver `null` ahí es lo honesto — el alias no existe
+      // en ese setup y la alternativa es un `Location` a un host que no resuelve. Se documenta en el
+      // proxy: sobre `127.0.0.1:3000`, `/demo` es 404 y se abre `demo.localhost:3000`.
+      return apex === 'localhost' ? 'localhost' : null;
+    }
+  }
+
+  if (hostname === rootDomain || hostname.endsWith(`.${rootDomain}`)) return rootDomain;
+
+  // Dominio custom del tenant (upsell futuro) o host desconocido: no sabemos si tiene wildcard.
+  return null;
+}
+
+/**
+ * La **inversa de {@link resolveHost}**: dado el host que estoy sirviendo y un slug, ¿en qué host
+ * vive la vidriera de ese slug? `null` si esta familia de hosts no sirve vidrieras.
+ *
+ * | host entrante | `tenantHostFor(host, 'demo')` |
+ * |---|---|
+ * | `maat.work` · `www.maat.work` · `app.maat.work` | `demo.maat.work` |
+ * | `127.0.0.1.nip.io` · `127-0-0-1.nip.io` | `demo.127.0.0.1.nip.io` · `demo.127-0-0-1.nip.io` |
+ * | `localhost` · `ajustes.localhost` | `demo.localhost` |
+ * | `127.0.0.1` · `0.0.0.0` · `::1` | `null` (no se le antepone un label a una IP) |
+ * | `istock-git-main-x.vercel.app` | `null` (no hay wildcard ni certificado) |
+ * | `midominio.com` (host desconocido) | `null` |
+ *
+ * **Devuelve un hostname sin puerto**: el puerto lo preserva el `clone()` de la URL en el proxy, que
+ * es donde vive. Meterlo acá obligaría a re-parsear `host:puerto` y a duplicar el caso IPv6 que
+ * `normalizeHostname` ya resuelve.
+ *
+ * ── Por qué esto NO reusa el cuerpo de `resolveHost`, y qué lo ata igual ───────────────────────
+ * Fundirlas obligaría a que la rama `marketing` —el 100% de los pageviews del apex y del panel—
+ * calcule un apex que nadie le pide, contra el presupuesto de `< 2 ms` de ADR-007 ley 1. Y copiar
+ * la taxonomía de hosts es exactamente el modo de falla que este repo ya pagó dos veces (la lista
+ * de reservados duplicada, el `SLUG_RE` duplicado): dos copias que no rompen nada hasta que
+ * divergen.
+ *
+ * Lo que las ata no es código compartido, es un **invariante ejecutable**: `demo.test.ts` corre el
+ * *round trip* `resolveHost(tenantHostFor(h, s)) === storefront(s)` sobre toda la matriz de
+ * familias de host, más el negativo (`null` sólo donde `resolveHost` no podría devolver
+ * `storefront`). Una divergencia se ve como un test rojo, no como un link muerto en producción.
+ */
+export function tenantHostFor(
+  rawHost: string | null | undefined,
+  slug: string,
+  options: ResolveHostOptions = {},
+): string | null {
+  if (!isSlugShaped(slug)) throw new Error(`tenantHostFor: slug inválido "${slug}"`);
+  const hostname = normalizeHostname(rawHost);
+  const apex = wildcardApexOf(hostname, (options.rootDomain ?? STOREFRONT_DOMAIN).toLowerCase());
+  return apex === null ? null : `${slug}.${apex}`;
+}
+
+/**
  * `('acme', '/')` → `/s/acme` · `('acme', '/p/iphone-14')` → `/s/acme/p/iphone-14`.
  *
  * El slug ya viene validado por `resolveHost`; se re-valida igual porque esta función es exportada

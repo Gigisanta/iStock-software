@@ -37,11 +37,15 @@
 
 import { NextResponse, type NextRequest } from 'next/server';
 import {
+  DEMO_TENANT_SLUG,
+  demoAliasTargetPath,
+  isDemoAliasPath,
   isGlobalMediaPath,
   isInfrastructurePath,
   isStorefrontInternalPath,
   resolveHost,
   storefrontPathFor,
+  tenantHostFor,
 } from './app/(storefront)/_lib/host';
 
 /**
@@ -118,6 +122,61 @@ function malformedHost(reason: string): NextResponse {
   });
 }
 
+/**
+ * `308` a la vidriera del demo, o `null` si este host no tiene un subdominio donde vive.
+ *
+ * ── Por qué esta función se llama SÓLO dentro de la rama `marketing`, y no arriba de todo ──────
+ * Es la línea entera de la slice S13. `/demo` es un **path**, y el proxy ya pagó cuatro veces el
+ * precio de decidir por path antes que por host. Puesto arriba —al lado de `isGlobalMediaPath`—
+ * este `if` serviría la vidriera del tenant demo bajo **cualquier** host: `acme.maat.work/demo`
+ * dejaría de ser una URL de `acme` para pasar a ser un redirect al demo. Eso es la fuga de ADR-007
+ * ley 2 con el agravante de que el contenido servido existe de verdad.
+ *
+ * Bajo un host de tenant, `/demo` es **un path más de ese tenant** y sigue el camino de siempre:
+ * `acme.maat.work/demo` → rewrite a `/s/acme/demo` → 404 de `acme`. La uniformidad es lo que
+ * mantiene cerrada la fuga: no hay ningún path reservado que signifique otro tenant.
+ * `demo.maat.work/demo` cae en la misma regla y da 404, y eso es correcto: el demo no es especial
+ * *como tenant*, es especial *como alias del apex*.
+ *
+ * Lo afirma `app/(storefront)/demo.test.ts`, y se falsificó moviendo la llamada arriba del
+ * `resolveHost` para verla encender.
+ *
+ * ── El destino ────────────────────────────────────────────────────────────────────────────────
+ * `url.clone()` preserva **protocolo, puerto y querystring**; sólo se cambian `hostname` y
+ * `pathname`. El hostname sale de {@link tenantHostFor}, que lo deriva del host **entrante**: en
+ * producción `maat.work → demo.maat.work`, en los e2e `127.0.0.1.nip.io:3100 →
+ * demo.127.0.0.1.nip.io:3100`. Un destino fijo funcionaría sólo en producción.
+ *
+ * `null` significa "en esta familia de hosts no existe la vidriera del demo" (preview de Vercel,
+ * dominio desconocido, o `127.0.0.1` pelado, al que no se le puede anteponer un label). Ahí se pasa
+ * derecho y `/demo` termina en el 404 de la app, que es lo honesto: un `Location` a un host que no
+ * resuelve es peor que no tener alias. En dev el alias se abre desde `localhost:3000` o desde
+ * `127.0.0.1.nip.io:3000`, no desde `127.0.0.1:3000`.
+ *
+ * **Cero I/O**: es una función pura de `(host, path)`. El alias no toca Postgres en el 100% de los
+ * hits, no invoca la app y no crea una sola entrada de cache.
+ *
+ * ── Por qué no recibe los headers saneados, y por qué eso NO afloja la regla ───────────────────
+ * `stripInboundTenantHeaders()` existe porque la doc pide borrar los `x-tenant-*` entrantes *"on
+ * every path through the proxy"* — o sea, en toda request que el proxy **deja seguir hasta la
+ * app**. Un redirect no deja seguir nada: termina la cadena y el browser abre una request nueva,
+ * con sus propios headers, que vuelve a pasar por el proxy desde cero. No hay pedido al que
+ * sacarle un header. Es el mismo motivo por el que `malformedHost()` tampoco los recibe, y por eso
+ * la llamada a `stripInboundTenantHeaders()` sigue arriba de todo: el caso en que este redirect
+ * **no** dispara sí continúa a la app, y ahí el saneo tiene que haber corrido.
+ */
+function demoAliasRedirect(request: NextRequest): NextResponse | null {
+  const demoHost = tenantHostFor(request.headers.get('host'), DEMO_TENANT_SLUG);
+  if (demoHost === null) return null;
+
+  const url = request.nextUrl.clone();
+  url.hostname = demoHost;
+  url.pathname = demoAliasTargetPath(request.nextUrl.pathname);
+  // `308` y no `307`: permanente. El costo de la permanencia está declarado en `_lib/host.ts`,
+  // arriba de `DEMO_TENANT_SLUG`.
+  return NextResponse.redirect(url, 308);
+}
+
 export function proxy(request: NextRequest): NextResponse {
   const sanitized = stripInboundTenantHeaders(request);
 
@@ -185,8 +244,15 @@ export function proxy(request: NextRequest): NextResponse {
   const resolved = resolveHost(request.headers.get('host'));
 
   switch (resolved.kind) {
-    case 'marketing':
+    case 'marketing': {
+      // S13 · el alias del demo. Va ACÁ ADENTRO, no arriba: un `if` por path antes de resolver el
+      // host serviría el demo bajo el subdominio de cualquier tenant. Ver `demoAliasRedirect`.
+      if (isDemoAliasPath(pathname)) {
+        const redirect = demoAliasRedirect(request);
+        if (redirect !== null) return redirect;
+      }
       return passthrough(sanitized);
+    }
 
     case 'not-found':
       return malformedHost(resolved.reason);
