@@ -464,6 +464,44 @@ prueba encendiéndola con el caso patológico y callándola con el tráfico lega
 `guard-leaks.test.sh` hace con su gate. Una alarma verificada en una sola polaridad no es una
 alarma débil: es independiente de lo que dice medir.
 
+### Un doc cita el símbolo, no el número de línea
+**Agregado por el LEAD el 2026-08-28, después de la tercera vez en el mismo día y con tres agentes
+distintos.** `cost-auditor` citó `chat.ts:284-286`, yo cité `:338` y `docs-keeper` citó ocho líneas
+(`:311`, `:358`, `:364`, `:376`, `:423`, `:426`, `:451`, `:529`): las tres tandas quedaron
+apuntando a texto ajeno **dentro de la misma sesión**, porque `ai-agent` estaba editando el archivo.
+Ninguno de los tres se equivocó al leer; el archivo se movió abajo de la cita.
+
+**La regla: en `docs/**`, una referencia a código nombra el archivo y el SÍMBOLO** —
+`chat.ts`, `addBilled` — **no el número de línea.** Un símbolo sobrevive a que le agreguen 40 líneas
+arriba, y **se verifica con un `grep`**, que es lo que lo vuelve gate-able; una línea no se verifica
+con nada y envejece en minutos.
+
+Dos precisiones, porque la regla mal leída prohíbe de más:
+
+1. **En un mensaje de commit el número de línea está bien**, y por eso este archivo los usa. Un
+   commit queda congelado junto al árbol que describe: la cita y su referente envejecen juntos. Un
+   doc vivo no tiene esa propiedad — se lee meses después contra un árbol que siguió.
+2. **La regla no es "nunca un número"**, es *"no un número solo"*. `chat.ts` · `addBilled` · `~:500`
+   está bien: el símbolo es el ancla y el número es la ayuda para el que scrollea.
+
+**Corolario, y es el mismo de `T28` y `T30`:** esto no puede depender de que alguien se acuerde. Una
+cita `archivo.ts:NNN` en `docs/**` es censable, y que el símbolo citado exista en el archivo citado
+es un `grep`. Fila **`T55`** del board.
+
+**Tercera precisión, y la escribo porque la produje yo el mismo día: un hash de commit en un doc
+tiene el mismo defecto, con una agravante.** Enmendé `9d5d20a` para corregir un mensaje mío que
+afirmaba un cambio que el diff no tenía; el commit pasó a ser `1414302` y quedaron **tres citas a
+`9d5d20a` en `docs/`** (`INDEX.md`, `SLICE_BOARD.md` ×2). La agravante es cómo falla: `git cat-file
+-t 9d5d20a` **contesta `commit`** —el objeto sigue vivo en mi reflog— así que la cita se verifica
+perfectamente en la máquina donde se rompió, y muere en un clon o en el primer `gc`.
+`git merge-base --is-ancestor` es la pregunta correcta y nadie la hace.
+
+Entonces: **un doc cita un hash sólo si el commit es alcanzable desde `main`**, y el que enmienda es
+el que arregla las citas — la enmienda es suya y el costo también. `T55` censa las dos formas: el
+`archivo.ts:NNN` sin símbolo y el hash colgante. La segunda es más barata de chequear que la
+primera y **no la había visto** hasta que la rompí; queda como recordatorio de que una regla nueva
+se prueba contra lo que uno mismo hizo ayer, no sólo contra lo que hicieron los agentes.
+
 ## 6. Respuesta al humano (formato del LEAD)
 
 Sin dumps de código. Siempre: **path del workflow · FASE · agentes · artefactos · blockers · próxima acción humana.**
