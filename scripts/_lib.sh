@@ -166,3 +166,36 @@ command_not_found_handle() {
 # que el rojo no apunte a la columna equivocada. Un arnes que puede acusar al writer equivocado es
 # peor que uno lento, y eso ya esta escrito en el config.
 puerto_ocupado() { lsof -nP -iTCP:"$1" -sTCP:LISTEN >/dev/null 2>&1; }
+
+# ── Frescura del server bajo prueba ───────────────────────────────────────────────────────────
+# Compartidas por `accept-s1.sh` y `accept-s13.sh`. Un gate que mide contra un `next start` viejo
+# sale verde afirmando algo del arbol de hace dos horas; los dos las necesitan y por eso viven aca
+# y no copiadas. `server_es_de_este_build`: el proceso que escucha arranco DESPUES del BUILD_ID en
+# disco. `build_es_del_arbol_actual`: ninguna fuente es mas nueva que ese BUILD_ID.
+server_es_de_este_build() {
+  local port="$1" pid ls start bid
+  pid=$(lsof -nP -iTCP:"$port" -sTCP:LISTEN -t 2>/dev/null | head -1) || return 1
+  [ -n "$pid" ] || return 1
+  ls=$(ps -p "$pid" -o lstart= 2>/dev/null | sed 's/^ *//;s/ *$//') || return 1
+  start=$(lstart_a_epoch "$ls") || return 1
+  [ -n "$start" ] || return 1
+  bid=$(mtime apps/web/.next/BUILD_ID) || return 1
+  [ "$start" -ge "$bid" ]
+}
+build_es_del_arbol_actual() {
+  local bid nuevas
+  bid=$(mtime apps/web/.next/BUILD_ID) || return 1
+  nuevas=$(git ls-files --cached --others --exclude-standard -- 'apps/web' 'packages' \
+    | grep -E '\.(ts|tsx|js|mjs|cjs|json|css)$' \
+    | grep -vE '\.test\.(ts|tsx)$' \
+    | while IFS= read -r f; do
+        [ -f "$f" ] || continue
+        m=$(mtime "$f") || continue
+        [ "$m" -gt "$bid" ] && printf '%s\n' "$f"
+      done)
+  if [ -n "$nuevas" ]; then
+    printf '%s\n' "$nuevas" | head -5 | while IFS= read -r f; do inf "  fuente mas nueva que el build: $f"; done
+    return 1
+  fi
+  return 0
+}

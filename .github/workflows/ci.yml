@@ -40,7 +40,14 @@ jobs:
           --health-retries 10
 
     steps:
+      # `fetch-depth: 0` NO es cosmetico y lo pide `guard-citas.sh`: el default es 1, y en un clon
+      # shallow los objetos viejos no estan, asi que `git merge-base --is-ancestor` contesta que no
+      # para TODA cita y C2 acusaria a las ~100 validas del repo. El gate detecta la profundidad y
+      # falla nombrando esta linea en vez de saltear —saltear lo dejaria vacuamente verde, que es
+      # como `accept-fase2` estuvo semanas sin que nadie se enterara.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: pnpm/action-setup@v4
         with: { version: 10.34.5 }
@@ -216,6 +223,19 @@ jobs:
         if: always()
         run: ./scripts/guard-doc-tables.test.sh
 
+      # T55. Va pegado al gate de tablas porque audita la misma superficie (`docs/**`) y no
+      # necesita ni Postgres ni build. C1 es un trinquete por archivo sobre `scripts/citas-baseline.txt`:
+      # la deuda de 196 citas no puede crecer, y un doc nuevo nace con piso cero. Las dos escotillas
+      # (`t55-hash-exento` para C2, `t55-cita-exenta` para C1) son marcas distintas a proposito: con
+      # una sola, la escrita para un chequeo apagaba el otro en silencio. Casos 16 y 17 del arnes.
+      - name: gate de citas de docs (una cita vencida que cae en la asercion de al lado se lee como correcta)
+        if: always()
+        run: ./scripts/guard-citas.sh
+
+      - name: "polaridad del gate de citas (17 casos: un commit real fuera de main, un clon shallow y el cruce de las dos escotillas)"
+        if: always()
+        run: ./scripts/guard-citas.test.sh
+
       - name: polaridad del gate de WAF (cada regla se tiene que ver romper)
         if: always()
         run: ./scripts/guard-firewall.test.sh
@@ -379,6 +399,20 @@ jobs:
       - name: aceptacion de S9 (lista para estados)
         if: always()
         run: ./scripts/accept-s9.sh
+
+      # S13 va aca y NO con un `ci-exento`, y la primera version de este archivo se equivoco: la
+      # exencion que escribi decia "CI lo cubre por la suite e2e", y no existe un solo spec que
+      # mida el alias. Una exencion con un motivo falso es peor que no tenerla, porque el motivo
+      # es justamente lo que nadie va a re-verificar. Este job ya buildea y ya levanta servers para
+      # S1/S2/S3, asi que la pata cara de S13 (V5, el `Location` sobre la red) no cuesta nada
+      # nuevo aca.
+      #
+      # V5c es la unica asercion de todo el repo que mide un ATAQUE sobre HTTP: pide
+      # `/demo` bajo el subdominio de otro tenant y exige que NO redirija a la vidriera del demo.
+      # Un rojo ahi es una fuga de tenant en produccion, no un test flaky.
+      - name: aceptacion de S13 (alias del demo, incluida la fuga de tenant sobre HTTP)
+        if: always()
+        run: ./scripts/accept-s13.sh
 
       # `test-results/`, no `playwright-report/`: el config no tiene reporter `html`, tiene
       # `list` + el censo de specs. Lo unico que queda en disco tras una falla son los traces de

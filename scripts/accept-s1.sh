@@ -20,6 +20,9 @@ cd "$(dirname "$0")/.."
 
 DBURL="${DATABASE_URL:-postgresql://localhost:5432/istock_dev}"
 PORT="${E2E_PORT:-3100}"
+# `server_es_de_este_build` y `build_es_del_arbol_actual` viven en `scripts/_lib.sh` desde que
+# `accept-s13.sh` paso a ser el segundo consumidor: un chequeo de frescura duplicado es como un
+# gate termina midiendo un server de otro build y jurando que midio este.
 
 # Chequeo de entorno, no de producto: si otro proceso tiene el puerto, este gate no puede levantar
 # su propio server y por lo tanto NO PUEDE MEDIR. Se corta aca, con la causa nombrada, en vez de
@@ -166,16 +169,6 @@ BOOT=""
 # **si el proceso que escucha arranco ANTES del BUILD_ID que hay en disco, es de otro build.**
 # Ante la duda -no puedo identificar el proceso- NO reuso: prefiero pagar un build.
 # NUNCA mato el server ajeno: puede ser de otro agente trabajando. Me corro de puerto y listo.
-server_es_de_este_build() {
-  local port="$1" pid ls start bid
-  pid=$(lsof -nP -iTCP:"$port" -sTCP:LISTEN -t 2>/dev/null | head -1) || return 1
-  [ -n "$pid" ] || return 1
-  ls=$(ps -p "$pid" -o lstart= 2>/dev/null | sed 's/^ *//;s/ *$//') || return 1
-  start=$(lstart_a_epoch "$ls") || return 1
-  [ -n "$start" ] || return 1
-  bid=$(mtime apps/web/.next/BUILD_ID) || return 1
-  [ "$start" -ge "$bid" ]
-}
 
 # Segunda staleness, y es la que de verdad me mordio. `server_es_de_este_build` compara
 # server >= build: detecta al zombi que sobrevivio a un rebuild. No ve el caso simetrico,
@@ -191,23 +184,6 @@ server_es_de_este_build() {
 # Sale por `git ls-files` para no barrer node_modules ni .next, y saltea los `*.test.ts`: los
 # tests no entran al bundle, asi que tocarlos no invalida el build y forzar un rebuild por cada
 # edicion de un test seria un impuesto de minutos por ronda.
-build_es_del_arbol_actual() {
-  local bid nuevas
-  bid=$(mtime apps/web/.next/BUILD_ID) || return 1
-  nuevas=$(git ls-files --cached --others --exclude-standard -- 'apps/web' 'packages' \
-    | grep -E '\.(ts|tsx|js|mjs|cjs|json|css)$' \
-    | grep -vE '\.test\.(ts|tsx)$' \
-    | while IFS= read -r f; do
-        [ -f "$f" ] || continue
-        m=$(mtime "$f") || continue
-        [ "$m" -gt "$bid" ] && printf '%s\n' "$f"
-      done)
-  if [ -n "$nuevas" ]; then
-    printf '%s\n' "$nuevas" | head -5 | while IFS= read -r f; do inf "  fuente mas nueva que el build: $f"; done
-    return 1
-  fi
-  return 0
-}
 
 if curl -sf -m 5 "http://127.0.0.1:${PORT}/api/health" >/dev/null 2>&1; then
   if server_es_de_este_build "$PORT" && build_es_del_arbol_actual; then

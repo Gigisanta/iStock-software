@@ -2030,6 +2030,91 @@ encender nombrando `archivo:línea`, y revirtió byte a byte.
   esa base y qué se le promete a esa persona. Es `Q5` de `PRODUCT.md` y sigue **abierta**.)_
 
 ---
+## ADR-027 — `/demo` es un **308 al subdominio del tenant demo**, no un rewrite: la vidriera existe sólo bajo su host
+- **Estado:** **aceptada** · **Fecha:** 2026-08-28 · **Ratificada por el LEAD** · redactada por `docs-keeper` · diseño e implementación de `storefront-agent` (**S13**).
+- **Alcance:** `apps/web/proxy.ts` y `apps/web/app/(storefront)/_lib/host.ts`. No toca `next.config.ts` ni agrega rutas.
+
+### Contexto
+
+`maat.work/demo` es una URL de marketing: se pega en un mensaje, en un mail o en un estado, y tiene
+que llevar a la vidriera del tenant `demo`. Esa vidriera ya tiene URL canónica —`demo.maat.work`—
+porque el producto resuelve el tenant **por host** (`resolveHost`), no por path.
+
+La opción cómoda era servirla ahí mismo con un rewrite. **No se puede, y los tres motivos son
+independientes**: cada uno alcanza solo para descartarlo.
+
+1. **Todos los links de la vidriera son host-rooted.** `STOREFRONT_HOME_PATH` es `/`, `listingPath()`
+   devuelve `/p/{listing}` y `TRADEIN_PATH` es `/canje` — todos relativos al host, porque bajo la
+   vidriera el host ya está en la barra. Un rewrite de `/demo` da una grilla renderizada donde
+   **ninguna card abre**: los `href` apuntarían a `maat.work/p/…`, que es marketing.
+2. **El texto de `wa.me` es byte-exact y termina en `{slug}.maat.work`** (`CLAUDE.md` §1). Bajo
+   rewrite, el mensaje que el prospecto manda **mentiría sobre dónde estuvo**, y ese string es un
+   gate de aceptación, no una cortesía.
+3. **Un `if` por path ANTES de resolver el host es una fuga de tenant.** Es la clase que ya nos
+   mordió con `'use cache'` sin host en la clave: ese `if` serviría el demo bajo **cualquier** host,
+   con lo cual `acme.maat.work/demo` dejaría de ser una URL de `acme`.
+
+### Decisión
+
+`maat.work/demo` y todo `/demo/**` emiten un **`308` permanente** a `demo.<apex>/…`, desde `proxy.ts`
+(`demoAliasRedirect`), y **adentro de la rama `marketing` de `resolveHost`** — nunca arriba de ella.
+
+Dos propiedades hacen el trabajo, y ninguna es opcional:
+
+- **La llamada vive dentro de la rama `marketing`.** Bajo un host de tenant, `/demo` vuelve a ser
+  *un path más de ese tenant* y sigue el camino de siempre (`acme.maat.work/demo` → 404 de `acme`).
+  La uniformidad es lo que cierra el motivo 3. Se falsificó moviendo la llamada arriba de
+  `resolveHost` y viendo encender `app/(storefront)/demo.test.ts`.
+- **El host de destino se deriva del host ENTRANTE**, con `tenantHostFor` (en
+  `app/(storefront)/_lib/host.ts`), que es la inversa de `resolveHost` y se prueba con un round trip.
+  En producción `maat.work → demo.maat.work`; en los e2e `127.0.0.1.nip.io:3100 →
+  demo.127.0.0.1.nip.io:3100`. Devuelve `null` donde no hay wildcard (preview de Vercel), y ahí
+  `/demo` pasa derecho al 404 de la app: **un `Location` a un host que no existe es peor que un 404.**
+
+El slug y el alias no son strings sueltos: `DEMO_TENANT_SLUG`, `DEMO_ALIAS_PATH`, `isDemoAliasPath()`
+y `demoAliasTargetPath()` viven en `_lib/host.ts`, y `demoAliasTargetPath()` **tira** si se la llama
+con un path que no es el alias.
+
+### Alternativas descartadas
+
+- **Rewrite** — los tres motivos de arriba.
+- **`redirects` de `next.config.ts`** — la doc de `proxy` lo sugiere para un redirect simple, y este
+  no lo es: un `destination` fijo rompe `*.nip.io`, `localhost` y los previews, o sea todo lo que no
+  sea producción. Y `next.config.ts` es del **LEAD** y decide para las tres caras a la vez (§4).
+- **Un `route.ts` que redirija** — lo censaría `guard-firewall.sh`, que barre `apps/web/app` entero,
+  y pediría entrada en `config/firewall-rules.json`, que tampoco es la columna de `storefront-agent`.
+  Una ruta nueva para no escribir cuatro líneas en el proxy paga con una decisión de WAF.
+
+### Consecuencias — el precio va escrito, no omitido
+
+- **Un round trip extra**, ~150–400 ms en 4G malo. Lo paga el prospecto que entra por el link de
+  marketing, una vez.
+- **El `308` es permanente y el browser lo cachea**, así que es **difícil de revertir**: el día que
+  alguien quiera servir contenido propio en `maat.work/demo` se va a encontrar con browsers que ni
+  preguntan. Se acepta porque la alternativa —`307`— renuncia a consolidar las señales de SEO en la
+  URL canónica, que es justamente para lo que existe el alias.
+
+### Lo que esta ADR NO decide
+
+- **No decide que `/demo` sea especial bajo un host de tenant.** `demo.maat.work/demo` da 404 y eso
+  es correcto: el demo no es especial adentro de su propia vidriera.
+- **No decide dónde vive `DEMO_TENANT_SLUG`.** Hoy es una copia en `apps/web`, atada por tres
+  aserciones ejecutables en vez de por una promesa de review. Su casa canónica es
+  `packages/domain/src/reserved-slugs.ts` — fila **`T56`** del board, dueño `domain-agent`.
+- **No decide el contenido del demo.** El teléfono del `wa.me` entra por `SEED_DEMO_WA_PHONE` y hoy
+  cae en un placeholder: blocker **`B6`**, humano.
+
+### Verificación
+
+- **Hecho:** `apps/web/app/(storefront)/demo.test.ts` — el 308 sobre el objeto `NextResponse`, el
+  round trip `resolveHost(tenantHostFor(h, slug))`, la polaridad de la ubicación de la llamada, y las
+  tres propiedades que atan el literal `'demo'`.
+- **Falta, y lo corre el LEAD:** `scripts/accept-s13.sh` (no existe todavía; `scripts/**` es del
+  LEAD), `bash scripts/guard-routes.sh` (requiere `next build`) y un e2e que mida el `308` y el
+  `Location` **sobre la red**. Hasta entonces la fila S13 está en `esperando gate`, no en `done`.
+
+---
+
 
 ## Notas operativas — hallazgos que no son ADR
 

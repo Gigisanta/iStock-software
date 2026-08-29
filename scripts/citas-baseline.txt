@@ -1,0 +1,8 @@
+# Piso del trinquete C1 de scripts/guard-citas.sh — GENERADO, no editar a mano.
+# Se reescribe con: bash scripts/guard-citas.sh --escribir-piso
+# Un archivo ausente de esta lista tiene piso CERO.
+CHATBOT.md 1
+DECISIONS.md 28
+DOMAIN.md 1
+INDEX.md 3
+SLICE_BOARD.md 161
