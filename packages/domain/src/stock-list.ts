@@ -24,6 +24,31 @@
  * validación— y una segunda copia acá sería una segunda fuente de verdad de la misma cadena.
  *
  * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *  El host del encabezado sale de los MISMOS links que el bloque imprime
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ * El encabezado dice `Nortecel · nortecel.maat.work` y abajo van los links de cada equipo. Son la
+ * misma afirmación escrita dos veces en un texto que se copia y se pega **entero**: si discrepan,
+ * el bloque se contradice a sí mismo delante de las cien personas que ven el estado.
+ *
+ * Hasta S9 el host del encabezado se **recalculaba** con `storefrontHost(slug)`, que hardcodea
+ * `maat.work` (y tiene que hardcodearlo: es el host del mensaje de WhatsApp, ver abajo). Los links,
+ * en cambio, llegan armados por el caller desde su `storefrontBaseUrl`. Contra un origen que no es
+ * producción —`next start` del gate y los e2e corren sobre `{slug}.127.0.0.1.nip.io:3100`— el mismo
+ * bloque decía `demo.maat.work` arriba y apuntaba a `127.0.0.1` abajo. No faltaba parametrizar:
+ * **ya estaba parametrizado y el encabezado no usaba el parámetro.**
+ *
+ * El arreglo no es pasar el host por un segundo campo, es **borrar el segundo cálculo**: el host se
+ * lee de `StockListUnit.url`, o sea de las URLs que el bloque ya imprime. Dos valores que tienen
+ * que coincidir coinciden porque son **uno**, no porque dos callers se acuerden de sincronizarlos.
+ * Corolario que hace falta para que la propiedad sea total: si las unidades no comparten host, la
+ * lista **falla** (ver `resolveStorefrontHost`). Elegir uno sería reintroducir la contradicción con
+ * otro disparador — dato en vez de config — y en un bloque que igual se pega entero.
+ *
+ * `storefrontHost`/`storefrontUrl` de `wa.ts` **no se tocan y no se unifican con esto**: el mensaje
+ * de WhatsApp se lo manda un comprador a un vendedor, y ahí el host de producción es el correcto
+ * aunque el server sea local. Son dos preguntas distintas y sólo una estaba rota.
+ *
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
  *  Campos prohibidos: la prohibición es de TIPOS, no de disciplina
  * ══════════════════════════════════════════════════════════════════════════════════════════════
  * `CLAUDE.md` §2: `imei`, `cost_usd`, `margin`, `internal_notes` (y `supplier`, y `enacomResult`,
@@ -60,9 +85,10 @@
 
 import { DomainError } from './errors';
 import { assertNonNegativeCents, formatArs, formatUsd } from './money';
+import { assertSlug } from './slug';
 import { isBlank } from './text';
 import { conditionLabel, type Condition, type PublicStatus } from './types';
-import { describeListingName, storefrontHost, type NameSource } from './wa';
+import { describeListingName, type NameSource } from './wa';
 
 /**
  * Presupuesto de caracteres por bloque, por default.
@@ -181,7 +207,14 @@ export interface StockList {
 export interface StockListInput {
   /** Nombre comercial, tal como lo escribió el dueño. Va en el encabezado de cada bloque. */
   readonly businessName: string;
-  /** Slug del tenant. Se valida y de él sale el host que muestra el encabezado. */
+  /**
+   * Slug del tenant. **Se valida, pero el host del encabezado ya no sale de acá:** sale de las
+   * URLs de las unidades, que son las que el bloque imprime. Ver el docblock del módulo.
+   *
+   * Sigue siendo obligatorio y sigue validándose porque es la identidad del tenant del que es este
+   * stock, y un slug roto acá es un tenant sin vidriera: falla temprano y con `DomainError`, no en
+   * un link muerto pegado en un estado.
+   */
   readonly slug: string;
   readonly units: readonly StockListUnit[];
   /** Default `DEFAULT_BLOCK_BUDGET_CHARS`. Entero positivo. */
@@ -274,7 +307,67 @@ export function buildStockListEntry(unit: StockListUnit): string {
 }
 
 /**
+ * La **autoridad** (host + puerto si lo hay) de una URL de ficha ya validada.
+ *
+ * Se saca por substring y no se normaliza a propósito. El link se imprime **tal cual** en el
+ * renglón de abajo (`buildStockListEntry`), así que el encabezado tiene que decir exactamente los
+ * mismos caracteres: cualquier normalización —bajar a minúsculas, sacar el puerto default,
+ * punycodear— haría que el encabezado y el link vuelvan a diferir, que es el bug que esto arregla,
+ * con la agravante de que ahora los dos serían "correctos".
+ *
+ * El puerto va incluido: `demo.127.0.0.1.nip.io:3100` es lo que dice el link y es a dónde llega el
+ * que lo abre. Un encabezado sin puerto sería un host al que no se puede ir.
+ */
+function storefrontAuthority(url: string): string {
+  const authority = /^https?:\/\/([^/?#]*)/u.exec(url)?.[1] ?? '';
+  // Sin autoridad no hay a dónde ir, y con `user@host` el encabezado mostraría credenciales
+  // pegadas en un estado público. Las dos son URLs que `buildStockListEntry` deja pasar (su regex
+  // sólo exige esquema y nada de espacios) y ninguna de las dos puede llegar a un encabezado.
+  if (authority.length === 0 || authority.includes('@')) {
+    throw new DomainError(
+      'LISTING_INVALID',
+      `la URL de la ficha no tiene un host usable: "${url}". El encabezado de la lista muestra el ` +
+        'host de los links, así que una URL sin host dejaría el bloque sin decir de quién es.',
+    );
+  }
+  return authority;
+}
+
+/**
+ * El host que muestra el encabezado: el de los links, y **el mismo para todas las unidades**.
+ *
+ * La lista es el stock de **una** vidriera. Dos hosts en la misma tanda significan que alguien
+ * armó las URLs con dos bases distintas, y entonces no existe ningún encabezado correcto: el que
+ * elija desmiente a la mitad de los links del bloque. Se falla, que es lo mismo que hace el resto
+ * de esta función ante datos que no se pueden publicar — media lista publicada es peor que ninguna.
+ */
+function resolveStorefrontHost(units: readonly StockListUnit[]): string {
+  let host: string | null = null;
+  for (const unit of units) {
+    const authority = storefrontAuthority(unit.url.trim());
+    if (host === null) {
+      host = authority;
+      continue;
+    }
+    if (authority !== host) {
+      throw new DomainError(
+        'LISTING_INVALID',
+        `las unidades de la lista apuntan a dos vidrieras distintas ("${host}" y "${authority}"): ` +
+          'el encabezado muestra el host de los links y no puede decir los dos. Una lista es el ' +
+          'stock de una sola vidriera.',
+      );
+    }
+  }
+  if (host === null) {
+    throw new DomainError('LISTING_INVALID', 'no hay unidades de las que sacar el host del encabezado');
+  }
+  return host;
+}
+
+/**
  * `Nortecel · nortecel.maat.work · 2/3` (+ `Stock al 28/08` si vino `now`).
+ *
+ * `host` es el de los links del bloque (ver `resolveStorefrontHost`), nunca uno recalculado.
  *
  * La numeración aparece **sólo con más de un bloque**: `1/1` es ruido, y son caracteres que le
  * saca a un equipo. Con dos o más es obligatoria — la persona los pega de a uno y el orden es lo
@@ -375,7 +468,10 @@ function assertPositiveInteger(value: number, label: string): void {
  * iteración no convergiera: antes un bloque dos caracteres más largo que un encabezado que miente.
  */
 export function buildStockList(input: StockListInput): StockList {
-  const host = storefrontHost(input.slug);
+  // El slug ya no arma el host del encabezado, pero se sigue validando: es la identidad del tenant
+  // dueño de este stock y un slug roto es un tenant sin vidriera. Se chequea primero, igual que
+  // antes, para no cambiar cuál error gana cuando hay más de uno mal.
+  assertSlug(input.slug);
 
   // El nombre del negocio es texto libre del dueño y acá se pega dentro de un texto estructurado.
   // Colapsar el whitespace no es cosmética: un `\n` en el nombre parte el encabezado en dos y deja
@@ -423,6 +519,10 @@ export function buildStockList(input: StockListInput): StockList {
     return { blocks: [], unitCount: 0 };
   }
   const entryLengths = entries.map((entry) => entry.length);
+
+  // Después de `entries`: para acá las URLs ya pasaron por `buildStockListEntry`, así que este
+  // paso sólo decide de cuál de ellas sale el host, y no duplica su validación.
+  const host = resolveStorefrontHost(input.units);
 
   let assumedTotal = 1;
   let packed = packEntries(entryLengths, buildHeader(businessName, host, 1, 1, dateText).length, budget);

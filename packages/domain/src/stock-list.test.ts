@@ -306,11 +306,20 @@ describe('buildStockList — encabezado y bloques', () => {
     expect(text.match(/RESERVADO/gu)).toHaveLength(1);
   });
 
-  it('SL21 — el slug se valida: el host del encabezado no se inventa', () => {
+  it('SL21 — el slug se sigue validando aunque ya no arme el host del encabezado', () => {
     expect(() => buildStockList(baseInput([UNIT], { slug: 'No Válido' }))).toThrow(DomainError);
-    expect(buildStockList(baseInput([UNIT], { slug: 'celu-store' })).blocks[0]?.text).toContain(
-      'celu-store.maat.work',
+
+    // Este test pedía antes que con `slug: 'celu-store'` el encabezado dijera `celu-store.maat.work`
+    // **dejando las URLs en `nortecel.maat.work`**: o sea fijaba la contradicción como si fuera el
+    // contrato. El contrato es el de SL27 — el encabezado dice el host de los links —, así que un
+    // input coherente lleva las dos puntas.
+    const list = buildStockList(
+      baseInput([{ ...UNIT, url: 'https://celu-store.maat.work/p/iphone-14-pro-256-grafito' }], {
+        slug: 'celu-store',
+      }),
     );
+    expect(list.blocks[0]?.text).toContain('celu-store.maat.work');
+    expect(list.blocks[0]?.text).not.toContain('nortecel');
   });
 
   it('SL22 — el nombre del negocio no puede forjar un encabezado ni partirlo en dos', () => {
@@ -362,5 +371,67 @@ describe('buildStockList — encabezado y bloques', () => {
     for (const secret of ['353916100002614', 'debe 200', '40000', '22000']) {
       expect(text).not.toContain(secret);
     }
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════════════════════
+//  El host del encabezado sale de los MISMOS links que el bloque imprime
+// ══════════════════════════════════════════════════════════════════════════════════════════════
+//
+// El bloque se copia entero y se pega entero. Si el encabezado dice un host y los links apuntan a
+// otro, el texto se contradice a sí mismo delante de cien personas. La única defensa que no
+// depende de que dos cálculos coincidan es que haya **un solo** cálculo: el host del encabezado se
+// lee de las URLs de las unidades, que son las que se imprimen.
+
+/** `Nortecel · nortecel.maat.work · 1/2` → `nortecel.maat.work`. */
+function headerHost(blockText: string): string {
+  return (blockText.split('\n')[0] ?? '').split(' · ')[1] ?? '';
+}
+
+/** Los hosts de todos los links impresos en el bloque, en orden. */
+function linkHosts(blockText: string): string[] {
+  return blockText
+    .split('\n')
+    .filter((line) => line.startsWith('http'))
+    .map((line) => /^https?:\/\/([^/]+)/u.exec(line)?.[1] ?? '');
+}
+
+describe('buildStockList — encabezado y links no pueden discrepar', () => {
+  it('SL27 — dev/e2e: el encabezado dice el host de los links, no `maat.work`', () => {
+    const base = 'http://demo.127.0.0.1.nip.io:3100';
+    const units = manyUnits(9).map((unit, index) => ({ ...unit, url: `${base}/p/equipo-${String(index + 1)}` }));
+    const list = buildStockList({ businessName: 'Nortecel', slug: 'demo', units, maxBlockChars: 420 });
+
+    expect(list.blocks.length).toBeGreaterThan(1);
+    for (const block of list.blocks) {
+      expect(headerHost(block.text)).toBe('demo.127.0.0.1.nip.io:3100');
+      for (const host of linkHosts(block.text)) expect(host).toBe(headerHost(block.text));
+      // El host de producción no puede aparecer en un bloque armado contra un origen local.
+      expect(block.text).not.toContain('maat.work');
+    }
+  });
+
+  it('SL28 — producción no se mueve: con `maat.work` la salida es byte por byte la de siempre', () => {
+    expect(buildStockList(baseInput([UNIT], { now: new Date('2026-08-28T12:00:00.000Z') })).blocks[0]?.text).toBe(
+      'Nortecel · nortecel.maat.work\nStock al 28/08\n\n' +
+        'iPhone 14 Pro 256 Grafito · usado excelente · USD 620 · $ 868.000\n' +
+        'https://nortecel.maat.work/p/iphone-14-pro-256-grafito',
+    );
+
+    // Y con numeración, que es donde el encabezado cambia de largo y mueve el empaquetado.
+    const multi = buildStockList(baseInput(manyUnits(9), { maxBlockChars: 420 }));
+    expect(multi.blocks.map((block) => block.text.split('\n')[0])).toEqual(
+      multi.blocks.map((block) => `Nortecel · nortecel.maat.work · ${String(block.index)}/${String(block.total)}`),
+    );
+    expect(multi.blocks).toHaveLength(3);
+    expect(multi.unitCount).toBe(9);
+  });
+
+  it('SL29 — dos hosts en la misma lista fallan: el encabezado no elige uno y desmiente al otro', () => {
+    expect(() => buildStockList(baseInput([UNIT, { ...UNIT, url: 'https://otro.maat.work/p/x' }]))).toThrow(DomainError);
+    // Una sola unidad con host propio no es ambigua y sale.
+    expect(buildStockList(baseInput([{ ...UNIT, url: 'https://otro.maat.work/p/x' }])).blocks[0]?.text).toContain(
+      'Nortecel · otro.maat.work',
+    );
   });
 });
