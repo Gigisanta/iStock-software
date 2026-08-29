@@ -367,6 +367,19 @@ jobs:
         if: always()
         run: ./scripts/accept-s8.sh
 
+      # S9 no toca la base ni levanta un server: es estatica entera, asi que podria vivir en el job
+      # de lints. Va aca igual, con las otras aceptaciones, porque agruparlas por lo que CUESTAN en
+      # vez de por lo que SON es como se pierde una: `accept-fase2` estuvo rojo semanas por estar
+      # solo en un lugar donde nadie miraba. El costo de este paso es un puñado de greps.
+      #
+      # Su verificacion distinta es V4, y conviene saber que mira antes de leer un rojo: censa que
+      # el FIXTURE de `build-input.test.ts` tenga los tres estados publicos. Un rojo ahi no dice
+      # "el codigo esta mal", dice "los tests dejaron de poder distinguir su propia mutacion" — que
+      # es como esta slice tuvo 19 tests verdes sobre un filtro que era un no-op.
+      - name: aceptacion de S9 (lista para estados)
+        if: always()
+        run: ./scripts/accept-s9.sh
+
       # `test-results/`, no `playwright-report/`: el config no tiene reporter `html`, tiene
       # `list` + el censo de specs. Lo unico que queda en disco tras una falla son los traces de
       # `trace: 'retain-on-failure'`, y van a `e2e/test-results/`. La ruta anterior
