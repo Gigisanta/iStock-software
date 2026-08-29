@@ -26,10 +26,13 @@
 #     100 se anuncie en pantalla) son de `qa-agent` y estaban en vuelo cuando esto se escribio.
 #     V2 de aca es la mitad ESTATICA de Q4 y no la reemplaza: mira que la condicion este escrita,
 #     no que el bloque renderizado la respete. Las dos hacen falta y por eso no se pisan.
-#  2. Que el host del encabezado coincida con el de los links. Estaba roto al escribir esto —el
-#     encabezado usaba `storefrontHost` de `wa.ts`, hardcodeado a `maat.work`, mientras los links
-#     salian de `storefrontBaseUrl`— y el arreglo es de `domain-agent`. No se gatea lo que otro
-#     esta arreglando: seria un rojo que no significa nada.
+#  2. VENCIDO EL MISMO DIA, y se corrige en vez de borrarse. Este punto decia que la coincidencia
+#     entre el host del encabezado y el de los links quedaba afuera del gate "porque `domain-agent`
+#     la esta arreglando". La arreglo (`bb4f820`), asi que la excusa caduco. Ahora la afirma V7 en
+#     su forma ESTRUCTURAL, y `SL27` de `packages/domain/src/stock-list.test.ts` en su forma de
+#     comportamiento. Que un docblock de gate haya envejecido en horas es el mismo defecto que
+#     `CLAUDE.md` §5 nombra para las citas: lo que se escribe al lado de trabajo en vuelo nace con
+#     fecha de vencimiento y hay que ir a buscarlo.
 #  3. Que el boton de copiar copie. Depende del navegador y del origen; V5 mira lo unico que se
 #     puede afirmar sin uno: que el fallo no sea silencioso.
 # ══════════════════════════════════════════════════════════════════════════════════════════════
@@ -151,6 +154,23 @@ fi
 # fuente que lo sabe. Lo que este bloque afirma es mas chico y aun asi hace falta: que la ruta
 # TENGA fila. Una ruta sin fila no es una ruta segura, es una ruta sobre la que nadie decidio — y
 # el canje demostro que eso se queda asi durante slices enteras.
+# ── V7 · el encabezado no puede volver a recalcular el host ───────────────────────────────────
+#
+# El defecto (`bb4f820`): `buildStockList` armaba el encabezado con `storefrontHost(slug)` —que
+# hardcodea `maat.work`— mientras los links salian de las `url` de las unidades. En e2e el mismo
+# texto decia `nortecel.maat.work` arriba y `127.0.0.1` abajo.
+#
+# `SL27` lo cubre por comportamiento y es la afirmacion principal. Esto es la estructural, y no es
+# redundancia gratuita: `SL27` prueba que HOY coinciden, V7 prueba que el armador no tiene de donde
+# sacar un segundo host. Es la diferencia entre "no se contradicen" y "no pueden contradecirse", y
+# la forma que eligio `domain-agent` fue justamente la segunda.
+sec 'V7 · `stock-list.ts` no importa `storefrontHost`: el host sale de los links o de ningun lado'
+if grep -nE '^import .*\bstorefrontHost\b' packages/domain/src/stock-list.ts >/dev/null 2>&1; then
+  no 'el armador de bloques volvio a importar `storefrontHost`: el encabezado puede recalcular un host distinto al de sus links'
+else
+  ok 'el armador no importa `storefrontHost` (el de `wa.ts` sigue existiendo para el mensaje de WA, que es otra pregunta)'
+fi
+
 sec 'V6 · `/app/lista` tiene fila declarada en guard-routes'
 if grep -qE '"/app/lista": *"resuming/initial"' scripts/guard-routes.sh; then
   ok 'la fila existe y no es `static/*` (el modo real lo verifica ./scripts/guard-routes.sh con un build)'
