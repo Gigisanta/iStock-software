@@ -78,6 +78,15 @@ async function StockContent() {
         Cargar equipo
       </Link>
 
+      {/* El import vive abajo del alta, no al lado: el camino de todos los días es cargar UN
+          equipo. Importar es lo que se hace una vez, el primer día, con la planilla vieja. */}
+      <Link
+        href="/app/stock/importar"
+        className="mt-2 flex min-h-[52px] w-full items-center justify-center rounded-xl border border-neutral-300 px-6 text-base font-semibold dark:border-neutral-700"
+      >
+        Importar desde CSV
+      </Link>
+
       {units.length === 0 ? (
         <div className="mt-4 rounded-2xl border border-dashed border-neutral-300 bg-white p-6 text-center dark:border-neutral-700 dark:bg-neutral-900">
           <p className="text-base font-semibold">Todavía no cargaste ningún equipo</p>

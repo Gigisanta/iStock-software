@@ -414,6 +414,22 @@ jobs:
         if: always()
         run: ./scripts/accept-s13.sh
 
+      # S10 va en ESTE job y no en el de arriba por una sola razon: su verificacion central
+      # (`scripts/probes/s10-import-csv.test.ts`, casos A y D) no es una asercion sobre el
+      # planner, es un CONTEO DE FILAS en `listings` y `listing_events` despues de un rechazo.
+      # Ninguna suite pura puede hacer esa afirmacion, y la medi: el mutante que saca la bitacora
+      # a su propia transaccion —o sea que rompe la atomicidad— deja los 110 tests de
+      # `_lib/csv-import` en VERDE y hace que el caso D cuente 3 unidades donde tiene que contar 0.
+      #
+      # El caso D ademas necesita la base por otro motivo: no existe archivo de entrada que
+      # produzca "las unidades entraron y la bitacora fallo". Eso se fabrica con un trigger
+      # inyectado sobre `listing_events`, acotado al tenant del fixture, y sin base no hay donde
+      # inyectarlo. Sin ese trigger, "es transaccional" es una frase sobre un `await` que nadie
+      # ejercita.
+      - name: aceptacion de S10 (import CSV, todo o nada, medido sobre las tablas)
+        if: always()
+        run: ./scripts/accept-s10.sh
+
       # `test-results/`, no `playwright-report/`: el config no tiene reporter `html`, tiene
       # `list` + el censo de specs. Lo unico que queda en disco tras una falla son los traces de
       # `trace: 'retain-on-failure'`, y van a `e2e/test-results/`. La ruta anterior

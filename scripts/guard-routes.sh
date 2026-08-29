@@ -103,6 +103,30 @@ const ESPERADO = {
   "/app/crear-negocio":     "resuming/initial",
   "/app/stock":             "resuming/initial",
   "/app/stock/nuevo":       "resuming/initial",
+  // `/app/stock/importar` (S10) entra con el MISMO modo que su hermana `nuevo`, y el modo es la
+  // decisión: las dos se quedan con su `<Suspense>` de tope y su shell en `◐`.
+  //
+  // `app-agent` la trajo con una pregunta que no era suya para responder, y tenía razón en
+  // preguntarla. El docblock de `nueva-unidad-form.tsx` afirmaba "el formulario anda sin
+  // JavaScript" y era falso por el punto 2 del bloque "RUTA BLOQUEANTE A PROPÓSITO" de
+  // `stock/[id]/fotos/page.tsx`: con `cacheComponents`, un `<Suspense>` de tope manda el contenido
+  // real adentro de un `<div hidden>` que recoloca un script inline, así que sin JS el form existe
+  // y no se ve. El texto ya se corrigió en los dos docblocks; lo que se decide acá es el boundary.
+  //
+  // **No se les pone `instant = false`, y el criterio es el que la propia excepción de `fotos`
+  // escribió**: vale para una ruta que (a) puede `notFound()` por un id que viene de la URL y
+  // (b) promete andar sin JavaScript. `nuevo` e `importar` no tienen (a) —ninguna toma un id— así
+  // que del par sólo queda (b), y (b) sola no paga el precio: bloquear el primer byte de las dos
+  // pantallas de carga más pesadas del panel (catálogo en una, plantilla en la otra) para
+  // habilitar un POST sin JS que nadie pidió. `CLAUDE.md` no promete progressive enhancement en
+  // ninguna parte; lo que sí prohíbe es una promesa escrita que el código no cumple, y eso se
+  // arregló donde estaba escrita.
+  //
+  // Lo que esta fila garantiza es lo contrario de lo que parece: NO garantiza que la pantalla ande
+  // sin JS —no anda—, garantiza que si alguien le agrega `instant = false` "para arreglarlo", el
+  // modo cambia a `blocking/empty` y este gate lo dice antes del merge, en vez de que el TTFB del
+  // panel se degrade en silencio.
+  "/app/stock/importar":    "resuming/initial",
   "/app/lista":             "resuming/initial",
   "/ingresar":              "resuming/initial",
   // Bloqueante a propósito (`export const instant = false`): sin esto el formulario de fotos no

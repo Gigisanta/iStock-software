@@ -14,9 +14,16 @@ import { initialNewUnitState, type NewUnitFormState } from './form-state';
  * (`PhotoInput`), que bloquea el submit mientras corre y lo deja bloqueado si la foto elegida no
  * entra: mandarla igual sería un 413 de Next en inglés.
  *
- * **El formulario anda sin JavaScript.** Es un `<form action={...}>` común: postea, la Server
- * Action valida todo de nuevo y responde. Lo que se pierde sin JS son las ayudas y el rescate de
- * la foto pesada, no el alta.  Por eso no hay `onSubmit` con `preventDefault` en ningún lado.
+ * **El markup postea sin JavaScript; la pantalla que lo contiene, hoy no.** Es un
+ * `<form action={...}>` común —no hay `onSubmit` con `preventDefault` en ningún lado— así que con
+ * un POST pelado la Server Action valida todo de nuevo y responde: lo que se pierde son las ayudas
+ * y el rescate de la foto pesada, no el alta. Lo que sí depende de JS es **ver** el formulario:
+ * `page.tsx` abre un `<Suspense>` de tope y con `cacheComponents` el contenido real viaja adentro
+ * de un `<div hidden>` que recoloca un script inline. Esto decía "anda sin JavaScript" a secas
+ * hasta el 2026-08-28, y era exactamente la promesa falsa que `stock/[id]/fotos/page.tsx` ya había
+ * diagnosticado para su propia pantalla (bloque "RUTA BLOQUEANTE A PROPÓSITO", punto 2) sin que
+ * nadie la corrigiera acá. Se corrige el texto y no el boundary: cambiar el modo de servido de
+ * esta ruta es una fila de `scripts/guard-routes.sh`, que es del LEAD.
  *
  * ── UNA foto, y el `name` es `photo` en singular ─────────────────────────────────────────────
  * Sin `multiple`. No es una simplificación de UI: el POST del alta pasa por el Routing Middleware
