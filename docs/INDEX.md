@@ -219,13 +219,15 @@ Lo que hay que saber sin leer nada más:
   y el `intent` es **obligatorio aunque admita `null`**, porque un parámetro opcional con default
   válido no distingue *"no me lo pasaron"* de *"me pasaron que no hay"* — que es exactamente lo que
   ya había roto S6 con `extras`. **Residuo abierto: `T18`** — en `main` (`f504d69`)
-  `cancelReservation()` todavía escribe `'cancelled'` a mano (`reserve-unit.ts:277`) en vez de
-  preguntarle a la tabla; hoy **acertaba por casualidad**, y ésa es justo la forma en que este defecto
-  vuelve. **Corregido el 2026-08-28: el arreglo está en `main` y este índice decía lo contrario.**
-  Los tres call sites derivan hoy de `transitionEffects(...).closesReservationAs` —
-  `reserve-unit.ts:281` (`398fff7`), `expire-reservations.ts:280` (`b9a8e05`) y
-  `publish-listing.ts:362` — y el censo de literales en la familia de reservas da **cero**. **T18
-  pasa a `doing`, no a `done`:** falta la corrida de `bash scripts/accept-s6.sh` por el LEAD.
+  `cancelReservation()` todavía escribía `'cancelled'` a mano en vez de preguntarle a la tabla; hoy
+  **acertaba por casualidad**, y ésa es justo la forma en que este defecto vuelve. **Corregido el
+  2026-08-28: el arreglo está en `main` y este índice decía lo contrario.** Los tres call sites
+  derivan hoy de `transitionEffects(...).closesReservationAs` — `reserve-unit.ts` ·
+  `cancelReservation` (`398fff7`), `expire-reservations.ts` (`b9a8e05`) y `publish-listing.ts` — y el
+  censo de literales en la familia de reservas da **cero**. **`T18` está `done` desde el 2026-08-28**,
+  con `bash scripts/accept-s6.sh` re-ejecutado por el LEAD (`S6: ACEPTADA`, exit 0); este índice decía
+  *"pasa a `doing`, no a `done`: falta la corrida"* y quedó vencido cuando la corrida ocurrió —
+  `SLICE_BOARD.md` §T18 es la fuente.
 - **S6.2 cerró** (`f504d69`) y es la corrección más cara de leer del día: `invalidateStorefrontUnit()`
   **purgaba la vidriera entera**. Reservar **una** unidad en un tenant de 60 equipos tiraba abajo las
   **61** páginas, porque **un tag de cache es un OR** y la ficha registraba también los tags de
@@ -316,7 +318,7 @@ Lo que hay que saber sin leer nada más:
   se renumeró `PRODUCT.md` a `Q<n>` porque las citas de gates y de código apuntan al board · **LEAD**),
   **T45** (la parte B de la `0009` no tiene auditoría cruzada en `tests/`: hoy la cubren los dos
   writers y un grep · `qa-agent`), **T46** (`TODO: después el RLS` es la única prohibición de
-  `CLAUDE.md` §2 sin test ni lint · **LEAD**), **T47** (`proxy.ts:363-365` explica una fragilidad del
+  `CLAUDE.md` §2 sin test ni lint · **LEAD**), **T47** (un comentario del `config.matcher` de `proxy.ts` explica una fragilidad del
   parser de matchers que ya no existe · `storefront-agent`), **T48** (el header de la `0009` se
   autotitula `S9`, y `S9` es otra slice · `db-agent`, **no lo toca `docs-keeper`: es su columna**) y
   **T49** (el soft cap del chat, 40 msgs/tenant/día, es una **cuota compartida**: una sola IP la agota
@@ -335,7 +337,7 @@ Lo que hay que saber sin leer nada más:
   tenant, la mitad que le falta a Q3 de `PRODUCT.md`) · **T18** (arriba) · **T19** (**corregido el
   2026-08-28: `packages/ai` EXISTE** en `main` desde `d42fac9`, con 19 `*.test.ts`; `ls packages/`
   devuelve `ai db domain media`. E7–E9 y S7 de `TEST_MATRIX.md` pasaron de 🔴 a 🟡 **pendiente de
-  censo** — que el paquete exista no es que la regla esté cubierta. **El censo se puede tomar y sigue sin tomarse, y tomarlo es auditar, no escribir**: por eso `T19` está en `todo` y no en `doing` (`CLAUDE.md` §0 regla 1, segunda precisión, commit `9d5d20a`)) · **T21–T25** (el barrido de reservas conserva para siempre la primera fila que
+  censo** — que el paquete exista no es que la regla esté cubierta. **El censo se puede tomar y sigue sin tomarse, y tomarlo es auditar, no escribir**: por eso `T19` está en `todo` y no en `doing` (`CLAUDE.md` §0 regla 1, segunda precisión, commit `1414302`)) · **T21–T25** (el barrido de reservas conserva para siempre la primera fila que
   falla: `T21` `db-agent` — columna `sweep_attempts` + `GRANT`; `T22`–`T24` `app-agent`; `T25` el gate,
   LEAD, en `scripts/probes/`. Hallazgo de `cost-auditor`, `COST.md` §2.5: nos cuesta USD 0,0015/mes
   por unidad trabada y al reseller USD 15–22 sobre un plan de 19). **Ojo con `T21`: sigue `doing` y
@@ -382,7 +384,7 @@ Lo que hay que saber sin leer nada más:
   dos capas, pagando la cara. **Dos brazos que no se implican:** el concepto nombrado en un archivo
   de `(storefront)` que **abre Postgres**, y la **forma** del contador (`onConflictDoUpdate`, `+ 1`
   dentro de un template de `sql`, `increment`) **aunque no se llame *rate limit***. El primero mira
-  la **línea** y no el archivo, porque `track/route.ts:34` abre Postgres y **explica la prohibición
+  la **línea** y no el archivo, porque el docblock de `track/route.ts` abre Postgres y **explica la prohibición
   en su docblock**: una regla que se encienda ahí castiga por documentarse, que es el `TODO`/`TODOS`
   de `guard-leaks.sh` otra vez. **Sin marcador de exención, a diferencia de W015**, y con motivo
   escrito: no existe la vidriera que legítimamente cuente en Postgres. **Falla cerrado** —
@@ -393,7 +395,7 @@ Lo que hay que saber sin leer nada más:
   chequeo?* y *¿lo corre alguien?* viene ***¿está en `main`?***. Verificado contra `main`, no contra
   el árbol: `git show HEAD:apps/web/scripts/web-lint.mjs | grep -c W016` → **4**.
 - **El residuo de T2 se cerró y este índice decía lo contrario:** *"la polaridad de W015 no es un
-  comando"*. Lo es desde `a015437` — **`scripts/web-lint.test.sh`**, con step en `ci.yml:156`, 45
+  comando"*. Lo es desde `a015437` — **`scripts/web-lint.test.sh`**, con step `polaridad de web-lint` en `ci.yml`, 45
   casos, **12 de ellos de W015** (incluidos *presencia no es filtro*, *proximidad no es alcance* y
   *schema ilegible = FAIL*). La pregunta abierta que el board le dejaba al LEAD queda contestada, y
   la observación que la sostenía —*"`ls apps/web/scripts/` devuelve un solo archivo"*— era cierta y
@@ -430,7 +432,7 @@ Lo que hay que saber sin leer nada más:
   encima se evaporaba porque `chk` no estaba importado) y M1 de `accept-s3.sh` (escaneaba
   comentarios y reprobaba prosa correcta). La parte mecánica la cierra **`scripts/guard-gates.sh`**
   —ningún gate invoca un helper que no tiene, ni redefine uno de `_lib.sh`— con step en
-  `ci.yml:101` y polaridad de **nueve** fixtures en `:105`. **`T20` cerró el 2026-08-28**: ese gate no
+  step `gate de los gates` de `ci.yml`, y polaridad de **nueve** fixtures en `guard-gates.test.sh`. **`T20` cerró el 2026-08-28**: ese gate no
   se auditaba a sí mismo y su mensaje contaba de más (21 impresos, 20 auditados); hoy `_lib.sh` entra
   a G1, G2 lo exceptúa **con motivo escrito**, y el número impreso es `AUDITADOS` —el de los archivos
   realmente medidos—, con ausencia de la línea = FAIL. **Corolario nuevo: un fix cuya reproducción
@@ -477,7 +479,7 @@ Lo que hay que saber sin leer nada más:
   2026-08-28 con `GUARD-FIREWALL: PASS`, **5 exceptuados con motivo** y **1 cubierto por regla**—, los 6 decididos, y una ruta nueva sin decidir lo rompe **el día que se crea** — pasó con
   el cron de S6, que entró a la allowlist **con motivo escrito** en vez de con una regla, porque un
   techo mal calibrado ahí apaga la expiración de reservas en silencio — y desde
-  `3199a78` **el gate y su polaridad tienen step en CI** (`ci.yml:118` y `:126`), así que eso dejó de
+  `3199a78` **el gate y su polaridad tienen step en CI** (steps `gate de reglas de WAF` y `polaridad del gate de WAF` de `ci.yml`), así que eso dejó de
   depender de que alguien se acuerde — *step declarado*, no ejecutado: ver el recuadro rojo al tope
   de §Estado. Y ninguna regla condiciona por `host`: se facturan los
   *allowed requests*, así que eso le cobraría peaje a cada pageview de vidriera, que

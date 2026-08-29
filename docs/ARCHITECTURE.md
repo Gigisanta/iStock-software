@@ -164,9 +164,9 @@ lo que cada página registró. Esta tabla es ese cruce, y **es contraintuitiva e
 
 | entrada de cache | tags que registra |
 |---|---|
-| **grilla** (`(storefront)/_lib/listings.ts:330`) | `storefront:{slug}` + `tenant-config:{slug}` |
-| **ficha, camino de HIT** (`:460` + `:502`) | `tenant-config:{slug}` + `listing:{uuid}` |
-| **ficha, camino de MISS** (`:460` + `:526`, vía `listingMiss()`) | `tenant-config:{slug}` + `storefront:{slug}` |
+| **grilla** (`(storefront)/_lib/listings.ts` · `getStorefrontCatalog`) | `storefront:{slug}` + `tenant-config:{slug}` |
+| **ficha, camino de HIT** (`getStorefrontListing`, sus dos `cacheTag()`) | `tenant-config:{slug}` + `listing:{uuid}` |
+| **ficha, camino de MISS** (`getStorefrontListing` → `listingMiss()`) | `tenant-config:{slug}` + `storefront:{slug}` |
 | **`page.tsx` de la ficha**, sus **dos** entradas (`generateMetadata` y el cuerpo) | los mismos, registrados **explícitamente** en cada rama |
 
 | emisor (panel) | tags que emite | cuándo |
@@ -192,7 +192,7 @@ lo que cada página registró. Esta tabla es ese cruce, y **es contraintuitiva e
 > **Trampa con dueño, que hay que leer antes de escribir la pantalla de ajustes (T12).**
 > Desde S6.2, `tenant-config:{slug}` es el **único** tag de alcance tenant que le queda a la ficha en
 > su camino de HIT, y `invalidateStorefront()` tiene **un solo caller en todo el repo**
-> (`create-tenant.ts:378`). El día que exista el editor de TC, **emitir `storefront:{slug}` a mano en
+> (`create-tenant.ts` · `createTenant`). El día que exista el editor de TC, **emitir `storefront:{slug}` a mano en
 > vez de llamar `invalidateStorefront()` actualiza la grilla y deja cada ficha del tenant con el TC
 > viejo hasta un año** (`cacheLife('max')`), sin error y sin log.
 

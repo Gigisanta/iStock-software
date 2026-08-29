@@ -191,7 +191,7 @@ un tipo que no compila no es lo mismo que un byte que no sale.
 ## `publicListingDTO` — allowlist explícita
 ```ts
 // ALLOWLIST. Agregar un campo acá es una decisión, no un accidente.
-// Verificado contra packages/domain/src/dto.ts:101-129 el 2026-08-28.
+// Verificado contra `PublicListingDTO` de packages/domain/src/dto.ts el 2026-08-28.
 {
   id, slug, title, modelDisplayName, storageGb, color,
   condition, conditionLabel,         // el enum Y su etiqueta de ficha ("usado excelente")
@@ -256,8 +256,8 @@ Ver skill `wa-payload`. Texto canónico en `CLAUDE.md` §1. Función pura en `pa
 (el path decía `packages/domain/wa.ts`, que no existe; corregido el 2026-08-28).
 
 **Dos registros de condición, a propósito** (ratificado por el LEAD en FASE 2, no reabrir): la ficha
-dice `usado excelente` (`CONDITION_LABELS`, `src/types.ts:52`) y el mensaje de WhatsApp dice
-`usado A` (`WA_CONDITION_LABELS`, `:69`). La ficha le habla a un comprador; el mensaje, a un reseller
+dice `usado excelente` (`src/types.ts` · `CONDITION_LABELS`) y el mensaje de WhatsApp dice
+`usado A` (`src/types.ts` · `WA_CONDITION_LABELS`). La ficha le habla a un comprador; el mensaje, a un reseller
 que usa esa jerga. **No es una inconsistencia y no se unifica.** Quien lo afirma sobre la misma
 página —único lugar donde los dos mapas se observan a la vez— es **M3b de `scripts/accept-s3.sh`**;
 los unit tests ven un mapa por vez y **seguirían verdes** si alguien los fusionara.
