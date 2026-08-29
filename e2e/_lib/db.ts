@@ -430,6 +430,154 @@ export async function seedDraftUnit(unit: SeedDraftUnit): Promise<string> {
 }
 
 /**
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *  S9 · una unidad en el estado que el test necesite, y la que el trigger NO selló
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * `seedPublicUnit()` siembra siempre `available`, y el spec de la lista para estados necesita las
+ * cinco caras del mismo hecho —los tres estados públicos, un borrador y un lateral— para poder
+ * afirmar *qué* entra en el texto que el dueño pega en un estado de Instagram. Sin las que **no**
+ * entran, "sólo entran las públicas" es verde por vacío.
+ *
+ * ── El sello, que es donde estaban los dos agujeros ───────────────────────────────────────────
+ * La policy `listings_storefront_anon_select` y la query de `/app/lista` filtran por **dos** cosas
+ * a la vez: `status in (available, reserved, sold)` **y** `published_at is not null`. Con una
+ * siembra ingenua las dos condiciones son redundantes —un borrador recién insertado tampoco tiene
+ * sello— y entonces **cualquiera de las dos se puede borrar del código sin que un test se entere**.
+ * Lo medí: con la primera versión de este helper, sacarle a la query el filtro por estado dejaba
+ * los seis tests de la lista en verde. Por eso hay tres valores y no un booleano.
+ *
+ * - **`'trigger'`** (default) — no se menciona la columna y decide el trigger
+ *   `listings_stamp_published_at` (migración 0002): estado público ⇒ sella, borrador ⇒ `null`.
+ *   Es el camino normal del panel.
+ *
+ * - **`'kept'`** — la fila entra con `published_at` puesto **aunque el estado no sea público**.
+ *   No es un truco: es el caso más común del producto. El trigger dice, con todas las letras,
+ *   *"nunca lo borra: el histórico de publicación no se pierde porque una unidad haya vuelto a
+ *   `unavailable`"*. O sea que **el equipo que el dueño publicó y después bajó de la vidriera
+ *   queda con estado no público y sello puesto**, y la única cosa que lo mantiene fuera de la
+ *   lista es el filtro por estado. Se produce con un `insert` normal porque el trigger sólo
+ *   escribe cuando el estado es público.
+ *
+ * - **`'none'`** — la fila entra **sin** sello y en estado público, que es lo contrario: la única
+ *   cosa que la mantiene afuera es el `isNotNull(publishedAt)`. Por el camino normal no se puede
+ *   producir (el trigger sella al entrar), así que se planta con
+ *   `set local session_replication_role = replica`, que apaga los triggers **de esa transacción y
+ *   de ninguna otra** (`set local` muere en el commit): ninguna otra siembra de la suite pierde el
+ *   sellado. Es el mismo patrón de control negativo con el que `tests/rls-cross-tenant.test.ts`
+ *   planta sus ataques antes de afirmar nada. Y tampoco es de laboratorio: así queda la tabla
+ *   después de un backfill, de una restauración parcial o de una réplica lógica.
+ *
+ * Con `'kept'` y `'none'` en el mismo fixture, las dos mitades del filtro tienen cada una una fila
+ * que sólo ella excluye, y borrar cualquiera de las dos pone el spec en rojo.
+ */
+export type UnitStamp = 'trigger' | 'kept' | 'none';
+
+export interface SeedUnitInState {
+  readonly tenantId: string;
+  readonly slug: string;
+  readonly title: string;
+  /** Enum `listing_status`. */
+  readonly status: string;
+  /** Qué pasa con `published_at`. Default `'trigger'`. Ver el docblock: no es cosmético. */
+  readonly stamp?: UnitStamp;
+  readonly priceUsd?: number;
+}
+
+export async function seedUnitInState(unit: SeedUnitInState): Promise<string> {
+  const q = sql();
+  const price = unit.priceUsd ?? 620;
+
+  if (unit.stamp === 'kept') {
+    // El trigger no toca la fila porque el estado no es público: el sello entra tal cual.
+    const kept = await q<{ id: string }[]>`
+      insert into public.listings (tenant_id, slug, kind, title, condition, price_usd, qty,
+                                   status, published_at)
+      values (${unit.tenantId}::uuid, ${unit.slug}, 'unit', ${unit.title},
+              'used_excellent'::listing_condition, ${price}, 1,
+              ${unit.status}::listing_status, now())
+      returning id
+    `;
+    const id = kept[0]?.id;
+    if (id === undefined) throw new Error(`no se pudo sembrar la unidad bajada ${unit.slug}`);
+    return id;
+  }
+
+  if (unit.stamp === 'none') {
+    const planted = await q.begin(async (tx) => {
+      await tx`set local session_replication_role = replica`;
+      return tx<{ id: string }[]>`
+        insert into public.listings (tenant_id, slug, kind, title, condition, price_usd, qty,
+                                     status, published_at)
+        values (${unit.tenantId}::uuid, ${unit.slug}, 'unit', ${unit.title},
+                'used_excellent'::listing_condition, ${price}, 1,
+                ${unit.status}::listing_status, null)
+        returning id
+      `;
+    });
+    const id = (planted as unknown as { id: string }[])[0]?.id;
+    if (id === undefined) throw new Error(`no se pudo plantar la unidad sin sellar ${unit.slug}`);
+    return id;
+  }
+
+  const rows = await q<{ id: string }[]>`
+    insert into public.listings (tenant_id, slug, kind, title, condition, price_usd, qty, status)
+    values (${unit.tenantId}::uuid, ${unit.slug}, 'unit', ${unit.title},
+            'used_excellent'::listing_condition, ${price}, 1, ${unit.status}::listing_status)
+    returning id
+  `;
+  const id = rows[0]?.id;
+  if (id === undefined) throw new Error(`no se pudo sembrar la unidad ${unit.slug} (${unit.status})`);
+  return id;
+}
+
+/**
+ * `count` unidades publicadas, en **una** sentencia.
+ *
+ * Existe para el spec del techo de la lista, que necesita cruzar `STOCK_LIST_MAX_UNITS`: 101
+ * inserts de a uno son 101 round-trips para producir decorado que el test no mira de a uno. Lo que
+ * el test mira es el número que la pantalla dice, y para eso las filas sólo tienen que existir,
+ * estar publicadas y ser del tenant.
+ *
+ * Los dos límites van casteados a `int` **a propósito**: `postgres.js` manda los parámetros sin
+ * tipo, y `generate_series(unknown, unknown)` es ambiguo para Postgres (hay overloads de `int`,
+ * `bigint`, `numeric` y `timestamp`), así que sin el cast la siembra muere con `function
+ * generate_series(unknown, unknown) is not unique` y el spec acusa a la pantalla por un defecto
+ * del arnés.
+ *
+ * `from` deja empezar la numeración donde terminó la siembra anterior: el spec siembra en dos
+ * tandas a propósito (abajo del techo y arriba del techo) para medir las dos polaridades del aviso
+ * sobre el mismo negocio.
+ */
+export async function seedManyPublicUnits(
+  tenantId: string,
+  count: number,
+  from = 1,
+): Promise<void> {
+  if (count <= 0) return;
+  const q = sql();
+  await q`
+    insert into public.listings (tenant_id, slug, kind, title, condition, price_usd, qty, status)
+    select ${tenantId}::uuid, 'qa-masivo-' || i, 'unit', 'iPhone 12 64 Azul ' || i,
+           'used_excellent'::listing_condition, 620, 1, 'available'
+    from generate_series(${from}::int, ${from + count - 1}::int) as i
+  `;
+}
+
+/** Estado y `published_at` de una unidad, para que un spec pueda probar que su fixture es el que dice. */
+export async function listingStampRow(
+  listingId: string,
+): Promise<{ readonly status: string; readonly publishedAt: Date | null } | null> {
+  const q = sql();
+  const rows = await q<{ status: string; published_at: Date | null }[]>`
+    select status, published_at from public.listings where id = ${listingId}::uuid limit 1
+  `;
+  const row = rows[0];
+  if (row === undefined) return null;
+  return { status: row.status, publishedAt: row.published_at };
+}
+
+/**
  * Una fila de `listing_photos` con keys **con la forma pública real** (`v1/{ab}/{sha256_32}.webp`)
  * pero **sin bytes detrás**.
  *

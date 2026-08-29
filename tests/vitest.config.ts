@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitest/config';
 
 /**
@@ -6,6 +7,11 @@ import { defineConfig } from 'vitest/config';
  * paquete; acá vive lo que se rompe *entre* dos paquetes y no le duele a ninguno de los dos.
  */
 export default defineConfig({
+  resolve: {
+    alias: {
+      'server-only': fileURLToPath(new URL('./_lib/server-only-stub.ts', import.meta.url)),
+    },
+  },
   test: {
     include: ['**/*.test.ts'],
     exclude: ['node_modules/**'],
