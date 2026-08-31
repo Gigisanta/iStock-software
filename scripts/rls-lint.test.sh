@@ -93,28 +93,28 @@ caso 'customer_name escribible en OTRA tabla sigue siendo hallazgo' \
 printf '\n\033[1m── el costo del dueno no se aflojo con la PII del visitante ──\033[0m\n'
 
 caso 'offer_usd metido en el INSERT de nueve columnas' \
-  "sed -i '' 's/\"notes\") ON TABLE \"tradein_leads\"/\"notes\", \"offer_usd\") ON TABLE \"tradein_leads\"/' \"\$T/drizzle/\$SQL8\"" \
+  "sed -i.bak 's/\"notes\") ON TABLE \"tradein_leads\"/\"notes\", \"offer_usd\") ON TABLE \"tradein_leads\"/' \"\$T/drizzle/\$SQL8\" && rm -f \"\$T/drizzle/\$SQL8.bak\"" \
   'columna prohibida en un GRANT a anon: tradein_leads\.offer_usd' \
   'columna SENSITIVE en un GRANT a anon: tradein_leads\.offer_usd' \
   'el privilegio de escritura de anon sobre tradein_leads es'
 
 caso 'internal_notes metido en el INSERT' \
-  "sed -i '' 's/\"notes\") ON TABLE \"tradein_leads\"/\"notes\", \"internal_notes\") ON TABLE \"tradein_leads\"/' \"\$T/drizzle/\$SQL8\"" \
+  "sed -i.bak 's/\"notes\") ON TABLE \"tradein_leads\"/\"notes\", \"internal_notes\") ON TABLE \"tradein_leads\"/' \"\$T/drizzle/\$SQL8\" && rm -f \"\$T/drizzle/\$SQL8.bak\"" \
   'columna prohibida en un GRANT a anon: tradein_leads\.internal_notes' \
   'columna SENSITIVE en un GRANT a anon: tradein_leads\.internal_notes'
 
 printf '\n\033[1m── la allowlist de nueve columnas es igualdad EXACTA ──\033[0m\n'
 
 caso 'una columna de MENOS (notes fuera del GRANT)' \
-  "sed -i '' 's/, \"notes\") ON TABLE \"tradein_leads\"/) ON TABLE \"tradein_leads\"/' \"\$T/drizzle/\$SQL8\"" \
+  "sed -i.bak 's/, \"notes\") ON TABLE \"tradein_leads\"/) ON TABLE \"tradein_leads\"/' \"\$T/drizzle/\$SQL8\" && rm -f \"\$T/drizzle/\$SQL8.bak\"" \
   'el privilegio de escritura de anon sobre tradein_leads es'
 
 caso 'status metido en el GRANT (el visitante no elige su estado)' \
-  "sed -i '' 's/\"notes\") ON TABLE \"tradein_leads\"/\"notes\", \"status\") ON TABLE \"tradein_leads\"/' \"\$T/drizzle/\$SQL8\"" \
+  "sed -i.bak 's/\"notes\") ON TABLE \"tradein_leads\"/\"notes\", \"status\") ON TABLE \"tradein_leads\"/' \"\$T/drizzle/\$SQL8\" && rm -f \"\$T/drizzle/\$SQL8.bak\"" \
   'el privilegio de escritura de anon sobre tradein_leads es'
 
 caso 'id metido en el GRANT (sale de su default, no se forja)' \
-  "sed -i '' 's/\"notes\") ON TABLE \"tradein_leads\"/\"notes\", \"id\") ON TABLE \"tradein_leads\"/' \"\$T/drizzle/\$SQL8\"" \
+  "sed -i.bak 's/\"notes\") ON TABLE \"tradein_leads\"/\"notes\", \"id\") ON TABLE \"tradein_leads\"/' \"\$T/drizzle/\$SQL8\" && rm -f \"\$T/drizzle/\$SQL8.bak\"" \
   'tradein_leads\.id no puede estar en un privilegio de escritura de anon'
 
 printf '\n\033[1m── las dos mitades: GRANT sin policy y policy sin GRANT ──\033[0m\n'

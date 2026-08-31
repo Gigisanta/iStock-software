@@ -81,7 +81,9 @@ _buscar() { local re="$1"; shift
   while IFS= read -r line; do
     [ -z "$line" ] && continue
     f="${line%%:*}"
-    git check-ignore -q "$f" 2>/dev/null && continue
+    # --no-index hace que el filtro sea estable también si el archivo ya está trackeado:
+    # lo que importa acá es la regla de ignore, no el estado del índice.
+    git check-ignore --no-index -q "$f" 2>/dev/null && continue
     kept="${kept}${line}"$'\n'
   done <<< "$o"
   printf '%s' "$kept"; }

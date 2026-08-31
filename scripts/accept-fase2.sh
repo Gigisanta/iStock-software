@@ -111,9 +111,9 @@ TOPUBLIC=$(psql -d "$DB" -tAc "select tablename||'.'||policyname from pg_policie
 # La auditoria de referencia es R6c de `tests/rls-cross-tenant.test.ts` (`qa-agent`), que fija
 # ademas los GRANT por COLUMNA: `anon` inserta `tenant_id`, `listing_id` y `source`, nunca `id`
 # ni `created_at`. Este gate es el filo grueso, el que corre sin runner de tests.
-ANONWRITE_OK='wa_click_events.wa_click_events_storefront_insert (INSERT)'
+ANONWRITE_OK='tradein_leads.tradein_leads_storefront_insert (INSERT) wa_click_events.wa_click_events_storefront_insert (INSERT)'
 ANONWRITE=$(psql -d "$DB" -tAc "select tablename||'.'||policyname||' ('||cmd||')' from pg_policies where schemaname='public' and 'anon' = any(roles) and cmd <> 'SELECT' order by 1" 2>/dev/null | tr '\n' ' ' | sed 's/ *$//')
-[ "$ANONWRITE" = "$ANONWRITE_OK" ] && ok "ADR-005: la UNICA escritura de anon es el beacon del click de WA (S4)" \
+[ "$ANONWRITE" = "$ANONWRITE_OK" ] && ok "ADR-005: las UNICAS escrituras de anon son el canje público y el beacon de WA (S4/S8)" \
   || no "las escrituras de anon no son las declaradas: [$ANONWRITE] != [$ANONWRITE_OK]"
 ANONUD=$(psql -d "$DB" -tAc "select tablename||'.'||policyname||' ('||cmd||')' from pg_policies where schemaname='public' and 'anon' = any(roles) and cmd in ('UPDATE','DELETE','ALL')" 2>/dev/null | tr '\n' ' ')
 [ -z "$(echo "$ANONUD" | tr -d ' ')" ] && ok "ADR-005: anon no tiene UPDATE/DELETE/ALL, y no hay lista que lo permita" \

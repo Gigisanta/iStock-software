@@ -95,8 +95,9 @@ none "margen no se muestra en ninguna pantalla del panel" \
      "\bmargin\b" \
      "apps/web/app/(app)/app/(panel)" --include='*.tsx'
 chk "notas internas sólo aparecen en la ficha de canje del owner" \
-    "! grep -rlE '\\binternal_?[Nn]otes\\b' 'apps/web/app/(app)/app/(panel)' --include='*.tsx' \
-       | grep -vF 'apps/web/app/(app)/app/(panel)/canjes/[id]/page.tsx' | grep -q ."
+    "! { grep -rnE '\\binternal_?[Nn]otes\\b' 'apps/web/app/(app)/app/(panel)' --include='*.tsx' \
+       | grep -vF 'apps/web/app/(app)/app/(panel)/canjes/[id]/page.tsx' \
+       | grep -vE ':[0-9]+:[[:space:]]*(//|\\*|/\\*)' | grep -q .; }"
 chk "la nota interna está detrás de canSeeOffer" \
     "grep -qE 'lead\\.canSeeOffer && lead\\.internalNotes' \
        'apps/web/app/(app)/app/(panel)/canjes/[id]/page.tsx'"
@@ -185,13 +186,17 @@ fi
 #     (`archivo.test.ts (13 tests | 4 skipped)`), que repite el mismo skip. Sumar las dos da el
 #     doble: me paso en la primera version de la regla de skips, dijo 8 con 4 reales.
 RESUMEN_RE='Tests +[0-9]+ (passed|failed|skipped)'
-RESUM=$(grep -cE "$RESUMEN_RE" /tmp/f3-test.log 2>/dev/null || echo 0)
+# Vitest emite ANSI en CI aunque el runner lo muestre como texto plano. Se limpia una vez para
+# que el censo no confunda "no pude leer el resumen" con "hay cero resúmenes".
+sed $'s/\\033\\[[0-9;]*m//g' /tmp/f3-test.log > /tmp/f3-test-clean.log
+RESUM=$(grep -cE "$RESUMEN_RE" /tmp/f3-test-clean.log 2>/dev/null || true)
+RESUM=${RESUM:-0}
 if [ "$RESUM" -lt "$PAQ_CON_TEST" ]; then
   no "solo $RESUM de $PAQ_CON_TEST paquetes con tests reportaron un resumen de vitest: alguno no midio nada"
   grep -E 'test\$|Scope:' /tmp/f3-test.log | sed 's/^/        /' | head -8
 else
   ok "los $PAQ_CON_TEST paquetes con tests reportaron resumen"
-  TOT=$(grep -E "$RESUMEN_RE" /tmp/f3-test.log | grep -oE '[0-9]+ passed' | grep -oE '^[0-9]+' | paste -sd+ - | bc)
+  TOT=$(grep -E "$RESUMEN_RE" /tmp/f3-test-clean.log | grep -oE '[0-9]+ passed' | grep -oE '^[0-9]+' | paste -sd+ - | bc)
   ok "tests corridos en total: ${TOT:-0}"
   # ── Skips ──────────────────────────────────────────────────────────────────────────────────
   # Esta regla decia "cero tests skipeados: los drivers mock existen, no hay excusa" y RECHAZABA
@@ -214,7 +219,7 @@ else
   # una fila de board.
   SKIPS_AUTORIZADOS=4
   # Solo las lineas de RESUMEN (ver `RESUMEN_RE` arriba), nunca las de cada archivo.
-  VISTOS=$(grep -E "$RESUMEN_RE" /tmp/f3-test.log 2>/dev/null \
+  VISTOS=$(grep -E "$RESUMEN_RE" /tmp/f3-test-clean.log 2>/dev/null \
              | grep -oE '[0-9]+ skipped' | grep -oE '^[0-9]+' | paste -sd+ - | bc)
   VISTOS=${VISTOS:-0}
   DECL=$(grep -rn 'it\.skip\|describe\.skip\|test\.skip' apps/web packages tests \
@@ -224,7 +229,7 @@ else
               | grep 'expect\.unreachable' | grep -cvE "B[1-6]:")
   if [ "$VISTOS" -ne "$SKIPS_AUTORIZADOS" ]; then
     no "tests skipeados: $VISTOS, autorizados: $SKIPS_AUTORIZADOS (el numero se clava en este archivo)"
-    grep -iE 'skipped' /tmp/f3-test.log | sed 's/^/        /' | head -3
+    grep -iE 'skipped' /tmp/f3-test-clean.log | sed 's/^/        /' | head -3
   elif [ "$DECL" -ne "$SKIPS_AUTORIZADOS" ]; then
     no "vitest reporto $VISTOS skips pero en el arbol hay $DECL \`it.skip(\`: alguno se skipea de otra forma"
   elif [ "$SIN_ANCLA" -ne 0 ]; then
@@ -251,7 +256,7 @@ done
 # `next build` es el unico momento en que se valida cacheComponents + 'use cache' de verdad.
 # Un 'use cache' mal puesto no lo ve ni typecheck ni vitest: lo ve el build, o produccion.
 sec "Global · next build (valida cacheComponents y 'use cache')"
-if pnpm --filter @istock/web -s exec next build >/tmp/f3-build.log 2>&1; then
+if pnpm --filter @istock/web -s exec next build --webpack >/tmp/f3-build.log 2>&1; then
   ok "next build"
   grep -E "Route \(app\)|○|●|ƒ" /tmp/f3-build.log | head -20 | sed 's/^/        /'
 else

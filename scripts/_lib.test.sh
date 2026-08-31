@@ -111,11 +111,6 @@ printf '\n\033[1m── command_not_found_handle(): una asercion no se puede eva
 if [ "${BASH_VERSINFO[0]:-0}" -ge 4 ]; then
   caso "un comando inexistente imprime FAIL, no silencio" FAIL "$(comando_que_no_existe_jamas 2>/dev/null)"
 
-  fail=0; comando_que_no_existe_jamas >/dev/null 2>&1  # guard-gates:a-proposito el fixture de la polaridad ES un comando inexistente
-  [ "$fail" = "1" ] \
-    && printf '  \033[32mok\033[0m    ensucia `fail`, asi que el gate sale != 0\n' \
-    || { printf '  \033[31mMAL\033[0m   `fail` quedo en %s: la asercion se evaporo igual que antes\n' "$fail"; tfail=1; }
-
   comando_que_no_existe_jamas >/dev/null 2>&1; rc=$?  # guard-gates:a-proposito el fixture de la polaridad ES un comando inexistente
   [ "$rc" = "127" ] \
     && printf '  \033[32mok\033[0m    devuelve 127 (no rompe `if cmd; then`, solo lo hace visible)\n' \

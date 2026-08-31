@@ -56,7 +56,8 @@ correr() { # correr <exit esperado> <titulo>
 
 SHA_VIVO=$(git rev-parse --short HEAD)
 # Commit REAL sin ninguna ref apuntandolo: `cat-file` lo reconoce, `merge-base` lo rechaza.
-SHA_MUERTO=$(git commit-tree "HEAD^{tree}" -m 'fixture T55: commit real fuera de main' </dev/null 2>/dev/null)
+SHA_MUERTO=$(git -c user.name='CI fixture' -c user.email='ci-fixture@example.invalid' \
+  commit-tree "HEAD^{tree}" -m 'fixture T55: commit real fuera de main' </dev/null 2>/dev/null)
 if [ -z "$SHA_MUERTO" ]; then
   echo "no se pudo crear el commit huerfano del fixture: sin el, el caso 5 no prueba nada" >&2
   exit 2

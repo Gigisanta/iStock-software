@@ -141,9 +141,9 @@ fi
 
 printf '\n\033[1m── la vidriera es publica, cacheada y de costo acotado\033[0m\n'
 
-nuevo; sed -i '' '1i\
-'"'"'use client'"'"';
-' "$T/w/app/(storefront)/s/[slug]/page.tsx"
+nuevo; ap 'app/(storefront)/s/[slug]/page.tsx' <<'EOF'
+'use client';
+EOF
 caso FIRES W001 "'use client' en la vidriera: JS de datos al visitante"
 
 nuevo; fx 'app/(storefront)/error.tsx' <<'EOF'
