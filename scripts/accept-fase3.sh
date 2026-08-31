@@ -82,13 +82,24 @@ chk "hay navegacion inferior (mobile-first, CLAUDE.md 0.11)" \
 # esta contando ocurrencias de un identificador.
 #
 # El invariante tiene tres partes, y ninguna es "la palabra no aparece":
-#   A. `margin` e `internal_notes` no se le muestran a NADIE en el panel. No cambia.
+#   A. `margin` no se muestra a NADIE en el panel; `internal_notes` sólo puede mostrarse al owner,
+#      detrás del discriminante `canSeeOffer`, y nunca al seller.
 #   B. el costo no viaja a un componente CLIENTE, salvo el alta: ahi lo escribe el dueno.
 #   C. toda lectura de `cost_usd` de la base esta condicionada por el rol `owner`.
 # C es la que muerde: es la que va a fallar el dia que alguien sume el costo a una query nueva.
-none "margen y notas internas no se muestran en ninguna pantalla del panel" \
-     "\b(margin|internal_?[Nn]otes)\b" \
+# `internalNotes` tiene una única excepción legítima: el owner ve la nota interna del canje en su
+# ficha, y la unión de `loadTradeinLead()` hace que el seller ni siquiera pueda leer esa propiedad.
+# Se mantiene una allowlist de archivo estrecha y una aserción separada del discriminante; si la
+# nota aparece en otra pantalla o se quita el guard, el gate vuelve a rojo.
+none "margen no se muestra en ninguna pantalla del panel" \
+     "\bmargin\b" \
      "apps/web/app/(app)/app/(panel)" --include='*.tsx'
+chk "notas internas sólo aparecen en la ficha de canje del owner" \
+    "! grep -rlE '\\binternal_?[Nn]otes\\b' 'apps/web/app/(app)/app/(panel)' --include='*.tsx' \
+       | grep -vF 'apps/web/app/(app)/app/(panel)/canjes/[id]/page.tsx' | grep -q ."
+chk "la nota interna está detrás de canSeeOffer" \
+    "grep -qE 'lead\\.canSeeOffer && lead\\.internalNotes' \
+       'apps/web/app/(app)/app/(panel)/canjes/[id]/page.tsx'"
 # El mismo principio que la regla de `httpMetadata` de mas abajo, y llego tarde: **el comentario que
 # explica por que NO hay input de costo no es un input de costo.** El 2026-08-28 esta regla marco
 # `stock/_ui/sell-form.tsx`, cuyos tres unicos hits son el docblock que dice, textual, que un input

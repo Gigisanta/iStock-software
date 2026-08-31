@@ -83,9 +83,9 @@ afterAll(async () => {
 
 describe('S11 · lista de stock del seller', () => {
   it('el tipo seller no declara una propiedad de costo', () => {
-    const sellerShape = null as unknown as SellerUnitRow;
-    // @ts-expect-error El costo no forma parte del payload ni del tipo del seller.
-    void sellerShape.costUsdCents;
+    const sellerHasCost: 'costUsdCents' extends keyof SellerUnitRow ? true : false = false;
+
+    expect(sellerHasCost).toBe(false);
   });
 
   it('no serializa costo, margen ni sensibles, incluso para un lote qty > 1', async () => {
