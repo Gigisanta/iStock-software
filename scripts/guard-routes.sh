@@ -133,6 +133,13 @@ const ESPERADO = {
   // funciona sin JavaScript, porque todo el contenido viaja escondido detrás del swap de streaming.
   "/app/stock/[id]/fotos":  "blocking/empty",
 
+  // Billing autenticado. La pantalla puede usar el shell PPR; el POST que crea la suscripcion
+  // y el callback OAuth son dinamicos porque dependen de la sesion y de la respuesta externa.
+  "/billing":                  "resuming/initial",
+  "/billing/suscribirse":      "resuming/initial",
+  "/billing/subscribe":        "dynamic",
+  "/api/auth/callback":         "dynamic",
+
   // Beacon del click de WhatsApp (S4). `dynamic` es el unico valor aceptable y no por performance:
   // la ruta ESCRIBE una fila. Una ruta que escribe y aparece prerenderizada significa que se ejecuto
   // en build time, con el tenant equivocado o con ninguno.
