@@ -280,11 +280,9 @@ describe('d · el backfill: las unidades que YA venían de un canje no quedaron 
     expect(r[0]?.n).toBe('0');
   });
 
-  it('el backfill ata por `tenant_id` ADEMÁS de por `id`, y por eso no puede cruzar tenants', async () => {
-    // `created_listing_id` es una FK sin tenant (0008 lo documenta), así que un valor cruzado es
-    // representable. El `and t.tenant_id = l.tenant_id` del UPDATE de 0009 es lo que hace que un
-    // dato mal cargado no arrastre la unidad de otro reseller. Se prueba corriendo la MISMA
-    // sentencia sobre un cruce fabricado y midiendo que no toque nada.
+  it('la FK compuesta rechaza un `created_listing_id` de otro tenant', async () => {
+    // Antes 0010 el vínculo sólo era por `id` y un cruce era representable. Ahora la base lo
+    // rechaza en el INSERT, antes de que un backfill pueda arrastrar una unidad ajena.
     const otro = '00000000-0000-4000-9006-000000000002';
     const cruzado = '00000000-0000-4000-9006-00000000000c';
     const lead = '00000000-0000-4000-9006-00000000000d';
@@ -295,21 +293,17 @@ describe('d · el backfill: las unidades que YA venían de un canje no quedaron 
       await admin.unsafe(`
         insert into listings (id, tenant_id, slug, title, condition, price_usd)
         values ('${cruzado}', '${otro}', 'ajena-1', 'iPhone ajeno', 'used_excellent', 500.00)`);
-      // El lead vive en el tenant del fixture y apunta a la unidad del OTRO.
-      await admin.unsafe(`
-        insert into tradein_leads (id, tenant_id, customer_name, customer_wa_phone, model_text, created_listing_id)
-        values ('${lead}', '${TENANT}', 'Cruzado', '5492995551234', 'iPhone 11', '${cruzado}')`);
-
-      await admin.unsafe(`
-        update listings l set acquisition_channel = 'trade_in'
-        from tradein_leads t
-        where t.created_listing_id = l.id and t.tenant_id = l.tenant_id
-          and l.acquisition_channel <> 'trade_in'`);
-
-      const r = await adminRows<{ c: string }>(
-        `select acquisition_channel as c from listings where id = '${cruzado}'`,
-      );
-      expect(r[0]?.c, 'el backfill arrastró la unidad de otro tenant').toBe('purchase');
+      // El lead vive en el tenant del fixture y apunta a la unidad del OTRO: 23503 es la FK,
+      // no una policy ni un unique global que exponga información.
+      let code = '';
+      try {
+        await admin.unsafe(`
+          insert into tradein_leads (id, tenant_id, customer_name, customer_wa_phone, model_text, created_listing_id)
+          values ('${lead}', '${TENANT}', 'Cruzado', '5492995551234', 'iPhone 11', '${cruzado}')`);
+      } catch (error) {
+        code = (error as { code?: string }).code ?? '';
+      }
+      expect(code).toBe('23503');
     } finally {
       await admin.unsafe(`delete from tradein_leads where id = '${lead}'`);
       await admin.unsafe(`delete from tenants where id = '${otro}'`);

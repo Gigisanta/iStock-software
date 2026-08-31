@@ -5,9 +5,8 @@ import type { Metadata } from 'next';
  * Precios. `PRODUCT.md` §Planes es la fuente: Trial 14 días · Base ~USD 19 · Negocio ~USD 35.
  *
  * El "~" no es cosmético y por eso está también en la pantalla. El precio final en pesos depende
- * de Mercado Pago Subscriptions, que sigue bloqueado en B3 (ADR-008 abierta), y publicar un número
- * exacto en pesos que después no se puede cobrar sería la promesa falsa más cara de todas: la que
- * el cliente descubre cuando ya cargó su stock.
+ * del plan de suscripción configurado en Mercado Pago; se confirma antes de pagar y no se inventa
+ * un tipo de cambio desde esta página.
  */
 
 export const metadata: Metadata = {
@@ -82,11 +81,10 @@ export default function PricingPage() {
         que atienden sin pagar de más.
       </p>
 
-      <div className="mt-6 rounded-2xl border border-amber-300 bg-amber-50 p-4 text-sm dark:border-amber-800/60 dark:bg-amber-950/30">
-        <strong className="font-semibold">Todavía no se puede pagar.</strong> Estamos construyendo
-        iStock y lo decimos acá y no en la letra chica: hoy podés crear tu cuenta y reservar el link
-        de tu vidriera. Las funciones de cada plan se van habilitando en las próximas semanas y esta
-        página se actualiza cuando pasa, no antes.
+      <div className="mt-6 rounded-2xl border border-emerald-300 bg-emerald-50 p-4 text-sm dark:border-emerald-800/60 dark:bg-emerald-950/30">
+        <strong className="font-semibold">Probá 14 días sin tarjeta.</strong> Después elegís Base o
+        Negocio y completás la suscripción en Mercado Pago. El monto final se muestra antes de
+        confirmar.
       </div>
 
       <div className="mt-10 grid gap-5 md:grid-cols-3">
@@ -126,14 +124,14 @@ export default function PricingPage() {
             </ul>
 
             <Link
-              href="/ingresar"
+              href={plan.id === 'trial' ? '/ingresar' : `/ingresar?plan=${plan.id}`}
               className={`mt-6 inline-flex items-center justify-center rounded-xl px-5 py-3 text-sm font-semibold ${
                 plan.highlighted
                   ? 'bg-neutral-900 text-white hover:bg-neutral-700 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200'
                   : 'border border-neutral-300 hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-900'
               }`}
             >
-              Empezar la prueba
+              {plan.id === 'trial' ? 'Empezar la prueba' : `Elegir ${plan.name}`}
             </Link>
           </article>
         ))}
@@ -144,8 +142,9 @@ export default function PricingPage() {
           <strong className="font-semibold text-neutral-900 dark:text-neutral-100">
             ¿Por qué los precios están en dólares con un “~” adelante?
           </strong>{' '}
-          Porque todavía no cerramos el cobro en pesos y no queremos publicar un número que después
-          no podamos sostener. Cuando esté, va a estar acá con el monto exacto.
+            Porque mostramos una referencia simple en USD y dejamos que Mercado Pago confirme el
+            monto local del plan antes de cobrar. Así el precio que ves al contratar no depende de
+            un número inventado en la vidriera.
         </p>
         <p>
           <strong className="font-semibold text-neutral-900 dark:text-neutral-100">

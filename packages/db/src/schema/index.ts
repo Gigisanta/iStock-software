@@ -8,7 +8,7 @@
  * | identidad (`tenants` por `id`, `users` por `auth.uid()` + membresía) | 2 | ✅ |
  * | catálogo **global** (`catalog_models`, `catalog_faqs`) | 2 | ❌ a propósito, ver `catalog.ts` |
  *
- * 19 tablas · 17 con RLS · 2 globales sin RLS y con `GRANT` de sólo lectura.
+ * 20 tablas · 18 con RLS · 2 globales sin RLS y con `GRANT` de sólo lectura.
  */
 
 export * from './enums';

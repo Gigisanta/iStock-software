@@ -14,7 +14,7 @@ import { moneyCents } from '../money';
 import { createdAt, pk, updatedAt } from './columns';
 import { tenantId } from './tenants';
 import { planTierEnum, subscriptionStatusEnum } from './enums';
-import { tenantPolicies } from './rls';
+import { ownerTenantPolicies } from './rls';
 
 export const subscriptions = pgTable(
   'subscriptions',
@@ -42,7 +42,9 @@ export const subscriptions = pgTable(
     index('subscriptions_tenant_idx').on(t.tenantId),
     uniqueIndex('subscriptions_tenant_key').on(t.tenantId),
     uniqueIndex('subscriptions_preapproval_key').on(t.providerPreapprovalId),
-    ...tenantPolicies('subscriptions'),
+    // MP/webhook es el único writer. El owner puede leer su estado; un seller no recibe
+    // proveedor, importe, referencia ni estado de facturación desde Postgres.
+    ...ownerTenantPolicies('subscriptions'),
   ],
 ).enableRLS();
 
@@ -67,6 +69,34 @@ export const entitlements = pgTable(
   (t) => [
     index('entitlements_tenant_idx').on(t.tenantId),
     uniqueIndex('entitlements_tenant_feature_key').on(t.tenantId, t.feature),
-    ...tenantPolicies('entitlements'),
+    // Los flags de acceso son control de billing. Sólo el owner puede consultarlos y ningún
+    // usuario autenticado los muta; el webhook y el seed usan service_role.
+    ...ownerTenantPolicies('entitlements'),
+  ],
+).enableRLS();
+
+/**
+ * Ledger idempotente del webhook de Mercado Pago. `provider_event_id` es global por proveedor:
+ * no lleva tenant en la clave única, porque el mismo aviso nunca puede aplicarse dos veces aunque
+ * el tenant del external_reference se resuelva de forma distinta.
+ */
+export const billingWebhookEvents = pgTable(
+  'billing_webhook_events',
+  {
+    id: pk(),
+    tenantId: tenantId(),
+    provider: text('provider').notNull().default('mercadopago'),
+    providerEventId: text('provider_event_id').notNull(),
+    topic: text('topic').notNull(),
+    action: text('action'),
+    resourceId: text('resource_id'),
+    receivedAt: timestamp('received_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('billing_webhook_events_tenant_idx').on(t.tenantId),
+    uniqueIndex('billing_webhook_events_provider_event_key').on(t.provider, t.providerEventId),
+    // No es una superficie del panel: las policies quedan explícitas, pero sólo service_role
+    // tiene GRANT DML. El owner podrá consultar auditoría cuando el operador se lo autorice.
+    ...ownerTenantPolicies('billing_webhook_events'),
   ],
 ).enableRLS();

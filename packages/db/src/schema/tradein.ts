@@ -10,7 +10,7 @@
  * MaatWork es encargado del tratamiento (ADR-009 §blocker legal).
  */
 
-import { check, index, integer, pgTable, text, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
+import { check, foreignKey, index, integer, pgTable, text, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 import { authUsers } from 'drizzle-orm/supabase';
 import { moneyCents } from '../money';
@@ -46,14 +46,23 @@ export const tradeinLeads = pgTable(
     internalNotes: text('internal_notes'),
 
     /** Unidad creada por `accept-to-stock`. `null` mientras el lead no se acepta. */
-    createdListingId: uuid('created_listing_id').references(() => listings.id, { onDelete: 'set null' }),
+    createdListingId: uuid('created_listing_id'),
     handledBy: uuid('handled_by').references(() => authUsers.id, { onDelete: 'set null' }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
   (t) => [
     index('tradein_leads_tenant_idx').on(t.tenantId),
+    // Target único para la FK compuesta de `tradein_checklists.tradein_lead_id`.
+    uniqueIndex('tradein_leads_tenant_id_key').on(t.tenantId, t.id),
     index('tradein_leads_tenant_status_idx').on(t.tenantId, t.status, t.createdAt),
+    foreignKey({
+      columns: [t.tenantId, t.createdListingId],
+      foreignColumns: [listings.tenantId, listings.id],
+      name: 'tradein_leads_tenant_created_listing_fk',
+    // `tenant_id` es NOT NULL: `SET NULL` sobre una FK compuesta no es válido sin nullear el
+    // tenant. El vínculo queda protegido y el caller debe resolverlo antes de borrar el listing.
+    }).onDelete('restrict'),
     // ── Tamaño y rango EN EL MOTOR (S8) ──────────────────────────────────────────────────────
     // Estos CHECK no duplican al Zod del borde: lo respaldan. La fila la escribe un ANÓNIMO
     // (`tradein_leads_storefront_insert`, abajo), así que el handler de la vidriera es la única
@@ -116,9 +125,7 @@ export const tradeinChecklists = pgTable(
   {
     id: pk(),
     tenantId: tenantId(),
-    tradeinLeadId: uuid('tradein_lead_id')
-      .notNull()
-      .references(() => tradeinLeads.id, { onDelete: 'cascade' }),
+    tradeinLeadId: uuid('tradein_lead_id').notNull(),
     itemKey: text('item_key').notNull(),
     itemLabel: text('item_label').notNull(),
     result: tradeinCheckResultEnum('result').notNull().default('na'),
@@ -129,7 +136,12 @@ export const tradeinChecklists = pgTable(
   (t) => [
     index('tradein_checklists_tenant_idx').on(t.tenantId),
     index('tradein_checklists_tenant_lead_idx').on(t.tenantId, t.tradeinLeadId),
-    uniqueIndex('tradein_checklists_lead_item_key').on(t.tradeinLeadId, t.itemKey),
+    uniqueIndex('tradein_checklists_lead_item_key').on(t.tenantId, t.tradeinLeadId, t.itemKey),
+    foreignKey({
+      columns: [t.tenantId, t.tradeinLeadId],
+      foreignColumns: [tradeinLeads.tenantId, tradeinLeads.id],
+      name: 'tradein_checklists_tenant_lead_fk',
+    }).onDelete('cascade'),
     ...tenantPolicies('tradein_checklists'),
   ],
 ).enableRLS();

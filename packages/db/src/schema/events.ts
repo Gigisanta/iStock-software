@@ -13,7 +13,7 @@
  */
 
 import { sql } from 'drizzle-orm';
-import { index, jsonb, pgTable, text, uuid } from 'drizzle-orm/pg-core';
+import { foreignKey, index, jsonb, pgTable, text, uuid } from 'drizzle-orm/pg-core';
 import { authUsers } from 'drizzle-orm/supabase';
 import { createdAt, pk } from './columns';
 import { tenantId } from './tenants';
@@ -26,9 +26,7 @@ export const listingEvents = pgTable(
   {
     id: pk(),
     tenantId: tenantId(),
-    listingId: uuid('listing_id')
-      .notNull()
-      .references(() => listings.id, { onDelete: 'cascade' }),
+    listingId: uuid('listing_id').notNull(),
     kind: listingEventKindEnum('kind').notNull(),
     fromStatus: listingStatusEnum('from_status'),
     toStatus: listingStatusEnum('to_status'),
@@ -42,6 +40,11 @@ export const listingEvents = pgTable(
   (t) => [
     index('listing_events_tenant_idx').on(t.tenantId),
     index('listing_events_tenant_listing_idx').on(t.tenantId, t.listingId, t.createdAt),
+    foreignKey({
+      columns: [t.tenantId, t.listingId],
+      foreignColumns: [listings.tenantId, listings.id],
+      name: 'listing_events_tenant_listing_fk',
+    }).onDelete('cascade'),
     ...tenantPolicies('listing_events'),
   ],
 ).enableRLS();
@@ -52,13 +55,20 @@ export const waClickEvents = pgTable(
     id: pk(),
     tenantId: tenantId(),
     /** `null` si el click salió del footer de la vidriera y no de una ficha. */
-    listingId: uuid('listing_id').references(() => listings.id, { onDelete: 'set null' }),
+    listingId: uuid('listing_id'),
     source: waClickSourceEnum('source').notNull(),
     createdAt: createdAt(),
   },
   (t) => [
     index('wa_click_events_tenant_idx').on(t.tenantId),
     index('wa_click_events_tenant_created_idx').on(t.tenantId, t.createdAt),
+    foreignKey({
+      columns: [t.tenantId, t.listingId],
+      foreignColumns: [listings.tenantId, listings.id],
+      name: 'wa_click_events_tenant_listing_fk',
+    // `tenant_id` es NOT NULL: `SET NULL` sobre una FK compuesta intentaría nullear también el
+    // tenant. Se conserva el dato y se bloquea el borrado del listing mientras haya clicks.
+    }).onDelete('restrict'),
     ...tenantPolicies('wa_click_events'),
     // ── La escritura de la vidriera anónima ────────────────────────────────────────────────
     // Dos condiciones, y las dos son `AND`:

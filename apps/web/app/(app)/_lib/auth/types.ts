@@ -1,8 +1,9 @@
 import 'server-only';
+import type { SelectedPlan } from './selected-plan';
 
 /**
- * Puerto de autenticación. **Una interfaz, dos drivers**: `supabase` (real, bloqueado en B2) y
- * `local` (cookie firmada + Postgres local, sólo desarrollo).
+ * Puerto de autenticación. **Una interfaz, dos drivers**: `supabase` (SSR real) y `local` (cookie
+ * firmada + Postgres local, sólo desarrollo).
  *
  * El puerto existe por una razón concreta, no por purismo: sin credenciales de Supabase el panel
  * tenía que quedar sin escribirse o escribirse contra un mock que después se tira. Con el puerto,
@@ -29,10 +30,13 @@ export interface AuthIdentity {
 
 export interface SignInInput {
   readonly email: string;
+  /** Plan elegido antes del login; sólo se usa para construir un callback cerrado. */
+  readonly selectedPlan: SelectedPlan | null;
 }
 
 export type SignInResult =
-  | { readonly ok: true; readonly identity: AuthIdentity }
+  | { readonly ok: true; readonly status: 'signed_in'; readonly identity: AuthIdentity }
+  | { readonly ok: true; readonly status: 'link_sent' }
   | { readonly ok: false; readonly code: AuthErrorCode; readonly message: string };
 
 export type AuthErrorCode =

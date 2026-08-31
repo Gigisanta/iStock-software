@@ -12,7 +12,7 @@
  */
 
 import { sql } from 'drizzle-orm';
-import { index, integer, pgTable, text, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
+import { foreignKey, index, integer, pgTable, text, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
 import { createdAt, pk, updatedAt } from './columns';
 import { tenantId } from './tenants';
 import { listings } from './listings';
@@ -23,9 +23,7 @@ export const listingPhotos = pgTable(
   {
     id: pk(),
     tenantId: tenantId(),
-    listingId: uuid('listing_id')
-      .notNull()
-      .references(() => listings.id, { onDelete: 'cascade' }),
+    listingId: uuid('listing_id').notNull(),
     sortOrder: integer('sort_order').notNull().default(0),
     alt: text('alt'),
 
@@ -50,7 +48,12 @@ export const listingPhotos = pgTable(
   (t) => [
     index('listing_photos_tenant_idx').on(t.tenantId),
     index('listing_photos_tenant_listing_idx').on(t.tenantId, t.listingId, t.sortOrder),
-    uniqueIndex('listing_photos_listing_sort_key').on(t.listingId, t.sortOrder),
+    uniqueIndex('listing_photos_listing_sort_key').on(t.tenantId, t.listingId, t.sortOrder),
+    foreignKey({
+      columns: [t.tenantId, t.listingId],
+      foreignColumns: [listings.tenantId, listings.id],
+      name: 'listing_photos_tenant_listing_fk',
+    }).onDelete('cascade'),
     ...tenantPolicies('listing_photos'),
     // La foto se ve si y sólo si SU listing se ve. El `exists` se evalúa con RLS puesta sobre
     // `listings`, o sea que hereda la policy de arriba: una foto de un borrador no existe para

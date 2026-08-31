@@ -10,9 +10,8 @@ import Link from 'next/link';
  * dice qué **no** hace. Por eso la sección "Lo que iStock no hace" existe y no se borra en el
  * primer sprint de conversión.
  *
- * El bloque de estado actual tampoco es humildad decorativa: hoy el panel deja crear la cuenta y
- * reservar el subdominio, y todavía no deja cargar equipos. Decir "cargá tu stock hoy" sería
- * exactamente la promesa falsa que la slice tiene prohibida.
+ * El bloque de estado actual tampoco es humildad decorativa: el panel deja crear la cuenta, cargar
+ * equipos y publicar la vidriera. La suscripción se completa fuera del sitio, en Mercado Pago.
  */
 
 const STEPS = [
@@ -51,7 +50,7 @@ const NOT_INCLUDED = [
   ['Facturación ARCA/AFIP', 'No emitimos ni un comprobante. Seguí con lo que usás hoy.'],
   ['WhatsApp Business API', 'El botón abre el WhatsApp normal. No mandamos mensajes por vos.'],
   ['Sincronización con MercadoLibre', 'No publicamos ni bajamos publicaciones de ML.'],
-  ['Carrito y cobro online', 'La venta la cerrás vos, como la cerrás ahora. Acá no se cobra nada.'],
+  ['Carrito y cobro online', 'La venta la cerrás vos por WhatsApp, como la cerrás ahora. La vidriera no cobra al cliente.'],
   ['Punto de venta / caja', 'No es un POS ni un sistema de taller.'],
   ['Landing a medida', 'La vidriera es la misma plantilla para todos. Un diseño propio se cotiza aparte.'],
 ] as const;
@@ -153,15 +152,14 @@ export default function MarketingHomePage() {
 
       <section className="mx-auto w-full max-w-5xl px-4 pb-16">
         <div className="rounded-2xl border border-amber-300 bg-amber-50 p-5 text-sm dark:border-amber-800/60 dark:bg-amber-950/30">
-          <h2 className="font-bold">En qué estado está iStock hoy</h2>
+          <h2 className="font-bold">Listo para empezar</h2>
           <p className="mt-2 text-neutral-700 dark:text-neutral-200">
-            Lo estamos construyendo y lo decimos de frente. Hoy podés crear tu cuenta y reservar el
-            link de tu vidriera. La carga de equipos, las fotos y la vidriera pública se van
-            habilitando en las próximas semanas, y te avisamos por mail cuando te toca.
+            Creás tu cuenta, cargás equipos con fotos y publicás tu vidriera en minutos. El cliente
+            ve la información completa y te escribe por WhatsApp con el mensaje ya armado.
           </p>
           <p className="mt-2 text-neutral-700 dark:text-neutral-200">
-            Mientras tanto no cobramos nada, y no porque sea una promoción: todavía no hay forma de
-            pagarnos. Cuando la haya, te lo vamos a decir antes, no después.
+            La prueba dura 14 días sin tarjeta. Cuando termina, elegís Base o Negocio y completás el
+            pago de forma segura en Mercado Pago; nunca recibimos datos de tu tarjeta.
           </p>
         </div>
       </section>

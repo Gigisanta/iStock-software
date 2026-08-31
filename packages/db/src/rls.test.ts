@@ -9,7 +9,7 @@
  * tenant corre contra Postgres real."* Con un solo proyecto Supabase para los 100 tenants, esto
  * no es un test de feature: es el test de que el producto se puede vender.
  *
- * Las 4 aserciones se corren sobre **las 15 tablas de negocio con `tenant_id`**, no sobre una de
+ * Las 4 aserciones se corren sobre **las 16 tablas tenant-scoped con `tenant_id`**, no sobre una de
  * muestra. Una tabla con la policy de `select` puesta y la de `delete` olvidada se ve idéntica a
  * una tabla bien hecha hasta el día que alguien borra el stock de otro.
  */
@@ -36,7 +36,7 @@ function ids(tenant: 'a' | 'b') {
   return {
     membership: n(1), location: n(2), fx: n(3), listing: n(4), photo: n(5), event: n(6),
     waClick: n(7), reservation: n(8), sale: n(9), lead: n(10), checklist: n(11),
-    thread: n(12), message: n(13), subscription: n(14), entitlement: n(15),
+    thread: n(12), message: n(13), subscription: n(14), entitlement: n(15), webhookEvent: n(16),
   };
 }
 
@@ -49,7 +49,7 @@ function insertsFor(tenantId: string, tenant: 'a' | 'b', userId: string, suffix 
   const i = ids(tenant);
   const u = (base: string) => (suffix === '' ? base : base.replace(/.{4}$/, suffix));
   return {
-    memberships: `insert into memberships (id, tenant_id, user_id, role) values ('${u(i.membership)}', '${tenantId}', '${userId}', 'seller')`,
+    memberships: `insert into memberships (id, tenant_id, user_id, role) values ('${u(i.membership)}', '${tenantId}', '${userId}', 'owner')`,
     locations: `insert into locations (id, tenant_id, name, address, hours) values ('${u(i.location)}', '${tenantId}', 'Local ${tenant}', 'Calle 1', '10 a 18')`,
     fx_settings: `insert into fx_settings (id, tenant_id, ars_per_usd) values ('${u(i.fx)}', '${tenantId}', 1487.50)`,
     listings: `insert into listings (id, tenant_id, slug, title, condition, price_usd, status) values ('${u(i.listing)}', '${tenantId}', 'equipo-${tenant}${suffix}', 'iPhone de ${tenant}', 'used_excellent', 600.00, 'available')`,
@@ -64,6 +64,7 @@ function insertsFor(tenantId: string, tenant: 'a' | 'b', userId: string, suffix 
     chatbot_messages: `insert into chatbot_messages (id, tenant_id, thread_id, role, content) values ('${u(i.message)}', '${tenantId}', '${i.thread}', 'user', 'hola')`,
     subscriptions: `insert into subscriptions (id, tenant_id) values ('${u(i.subscription)}', '${tenantId}')`,
     entitlements: `insert into entitlements (id, tenant_id, feature) values ('${u(i.entitlement)}', '${tenantId}', 'chatbot${suffix}')`,
+    billing_webhook_events: `insert into billing_webhook_events (id, tenant_id, provider_event_id, topic) values ('${u(i.webhookEvent)}', '${tenantId}', 'rls-${tenant}-${u(i.webhookEvent)}', 'subscription')`,
   };
 }
 
@@ -116,11 +117,11 @@ describe('RLS cruzado — las 4 aserciones de la skill, tabla por tabla', () => 
     listing_photos: 'photo', listing_events: 'event', wa_click_events: 'waClick',
     reservations: 'reservation', sales: 'sale', tradein_leads: 'lead',
     tradein_checklists: 'checklist', chatbot_threads: 'thread', chatbot_messages: 'message',
-    subscriptions: 'subscription', entitlements: 'entitlement',
+    subscriptions: 'subscription', entitlements: 'entitlement', billing_webhook_events: 'webhookEvent',
   };
 
-  it('cubre las 15 tablas de negocio con tenant_id', () => {
-    expect(TENANT_TABLES).toHaveLength(15);
+  it('cubre las 16 tablas tenant-scoped con tenant_id', () => {
+    expect(TENANT_TABLES).toHaveLength(16);
   });
 
   for (const table of TENANT_TABLES) {
@@ -145,11 +146,23 @@ describe('RLS cruzado — las 4 aserciones de la skill, tabla por tabla', () => 
       });
 
       it('tenant B NO puede ACTUALIZAR la fila de A (0 filas afectadas, sin error)', async () => {
+        if (table === 'billing_webhook_events') {
+          const failure = await sessionB.expectFailure(`update ${table} set topic = topic where id = '${rowA}'`);
+          expect(failure.code).toBe('42501');
+          expect(failure.message).toContain('permission denied');
+          return;
+        }
         const affected = await sessionB.affected(`update ${table} set tenant_id = tenant_id where id = '${rowA}'`);
         expect(affected).toBe(0);
       });
 
       it('tenant B NO puede BORRAR la fila de A (0 filas afectadas, sin error)', async () => {
+        if (table === 'billing_webhook_events') {
+          const failure = await sessionB.expectFailure(`delete from ${table} where id = '${rowA}'`);
+          expect(failure.code).toBe('42501');
+          expect(failure.message).toContain('permission denied');
+          return;
+        }
         const affected = await sessionB.affected(`delete from ${table} where id = '${rowA}'`);
         expect(affected).toBe(0);
       });

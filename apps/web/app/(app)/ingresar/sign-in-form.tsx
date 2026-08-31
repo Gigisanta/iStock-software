@@ -2,7 +2,8 @@
 
 import { useActionState } from 'react';
 import { signInAction } from '../_lib/auth/actions';
-import { initialAuthFormState } from '../_lib/auth/form-state';
+import { initialAuthFormStateForPlan } from '../_lib/auth/form-state';
+import type { SelectedPlan } from '../_lib/auth/selected-plan';
 
 /**
  * `"use client"` justificado: hay interacción real (submit con estado pendiente y error por
@@ -13,8 +14,17 @@ import { initialAuthFormState } from '../_lib/auth/form-state';
  * Action corre. Por eso el `disabled` del botón depende de `isPending` y no de un `useState`
  * propio: no hay estado que sincronizar.
  */
-export function SignInForm({ developmentDriver }: { developmentDriver: boolean }) {
-  const [state, formAction, isPending] = useActionState(signInAction, initialAuthFormState);
+export function SignInForm({
+  developmentDriver,
+  selectedPlan,
+}: {
+  developmentDriver: boolean;
+  selectedPlan: SelectedPlan | null;
+}) {
+  const [state, formAction, isPending] = useActionState(
+    signInAction,
+    initialAuthFormStateForPlan(selectedPlan),
+  );
 
   return (
     <form action={formAction} className="mt-8 space-y-4" noValidate>
@@ -44,13 +54,31 @@ export function SignInForm({ developmentDriver }: { developmentDriver: boolean }
         ) : null}
       </div>
 
+      <input type="hidden" name="plan" value={state.selectedPlan ?? ''} />
+      {state.selectedPlan === null ? null : (
+        <p className="rounded-xl border border-neutral-200 bg-neutral-50 px-4 py-3 text-sm dark:border-neutral-800 dark:bg-neutral-900">
+          Elegiste el plan {state.selectedPlan === 'base' ? 'Base' : 'Negocio'}. Después de entrar vas
+          a poder suscribirte.
+        </p>
+      )}
+
       <button
         type="submit"
         disabled={isPending}
         className="w-full rounded-xl bg-neutral-900 px-6 py-3.5 text-base font-semibold text-white disabled:opacity-60 dark:bg-white dark:text-neutral-900"
       >
-        {isPending ? 'Entrando…' : 'Entrar'}
+        {isPending ? 'Mandando link…' : state.status === 'link_sent' ? 'Reenviar link' : 'Entrar'}
       </button>
+
+      {state.status === 'link_sent' ? (
+        <p
+          role="status"
+          className="rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-3 text-sm dark:border-emerald-800/60 dark:bg-emerald-950/30"
+        >
+          Te mandamos un link a tu mail. Abrilo para entrar al panel
+          {state.selectedPlan === null ? '.' : ' y seguir con el plan que elegiste.'}
+        </p>
+      ) : null}
 
       {developmentDriver ? (
         <p className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm dark:border-amber-800/60 dark:bg-amber-950/30">

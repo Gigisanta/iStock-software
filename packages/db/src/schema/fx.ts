@@ -17,7 +17,7 @@ import { moneyCents } from '../money';
 import { createdAt, pk, updatedAt } from './columns';
 import { tenantId } from './tenants';
 import { fxRoundingModeEnum } from './enums';
-import { storefrontAnonSelectPolicy, storefrontTenantId, tenantPolicies } from './rls';
+import { ownerTenantPolicies, storefrontAnonSelectPolicy, storefrontTenantId } from './rls';
 
 export const fxSettings = pgTable(
   'fx_settings',
@@ -35,7 +35,8 @@ export const fxSettings = pgTable(
   (t) => [
     index('fx_settings_tenant_idx').on(t.tenantId),
     uniqueIndex('fx_settings_tenant_key').on(t.tenantId),
-    ...tenantPolicies('fx_settings'),
+    // El TC es un dato financiero y sólo el owner puede leerlo o cambiarlo desde el panel.
+    ...ownerTenantPolicies('fx_settings'),
     // El TC del tenant: sin esto la ficha no puede mostrar ARS, que es requisito de aceptación.
     // `updated_by` (uuid de usuario) NO está en el GRANT de columnas.
     storefrontAnonSelectPolicy('fx_settings', sql`tenant_id = ${storefrontTenantId()}`),

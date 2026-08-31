@@ -8,23 +8,21 @@
  */
 
 import { sql } from 'drizzle-orm';
-import { check, index, integer, pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
+import { check, foreignKey, index, integer, pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
 import { authUsers } from 'drizzle-orm/supabase';
 import { moneyCents } from '../money';
 import { createdAt, pk, updatedAt } from './columns';
 import { tenantId } from './tenants';
 import { reservationStatusEnum } from './enums';
 import { listings } from './listings';
-import { tenantPolicies } from './rls';
+import { ownerReadSellerInsertPolicies, tenantPolicies } from './rls';
 
 export const reservations = pgTable(
   'reservations',
   {
     id: pk(),
     tenantId: tenantId(),
-    listingId: uuid('listing_id')
-      .notNull()
-      .references(() => listings.id, { onDelete: 'cascade' }),
+    listingId: uuid('listing_id').notNull(),
     status: reservationStatusEnum('status').notNull().default('active'),
     minutes: integer('minutes').notNull().default(60),
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
@@ -72,17 +70,24 @@ export const reservations = pgTable(
   },
   (t) => [
     index('reservations_tenant_idx').on(t.tenantId),
+    // Target único para la FK compuesta de `sales.reservation_id`.
+    uniqueIndex('reservations_tenant_id_key').on(t.tenantId, t.id),
     index('reservations_tenant_status_idx').on(t.tenantId, t.status, t.expiresAt),
     // El cron de expiración barre por `expires_at` sin filtro de tenant (corre como service_role).
     index('reservations_active_expiry_idx').on(t.expiresAt).where(sql`status = 'active'`),
     // La invariante "máximo una reserva activa por unidad", en el motor y no en el código.
     uniqueIndex('reservations_one_active_per_listing')
-      .on(t.listingId)
+      .on(t.tenantId, t.listingId)
       .where(sql`status = 'active'`),
     check('reservations_minutes_range', sql`minutes between 30 and 120`),
     // Un contador de intentos que puede ir a negativo no es un contador: es una forma de
     // deshabilitar el guard escribiendo -1 y que nadie lo note.
     check('reservations_sweep_attempts_non_negative', sql`sweep_attempts >= 0`),
+    foreignKey({
+      columns: [t.tenantId, t.listingId],
+      foreignColumns: [listings.tenantId, listings.id],
+      name: 'reservations_tenant_listing_fk',
+    }).onDelete('cascade'),
     // El panel crea reservas con el contador en cero, y eso lo exige la POLICY (capa 2), no el
     // GRANT (capa 1): ver `sweepAttempts` arriba y `TenantPolicyOptions` en `./rls.ts`.
     ...tenantPolicies('reservations', { insertWithCheck: sql`sweep_attempts = 0` }),
@@ -94,10 +99,8 @@ export const sales = pgTable(
   {
     id: pk(),
     tenantId: tenantId(),
-    listingId: uuid('listing_id')
-      .notNull()
-      .references(() => listings.id, { onDelete: 'restrict' }),
-    reservationId: uuid('reservation_id').references(() => reservations.id, { onDelete: 'set null' }),
+    listingId: uuid('listing_id').notNull(),
+    reservationId: uuid('reservation_id'),
     /** Precio realmente cobrado, en USD. */
     priceUsd: moneyCents('price_usd').notNull(),
     /** ARS informativo al momento de la venta, con el TC que se usó. */
@@ -145,15 +148,27 @@ export const sales = pgTable(
      * único global convierte al índice en un **oráculo cruzado**. Un tenant que adivina el `id`
      * de una unidad ajena distingue "ya vendida" de "no vendida" por el `23505` que recibe, sin
      * ver una fila. El alcance de la afirmación queda dicho tal cual es: la unicidad es **por
-     * tenant**. Lo que la completa —que la venta y el listing sean del mismo tenant— hoy **no**
-     * lo ata la base: `listing_id` referencia `listings(id)` a secas. Medido en S7 (P4): un
-     * tenant puede insertar una venta propia apuntando al `listing_id` de otro. No leakea datos
-     * (el join contra `listings` lo corta RLS) pero, con `on delete restrict`, **le clava la
-     * unidad al otro tenant**. Cerrarlo pide FK compuesta contra `listings(tenant_id, id)`, o sea
-     * tocar `listings`: es un hallazgo reportado al LEAD, no un cambio de esta slice.
+     * tenant**. La FK compuesta `sales_tenant_listing_fk` afirma además que la venta y el
+     * listing sean del mismo tenant; la migración 0010 aborta si encuentra datos históricos
+     * cruzados antes de instalarla.
      */
     uniqueIndex('sales_one_sale_per_listing').on(t.tenantId, t.listingId),
     check('sales_price_positive', sql`price_usd > 0`),
-    ...tenantPolicies('sales'),
+    foreignKey({
+      columns: [t.tenantId, t.listingId],
+      foreignColumns: [listings.tenantId, listings.id],
+      name: 'sales_tenant_listing_fk',
+    }).onDelete('restrict'),
+    foreignKey({
+      columns: [t.tenantId, t.reservationId],
+      foreignColumns: [reservations.tenantId, reservations.id],
+      name: 'sales_tenant_reservation_fk',
+    // `tenant_id` es NOT NULL: una FK compuesta no puede hacer SET NULL sólo sobre reservation_id.
+    // Las reservas se cierran por estado; si tienen ventas históricas, se conservan ambas filas.
+    }).onDelete('restrict'),
+    ...ownerReadSellerInsertPolicies(
+      'sales',
+      sql`cost_usd is not distinct from (select l.cost_usd from public.listings l where l.id = sales.listing_id and l.tenant_id = sales.tenant_id) and internal_notes is null and sold_by = (select auth.uid())`,
+    ),
   ],
 ).enableRLS();

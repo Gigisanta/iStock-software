@@ -21,8 +21,8 @@ const GLOBAL_TABLES = ['catalog_faqs', 'catalog_models'] as const;
 /** Sin `tenant_id` pero CON RLS: identidad. Ver `src/schema/users.ts` y `tenants.ts`. */
 const IDENTITY_TABLES = ['tenants', 'users'] as const;
 
-const EXPECTED_TABLES = 19;
-const EXPECTED_RLS_TABLES = 17;
+const EXPECTED_TABLES = 20;
+const EXPECTED_RLS_TABLES = 18;
 
 afterAll(async () => { await sql.end({ timeout: 5 }); });
 
@@ -150,7 +150,7 @@ describe('forma de las policies (ADR-005 · los seis lints ERROR de Supabase)', 
 });
 
 describe('columnas obligatorias', () => {
-  it('`tenant_id` es NOT NULL, uuid, y con FK a tenants ON DELETE CASCADE en las 15 tablas', async () => {
+  it('`tenant_id` es NOT NULL, uuid, y con FK a tenants ON DELETE CASCADE en las 16 tablas', async () => {
     const r = await rows<{ relname: string; notnull: boolean; typ: string; ondelete: string | null }>(`
       select c.relname,
              a.attnotnull as notnull,
@@ -162,7 +162,7 @@ describe('columnas obligatorias', () => {
       join pg_namespace n on n.oid = c.relnamespace
       join pg_attribute a on a.attrelid = c.oid and a.attname = 'tenant_id'
       where n.nspname = 'public' and c.relkind = 'r' order by 1`);
-    expect(r).toHaveLength(15);
+    expect(r).toHaveLength(16);
     for (const row of r) {
       expect(row.notnull, `${row.relname}.tenant_id debe ser NOT NULL`).toBe(true);
       expect(row.typ).toBe('uuid');
@@ -194,12 +194,10 @@ describe('columnas obligatorias', () => {
         and exists (select 1 from pg_attribute a where a.attrelid = c.oid and a.attname = 'tenant_id')
         and (select a.attname from pg_attribute a where a.attrelid = c.oid and a.attnum = x.indkey[0]) <> 'tenant_id'
       order by 1`);
-    // Excepción consciente: la unicidad "una sola reserva activa por unidad" y la unicidad de
-    // orden de foto son por listing, no por tenant — y el listing ya está acotado por tenant.
-    expect(r.map((x) => x.idx)).toEqual([
-      'listing_photos_listing_sort_key',
-      'tradein_checklists_lead_item_key',
-    ]);
+    // Excepción consciente: la idempotencia del ledger es global por proveedor/evento. El
+    // webhook puede llegar con una referencia de tenant distinta durante una disputa, pero el
+    // mismo evento jamás debe procesarse dos veces.
+    expect(r.map((x) => x.idx)).toEqual(['billing_webhook_events_provider_event_key']);
   });
 
   it('cero columnas de plata en float/real/double: TODA plata es numeric(12, 2)', async () => {

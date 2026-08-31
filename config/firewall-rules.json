@@ -82,9 +82,38 @@
       "covers": [
         "/s/[slug]/api/chat"
       ]
+    },
+    {
+      "name": "billing-subscribe-rl",
+      "why": "El checkout de suscripcion crea una preapproval en Mercado Pago y cada intento valido es una llamada externa con costo operativo. Un owner que duplica clicks o una sesion robada no puede abrir un loop de checkouts desde la misma IP. Cinco intentos en diez minutos dejan margen para reintentar un error real sin poner un techo sobre la pagina publica; el webhook no lleva esta regla porque Mercado Pago necesita poder reintentar sin quedar estrangulado.",
+      "route": "/billing/subscribe",
+      "condition": {
+        "type": "path",
+        "op": "eq",
+        "value": "/billing/subscribe"
+      },
+      "rateLimit": {
+        "window": 600,
+        "requests": 5,
+        "keys": [
+          "ip"
+        ],
+        "algo": "fixed_window",
+        "action": "deny"
+      },
+      "status": "active",
+      "landed_in": "billing",
+      "covers": [
+        "/billing/subscribe"
+      ]
     }
   ],
   "allowlist": [
+    {
+      "route": "/api/auth/callback",
+      "reason": "Es el callback GET de Supabase Auth: solo intercambia un code de un proveedor externo por una sesion y redirige a un destino fijo; no acepta escrituras de negocio ni cuerpos libres. Rate-limitarlo por IP podria cortar callbacks legitimos cuando varios usuarios comparten NAT y no reduce el costo principal, que es la llamada de autenticacion ya validada por Supabase. La ruta valida code/plan y usa destinos internos antes de responder.",
+      "revisit": "Si el callback agrega POST, acepta destinos externos o empieza a mutar datos de negocio, debe salir de la allowlist y recibir una regla especifica."
+    },
     {
       "route": "/_media/[...key]",
       "reason": "Sirve los BYTES de las fotos, o sea el mayor egress del producto, y aun asi no lleva regla: un visitante legitimo abre una grilla y pide veinte imagenes de una, asi que un bucket por IP con un techo util para un flood corta primero al comprador. Lo que acota este endpoint no es el rate limit sino el tamano de la variante (probes de S2/S3, techo medido de la card) y el hecho de que la key es content-addressed e inmutable, o sea 100% cacheable. Ademas es temporal: existe mientras B1 siga abierto y en produccion las mismas keys las sirve el CDN de Cloudflare desde otro host, donde Vercel ni las ve.",

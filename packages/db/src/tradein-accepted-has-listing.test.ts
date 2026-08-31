@@ -122,6 +122,9 @@ beforeAll(async () => {
   await admin.unsafe(`
     insert into tenants (id, slug, name, wa_phone, status, accepts_trade_in)
     values ('${TENANT}', '${SLUG}', 'Canje Invariante', '5492990000051', 'active', true)`);
+  await admin.unsafe(`
+    insert into memberships (tenant_id, user_id, role)
+    values ('${TENANT}', '${USER}', 'owner')`);
   vidriera = openStorefrontSession(SLUG);
 });
 
@@ -283,23 +286,29 @@ describe('c · borrar la unidad de un canje aceptado: CAMBIO DE COMPORTAMIENTO, 
     expect(v.ok, `${v.code} ${v.message}`).toBe(true);
   });
 
-  it('borrar la unidad SOLA rebota: `ON DELETE SET NULL` dejaría el lead accepted y huérfano', async () => {
-    // Esto ANTES de 0009 pasaba en silencio y dejaba exactamente el estado que la invariante
-    // prohíbe. A partir de ahora, quien borre la unidad tiene que decidir qué pasa con el canje —
-    // que es justamente la pregunta que hoy nadie se hace. No rompe nada vivo: `apps/web` no tiene
-    // ningún flujo que borre un `listing` (los únicos deletes son teardown de tests, sobre leads
-    // que nunca llegan a `accepted`).
+  it('borrar la unidad SOLA rebota por la FK compuesta, antes de dejar el lead huérfano', async () => {
+    // `SET NULL` no es válido con `tenant_id NOT NULL`: la FK compuesta protege la relación y
+    // obliga a resolver el canje antes de borrar la unidad. No rompe ningún flujo vivo: `apps/web`
+    // no tiene un camino que borre un `listing`.
     const v = await enUnaTransaccion([
       `delete from listings where tenant_id = '${TENANT}' and id = '${LISTING}'`,
     ]);
     expect(v.ok).toBe(false);
-    expect(v.code).toBe('23514');
-    expect(v.message).toContain(LEAD);
+    expect(v.code).toBe('23503');
+    expect(v.message).toContain('tradein_leads_tenant_created_listing_fk');
   });
 
-  it('el trigger dispara por el `SET NULL` de la FK, o sea sin que nadie toque `tradein_leads`', async () => {
-    // Es lo que justifica que el trigger escuche `UPDATE OF status, created_listing_id` y no sólo
-    // `status`: la escritura que rompe la invariante acá la hace la FK, no el panel.
+  it('la relación queda declarada como FK compuesta con `ON DELETE RESTRICT`', async () => {
+    const fk = await adminRows<{ def: string }>(`
+      select pg_get_constraintdef(oid) as def
+      from pg_constraint
+      where conrelid = 'public.tradein_leads'::regclass
+        and conname = 'tradein_leads_tenant_created_listing_fk'`);
+    expect(fk[0]?.def).toMatch(/FOREIGN KEY \(tenant_id, created_listing_id\)/i);
+    expect(fk[0]?.def).toMatch(/ON DELETE RESTRICT/i);
+
+    // El constraint trigger legado sigue protegiendo transiciones de estado; ya no lo dispara
+    // una eliminación porque la FK compuesta la rechaza antes.
     const r = await adminRows<{ ev: string }>(`
       select string_agg(
                case when t.tgtype::int & 4 = 4 then 'insert' else '' end ||

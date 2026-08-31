@@ -4,6 +4,7 @@ import { redirect } from 'next/navigation';
 import { z } from 'zod';
 import { authDriver } from './driver';
 import type { AuthFormState } from './form-state';
+import { selectedPlanFieldSchema, selectedPlanFromFormValue, SUBSCRIPTION_REDIRECTS } from './selected-plan';
 import { AuthError } from './types';
 
 /**
@@ -22,31 +23,48 @@ const signInSchema = z.object({
     .string({ error: 'Escribí tu mail.' })
     .transform((raw) => raw.trim().toLowerCase())
     .pipe(z.email('Ese mail no parece válido.').max(254)),
+  plan: selectedPlanFieldSchema,
 });
 
 export async function signInAction(_prev: AuthFormState, formData: FormData): Promise<AuthFormState> {
   // Zod en el borde: `formData.get()` devuelve `FormDataEntryValue | null`, o sea `unknown` útil.
-  const parsed = signInSchema.safeParse({ email: formData.get('email') });
+  const planValues = formData.getAll('plan');
+  const rawPlan = planValues.length === 0 ? null : planValues.length === 1 ? planValues[0] : planValues;
+  const selectedPlan = selectedPlanFromFormValue(rawPlan);
+  const parsed = signInSchema.safeParse({ email: formData.get('email'), plan: rawPlan });
   const typed = typeof formData.get('email') === 'string' ? String(formData.get('email')) : '';
 
   if (!parsed.success) {
-    return { error: parsed.error.issues[0]?.message ?? 'Revisá el mail.', email: typed };
+    return {
+      error: parsed.error.issues[0]?.message ?? 'Revisá el mail.',
+      status: 'idle',
+      email: typed,
+      selectedPlan,
+    };
   }
 
   let result: Awaited<ReturnType<ReturnType<typeof authDriver>['signIn']>>;
   try {
-    result = await authDriver().signIn({ email: parsed.data.email });
+    result = await authDriver().signIn({ email: parsed.data.email, selectedPlan });
   } catch (error) {
-    if (error instanceof AuthError) return { error: error.message, email: typed };
+    if (error instanceof AuthError) {
+      return { error: error.message, status: 'idle', email: typed, selectedPlan };
+    }
     return {
       error: 'No pudimos conectarnos. Probá de nuevo en un minuto.',
+      status: 'idle',
       email: typed,
+      selectedPlan,
     };
   }
 
-  if (!result.ok) return { error: result.message, email: typed };
+  if (!result.ok) return { error: result.message, status: 'idle', email: typed, selectedPlan };
 
-  redirect('/app');
+  if (result.status === 'link_sent') {
+    return { error: null, status: 'link_sent', email: typed, selectedPlan };
+  }
+
+  redirect(selectedPlan === null ? '/app' : SUBSCRIPTION_REDIRECTS[selectedPlan]);
 }
 
 /**

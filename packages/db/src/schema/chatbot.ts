@@ -11,7 +11,7 @@
  *   `publicListingDTO`, que ya los stripeó.
  */
 
-import { index, integer, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
+import { foreignKey, index, integer, pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
 import { createdAt, pk, updatedAt } from './columns';
 import { tenantId } from './tenants';
 import { chatRoleEnum } from './enums';
@@ -24,7 +24,7 @@ export const chatbotThreads = pgTable(
     id: pk(),
     tenantId: tenantId(),
     /** Ficha abierta cuando arrancó la conversación. */
-    listingId: uuid('listing_id').references(() => listings.id, { onDelete: 'set null' }),
+    listingId: uuid('listing_id'),
     /** Hash salteado del visitante. **No** es una IP y no se puede revertir a una. */
     visitorHash: text('visitor_hash'),
     messageCount: integer('message_count').notNull().default(0),
@@ -37,6 +37,13 @@ export const chatbotThreads = pgTable(
   (t) => [
     index('chatbot_threads_tenant_idx').on(t.tenantId),
     index('chatbot_threads_tenant_created_idx').on(t.tenantId, t.createdAt),
+    uniqueIndex('chatbot_threads_tenant_id_key').on(t.tenantId, t.id),
+    foreignKey({
+      columns: [t.tenantId, t.listingId],
+      foreignColumns: [listings.tenantId, listings.id],
+      name: 'chatbot_threads_tenant_listing_fk',
+    // `tenant_id` es NOT NULL: `SET NULL` sobre una FK compuesta violaría la columna obligatoria.
+    }).onDelete('restrict'),
     ...tenantPolicies('chatbot_threads'),
   ],
 ).enableRLS();
@@ -46,9 +53,7 @@ export const chatbotMessages = pgTable(
   {
     id: pk(),
     tenantId: tenantId(),
-    threadId: uuid('thread_id')
-      .notNull()
-      .references(() => chatbotThreads.id, { onDelete: 'cascade' }),
+    threadId: uuid('thread_id').notNull(),
     role: chatRoleEnum('role').notNull(),
     content: text('content').notNull(),
     /** Dieta medida, no estimada: ≤1200 in / ≤180 out por turno (docs/CHATBOT.md). */
@@ -61,6 +66,11 @@ export const chatbotMessages = pgTable(
   (t) => [
     index('chatbot_messages_tenant_idx').on(t.tenantId),
     index('chatbot_messages_tenant_thread_idx').on(t.tenantId, t.threadId, t.createdAt),
+    foreignKey({
+      columns: [t.tenantId, t.threadId],
+      foreignColumns: [chatbotThreads.tenantId, chatbotThreads.id],
+      name: 'chatbot_messages_tenant_thread_fk',
+    }).onDelete('cascade'),
     ...tenantPolicies('chatbot_messages'),
   ],
 ).enableRLS();

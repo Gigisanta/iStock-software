@@ -103,7 +103,7 @@ export function localAuthDriver(): AuthDriver {
       // Id, nunca el mail: `logEvent` tira si le pasás un campo con nombre de PII.
       logEvent('auth.sign_in', { driver: 'local', userId: identity.userId });
 
-      return { ok: true, identity };
+      return { ok: true, status: 'signed_in', identity };
     },
 
     async signOut(): Promise<void> {

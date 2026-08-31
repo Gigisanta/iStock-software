@@ -1,0 +1,1 @@
+ALTER POLICY "tenants_tenant_insert" ON "tenants" TO authenticated WITH CHECK (id = (select auth.jwt() -> 'app_metadata' ->> 'tenant_id')::uuid and false);

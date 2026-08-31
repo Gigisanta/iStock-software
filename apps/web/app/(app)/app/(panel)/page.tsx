@@ -2,6 +2,7 @@ import { Suspense } from 'react';
 import Link from 'next/link';
 import { storefrontHostForSlug, storefrontUrlForSlug } from '../../_lib/env';
 import { requireTenant } from '../../_lib/session';
+import { trialSubscriptionCta, type TrialSubscriptionCta } from '../../_lib/subscription-cta';
 import { trialDaysLeft } from '../../_lib/tenants/queries';
 import { CopyLinkButton } from './_ui/copy-link-button';
 import { Card, PageTitle } from './_ui/section';
@@ -30,6 +31,7 @@ async function PanelHome() {
   const { tenant, identity, role } = await requireTenant();
 
   const daysLeft = trialDaysLeft(tenant.trialEndsAt);
+  const subscriptionCta = trialSubscriptionCta(daysLeft);
   const storefront = storefrontUrlForSlug(tenant.slug);
   const firstName = identity.fullName ?? identity.email.split('@')[0] ?? '';
 
@@ -37,17 +39,8 @@ async function PanelHome() {
     <>
       <PageTitle>Hola{firstName === '' ? '' : `, ${firstName}`}</PageTitle>
 
-      {tenant.plan === 'trial' && daysLeft !== null ? (
-        <div className="mb-4 rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm dark:border-amber-800/60 dark:bg-amber-950/30">
-          {daysLeft > 0 ? (
-            <>
-              Te quedan <strong className="font-semibold">{daysLeft} días</strong> de prueba. No te
-              vamos a cobrar sin avisarte.
-            </>
-          ) : (
-            <>Se te terminó la prueba. Escribinos y lo vemos: todavía no hay forma de pagar.</>
-          )}
-        </div>
+      {tenant.plan === 'trial' && subscriptionCta !== null ? (
+        <SubscriptionPrompt cta={subscriptionCta} />
       ) : null}
 
       <Card>
@@ -89,6 +82,34 @@ async function PanelHome() {
         Entraste como {role === 'owner' ? 'dueño' : 'vendedor'}.
       </p>
     </>
+  );
+}
+
+function SubscriptionPrompt({ cta }: { cta: TrialSubscriptionCta }) {
+  return (
+    <aside
+      aria-labelledby="subscription-prompt-title"
+      className="mb-4 rounded-2xl border border-amber-300 bg-amber-50 px-4 py-4 dark:border-amber-800/60 dark:bg-amber-950/30"
+    >
+      <h2 id="subscription-prompt-title" className="text-base font-semibold">
+        {cta.title}
+      </h2>
+      <p className="mt-1 text-sm">{cta.message}</p>
+      {cta.reassurance === null ? null : (
+        <p className="mt-1 text-xs text-neutral-600 dark:text-neutral-300">{cta.reassurance}</p>
+      )}
+      <nav aria-label="Elegí tu plan" className="mt-3 grid gap-2 sm:grid-cols-2">
+        {cta.plans.map((plan) => (
+          <Link
+            key={plan.tier}
+            href={plan.href}
+            className="rounded-xl bg-neutral-900 px-4 py-3 text-center text-sm font-semibold text-white hover:bg-neutral-700 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
+          >
+            {plan.label}
+          </Link>
+        ))}
+      </nav>
+    </aside>
   );
 }
 

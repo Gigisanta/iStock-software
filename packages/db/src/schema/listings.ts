@@ -137,6 +137,9 @@ export const listings = pgTable(
     // Todo índice compuesto arranca por tenant_id a la izquierda (skill drizzle-rls §2).
     index('listings_tenant_status_idx').on(t.tenantId, t.status, t.createdAt),
     uniqueIndex('listings_tenant_slug_key').on(t.tenantId, t.slug),
+    // Target de las FKs compuestas de las tablas hijas: el `listing_id` solo no alcanza para
+    // afirmar que el tenant del hijo y el del listing sean el mismo.
+    uniqueIndex('listings_tenant_id_key').on(t.tenantId, t.id),
     index('listings_tenant_model_idx').on(t.tenantId, t.catalogModelId),
     // Un IMEI no se carga dos veces en el mismo tenant. Parcial: los lotes no tienen IMEI.
     uniqueIndex('listings_tenant_imei_key')

@@ -21,7 +21,7 @@ import { authUsers } from 'drizzle-orm/supabase';
 import { createdAt, pk, updatedAt } from './columns';
 import { tenantId } from './tenants';
 import { membershipRoleEnum } from './enums';
-import { tenantPolicies } from './rls';
+import { membershipPolicies } from './rls';
 
 export const memberships = pgTable(
   'memberships',
@@ -55,6 +55,6 @@ export const memberships = pgTable(
     uniqueIndex('memberships_single_owner_per_user_key')
       .on(t.userId)
       .where(sql`role = 'owner'`),
-    ...tenantPolicies('memberships'),
+    ...membershipPolicies('memberships'),
   ],
 ).enableRLS();

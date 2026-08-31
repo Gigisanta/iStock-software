@@ -154,6 +154,9 @@ beforeAll(async () => {
     insert into tenants (id, slug, name, wa_phone, status) values
       ('${TENANT_A}', '${SLUG_A}', 'Venta A', '5492990000041', 'active'),
       ('${TENANT_B}', '${SLUG_B}', 'Venta B', '5492990000042', 'active')`);
+  await admin.unsafe(`
+    insert into memberships (tenant_id, user_id, role) values
+      ('${TENANT_A}', '${USER_A}', 'owner'), ('${TENANT_B}', '${USER_B}', 'owner')`);
 
   await admin.unsafe(listingInsert(LISTING_A1, TENANT_A, 'venta-a-1'));
   await admin.unsafe(listingInsert(LISTING_A2, TENANT_A, 'venta-a-2'));

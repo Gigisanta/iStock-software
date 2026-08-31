@@ -157,6 +157,55 @@ async function unidadVencida(listingId: string, venceHace: number, attempts = 0)
   return { listingId, reservationId };
 }
 
+/**
+ * El caso de head-of-line necesita llenar exactamente un lote de 200 filas. Hacerlo con
+ * `unidadVencida()` sería 400 viajes al Postgres antes de empezar a medir el barrido y vuelve
+ * flaky el timeout de Vitest en CI. Esta variante conserva los mismos datos y restricciones, pero
+ * carga listings y reservas en un INSERT por tabla.
+ */
+async function unidadesVencidasEnBloque(
+  listingIds: readonly string[],
+  venceHaceDesde: number,
+  attempts = 0,
+): Promise<Fila[]> {
+  const filas = listingIds.map((listingId, index) => ({
+    listingId,
+    reservationId: uuidSano(),
+    venceHace: venceHaceDesde + index,
+  }));
+
+  const listingValues = filas.map((_, index) => {
+    const offset = index * 3;
+    return `($${offset + 1}::uuid, $${offset + 2}::uuid, $${offset + 3}, 'Probe head-of-line', 'used_excellent', 100, 'reserved')`;
+  });
+  const listingParams = filas.flatMap(({ listingId, venceHace }) => [
+    listingId,
+    tenantId,
+    `u-${listingId.slice(0, 8)}-${venceHace}`,
+  ]);
+  await cliente.unsafe(
+    `insert into listings (id, tenant_id, slug, title, condition, price_usd, status) values ${listingValues.join(', ')}`,
+    listingParams,
+  );
+
+  const reservationValues = filas.map((_, index) => {
+    const offset = index * 4;
+    return `($${offset + 1}::uuid, $${offset + 2}::uuid, $${offset + 3}::uuid, 'active', 60, now() - ($${offset + 4} || ' minutes')::interval, ${attempts})`;
+  });
+  const reservationParams = filas.flatMap(({ listingId, reservationId, venceHace }) => [
+    reservationId,
+    tenantId,
+    listingId,
+    venceHace,
+  ]);
+  await cliente.unsafe(
+    `insert into reservations (id, tenant_id, listing_id, status, minutes, expires_at, sweep_attempts) values ${reservationValues.join(', ')}`,
+    reservationParams,
+  );
+
+  return filas.map(({ listingId, reservationId }) => ({ listingId, reservationId }));
+}
+
 async function estado(reservationId: string): Promise<{ status: string; attempts: number }> {
   const [row] = await cliente<{ status: string; sweep_attempts: number }[]>`
     select status, sweep_attempts from reservations where id = ${reservationId}::uuid`;
@@ -275,11 +324,12 @@ describe('S6 · el barrido no se traba detrás de una fila rota', () => {
    * Antes del arreglo vale 0 y vale 0 para siempre. Tiene que valer 1.
    */
   it('con el lote lleno de filas que fallan, la reserva sana igual vence en la SEGUNDA corrida', async () => {
-    const venenosas: Fila[] = [];
-    for (let i = 0; i < EXPIRE_BATCH_SIZE; i += 1) {
-      // Todas más viejas que la sana: 500 minutos para arriba.
-      venenosas.push(await unidadVencida(uuidVenenoso(i), 500 + i));
-    }
+    // Todas más viejas que la sana: 500 minutos para arriba. El bulk insert mantiene el lote
+    // lleno sin convertir la probe en una prueba de 400 round-trips al servidor.
+    const venenosas = await unidadesVencidasEnBloque(
+      Array.from({ length: EXPIRE_BATCH_SIZE }, (_, i) => uuidVenenoso(i)),
+      500,
+    );
     const sanas = [await unidadVencida(uuidSano(), 1)];
     const sana = sanas[0]!;
     medido.envenenadas = venenosas.length;
@@ -322,7 +372,7 @@ describe('S6 · el barrido no se traba detrás de una fila rota', () => {
     const [listing] = await cliente<{ status: string }[]>`
       select status from listings where id = ${sana.listingId}::uuid`;
     expect(listing?.status).toBe('available');
-  });
+  }, 30_000);
 
   /**
    * ── B · el techo existe de verdad ───────────────────────────────────────────────────────────

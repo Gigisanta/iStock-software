@@ -33,6 +33,23 @@ export function belongsToTenant(): SQL {
 }
 
 /**
+ * Authorization basada en la fuente de verdad (`memberships`), no en un claim mutable por el
+ * caller. El helper SQL se declara en la migración y corre como invoker, así que la consulta
+ * interna también queda sometida a RLS.
+ */
+export function currentUserIsTenantMember(): SQL {
+  return sql`public.is_current_user_tenant_member(tenant_id)`;
+}
+
+export function currentUserIsTenantOwner(): SQL {
+  return sql`public.is_current_user_tenant_owner(tenant_id)`;
+}
+
+export function currentUserOwnsTenantRow(): SQL {
+  return sql`public.is_current_user_tenant_owner(id)`;
+}
+
+/**
  * Condición EXTRA sobre el `with check` del INSERT del panel, además del tenant.
  *
  * Existe por un motivo concreto y medido (S6, `drizzle/0006_reservations_sweep_attempts.sql`):
@@ -104,15 +121,84 @@ export function selfTenantPolicies(table: string) {
   const own = sql`id = ${tenantClaim()}`;
   return [
     pgPolicy(`${table}_tenant_select`, { as: 'permissive', for: 'select', to: authenticatedRole, using: own }),
-    pgPolicy(`${table}_tenant_insert`, { as: 'permissive', for: 'insert', to: authenticatedRole, withCheck: sql`id = ${tenantClaim()}` }),
+    // El alta de un tenant es bootstrap y corre con service_role. No se permite desde una
+    // sesión autenticada: un claim de tenant no convierte a un seller en creador de negocios.
+    // El predicado de identidad sigue presente aunque el bootstrap autenticado esté cerrado.
+    pgPolicy(`${table}_tenant_insert`, { as: 'permissive', for: 'insert', to: authenticatedRole, withCheck: sql`${own} and false` }),
     pgPolicy(`${table}_tenant_update`, {
       as: 'permissive',
       for: 'update',
       to: authenticatedRole,
-      using: sql`id = ${tenantClaim()}`,
-      withCheck: sql`id = ${tenantClaim()}`,
+      using: sql`${own} and ${currentUserOwnsTenantRow()}`,
+      withCheck: sql`${own} and ${currentUserOwnsTenantRow()}`,
     }),
-    pgPolicy(`${table}_tenant_delete`, { as: 'permissive', for: 'delete', to: authenticatedRole, using: sql`id = ${tenantClaim()}` }),
+    pgPolicy(`${table}_tenant_delete`, {
+      as: 'permissive',
+      for: 'delete',
+      to: authenticatedRole,
+      using: sql`${own} and ${currentUserOwnsTenantRow()}`,
+    }),
+  ];
+}
+
+/** Las cuatro operaciones de una tabla cuyo DML autenticado queda reservado al owner. */
+export function ownerTenantPolicies(table: string) {
+  const own = sql`${belongsToTenant()} and ${currentUserIsTenantOwner()}`;
+  return [
+    pgPolicy(`${table}_tenant_select`, { as: 'permissive', for: 'select', to: authenticatedRole, using: own }),
+    pgPolicy(`${table}_tenant_insert`, { as: 'permissive', for: 'insert', to: authenticatedRole, withCheck: own }),
+    pgPolicy(`${table}_tenant_update`, {
+      as: 'permissive',
+      for: 'update',
+      to: authenticatedRole,
+      using: own,
+      withCheck: own,
+    }),
+    pgPolicy(`${table}_tenant_delete`, { as: 'permissive', for: 'delete', to: authenticatedRole, using: own }),
+  ];
+}
+
+/** Membresías: todos los miembros pueden consultar su tenant, pero sólo el owner las muta. */
+export function membershipPolicies(table: string) {
+  const own = sql`${belongsToTenant()} and ${currentUserIsTenantOwner()}`;
+  return [
+    pgPolicy(`${table}_tenant_select`, {
+      as: 'permissive',
+      for: 'select',
+      to: authenticatedRole,
+      using: belongsToTenant(),
+    }),
+    pgPolicy(`${table}_tenant_insert`, { as: 'permissive', for: 'insert', to: authenticatedRole, withCheck: own }),
+    pgPolicy(`${table}_tenant_update`, {
+      as: 'permissive',
+      for: 'update',
+      to: authenticatedRole,
+      using: own,
+      withCheck: own,
+    }),
+    pgPolicy(`${table}_tenant_delete`, { as: 'permissive', for: 'delete', to: authenticatedRole, using: own }),
+  ];
+}
+
+/**
+ * Sales: un seller puede registrar el hecho de venta, pero no leerlo, corregirlo ni borrarlo.
+ * La condición de INSERT se completa en `sales.ts` para que el costo sólo pueda copiarse del
+ * listing de la misma cuenta y las notas internas no entren por ese camino.
+ */
+export function ownerReadSellerInsertPolicies(table: string, sellerInsertCheck: SQL) {
+  const own = sql`${belongsToTenant()} and ${currentUserIsTenantOwner()}`;
+  const sellerInsert = sql`${belongsToTenant()} and ${currentUserIsTenantMember()} and not ${currentUserIsTenantOwner()} and ${sellerInsertCheck}`;
+  return [
+    pgPolicy(`${table}_tenant_select`, { as: 'permissive', for: 'select', to: authenticatedRole, using: own }),
+    pgPolicy(`${table}_tenant_insert`, { as: 'permissive', for: 'insert', to: authenticatedRole, withCheck: sql`${own} or ${sellerInsert}` }),
+    pgPolicy(`${table}_tenant_update`, {
+      as: 'permissive',
+      for: 'update',
+      to: authenticatedRole,
+      using: own,
+      withCheck: own,
+    }),
+    pgPolicy(`${table}_tenant_delete`, { as: 'permissive', for: 'delete', to: authenticatedRole, using: own }),
   ];
 }
 

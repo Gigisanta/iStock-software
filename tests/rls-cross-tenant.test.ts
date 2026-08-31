@@ -172,7 +172,7 @@ const INTRUDER_ROW = '00000000-0000-4000-9000-0000000000e9';
 const SALE_B = '00000000-0000-4000-9000-0000000000d4';
 /** La venta que B intenta plantar en la cuenta de A. Nunca tiene que existir. */
 const SALE_INTRUSA = '00000000-0000-4000-9000-0000000000e8';
-/** El uuid de unidad que las DOS ventas de R9f comparten: es el punto entero de R9f. */
+/** El uuid de unidad que R9f usa para probar la unicidad y el tenant de la FK compuesta. */
 const LISTING_MISMO_UUID = '00000000-0000-4000-9000-0000000000c6';
 const VENTA_PAR_A = '00000000-0000-4000-9000-0000000000c7';
 const VENTA_PAR_B = '00000000-0000-4000-9000-0000000000d7';
@@ -2344,7 +2344,7 @@ describe('R9 · la venta manual: el costo y el margen de un reseller no cruzan a
          values ('${TENANT_B}', '${INTRUDER_ROW}', 1.00)`,
       );
       expect(error.code).toBe('23503');
-      expect(error.message).toContain('sales_listing_id_listings_id_fk');
+      expect(error.message).toContain('sales_tenant_listing_fk');
     });
 
     it('B tampoco puede registrar la venta de A pasando por la unidad de A y su propio tenant fake', async () => {
@@ -2455,20 +2455,16 @@ describe('R9 · la venta manual: el costo y el margen de un reseller no cruzan a
 
   // ─────────────────────────────────────────────────────────────────────────────────────────
   /**
-   * R9f · el índice único de D8 es el PAR `(tenant_id, listing_id)`, y el par es el invariante.
+   * R9f · la venta y su unidad deben pertenecer al mismo tenant, y el par es único.
    *
-   * `(listing_id)` a secas parece la afirmación más fuerte —"una unidad se vende una sola vez en
-   * todo el sistema"— y es la que alguien va a proponer el día que "simplifique" el índice: los
-   * uuid son únicos, ¿para qué el tenant? Para esto: un único GLOBAL convierte al índice en un
-   * **oráculo cruzado**. El `23505` del motor se evalúa ANTES que cualquier policy de lectura, así
-   * que un tenant que consigue el uuid de una unidad ajena distinguiría "ya vendida" de "no
-   * vendida" por el error que recibe, sin haber leído una fila y sin que RLS se entere.
+   * La FK compuesta `sales_tenant_listing_fk` rechaza con `23503` un `listing_id` válido de otro
+   * tenant antes de que pueda existir una venta cruzada. La unicidad de D8 sigue siendo por par:
+   * el segundo intento sobre `(tenant_id, listing_id)` del mismo tenant da `23505`.
    *
    * Se mide con la conexión de operador y no con dos sesiones: acá el sujeto es **el motor**, no
-   * una policy. Que B pueda o no llegar a referenciar el `listing_id` de A desde su sesión es otra
-   * pregunta, es P4, y está fuera del alcance de esta ola (ver R9c).
+   * una policy. Las sesiones autenticadas de R9c ya prueban el aislamiento de RLS.
    */
-  describe('R9f · dos resellers pueden tener una venta cada uno sobre el mismo uuid de unidad', () => {
+  describe('R9f · una venta sólo puede apuntar a una unidad de su tenant y el par es único', () => {
     it('la primera venta del par (tenant A, unidad) entra sin chistar', async () => {
       await admin.unsafe(
         `insert into sales (id, tenant_id, listing_id, price_usd, cost_usd)
@@ -2480,18 +2476,21 @@ describe('R9 · la venta manual: el costo y el margen de un reseller no cruzan a
       expect(rows[0]?.n).toBe('1');
     });
 
-    it('el MISMO listing_id en OTRO tenant también entra: no hay oráculo cruzado', async () => {
-      await admin.unsafe(
+    it('el MISMO listing_id en OTRO tenant rebota con 23503 por la FK compuesta', async () => {
+      const error = await adminRechaza(
         `insert into sales (id, tenant_id, listing_id, price_usd, cost_usd)
          values ('${VENTA_PAR_B}', '${TENANT_B}', '${LISTING_MISMO_UUID}', 850.00, 550.00)`,
       );
+      expect(error.code).toBe('23503');
+      expect(error.message).toContain('sales_tenant_listing_fk');
+
       const rows = await adminRows<{ tenant_id: string }>(
         `select tenant_id from sales where listing_id = '${LISTING_MISMO_UUID}' order by tenant_id`,
       );
       expect(
         rows.map((r) => r.tenant_id),
-        'el índice es (listing_id) solo: un 23505 le revela a un tenant que la unidad ajena se vendió',
-      ).toEqual([TENANT_A, TENANT_B]);
+        'la FK compuesta impide que la unidad de A quede referenciada por una venta de B',
+      ).toEqual([TENANT_A]);
     });
 
     it('y la SEGUNDA venta del mismo par sí choca: D8 la frena el motor, con el índice por nombre', async () => {
