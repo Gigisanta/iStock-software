@@ -229,7 +229,7 @@ describe('gate (b) · el seller no recibe offer_usd ni internal_notes', () => {
     // El payload serializado —que es lo que viaja en el RSC— no contiene ni el número ni el texto.
     const payload = JSON.stringify(lead);
     expect(payload).not.toContain(String(OFERTA_CENTAVOS));
-    expect(payload).not.toContain('431');
+    expect(payload).not.toContain(OFERTA_DECIMAL);
     expect(payload).not.toContain(NOTA_INTERNA);
 
     // Y lo que sí necesita para trabajar el lead en el mostrador, sí está.
@@ -260,7 +260,7 @@ describe('gate (b) · el seller no recibe offer_usd ni internal_notes', () => {
 
     const payload = JSON.stringify(leads);
     expect(payload).not.toContain(String(OFERTA_CENTAVOS));
-    expect(payload).not.toContain('431');
+    expect(payload).not.toContain(OFERTA_DECIMAL);
     expect(payload).not.toContain(NOTA_INTERNA);
 
     expect(sqlCapturado.length).toBeGreaterThan(0);
