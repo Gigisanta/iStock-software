@@ -188,7 +188,7 @@ fi
 RESUMEN_RE='Tests +[0-9]+ (passed|failed|skipped)'
 # Vitest emite ANSI en CI aunque el runner lo muestre como texto plano. Se limpia una vez para
 # que el censo no confunda "no pude leer el resumen" con "hay cero resúmenes".
-sed $'s/\\033\\[[0-9;]*m//g' /tmp/f3-test.log > /tmp/f3-test-clean.log
+perl -pe 's/\e\[[0-9;]*m//g' /tmp/f3-test.log > /tmp/f3-test-clean.log
 RESUM=$(grep -cE "$RESUMEN_RE" /tmp/f3-test-clean.log 2>/dev/null || true)
 RESUM=${RESUM:-0}
 if [ "$RESUM" -lt "$PAQ_CON_TEST" ]; then

@@ -75,18 +75,54 @@ esac
 # `apps/web/tsconfig.tsbuildinfo` lista cada archivo del repo y hacia MATCH con cualquier patron.
 # 2026-08-27. Este parrafo se habia perdido en dos de las cuatro copias; por eso vive aca ahora.
 _buscar() { local re="$1"; shift
-  local o; o=$(grep -rnE --exclude-dir=.next --exclude-dir=node_modules --exclude-dir=dist \
-      --exclude-dir=.turbo --exclude="*.map" "$re" "$@" 2>/dev/null || true)
-  local kept="" line f
-  while IFS= read -r line; do
-    [ -z "$line" ] && continue
-    f="${line%%:*}"
-    # --no-index hace que el filtro sea estable también si el archivo ya está trackeado:
-    # lo que importa acá es la regla de ignore, no el estado del índice.
-    git check-ignore --no-index -q "$f" 2>/dev/null && continue
-    kept="${kept}${line}"$'\n'
-  done <<< "$o"
-  printf '%s' "$kept"; }
+  # GNU grep acepta --include/--exclude después de la ruta; BSD grep no. En vez de depender
+  # del orden o de una opción que una de las dos plataformas no tiene, separamos los globos y
+  # hacemos el censo de archivos con find, que existe en ambas.
+  local includes=() excludes=("*.map") excludedirs=(.next node_modules dist .turbo) paths=() arg pat f base skip
+  for arg in "$@"; do
+    case "$arg" in
+      --include=*) includes+=( "${arg#--include=}" ) ;;
+      --exclude=*) excludes+=( "${arg#--exclude=}" ) ;;
+      --exclude-dir=*) excludedirs+=( "${arg#--exclude-dir=}" ) ;;
+      *) paths+=( "$arg" ) ;;
+    esac
+  done
+
+  for arg in "${paths[@]}"; do
+    if [ -f "$arg" ]; then
+      f="$arg"
+      base="${f##*/}"; skip=0
+      if [ "${#includes[@]}" -gt 0 ]; then
+        skip=1
+        for pat in "${includes[@]}"; do case "$base" in $pat) skip=0; break;; esac; done
+      fi
+      for pat in "${excludes[@]}"; do case "$base" in $pat) skip=1; break;; esac; done
+      [ "$skip" = 1 ] && continue
+      git check-ignore --no-index -q -- "$f" 2>/dev/null && continue
+      grep -nE "$re" "$f" 2>/dev/null | sed "s|^|$f:|" || true
+      continue
+    fi
+    [ -d "$arg" ] || continue
+    while IFS= read -r f; do
+      base="${f##*/}"; skip=0
+      for pat in "${excludedirs[@]}"; do
+        case "$f" in */"$pat"/*|*/"$pat") skip=1; break;; esac
+      done
+      if [ "${#includes[@]}" -gt 0 ] && [ "$skip" = 0 ]; then
+        skip=1
+        for pat in "${includes[@]}"; do case "$base" in $pat) skip=0; break;; esac; done
+      fi
+      if [ "$skip" = 0 ]; then
+        for pat in "${excludes[@]}"; do case "$base" in $pat) skip=1; break;; esac; done
+      fi
+      [ "$skip" = 1 ] && continue
+      # --no-index hace que el filtro sea estable también si el archivo ya está trackeado:
+      # lo que importa acá es la regla de ignore, no el estado del índice.
+      git check-ignore --no-index -q -- "$f" 2>/dev/null && continue
+      grep -nE "$re" "$f" 2>/dev/null | sed "s|^|$f:|" || true
+    done < <(find "$arg" -type f -print 2>/dev/null)
+  done
+}
 
 _veredicto() { local d="$1" kept="$2"
   if [ -z "${kept//[$'\n\t ']/}" ]; then ok "$d"
