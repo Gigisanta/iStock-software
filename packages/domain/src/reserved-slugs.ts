@@ -31,8 +31,9 @@
  *   `resolveHost()` (y por lo tanto `proxy.ts`).
  *
  * La única diferencia entre los dos es {@link TENANT_SERVED_RESERVED_SLUGS}: nombres que **sí**
- * sirven una vidriera pero que ningún cliente puede pedir. Hoy hay exactamente uno, `demo`
- * (S13): `demo.maat.work` tiene que mostrar el tenant demo, y a la vez nadie puede quedárselo.
+ * sirven una vidriera pero que ningún cliente puede pedir. Hoy hay exactamente uno,
+ * {@link DEMO_TENANT_SLUG} (S13): `demo.maat.work` tiene que mostrar el tenant demo, y a la vez
+ * nadie puede quedárselo.
  * Unificar las dos listas en un solo Set rompe esa asimetría **en silencio** — o el demo deja de
  * tener vidriera, o el nombre `demo` queda libre para cualquiera. Por eso la excepción es un
  * valor declarado y testeado, no un comentario.
@@ -56,12 +57,28 @@
 export const PRERENDER_SEED_SLUG = 'not-a-tenant';
 
 /**
+ * El slug del tenant demo. **Una sola fuente, y esta es.**
+ *
+ * Vive acá y no en `apps/web` por la misma razón que la lista: es el único valor del repo que
+ * tiene que ser cierto en cuatro columnas a la vez — `packages/db` lo siembra (`tenants.is_demo`),
+ * `(storefront)` lo rutea (`demo.maat.work` y el alias `maat.work/demo`), `(app)` lo rechaza en el
+ * alta, y {@link TENANT_SERVED_RESERVED_SLUGS} lo declara irregistrable. Mientras fue un literal
+ * repetido en dos columnas, "las dos copias dicen lo mismo" era una promesa de review; ahora es
+ * una propiedad del grafo de imports, que es lo único que no se olvida.
+ *
+ * Es la **excepción** de la lista, no un reservado más: `demo` sí sirve una vidriera. Por eso los
+ * dos Sets de abajo lo referencian en vez de repetir el string, y por eso el que quiera renombrar
+ * el demo cambia **una** línea y se entera en el acto de las cuatro columnas que lo usan.
+ */
+export const DEMO_TENANT_SLUG = 'demo';
+
+/**
  * Reservados que **sí** resuelven a una vidriera real.
  *
  * Excepción declarada, no accidental: el tenant demo existe en la base (`tenants.is_demo`) y
- * `demo.maat.work` sirve su vidriera, pero `demo` no se registra desde el panel.
+ * `demo.maat.work` sirve su vidriera, pero {@link DEMO_TENANT_SLUG} no se registra desde el panel.
  */
-export const TENANT_SERVED_RESERVED_SLUGS: ReadonlySet<string> = new Set(['demo']);
+export const TENANT_SERVED_RESERVED_SLUGS: ReadonlySet<string> = new Set([DEMO_TENANT_SLUG]);
 
 /**
  * Lista canónica. Nadie registra ninguno de estos nombres. Seis familias, y ninguna es decorativa:
@@ -95,7 +112,7 @@ export const RESERVED_SLUGS: ReadonlySet<string> = new Set([
   'blog', 'docs', 'doc', 'ayuda', 'help', 'faq', 'contacto', 'contact', 'about', 'nosotros',
   'legal', 'terminos', 'terms', 'privacidad', 'privacy', 'cookies',
   // 4 · entornos
-  'demo', 'test', 'testing', 'dev', 'develop', 'staging', 'stage', 'preview', 'sandbox',
+  DEMO_TENANT_SLUG, 'test', 'testing', 'dev', 'develop', 'staging', 'stage', 'preview', 'sandbox',
   'beta', 'alpha', 'next', 'new', 'old', 'legacy', 'status', 'health', 'metrics',
   // 5 · superficie de phishing
   'login', 'logout', 'signin', 'signup', 'register', 'registro', 'salir',

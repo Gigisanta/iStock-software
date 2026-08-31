@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
+import * as barrel from './index';
 import {
+  DEMO_TENANT_SLUG,
   PRERENDER_SEED_SLUG,
   RESERVED_SLUGS,
   RESERVED_SUBDOMAINS,
@@ -125,5 +127,75 @@ describe('las consultas responden sobre el slug ya normalizado, nunca sobre el c
     // acá, el valor que termina en la base seguiría siendo el crudo.
     expect(isReservedSlug('WWW')).toBe(false);
     expect(isReservedSlug(normalizeSlug('  WWW  '))).toBe(true);
+  });
+});
+
+/**
+ * `DEMO_TENANT_SLUG` (T56).
+ *
+ * La constante existía como un segundo literal `'demo'` en `apps/web/app/(storefront)/_lib/host.ts`,
+ * lejos del Set que la protege. Estos tests son los que hacen que la mudanza valga: no repiten el
+ * string donde el string es derivable, y lo **fijan** exactamente en el único lugar donde tiene
+ * consumidores que no pueden importarlo.
+ */
+describe('T56 · `DEMO_TENANT_SLUG` es la única fuente del slug del demo', () => {
+  it('vale `demo`, y este es el único test que puede afirmarlo', () => {
+    // Se fija contra el literal a propósito, y una sola vez. El valor tiene dos consumidores que
+    // **no** pasan por el compilador de TypeScript y por lo tanto no se enteran de un rename:
+    // `packages/db/src/seed.ts` siembra la fila con `slug: 'demo'`, y el DNS sirve
+    // `demo.maat.work`. Renombrar la constante sin tocar esos dos deja el subdominio apuntando a
+    // un tenant que no existe, que es un 404 en la única URL que se le manda a un prospecto.
+    expect(DEMO_TENANT_SLUG).toBe('demo');
+  });
+
+  it('nadie lo puede registrar', () => {
+    expect(isReservedSlug(DEMO_TENANT_SLUG)).toBe(true);
+    expect(RESERVED_SLUGS.has(DEMO_TENANT_SLUG)).toBe(true);
+  });
+
+  it('y aun así sirve su propia vidriera: el proxy no lo manda a marketing', () => {
+    expect(isReservedSubdomain(DEMO_TENANT_SLUG)).toBe(false);
+    expect(RESERVED_SUBDOMAINS.has(DEMO_TENANT_SLUG)).toBe(false);
+    expect(TENANT_SERVED_RESERVED_SLUGS.has(DEMO_TENANT_SLUG)).toBe(true);
+  });
+
+  it('es la ÚNICA excepción con vidriera propia', () => {
+    // Si mañana hay dos, que sea una decisión escrita y no un Set que creció de costado: la
+    // asimetría `RESERVED_SLUGS ∖ RESERVED_SUBDOMAINS` es justo la que no falla en ningún build.
+    expect([...TENANT_SERVED_RESERVED_SLUGS]).toEqual([DEMO_TENANT_SLUG]);
+    expect([...RESERVED_SLUGS].filter((slug) => !RESERVED_SUBDOMAINS.has(slug))).toEqual([
+      DEMO_TENANT_SLUG,
+    ]);
+  });
+
+  it('un rename a medias rompe acá y no en producción', () => {
+    // El modo de falla que T56 vino a cerrar. Mientras el literal estuvo escrito dos veces, mover
+    // uno solo pasaba typecheck, lint y build: el Set seguía teniendo `'demo'` y la constante ya
+    // decía otra cosa. Ahora los dos Sets se derivan de la constante, así que la mitad no movida
+    // deja de estar contenida y el rojo llega en el commit.
+    expect(RESERVED_SLUGS.has(DEMO_TENANT_SLUG)).toBe(true);
+    expect(TENANT_SERVED_RESERVED_SLUGS.has(DEMO_TENANT_SLUG)).toBe(true);
+    for (const slug of TENANT_SERVED_RESERVED_SLUGS) {
+      expect(RESERVED_SLUGS.has(slug), slug).toBe(true);
+    }
+  });
+
+  it('tiene forma de slug válido: si no, `resolveHost` nunca lo aceptaría como vidriera', () => {
+    expect(SLUG_PATTERN.test(DEMO_TENANT_SLUG)).toBe(true);
+    expect(DEMO_TENANT_SLUG.length).toBeGreaterThanOrEqual(SLUG_MIN_LENGTH);
+    expect(DEMO_TENANT_SLUG.length).toBeLessThanOrEqual(SLUG_MAX_LENGTH);
+  });
+
+  it('ya está normalizado: el borde lo compara sin transformarlo', () => {
+    // `isReservedSlug` no normaliza (ver el bloque de abajo). Un `DEMO_TENANT_SLUG` con mayúscula
+    // o espacio sería irregistrable en la lista y registrable en la práctica.
+    expect(normalizeSlug(DEMO_TENANT_SLUG)).toBe(DEMO_TENANT_SLUG);
+  });
+
+  it('sale por el barrel, que es lo que importan las otras columnas', () => {
+    // `apps/web` importa `@istock/domain`, no `./reserved-slugs`. Un export que existe en el
+    // módulo y no en `index.ts` deja a la otra columna sin más opción que volver a declararlo,
+    // que es exactamente el estado que esta fila vino a terminar.
+    expect(barrel.DEMO_TENANT_SLUG).toBe(DEMO_TENANT_SLUG);
   });
 });

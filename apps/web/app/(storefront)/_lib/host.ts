@@ -28,6 +28,7 @@
  */
 
 import {
+  DEMO_TENANT_SLUG,
   PRERENDER_SEED_SLUG,
   RESERVED_SUBDOMAINS,
   SLUG_PATTERN,
@@ -82,7 +83,13 @@ import {
  * no una página que alguien pueda ver. Con `demo` el build tendría que consultar la DB y, si el
  * tenant demo faltara ese día, dejaría la página de miss prerenderizada bajo el nombre del demo.
  */
-export { PRERENDER_SEED_SLUG, RESERVED_SUBDOMAINS, isReservedSubdomain, isSlugShaped };
+export {
+  DEMO_TENANT_SLUG,
+  PRERENDER_SEED_SLUG,
+  RESERVED_SUBDOMAINS,
+  isReservedSubdomain,
+  isSlugShaped,
+};
 
 /**
  * **Alias de `SLUG_PATTERN` de `@istock/domain`. Ya no es una segunda declaración.**
@@ -300,20 +307,6 @@ export function resolveHost(rawHost: string | null | undefined, options: Resolve
  * producción, exactamente como advierte `STOREFRONT_HOME_PATH`; y (b) `next.config.ts` es del LEAD
  * y decide para las tres caras a la vez (`CLAUDE.md` §4).
  */
-
-/**
- * El slug del tenant demo. **`packages/db/src/seed.ts` lo siembra con este nombre y
- * `TENANT_SERVED_RESERVED_SLUGS` de `@istock/domain` lo declara irregistrable.**
- *
- * Sí, es un segundo literal `'demo'` en el repo, y no me gusta: el lugar canónico de esta constante
- * es `packages/domain`, al lado del Set que la protege — pero ese paquete es de `domain-agent` y
- * esta columna pide, no edita (`CLAUDE.md` §4). Mientras tanto la copia **no** queda atada por una
- * promesa de review: `demo.test.ts` afirma las tres propiedades que la hacen correcta —que está en
- * `TENANT_SERVED_RESERVED_SLUGS`, que está en `RESERVED_SLUGS` (nadie lo registra) y que
- * `resolveHost('demo.<apex>')` devuelve `storefront('demo')`—, así que si el Set cambia el rojo
- * llega en el commit y no con el primer prospecto.
- */
-export const DEMO_TENANT_SLUG = 'demo';
 
 /** El alias del demo bajo el apex: `maat.work/demo`. */
 export const DEMO_ALIAS_PATH = `/${DEMO_TENANT_SLUG}`;

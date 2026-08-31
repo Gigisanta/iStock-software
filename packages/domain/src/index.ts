@@ -86,6 +86,7 @@ export {
 } from './reservation';
 
 export {
+  DEMO_TENANT_SLUG,
   PRERENDER_SEED_SLUG,
   RESERVED_SLUGS,
   RESERVED_SUBDOMAINS,

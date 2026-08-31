@@ -1,12 +1,35 @@
 -- ═══════════════════════════════════════════════════════════════════════════════════════════
--- 0009 · S9 · Dos afirmaciones del canje que vivían SÓLO en el borde, mudadas al motor.
+-- 0009 · S8.1 · El canje, terminado en el MOTOR: la puerta mira `accepts_trade_in`, la unidad
+--              registra de qué canal vino, y `accepted` sin unidad deja de ser un estado posible.
 --
--- Las dos las levantó `adversary-reviewer` sobre S8, y las dos son la misma clase de defecto:
--- una regla de negocio que sólo existe en `apps/web`, en un camino que ya tiene un caller y va a
--- tener otro. Es la doctrina que **0008 escribió en sus propias líneas 36-40** para justificar
--- sus siete CHECK de tamaño — "una afirmación que vive sólo en el borde se pierde el día que
--- aparece un segundo caller" (ADR-025) — aplicada a los largos de texto y no a la regla que
--- tiene consecuencia.
+-- ── Este archivo NO es la migración de `S9`, y hasta hoy su encabezado decía que sí ────────
+-- La línea de arriba se autotitulaba `S9` por parecerse al número de archivo. **`S9` es otra
+-- slice** —"copy list para estados de IG/WA", de `domain-agent` → `app-agent`— y **no toca la
+-- base**: el que buscara "la migración de S9" caía acá y leía un canje, y el que auditara `S8.1`
+-- buscaba un archivo que dijera `S8.1` y no lo encontraba. El número de archivo (`0009`) y el de
+-- slice (`S8.1`) son series distintas que se pisaron por parecerse. Corregido por `db-agent`
+-- (fila `T48`): **sólo el comentario, ni una sentencia SQL cambió** — y no por prolijidad, sino
+-- porque el migrador de Drizzle compara `created_at` y **no el hash del `.sql`** (CLAUDE.md §3):
+-- toda base que ya aplicó este archivo se queda con el texto viejo y `migrate` va a seguir
+-- diciendo `OK`. Editar el SQL acá no habría llegado a ninguna de ellas.
+--
+-- ── Lo que este archivo hace: TRES cosas, que son las tres del encargo de `S8.1` ─────────
+--   · **A** (§1) — `ALTER POLICY tradein_leads_storefront_insert`: el insert anónimo ahora exige
+--     que el tenant de la fila tenga el canje prendido. Hasta S8 eso lo sostenía SÓLO el handler.
+--   · **B1** (§2 y §3) — `listings.acquisition_channel`: enum nuevo `purchase`/`trade_in`/`other`,
+--     `not null default 'purchase'`, más el **backfill** de las unidades que ya venían de un lead.
+--   · **B2** (§4) — `accepted` ⇒ hay unidad creada, como `CONSTRAINT TRIGGER … DEFERRABLE
+--     INITIALLY DEFERRED` (un `CHECK` no se difiere y rompía a `acceptToStock()`), más el
+--     pre-chequeo de huérfanos, porque un trigger no mira el pasado.
+--   · **§5** cierra verificando las tres contra el catálogo en vez de suponerlas.
+--
+-- **A** y **B2** las levantó `adversary-reviewer` sobre S8, y las dos son la misma clase de
+-- defecto: una regla de negocio que sólo existe en `apps/web`, en un camino que ya tiene un
+-- caller y va a tener otro. Es la doctrina que **0008 escribió en sus propias líneas 36-40** para
+-- justificar sus siete CHECK de tamaño — "una afirmación que vive sólo en el borde se pierde el
+-- día que aparece un segundo caller" (ADR-025) — aplicada a los largos de texto y no a la regla
+-- que tiene consecuencia. **B1** no es de esa clase: es una procedencia que hasta hoy había que
+-- deducir de dos rastros indirectos (§2).
 --
 -- ── 0008 NO SE EDITA, y por eso esto es un archivo nuevo ───────────────────────────────────
 -- El migrador de Drizzle decide qué aplicar comparando `created_at`, **no el hash del `.sql`**.
@@ -147,7 +170,8 @@ COMMENT ON TYPE "public"."acquisition_channel" IS 'Canal de adquisicion de una u
 -- ═══════════════════════════════════════════════════════════════════════════════════════════
 -- ── 3 · El backfill, con el único dato duro que existía hasta hoy ──────────────────────────
 -- ═══════════════════════════════════════════════════════════════════════════════════════════
--- Sin esto, toda unidad nacida de un canje antes de S9 quedaría en `'purchase'` — o sea la
+-- Sin esto, toda unidad nacida de un canje antes de esta migración quedaría en `'purchase'`
+-- — o sea la
 -- columna nueva mentiría sobre exactamente los casos por los que se pidió. El `tenant_id` en el
 -- `where` va **además** del `id`, que ya es único: es la misma defensa en profundidad que el repo
 -- exige en toda query (CLAUDE.md §2), y acá evita que un `created_listing_id` cruzado —que 0007
