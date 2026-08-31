@@ -113,7 +113,8 @@ describe('S11 · lista de stock del seller', () => {
   }, 30_000);
 
   it('mantiene el costo sólo en la rama owner, sin compartir la forma del seller', async () => {
-    const [ownerRow] = await listUnits(ctxOwner);
+    const ownerRows = await listUnits(ctxOwner);
+    const ownerRow = ownerRows.find((row) => row.id === UNIT_ID);
     if (ownerRow === undefined) throw new Error('se esperaba una fila para owner');
 
     expect(ownerRow.costUsdCents).toBe(71111);
