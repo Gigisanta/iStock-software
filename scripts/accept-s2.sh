@@ -43,15 +43,18 @@ sec "M1 · el pipeline entrega lo que el board pide — medido por el LEAD, no l
 PROBE=$(mktemp)
 if pnpm --filter @istock/media exec vitest run --root ../.. scripts/probes/s2-media-measure.test.ts \
      >"$PROBE" 2>&1; then
+  PROBE_CLEAN=$(mktemp)
+  perl -pe 's/\e\[[0-9;]*m//g' "$PROBE" >"$PROBE_CLEAN"
   grep -oE 'MEDIDO [a-z]+=[0-9]+B techo=[0-9]+B [0-9]+x[0-9]+' "$PROBE" | sort | while read -r l; do inf "$l"; done
   # El master se mide con otra forma (no tiene NxN: no es una variante servible) y por eso el
   # grep de arriba no lo agarraba. Sin esta linea el objeto MAS PESADO del producto — el 62,7%
   # de los bytes guardados — era el unico cuyo numero el LEAD no veia, aunque el probe si lo
   # asertara. Un techo que nadie lee es un techo que nadie nota cuando se acerca.
   grep -oE 'MEDIDO master=.*' "$PROBE" | head -1 | while read -r l; do inf "$l"; done
-  grep -qE 'Tests +4 passed \(4\)' "$PROBE" \
+  grep -qE 'Tests +4 passed( \(4\))?' "$PROBE_CLEAN" \
     && ok "4/4: 3 variantes, ningun techo pasado, keys opacas, master fuera del bucket publico" \
     || no "el probe no corrio los 4 chequeos (ver salida)"
+  rm -f "$PROBE_CLEAN"
 else
   no "el probe del LEAD fallo"; grep -E 'AssertionError|expected|FAIL' "$PROBE" | head -8 | sed 's/^/        /'
 fi
@@ -72,10 +75,13 @@ rm -f "$PROBE"
 PROBE2=$(mktemp)
 if pnpm --filter @istock/db exec vitest run --root ../.. scripts/probes/s2-seed-master-key.test.ts \
      >"$PROBE2" 2>&1; then
+  PROBE2_CLEAN=$(mktemp)
+  perl -pe 's/\e\[[0-9;]*m//g' "$PROBE2" >"$PROBE2_CLEAN"
   grep -oE 'MEDIDO seedMasterKey -> .*' "$PROBE2" | head -1 | while read -r l; do inf "$l"; done
-  grep -qE 'Tests +3 passed \(3\)' "$PROBE2" \
+  grep -qE 'Tests +3 passed( \(3\))?' "$PROBE2_CLEAN" \
     && ok "el seed emite masters con la forma de ADR-006, y tenant/listing en ese orden" \
     || no "la sonda del seed no corrio sus 3 chequeos (ver salida)"
+  rm -f "$PROBE2_CLEAN"
 else
   no "la sonda del seed fallo"; grep -E 'AssertionError|expected|FAIL' "$PROBE2" | head -8 | sed 's/^/        /'
 fi

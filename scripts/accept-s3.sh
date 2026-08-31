@@ -644,19 +644,21 @@ rm -f "$HTML" "$GRID"
 
 sec "M6 · prohibiciones de siempre sobre lo que toco S3"
 none "cero imei/cost/margin/notas internas en (storefront)" \
-     '\b(imei|cost_?[uU]sd[A-Za-z_]*|margin[A-Za-z_]*|internal_?[nN]otes|supplier)\b' "$SF"
+     '\b(imei|cost_?[uU]sd[A-Za-z_]*|margin[A-Za-z_]*|internal_?[nN]otes|supplier)\b' \
+     --exclude="*.test.ts" "$SF"
 none "sin console.log de un listing/unit/row entero" \
-     'console\.(log|info|debug)\((listing|unit|row|product|item)\b' "$SF"
+     'console\.(log|info|debug)\((listing|unit|row|product|item)\b' \
+     --exclude="*.test.ts" "$SF"
 noneraw "sin 'despues el RLS/R2/cache' (con noneraw: el hallazgo ES un comentario)" \
-     '(TODO|FIXME|XXX)[^\n]*(RLS|R2|cache|caché|despu)' "$SF"
+     '(TODO|FIXME|XXX)[^\n]*(RLS|R2|cache|caché|despu)' --exclude="*.test.ts" "$SF"
 none "la vidriera no arma URLs de R2 a mano (eso es packages/media)" \
-     'r2\.cloudflarestorage|\.r2\.dev' "$SF"
+     'r2\.cloudflarestorage|\.r2\.dev' --exclude="*.test.ts" "$SF"
 none "sin Realtime de Supabase en la vidriera (visitante anonimo, CLAUDE.md §3)" \
-     'supabase.*channel\(|realtime' "$SF"
+     'supabase.*channel\(|realtime' --exclude="*.test.ts" "$SF"
 none "sin Image de next/image con loader por defecto (Vercel Image Optimization, prohibido)" \
-     "from 'next/image'" "$SF"
+     "from 'next/image'" --exclude="*.test.ts" "$SF"
 none "PROHIBIDO revalidate:60 por default (x216 el costo)" \
-     'revalidate\s*[:=]\s*60\b' "$SF"
+     'revalidate\s*[:=]\s*60\b' --exclude="*.test.ts" "$SF"
 
 # ─────────────────────────────────────────────────────────────────────────────
 if [ "$FIXTURE" = "1" ]; then

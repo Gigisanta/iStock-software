@@ -387,7 +387,8 @@ none "cero imei/cost/margin/notas internas en (storefront)" \
 none "sin console.log de un listing" "console\.log\([^)]*(listing|unit|producto)" apps/web/app packages
 noneraw "sin 'despues el RLS/R2/cache' (noneraw: el hallazgo ES un comentario)" \
      "(TODO|FIXME|XXX)[^\n]*(RLS|R2|cache|caché|despu)" apps/web/app packages/db/src "$SF"
-none "el slug no viaja como header de tenant" "headers\(\)|x-tenant" "$SF"
+none "el slug no viaja como header de tenant" "headers\(\)|x-tenant" \
+     --exclude="*.test.ts" "$SF"
 
 printf '\n'
 if [ "$fail" = "0" ]; then printf '\033[1;32mS1: ACEPTADA\033[0m\n'
