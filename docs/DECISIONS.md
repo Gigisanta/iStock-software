@@ -2098,9 +2098,9 @@ con un path que no es el alias.
 
 - **No decide que `/demo` sea especial bajo un host de tenant.** `demo.maat.work/demo` da 404 y eso
   es correcto: el demo no es especial adentro de su propia vidriera.
-- **No decide dónde vive `DEMO_TENANT_SLUG`.** Hoy es una copia en `apps/web`, atada por tres
-  aserciones ejecutables en vez de por una promesa de review. Su casa canónica es
-  `packages/domain/src/reserved-slugs.ts` — fila **`T56`** del board, dueño `domain-agent`.
+- **No decide dónde vive `DEMO_TENANT_SLUG`.** En `HEAD` `733eda2`, la fuente canónica está en
+  `packages/domain/src/reserved-slugs.ts` y `(storefront)` la importa. Los tests y gates de **T56** fueron
+  verificados por el LEAD. Esto no agrega una decisión nueva ni cambia la frontera de S13.
 - **No decide el contenido del demo.** El teléfono del `wa.me` entra por `SEED_DEMO_WA_PHONE` y hoy
   cae en un placeholder: blocker **`B6`**, humano.
 

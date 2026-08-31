@@ -3070,6 +3070,30 @@ METRICA_A_VIGILAR: **`billed.primaryServedEmpty` por turno. Alarma en cualquier 
 > precio de este documento —el techo ya contaba esas llamadas—; cambia qué se va a poder medir en
 > producción, que es lo que dice §7 (B4).
 
+### 2.9 Auditado en S11 — separación de costo owner/seller (2026-08-31)
+
+**COST_VERDICT: PASS.** S11 sólo cambia la forma del resultado de `listUnits()`: el `seller`
+recibe una allowlist sin `costUsdCents`; no agrega una lectura, escritura, ruta ni imagen. La
+comparación contra `HEAD` confirma que la query de costo ya estaba detrás de
+`if (ctx.role === 'owner')`; en el árbol actual el `seller` ejecuta exactamente **2 queries** por
+lista no vacía (`listings` + fotos) y **0 queries de costo**, mientras que `owner` conserva las
+**3** (`listings` + fotos + costo). Lista vacía: **1 query** en ambos roles, sin costo.
+
+```
+delta S11 por tenant/mes
+  egress nuevo              0 imágenes × bytes nuevos                         = 0 GB
+  filas Postgres nuevas     0 writes de producción                            = 0 filas
+  lecturas Postgres nuevas  seller: 2 − 2; owner: 3 − 3                       = 0 queries
+  invocaciones/CPU nuevas   0 rutas, 0 fetches, 0 transforms; sólo branch local = 0 USD medible
+                                                                              ─────────
+                                                                              USD 0.00
+```
+
+El test de S11 crea y limpia sólo su fixture temporal (2 listings, 2 usuarios, 2 memberships y 1
+tenant); no tiene caller de producción y no agrega trabajo al runtime. **Medido:** test dirigido
+`2/2`, `typecheck` y `web-lint` `16/16`. **No medido:** CPU-ms de la rama local por fila; no hay
+benchmark de función y no se atribuye como costo infra.
+
 ## 3. Techo de LLM a 50 tenants `negocio`
 
 **Actualizado el 2026-08-28 con la eval de §2.6 y re-medido el mismo día con la de §2.7.** El bloque

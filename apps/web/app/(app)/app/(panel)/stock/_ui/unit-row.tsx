@@ -12,7 +12,7 @@ import {
   denyReasonText,
   transitionContextFor,
 } from '../../../../_lib/listings/publish-listing';
-import type { UnitRow } from '../../../../_lib/listings/queries';
+import { ownerCostForRow, type UnitRow } from '../../../../_lib/listings/queries';
 import type { ActiveReservationRow } from '../../../../_lib/reservations/queries';
 import {
   RESERVATION_DEFAULT_OPTION,
@@ -172,6 +172,7 @@ export function UnitRowCard({
     : null;
   const sellBlockedText =
     sellCheck !== null && !sellCheck.ok ? denyReasonText(sellCheck.reason) : null;
+  const ownerCost = ctx.role === 'owner' ? ownerCostForRow(unit) : null;
 
   return (
     <li
@@ -216,10 +217,10 @@ export function UnitRowCard({
             {formatUsd(unit.priceUsdCents)}
           </p>
 
-          {unit.costUsdCents === null ? null : (
+          {ownerCost === null ? null : (
             <p className="text-xs text-neutral-500 dark:text-neutral-400">
-              Te costó {formatUsd(unit.costUsdCents)} · te quedan{' '}
-              {formatUsd(unit.priceUsdCents - unit.costUsdCents)}
+              Te costó {formatUsd(ownerCost)} · te quedan{' '}
+              {formatUsd(unit.priceUsdCents - ownerCost)}
             </p>
           )}
 

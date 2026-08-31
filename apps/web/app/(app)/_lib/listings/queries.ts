@@ -41,7 +41,7 @@ export interface UnitPhoto {
   readonly alt: string | null;
 }
 
-export interface UnitRow {
+interface UnitRowBase {
   readonly id: string;
   readonly slug: string;
   readonly title: string;
@@ -57,10 +57,30 @@ export interface UnitRow {
   readonly createdAt: Date;
   readonly photos: readonly UnitPhoto[];
   readonly photoCount: number;
-  /** `null` para `seller` **porque no se consultó**, no porque se haya borrado del objeto. */
+}
+
+/** El seller recibe sólo la allowlist pública; el campo sensible no existe en esta forma. */
+export interface SellerUnitRow extends UnitRowBase {}
+
+/** El owner puede recibir el costo, incluido `null` cuando todavía no fue cargado. */
+export interface OwnerUnitRow extends UnitRowBase {
   readonly costUsdCents: number | null;
 }
 
+export type UnitRow = SellerUnitRow | OwnerUnitRow;
+
+/** Devuelve el costo sólo cuando la fila tiene la forma owner; la forma seller no lo declara. */
+export function ownerCostForRow(row: UnitRow): number | null {
+  return 'costUsdCents' in row ? row.costUsdCents : null;
+}
+
+export async function listUnits(
+  ctx: TenantContext & { readonly role: 'owner' },
+): Promise<readonly OwnerUnitRow[]>;
+export async function listUnits(
+  ctx: TenantContext & { readonly role: 'seller' },
+): Promise<readonly SellerUnitRow[]>;
+export async function listUnits(ctx: TenantContext): Promise<readonly UnitRow[]>;
 export async function listUnits(ctx: TenantContext): Promise<readonly UnitRow[]> {
   return withTenantDb(ctx, async (tx) => {
     const rows = await tx
@@ -111,7 +131,7 @@ export async function listUnits(ctx: TenantContext): Promise<readonly UnitRow[]>
       byListing.set(photo.listingId, list);
     }
 
-    // Segunda query, sólo para `owner`. Ver el encabezado del módulo.
+    // Segunda query, sólo para `owner`. El seller no tiene ningún campo de costo en su objeto.
     const costs = new Map<string, number | null>();
     if (ctx.role === 'owner') {
       const costRows = await tx
@@ -123,12 +143,11 @@ export async function listUnits(ctx: TenantContext): Promise<readonly UnitRow[]>
 
     return rows.map((row) => {
       const list = byListing.get(row.id) ?? [];
-      return {
-        ...row,
-        photos: list,
-        photoCount: list.length,
-        costUsdCents: costs.get(row.id) ?? null,
-      };
+      const base = { ...row, photos: list, photoCount: list.length };
+      if (ctx.role === 'owner') {
+        return { ...base, costUsdCents: costs.get(row.id) ?? null };
+      }
+      return base;
     });
   });
 }
