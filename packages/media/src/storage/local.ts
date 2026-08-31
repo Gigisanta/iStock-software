@@ -26,7 +26,7 @@ export class LocalDiskDriver implements StorageDriver {
   readonly root: string;
 
   constructor(options: LocalDriverOptions = {}) {
-    this.root = resolve(options.root ?? join(process.cwd(), '.media-local'));
+    this.root = resolve(options.root ?? join(/* turbopackIgnore: true */ process.cwd(), '.media-local'));
   }
 
   private pathFor(bucket: MediaBucket, key: string): string {
