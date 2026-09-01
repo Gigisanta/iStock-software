@@ -117,14 +117,17 @@ describe('S6 · el cron llega al handler', () => {
     }
   });
 
-  it('el schedule respeta los límites reales del plan Pro', () => {
+  it('el schedule respeta los límites reales del plan Hobby/free', () => {
     const lista = crons();
     expect(lista.length, 'el schema oficial tipa `crons` con maxItems 100').toBeLessThanOrEqual(100);
 
     for (const { schedule, path } of lista) {
-      // `minLength: 9` en el schema oficial; `* * * * *` (9 chars) es el mínimo y Pro lo permite.
+      // Hobby sólo acepta una ejecución diaria y puede dispararla con hasta ±59 minutos de
+      // precisión. El proyecto se mantiene en modo free: cualquier frecuencia mayor rompe el
+      // despliegue antes de publicar.
       expect(schedule.length, `${path}: schedule más corto que el mínimo del schema`).toBeGreaterThanOrEqual(9);
       expect(schedule.split(/\s+/), `${path}: un cron de Vercel tiene 5 campos`).toHaveLength(5);
+      expect(schedule).toBe('0 3 * * *');
     }
   });
 

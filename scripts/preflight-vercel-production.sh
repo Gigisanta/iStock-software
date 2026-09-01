@@ -37,7 +37,11 @@ if [ "$ACCOUNT" = 'gigisanta' ]; then pass 'sesión Vercel: gigisanta'; else fai
 VERCEL_API_ARGS=(api "/v2/teams/$TEAM_ID")
 TEAM_JSON=$(vercel "${VERCEL_API_ARGS[@]}" --scope "$SCOPE" 2>/dev/null || true)
 PLAN=$(printf '%s' "$TEAM_JSON" | jq -r '.billing.plan // empty' 2>/dev/null || true)
-if [ "$PLAN" = 'pro' ]; then pass 'team Vercel en Pro'; else fail "team Vercel en ${PLAN:-plan desconocido}; el cron de 5 minutos requiere Pro"; fi
+if [ "$PLAN" = 'hobby' ]; then
+  pass 'team Vercel en Hobby (modo free)'
+else
+  fail "team Vercel en ${PLAN:-plan desconocido}; este despliegue está fijado al modo free (Hobby)"
+fi
 
 ENV_JSON=$(vercel env ls production --scope "$SCOPE" --project "$PROJECT" --json 2>/dev/null || true)
 if ! printf '%s' "$ENV_JSON" | jq -e '.envs | type == "array"' >/dev/null 2>&1; then
@@ -52,20 +56,12 @@ else
     AUTH_DRIVER
     MEDIA_DRIVER
     R2_ACCOUNT_ID
-    R2_ACCESS_KEY_ID
-    R2_SECRET_ACCESS_KEY
     R2_BUCKET_ORIGINALS
     R2_BUCKET_MEDIA
     NEXT_PUBLIC_MEDIA_BASE_URL
     BILLING_DRIVER
-    MP_ACCESS_TOKEN
-    MP_WEBHOOK_SECRET
-    MP_PREAPPROVAL_PLAN_BASE
-    MP_PREAPPROVAL_PLAN_NEGOCIO
     LLM_PRIMARY_MODEL
     LLM_FALLBACK_MODEL
-    GOOGLE_GENERATIVE_AI_API_KEY
-    GROQ_API_KEY
     NEXT_PUBLIC_ROOT_DOMAIN
     NEXT_PUBLIC_APP_URL
     LLM_MAX_INPUT_TOKENS
@@ -79,16 +75,30 @@ else
     fi
   done
   if [ "${#MISSING[@]}" -eq 0 ]; then
-    pass 'variables requeridas presentes en Production (valores no expuestos)'
+    pass 'variables base presentes en Production (valores no expuestos)'
   else
     fail "faltan variables Production: ${MISSING[*]}"
   fi
+
+  OPTIONAL_MISSING=()
+  for key in R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY MP_ACCESS_TOKEN MP_WEBHOOK_SECRET \
+    MP_PREAPPROVAL_PLAN_BASE MP_PREAPPROVAL_PLAN_NEGOCIO GOOGLE_GENERATIVE_AI_API_KEY GROQ_API_KEY; do
+    if ! printf '%s' "$ENV_JSON" | jq -e --arg key "$key" \
+      '.envs[] | select(.key == $key and (.target | index("production")) != null)' >/dev/null; then
+      OPTIONAL_MISSING+=("$key")
+    fi
+  done
+  if [ "${#OPTIONAL_MISSING[@]}" -gt 0 ]; then
+    printf 'INFO  módulos opcionales free sin credenciales: %s\n' "${OPTIONAL_MISSING[*]}"
+  else
+    pass 'credenciales opcionales presentes en Production (valores no expuestos)'
+  fi
 fi
 
-if [ -f vercel.json ] && jq -e '.crons | length == 1 and .[0].path == "/api/cron/expire-reservations" and .[0].schedule == "*/5 * * * *"' vercel.json >/dev/null; then
-  pass 'cron de expiración: cada 5 minutos, una sola ruta'
+if [ -f vercel.json ] && jq -e '.crons | length == 1 and .[0].path == "/api/cron/expire-reservations" and .[0].schedule == "0 3 * * *"' vercel.json >/dev/null; then
+  pass 'cron de expiración: diario a las 03:00 UTC, compatible con Hobby (una sola ruta)'
 else
-  fail 'vercel.json no declara exactamente el cron de expiración esperado'
+  fail 'vercel.json no declara exactamente el cron diario compatible con Hobby'
 fi
 
 DNS_CNAME=$(dig +short CNAME "$DOMAIN" 2>/dev/null || true)
