@@ -139,6 +139,7 @@ const ESPERADO = {
   "/billing/suscribirse":      "resuming/initial",
   "/billing/subscribe":        "dynamic",
   "/api/auth/callback":         "dynamic",
+  "/api/auth/[...path]":         "dynamic",
 
   // Beacon del click de WhatsApp (S4). `dynamic` es el unico valor aceptable y no por performance:
   // la ruta ESCRIBE una fila. Una ruta que escribe y aparece prerenderizada significa que se ejecuto
