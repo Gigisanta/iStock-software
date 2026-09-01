@@ -1,6 +1,7 @@
 import { Suspense } from 'react';
 import type { Metadata } from 'next';
 import { formatMonthlyUsd, PAID_PLAN_TIERS, PLAN_CATALOG } from '../_lib/plans';
+import { billingDriver } from '../_lib/env';
 import { requireOwner } from '../../(app)/_lib/session';
 
 export const metadata: Metadata = { title: 'Suscripción' };
@@ -16,14 +17,16 @@ export default function BillingPage() {
 
 async function BillingContent() {
   const { tenant } = await requireOwner();
+  const paymentsEnabled = billingDriver() === 'mercadopago';
 
   return (
     <main className="mx-auto w-full max-w-2xl px-4 py-8">
       <p className="text-sm font-medium text-neutral-500 dark:text-neutral-400">{tenant.name}</p>
       <h1 className="mt-1 text-3xl font-semibold tracking-tight">Elegí tu plan</h1>
       <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-300">
-        Te llevamos a Mercado Pago para completar la suscripción. Podés usar dinero disponible o
-        tarjeta de débito; nosotros no recibimos datos de tarjeta.
+        {paymentsEnabled
+          ? 'Te llevamos a Mercado Pago para completar la suscripción. Podés usar dinero disponible o tarjeta de débito; nosotros no recibimos datos de tarjeta.'
+          : 'La prueba gratuita está activa. Los pagos están pausados por ahora y se habilitarán cuando configuremos Mercado Pago.'}
       </p>
 
       <div className="mt-6 grid gap-4">
@@ -46,9 +49,10 @@ async function BillingContent() {
                 <input type="hidden" name="plan" value={plan} />
                 <button
                   type="submit"
+                  disabled={!paymentsEnabled}
                   className="min-h-[48px] shrink-0 rounded-xl bg-neutral-900 px-4 text-sm font-semibold text-white dark:bg-white dark:text-neutral-900"
                 >
-                  Elegir {spec.label}
+                  {paymentsEnabled ? `Elegir ${spec.label}` : 'Pagos próximamente'}
                 </button>
               </div>
               <p className="mt-4 text-sm text-neutral-600 dark:text-neutral-300">
@@ -62,8 +66,9 @@ async function BillingContent() {
       </div>
 
       <p className="mt-6 text-xs text-neutral-500 dark:text-neutral-400">
-        Tu prueba de 14 días no se cobra automáticamente desde esta pantalla. El estado se confirma
-        cuando Mercado Pago notifica la suscripción.
+        {paymentsEnabled
+          ? 'Tu prueba de 14 días no se cobra automáticamente desde esta pantalla. El estado se confirma cuando Mercado Pago notifica la suscripción.'
+          : 'Tu prueba de 14 días no requiere tarjeta ni configura ningún cobro automático.'}
       </p>
     </main>
   );

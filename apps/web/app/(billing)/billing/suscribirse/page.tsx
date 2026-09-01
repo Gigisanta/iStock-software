@@ -1,6 +1,7 @@
 import { Suspense } from 'react';
 import type { Metadata } from 'next';
 import { requireOwner } from '../../../(app)/_lib/session';
+import { billingDriver } from '../../_lib/env';
 import { parseSubscriptionRequest } from '../../_lib/subscribe';
 import { formatMonthlyUsd, PLAN_CATALOG } from '../../_lib/plans';
 
@@ -46,6 +47,7 @@ async function SubscribeContent({ searchParams }: SubscribePageProps) {
   }
 
   const spec = PLAN_CATALOG[requested.plan];
+  const paymentsEnabled = billingDriver() === 'mercadopago';
 
   return (
     <main className="mx-auto w-full max-w-2xl px-4 py-8">
@@ -57,16 +59,18 @@ async function SubscribeContent({ searchParams }: SubscribePageProps) {
           {formatMonthlyUsd(requested.plan)} por mes
         </p>
         <p className="mt-4 text-sm text-neutral-600 dark:text-neutral-300">
-          Vas a completar el alta en Mercado Pago. Podés usar dinero disponible o tarjeta de débito;
-          nosotros no recibimos datos de tarjeta.
+          {paymentsEnabled
+            ? 'Vas a completar el alta en Mercado Pago. Podés usar dinero disponible o tarjeta de débito; nosotros no recibimos datos de tarjeta.'
+            : 'Los pagos están pausados por ahora porque esta instalación está usando únicamente servicios gratuitos.'}
         </p>
         <form method="post" action="/billing/subscribe" className="mt-5">
           <input type="hidden" name="plan" value={requested.plan} />
           <button
             type="submit"
+            disabled={!paymentsEnabled}
             className="min-h-[52px] w-full rounded-xl bg-neutral-900 px-6 text-base font-semibold text-white dark:bg-white dark:text-neutral-900"
           >
-            Continuar a Mercado Pago
+            {paymentsEnabled ? 'Continuar a Mercado Pago' : 'Pagos próximamente'}
           </button>
         </form>
       </section>
