@@ -16,6 +16,7 @@
     "db:migrate": "pnpm --filter @istock/db migrate",
     "db:seed": "pnpm --filter @istock/db seed",
     "db:local": "./scripts/pg-local.sh",
+    "vercel:preflight": "./scripts/preflight-vercel-production.sh",
     "guard": "./scripts/guard-artifacts.sh",
     "audit": "pnpm audit --audit-level=high"
   },
