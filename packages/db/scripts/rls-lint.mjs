@@ -141,8 +141,9 @@ const sql = migrations.map((tag) => readFileSync(join(ROOT, 'drizzle', `${tag}.s
 const sqlNoComments = sql.split('\n').filter((l) => !l.trim().startsWith('--')).join('\n');
 
 // ── 2. Toda tabla creada tiene RLS, FORCE y las 4 policies ───────────────────────────────────
-const tables = [...sqlNoComments.matchAll(/CREATE TABLE(?: IF NOT EXISTS)?\s+"?(\w+)"?/gi)]
-  .map((m) => m[1])
+const tables = [...sqlNoComments.matchAll(/CREATE TABLE(?: IF NOT EXISTS)?\s+(?:(?:"?(\w+)"?)\.)?"?(\w+)"?/gi)]
+  .filter((m) => (m[1] ?? 'public') === 'public')
+  .map((m) => m[2])
   .filter((t) => !t.startsWith('__drizzle'));
 
 const enabled = new Set(
@@ -347,6 +348,11 @@ for (const [, head, roles] of sqlNoComments.matchAll(/\bGRANT\b([^;]*?)\bTO\b([^
     fail('0020', `GRANT masivo a anon: el read model público se otorga tabla por tabla → ${short}`);
     continue;
   }
+
+  // Los roles de compatibilidad de Neon Auth necesitan USAGE/EXECUTE sobre el schema y sus
+  // helpers, pero 0020 audita exclusivamente la superficie de datos de tablas. No mezclar esos
+  // grants de infraestructura con el read model evita que el bootstrap de auth parezca una fuga.
+  if (!/\bON\s+TABLE\b/i.test(head)) continue;
 
   const columnGrant = /^GRANT\s+(SELECT|INSERT)\s*\(([^)]*)\)\s*ON\s+TABLE\s+"?(\w+)"?$/i.exec(
     `GRANT${head}`.replace(/\s+/g, ' ').trim(),

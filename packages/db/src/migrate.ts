@@ -19,7 +19,9 @@ import { databaseUrl } from './env';
 const migrationsFolder = resolve(dirname(fileURLToPath(import.meta.url)), '../drizzle');
 
 async function main(): Promise<void> {
-  const url = databaseUrl();
+  // Neon recomienda la conexión directa para DDL/migraciones; la URL pooled queda para el
+  // runtime de la aplicación. En local sólo existe DATABASE_URL, por eso conserva el fallback.
+  const url = process.env['DATABASE_URL_UNPOOLED'] ?? databaseUrl();
   process.stdout.write(`migrate → ${url.replace(/:[^:@/]*@/, ':***@')}\n`);
   const { db, close } = createDb({ url });
   try {

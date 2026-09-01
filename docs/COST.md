@@ -33,12 +33,12 @@ La decisión de usar pocos servicios es correcta para este volumen:
 | Servicio | Responsabilidad | Decisión de costo |
 |---|---|---|
 | Vercel | Next.js, proxy de host, Functions, ISR y un cron | Un proyecto; no agregar worker, Redis ni cola permanente |
-| Supabase | Postgres, Auth, RLS y `pgvector` | Un proyecto; catálogo global para no duplicar filas/embeddings |
-| Cloudflare R2 + CDN | Fotos públicas y master privado | Un bucket público y uno privado; egress de R2 a USD 0; no Supabase Storage ni Vercel Image Optimization |
+| Neon | Postgres, Neon Auth y RLS | Un proyecto conectado desde Vercel; catálogo global para no duplicar filas/embeddings |
+| Cloudflare R2 + CDN | Fotos públicas y master privado | Un bucket público y uno privado; egress de R2 a USD 0; no storage público alternativo ni Vercel Image Optimization |
 | Mercado Pago | Suscripciones | Separa facturación de infraestructura; comisión transaccional no es costo marginal de infra |
 | Gemini + Groq | Chat de Negocio | Dos proveedores por resiliencia, ambos sólo en el hot path del chat |
 
-No encontré un servicio siempre encendido, una conexión Realtime anónima ni una cola/Redis innecesarios en el checkout. Agregar cualquiera de ellos antes de medir sería costo tonto: suma piso fijo o conexiones sin resolver un cuello de botella probado.
+No encontré un servicio siempre encendido, una conexión Realtime anónima ni una cola/Redis necesarios en el checkout. Agregar cualquiera de ellos antes de medir sería costo tonto: suma piso fijo o conexiones sin resolver un cuello de botella probado.
 
 El checkout está en preproducción y el README declara que no hay deploy público ni métricas de producción verificables. Por eso la arquitectura puede ser eficiente en papel, pero el gate de producción no puede ser `PASS` todavía.
 
@@ -65,14 +65,14 @@ Tarifas consultadas el 2026-09-01 en documentación oficial:
 | Proveedor | Tarifa útil para este modelo | Tratamiento |
 |---|---|---|
 | Cloudflare R2 | USD 0.015/GB-mes; Class A USD 4.50/M; Class B USD 0.36/M; egress USD 0; free tier mensual 10 GB, 1 M Class A y 10 M Class B por cuenta | variable marginal; el free tier es de cuenta, no de tenant |
-| Supabase Pro | USD 25/mes; incluye 8 GB de disk y créditos de compute; egress incluido hasta 250 GB y cached egress hasta 250 GB en el plan consultado | piso fijo, no se divide en la prueba marginal; exceso/uso real `UNVERIFIED` |
+| Neon Free | Recurso `istock-neon` conectado desde Vercel; límites y consumo efectivos del plan `free_v3` quedan `UNVERIFIED` | plan actual; no se asume capacidad comercial sin observarla |
 | Vercel Pro | USD 20/mes y USD 20 de crédito mensual; función por unidad publicada a USD 0.0000006/invocación para Pro; CPU y memoria dependen de región | piso fijo; la aplicación del crédito y la clasificación actual del proyecto son `UNVERIFIED` |
 | Gemini 2.5 Flash-Lite | USD 0.10/M tokens de entrada y USD 0.40/M de salida | sólo chat Negocio |
 | Groq `openai/gpt-oss-20b` | USD 0.075/M de entrada y USD 0.30/M de salida | fallback de chat; uso real `UNVERIFIED` |
 
 Fuentes oficiales y fecha de consulta: [Cloudflare R2 Pricing](https://developers.cloudflare.com/r2/pricing/) (actualizada 2026-08-07, consultada 2026-09-01), [Supabase Pricing](https://supabase.com/pricing/) (consultada 2026-09-01), [Vercel Pro Plan](https://vercel.com/docs/plans/pro-plan) y [Vercel Functions usage and pricing](https://vercel.com/docs/functions/usage-and-pricing) (consultadas 2026-09-01), [Vercel function invocations per-unit](https://vercel.com/changelog/function-invocations-now-billed-per-unit) (2026-05-29, consultada 2026-09-01), [Gemini API Pricing](https://ai.google.dev/gemini-api/docs/pricing) (consultada 2026-09-01), [Groq gpt-oss-20b pricing](https://console.groq.com/docs/model/openai/gpt-oss-20b) (consultada 2026-09-01).
 
-Piso mensual separado del marginal: **USD 25 Supabase Pro + USD 20 Vercel Pro + precio del plan Cloudflare `UNVERIFIED`**. El piso no se reparte dentro de USD 0.50/tenant. Las comisiones de Mercado Pago y cualquier add-on pago tampoco se inventan ni se mezclan con infraestructura.
+Piso mensual separado del marginal: **Neon Free + Vercel Hobby hoy; Vercel Pro es necesario para el uso comercial y el cron de 5 minutos + precio del plan Cloudflare `UNVERIFIED`**. El piso no se reparte dentro de USD 0.50/tenant. Las comisiones de Mercado Pago y cualquier add-on pago tampoco se inventan ni se mezclan con infraestructura.
 
 ## Egreso y operaciones de imágenes
 
@@ -128,7 +128,7 @@ Con el CDN de Cloudflare funcionando, R2 no cobra egress y los Class B deben apr
 
 ### Bytes al browser
 
-El stress anterior carga `90% × 60 × 150 KiB + 10% × (250 + 7 × 150) KiB = 8.230 KiB/view`. Con 3.000 vistas: `25.28256 GB/tenant/mes` de bytes públicos máximos. El proveedor R2 cobra egress USD 0, pero el origen real del byte, el plan/CDN y cualquier byte que escape por Vercel o Supabase son `UNVERIFIED`. Un original de 25 MiB sólo es un límite de upload server-side; no es un presupuesto válido para el browser.
+El stress anterior carga `90% × 60 × 150 KiB + 10% × (250 + 7 × 150) KiB = 8.230 KiB/view`. Con 3.000 vistas: `25.28256 GB/tenant/mes` de bytes públicos máximos. El proveedor R2 cobra egress USD 0, pero el origen real del byte, el plan/CDN y cualquier byte que escape por Vercel o Neon son `UNVERIFIED`. Un original de 25 MiB sólo es un límite de upload server-side; no es un presupuesto válido para el browser.
 
 ## Postgres, filas y conexiones
 
@@ -152,13 +152,13 @@ Con cache sano, el costo DB público esperado es cero en hits. El objetivo del c
 - `expire-reservations/route.ts` autentica primero con `CRON_SECRET`; no hay worker 24/7.
 - `expireDueReservations`: incluso sin vencimientos hace al menos dos SELECT por ejecución; el batch máximo es 200 y cada fila cambiada puede hacer hasta un UPDATE de listing, un UPDATE de reservation y un INSERT de event.
 
-Mínimo mensual del cron, plataforma completa: `8.640 × 2 = 17.280 SELECT`; distribuido aritméticamente en 100 tenants: `172.8 SELECT/tenant/mes`, antes de las filas realmente vencidas. A la tarifa de referencia de invocación Vercel: `8.640 × USD 0.0000006 = USD 0.005184 total`, `USD 0.00005184/tenant`; el crédito Pro y la clasificación vigente son `UNVERIFIED`. El costo Supabase por fila/consulta no se puede inventar a partir del precio del plan.
+Mínimo mensual del cron, plataforma completa: `8.640 × 2 = 17.280 SELECT`; distribuido aritméticamente en 100 tenants: `172.8 SELECT/tenant/mes`, antes de las filas realmente vencidas. A la tarifa de referencia de invocación Vercel: `8.640 × USD 0.0000006 = USD 0.005184 total`, `USD 0.00005184/tenant`; el crédito Pro y la clasificación vigente son `UNVERIFIED`. El costo Neon por fila/consulta no se puede inventar a partir del precio del plan.
 
 ### Conexiones y Realtime
 
-`max: 1` limita cada pool de instancia caliente, no el total de conexiones del proyecto. La cantidad de instancias, concurrencia, conexiones activas, espera de pool y tamaño/compute de Supabase son `UNVERIFIED`.
+`max: 1` limita cada pool de instancia caliente, no el total de conexiones del proyecto. La cantidad de instancias, concurrencia, conexiones activas, espera de pool y tamaño/compute de Neon son `UNVERIFIED`.
 
-No hay código de Realtime anónimo en la vidriera. El gate sigue exigiendo **cero conexiones anónimas** y una verificación de la configuración del proyecto Supabase, porque el código no prueba por sí solo la configuración administrada.
+No hay código de Realtime anónimo en la vidriera. El gate sigue exigiendo **cero conexiones persistentes anónimas** y una verificación de la configuración administrada de Neon, porque el código no prueba por sí solo los límites del proveedor.
 
 ## Vercel Functions, CPU y egress HTML
 
@@ -232,10 +232,11 @@ La decisión de “menor cantidad posible de servicios” pasa arquitectónicame
 
 El LEAD debe adjuntar evidencia fechada de todos estos puntos:
 
-1. **R2/media:** `MEDIA_DRIVER=r2`; credenciales y dos buckets configurados; dominio CDN custom activo; ningún `.r2.dev`, Supabase Storage público, Vercel Image Optimization u original >500 KiB en browser. Medir bytes, Class A/B, cache miss y crecimiento de objetos; resolver retención/GC de objetos huérfanos.
+1. **R2/media:** `MEDIA_DRIVER=r2`; credenciales y dos buckets configurados; dominio CDN custom activo; ningún `.r2.dev`, storage alternativo público, Vercel Image Optimization u original >500 KiB en browser. Medir bytes, Class A/B, cache miss y crecimiento de objetos; resolver retención/GC de objetos huérfanos.
 2. **Cache/DB:** en producción, `storefront_db_hit_rate ≤5%`; mostrar consultas por hit, filas, p95 de query, conexiones activas y pool waits. Un hit de vidriera que toca Postgres es una regresión de costo aunque el tenant sea Negocio.
 3. **Vercel:** confirmar Pro, región/clase de ejecución, invocaciones, CPU-ms/pageview, memoria, egress HTML y consumo del crédito de USD 20. Confirmar que el cron publicado ejecuta 8.640/mes esperado, tiene `CRON_SECRET` y no hay worker 24/7.
-4. **Supabase:** proyecto real, compute, disk, conexiones y spend cap **ON**. El spend cap apagado es fallo automático; no se reemplaza por una suposición del `.env.example`.
+4. **Neon:** proyecto real conectado desde Vercel, migraciones aplicadas, Auth con origen confiable,
+   conexiones y consumo verificables. La migración no aplicada mantiene el gate en FAIL.
 5. **Seguridad de tráfico:** publicar y comprobar las cuatro reglas de `config/firewall-rules.json` para track, trade-in, chat y billing; no agregar rate limit por cada pageview HTML sin una justificación de costo. La publicación viva está declarada como pendiente en el archivo.
 6. **Realtime:** evidencia de cero conexiones anónimas.
 7. **LLM/Negocio:** ruta real sólo en Negocio; Gemini Flash-Lite primario y fallback aprobado; ningún frontier; p95 y máximo agregado ≤1.200 in/180 out por turno; cap ≤40 mensajes/día/tenant; costo por proveedor y tokens in/out por tenant.
@@ -247,7 +248,7 @@ Cualquier punto sin evidencia permanece `UNVERIFIED` y conserva `COST_VERDICT: F
 
 - Deploy, hostname wildcard, DNS/nameservers y dominio CDN activos.
 - Configuración efectiva y consumo de Vercel Pro, créditos, región, clase de runtime, CPU-ms, memoria, invocaciones y egress HTML.
-- Proyecto Supabase real, spend cap, compute, disk, bloat, filas acumuladas, conexiones y costo de exceso.
+- Proyecto Neon real, plan efectivo, compute, almacenamiento, bloat, filas acumuladas, conexiones y costo de exceso.
 - Cuenta R2 real, bucket lifecycle, objetos huérfanos, bytes medios, Class A/B y hit ratio del CDN.
 - Pageviews, scroll efectivo, distribución home/detalle, uploads/reuploads y tenants por plan.
 - Publicación efectiva de WAF/rate limits.

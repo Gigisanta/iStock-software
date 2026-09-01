@@ -87,7 +87,7 @@ Vercel desplegada todavía no está verificado.
 | Capa | Tecnología |
 | --- | --- |
 | Web | Next.js 16 App Router, React 19, TypeScript `strict`, Tailwind CSS |
-| Datos | PostgreSQL, Supabase (Auth + RLS en producción), Drizzle ORM y migraciones SQL versionadas |
+| Datos | Neon Postgres + Neon Auth (integrados en Vercel), RLS, Drizzle ORM y migraciones SQL versionadas |
 | Media | `sharp`, Cloudflare R2 + CDN; filesystem local para desarrollo |
 | IA | Vercel AI SDK en el diseño, providers configurados por environment y fallback; implementación aislada en `packages/ai` |
 | Billing | Mercado Pago Subscriptions, con driver mock local |
@@ -101,8 +101,8 @@ Las versiones exactas y variables disponibles están en los `package.json` de ca
 ## Correrlo en local
 
 Requisitos: Node.js 22 o superior, pnpm 10.34.5 y un PostgreSQL local con `psql` disponible. El
-script local crea una base `istock_dev` y emula sólo lo necesario para probar roles y RLS de
-Supabase; no emula GoTrue, Storage, Realtime ni pgvector.
+script local crea una base `istock_dev` y emula sólo lo necesario para probar roles y RLS compatibles
+con Neon; no emula Neon Auth, Storage, Realtime ni pgvector.
 
 ```bash
 git clone https://github.com/Gigisanta/iStock-software.git
@@ -161,20 +161,19 @@ CI:
 | `pnpm --filter @istock/domain test` | **244 passed** en 13 archivos. |
 | `pnpm --filter @istock/media test` | **164 passed** en 11 archivos. Incluye pipeline de imágenes y contratos de R2. |
 | `pnpm --filter @istock/ai test` | **591 passed** en 20 archivos. |
-| `pnpm --filter @istock/web test` | **973 passed, 4 skipped** en 59 archivos. |
-| `pnpm --filter @istock/db test` | **443 passed, 1 failed**. El fallo actual espera `23514` y recibe `23503` por la constraint/FK presente en el worktree. |
-| `pnpm --filter @istock/tests test` | **430 passed, 2 failed**. Los fallos actuales reflejan la misma deriva de constraints/FK en la base de prueba. |
+| `pnpm --filter @istock/web test` | **985 passed, 4 skipped** en 61 archivos. |
+| `pnpm --filter @istock/db test` | **478 passed** en 18 archivos. |
+| `pnpm --filter @istock/tests test` | **448 passed** en 9 archivos. |
 
-Las dos suites rojas contienen evidencia útil de aislamiento y transacciones, pero no se presentan
-como verdes mientras el worktree tenga esa migración/código en evolución. `pnpm e2e`, `pnpm audit`,
-un `next build` de aceptación y un deploy público no forman parte de esta corrida local.
+Estas cifras son una fotografía local; la producción todavía requiere aplicar la migración remota,
+configurar los secretos de proveedores y verificar un deploy público.
 
 ## Estado y límites conocidos
 
-- **Pre-producción:** el driver local de autenticación está bloqueado explícitamente en producción;
-  falta verificar el proyecto Supabase, Auth y `spend cap` configurado.
-- **Infraestructura externa:** R2, Mercado Pago, Gemini/Groq y el dominio wildcard requieren
-  credenciales, configuración o DNS que no están en el repositorio.
+- **Pre-producción:** Neon y Neon Auth ya están conectados al proyecto Vercel; falta aplicar la migración
+  remota y registrar `https://istock.maat.work` como origen confiable de Neon Auth.
+- **Infraestructura externa:** el dominio Vercel y el CDN R2 ya están configurados; faltan las credenciales
+  de acceso R2, Mercado Pago y Gemini/Groq, que nunca se guardan en el repositorio.
 - **Chatbot:** `packages/ai` tiene lógica y evals, pero falta cablear la superficie web `/api/chat`,
   su observabilidad y su rate limit en el borde.
 - **Browser y CDN:** los specs de Playwright y los gates existen; no se afirma aquí que hayan sido
@@ -186,8 +185,8 @@ un `next build` de aceptación y un deploy público no forman parte de esta corr
 
 ## Roadmap verificable
 
-1. **Cerrar infraestructura de producción:** Supabase con RLS/spend cap, R2 privado + CDN, sandbox
-   de Mercado Pago, credenciales de providers y DNS wildcard de `maat.work`.
+1. **Cerrar infraestructura de producción:** migración Neon + RLS, credenciales R2, sandbox de Mercado
+   Pago, credenciales de providers y reglas WAF de Vercel.
 2. **Cerrar la superficie web del chatbot:** `/api/chat`, handoff a WhatsApp, consumo de métricas de
    presupuesto y rate limiting WAF.
 3. **Reejecutar la aceptación completa:** typecheck/lint/gates, migración + seed limpios, Playwright

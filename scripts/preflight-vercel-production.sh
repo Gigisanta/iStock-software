@@ -46,9 +46,9 @@ else
   REQUIRED_ENV=(
     CRON_SECRET
     DATABASE_URL
-    NEXT_PUBLIC_SUPABASE_URL
-    NEXT_PUBLIC_SUPABASE_ANON_KEY
-    SUPABASE_SERVICE_ROLE_KEY
+    DATABASE_URL_UNPOOLED
+    NEON_AUTH_BASE_URL
+    NEON_AUTH_COOKIE_SECRET
     AUTH_DRIVER
     MEDIA_DRIVER
     R2_ACCOUNT_ID
@@ -91,11 +91,13 @@ else
   fail 'vercel.json no declara exactamente el cron de expiración esperado'
 fi
 
-DNS_A=$(dig +short "$DOMAIN" A 2>/dev/null || true)
-if printf '%s\n' "$DNS_A" | grep -Fxq "$VERCEL_IP"; then
-  pass "DNS $DOMAIN apunta a $VERCEL_IP"
+DNS_CNAME=$(dig +short CNAME "$DOMAIN" 2>/dev/null || true)
+DNS_A=$(dig +short A "$DOMAIN" 2>/dev/null || true)
+if printf '%s\n' "$DNS_A" | grep -Fxq "$VERCEL_IP" || \
+   printf '%s\n' "$DNS_CNAME" | grep -Eq 'vercel-dns-[0-9]+\.com\.?$'; then
+  pass "DNS $DOMAIN apunta a Vercel"
 else
-  fail "DNS $DOMAIN no apunta a $VERCEL_IP (actual: ${DNS_A:-sin registro A})"
+  fail "DNS $DOMAIN no apunta a Vercel (actual: ${DNS_CNAME:-sin CNAME} ${DNS_A:-sin registro A})"
 fi
 
 if DEPLOYMENTS=$(vercel ls "$PROJECT" --scope "$SCOPE" --limit 1 2>&1); then

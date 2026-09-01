@@ -38,3 +38,8 @@ scripts/.wafpol-tmp/
 # tras un Ctrl-C no puede ensuciar ninguna otra medicion. Y aunque pudiera: un fixture visible
 # que pone algo en rojo es ruidoso y se borra; un fixture invisible que apaga una polaridad no
 # avisa nunca.
+# Herramientas locales de Codex/Neon; no forman parte del producto desplegable.
+.agents/
+.codex/
+skills-lock.json
+.env*

@@ -26,6 +26,7 @@ const IDENTITY = {
 function form(...plans: string[]): FormData {
   const data = new FormData();
   data.set('email', 'dueno@test.local');
+  data.set('password', 'correct-password');
   for (const plan of plans) data.append('plan', plan);
   return data;
 }
@@ -44,7 +45,12 @@ describe('signInAction · plan elegido', () => {
     await expect(signInAction(state, form('base'))).rejects.toThrow(
       'redirect:/billing/suscribirse?plan=base',
     );
-    expect(signIn).toHaveBeenCalledWith({ email: 'dueno@test.local', selectedPlan: 'base' });
+    expect(signIn).toHaveBeenCalledWith({
+      email: 'dueno@test.local',
+      password: 'correct-password',
+      mode: 'sign_in',
+      selectedPlan: 'base',
+    });
     expect(redirect).toHaveBeenCalledWith('/billing/suscribirse?plan=base');
   });
 
@@ -100,7 +106,12 @@ describe('signInAction · plan elegido', () => {
       email: 'dueno@test.local',
       selectedPlan: 'negocio',
     });
-    expect(signIn).toHaveBeenCalledWith({ email: 'dueno@test.local', selectedPlan: 'negocio' });
+    expect(signIn).toHaveBeenCalledWith({
+      email: 'dueno@test.local',
+      password: 'correct-password',
+      mode: 'sign_in',
+      selectedPlan: 'negocio',
+    });
     expect(redirect).not.toHaveBeenCalled();
   });
 });

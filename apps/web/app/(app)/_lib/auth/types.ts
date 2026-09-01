@@ -2,8 +2,8 @@ import 'server-only';
 import type { SelectedPlan } from './selected-plan';
 
 /**
- * Puerto de autenticación. **Una interfaz, dos drivers**: `supabase` (SSR real) y `local` (cookie
- * firmada + Postgres local, sólo desarrollo).
+ * Puerto de autenticación. `neon` es el driver de producción y `local` queda sólo para desarrollo.
+ * Se conserva `supabase` como compatibilidad de migración mientras se retiran instalaciones viejas.
  *
  * El puerto existe por una razón concreta, no por purismo: sin credenciales de Supabase el panel
  * tenía que quedar sin escribirse o escribirse contra un mock que después se tira. Con el puerto,
@@ -22,7 +22,7 @@ export type MembershipRole = 'owner' | 'seller';
 
 /** Quién es la persona. Nada de esto es autorización. */
 export interface AuthIdentity {
-  /** = `auth.users.id` de Supabase. Es el `sub` del JWT y lo que lee `auth.uid()`. */
+  /** = el id UUID de Neon Auth. Es el `sub` de los claims que usa `auth.uid()`. */
   readonly userId: string;
   readonly email: string;
   readonly fullName: string | null;
@@ -30,7 +30,11 @@ export interface AuthIdentity {
 
 export interface SignInInput {
   readonly email: string;
-  /** Plan elegido antes del login; sólo se usa para construir un callback cerrado. */
+  /** Contraseña de Neon Auth. El driver local y el legado la ignoran. */
+  readonly password?: string;
+  /** El formulario distingue explícitamente alta de ingreso. */
+  readonly mode?: 'sign_in' | 'sign_up';
+  /** Plan elegido antes del login. */
   readonly selectedPlan: SelectedPlan | null;
 }
 
@@ -55,7 +59,7 @@ export class AuthError extends Error {
 }
 
 export interface AuthDriver {
-  readonly name: 'local' | 'supabase';
+  readonly name: 'local' | 'neon' | 'supabase';
 
   /**
    * `true` si el driver da de alta usuarios sin verificar el mail. La UI **tiene que decirlo**:

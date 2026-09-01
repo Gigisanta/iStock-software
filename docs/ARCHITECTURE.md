@@ -15,12 +15,14 @@ bloqueador y el experimento que lo cierra. Nada quedó sin decidir por olvido._
 
 ## Invariantes (ya decididas, no dependen del research)
 
-1. **Un solo proyecto Supabase** para todos los tenants. Aislamiento por `tenant_id` + RLS.
+1. **Un solo proyecto Neon Postgres** para todos los tenants, con Neon Auth como identidad canónica.
+   Aislamiento por `tenant_id` + RLS; `auth.users` sólo conserva un espejo UUID compatible para las FK.
    Nunca schema-per-tenant, nunca un proyecto por cliente.
 2. **La vidriera es casi estática.** Objetivo: **95% de los hits no tocan Postgres.**
 3. **Las fotos salen de Cloudflare R2** por CDN de Cloudflare. Egress $0. Jamás de Vercel ni
    de Supabase Storage.
-4. **Realtime sólo en el panel autenticado.** Cero conexiones persistentes para anónimos.
+4. **Sin Realtime en el camino crítico.** El panel usa Server Components/Actions; cero conexiones
+   persistentes para anónimos.
 5. **`packages/domain` es TS puro.** Es el único lugar donde vive una regla de negocio.
 6. **El LLM nunca está en el camino de un pageview.** Sólo responde a un mensaje explícito.
 

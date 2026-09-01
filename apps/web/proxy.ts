@@ -430,6 +430,9 @@ export const config = {
     // un regex no-goloso que corta en el primer corchete de cierre, así que un corchete adentro de
     // un comentario le esconde la mitad de las entradas y el rojo que da no habla de eso.)
     '/app/:path*',
+    // Neon Auth atiende este subárbol en el dominio principal. También debe pasar por el proxy para
+    // que el saneo de `x-tenant-*` sea total si alguien lo solicita bajo un host de tenant.
+    '/api/auth/:path*',
     '/_media/:path*',
     '/%5Fmedia/:path*',
     // El lookahead anidado se lee así: excluí un path por su sufijo **salvo** que sea un file

@@ -12,9 +12,8 @@ import { getPanelSession } from '../_lib/session';
 import { SignInForm } from './sign-in-form';
 
 /**
- * Ingreso al panel. No hay pantalla de "registro" aparte: en Capa 1 el mail te crea la cuenta si
- * no existe y te hace entrar si existe. Dos formularios idénticos con dos títulos distintos es
- * una decisión de diseño que sólo sirve para que alguien elija el equivocado.
+ * Ingreso al panel. La misma pantalla permite entrar o crear una cuenta, con una acción explícita
+ * para cada caso y sin revelar si un mail ya está registrado.
  *
  * `noindex`: es una pantalla de sesión, no tiene nada que hacer en Google.
  */

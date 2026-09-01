@@ -157,7 +157,8 @@ IMEI + origen + resultado de consulta ENACOM (link + enum) **en el panel**.
 
 - **Next.js App Router** + TypeScript `strict` + Tailwind + shadcn/ui. RSC por default,
   `"use client"` sólo donde hay interacción.
-- **Supabase:** UN proyecto para todos los tenants. Postgres + Auth + RLS + pgvector. **Spend cap ON.**
+- **Neon:** UN proyecto para todos los tenants, administrado desde la integración de Vercel.
+  Neon Postgres + Neon Auth + RLS; `pgvector` queda opcional y aislado en la migración correspondiente.
 - **Drizzle** + migraciones versionadas en git.
   **Trampa medida por `db-agent` en FASE 4 (2026-08-28):** el migrador de Drizzle decide qué
   aplicar comparando **`created_at`, no el hash del archivo**. Si editás una migración después de
@@ -174,10 +175,11 @@ IMEI + origen + resultado de consulta ENACOM (link + enum) **en el panel**.
   variantes `thumb` / `card` / `detail`. La vidriera sirve `card` (~80–150KB) por CDN de Cloudflare.
   - PROHIBIDO servir originales de 2MB.
   - PROHIBIDO Vercel Image Optimization como default.
-  - PROHIBIDO Supabase Storage como CDN público de la vidriera.
+  - PROHIBIDO cualquier storage externo como CDN público de la vidriera.
 - **Vidriera:** ISR / cache de CDN + `revalidateTag('storefront:{slug}')` al mutar stock.
   Objetivo: **95% de los hits no tocan Postgres.**
-- **Realtime de Supabase:** sólo panel autenticado. **Nunca** para visitante anónimo.
+- **Realtime:** fuera del alcance actual. El panel usa Server Components/Actions y nunca hay conexiones
+  persistentes para visitantes anónimos.
 - **Jobs:** Vercel Cron o Inngest free tier (expirar reservas). **No** worker 24/7.
 - **LLM de vidriera:** Gemini 2.5 Flash-Lite primario; **Groq `openai/gpt-oss-20b` fallback**.
   **NUNCA Claude/GPT en el hot path.**

@@ -1,6 +1,7 @@
 import 'server-only';
 import { assertLocalDriverAllowed, serverEnv } from '../env';
 import { localAuthDriver } from './local-driver';
+import { neonAuthDriver } from './neon-driver';
 import { supabaseAuthDriver } from './supabase-driver';
 import type { AuthDriver } from './types';
 
@@ -11,6 +12,7 @@ import type { AuthDriver } from './types';
 export function authDriver(): AuthDriver {
   const env = serverEnv();
 
+  if (env.AUTH_DRIVER === 'neon') return neonAuthDriver();
   if (env.AUTH_DRIVER === 'supabase') return supabaseAuthDriver();
 
   // Tira si `NODE_ENV === 'production'`. Un driver que no verifica el mail no se despliega.

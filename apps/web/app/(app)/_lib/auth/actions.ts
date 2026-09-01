@@ -23,6 +23,11 @@ const signInSchema = z.object({
     .string({ error: 'Escribí tu mail.' })
     .transform((raw) => raw.trim().toLowerCase())
     .pipe(z.email('Ese mail no parece válido.').max(254)),
+  password: z
+    .string({ error: 'Escribí una contraseña.' })
+    .min(8, 'La contraseña necesita al menos 8 caracteres.')
+    .max(128, 'La contraseña no puede pasar de 128 caracteres.'),
+  mode: z.enum(['sign_in', 'sign_up']).default('sign_in'),
   plan: selectedPlanFieldSchema,
 });
 
@@ -31,7 +36,12 @@ export async function signInAction(_prev: AuthFormState, formData: FormData): Pr
   const planValues = formData.getAll('plan');
   const rawPlan = planValues.length === 0 ? null : planValues.length === 1 ? planValues[0] : planValues;
   const selectedPlan = selectedPlanFromFormValue(rawPlan);
-  const parsed = signInSchema.safeParse({ email: formData.get('email'), plan: rawPlan });
+  const parsed = signInSchema.safeParse({
+    email: formData.get('email'),
+    password: formData.get('password'),
+    mode: formData.get('mode') ?? 'sign_in',
+    plan: rawPlan,
+  });
   const typed = typeof formData.get('email') === 'string' ? String(formData.get('email')) : '';
 
   if (!parsed.success) {
@@ -45,7 +55,12 @@ export async function signInAction(_prev: AuthFormState, formData: FormData): Pr
 
   let result: Awaited<ReturnType<ReturnType<typeof authDriver>['signIn']>>;
   try {
-    result = await authDriver().signIn({ email: parsed.data.email, selectedPlan });
+    result = await authDriver().signIn({
+      email: parsed.data.email,
+      password: parsed.data.password,
+      mode: parsed.data.mode,
+      selectedPlan,
+    });
   } catch (error) {
     if (error instanceof AuthError) {
       return { error: error.message, status: 'idle', email: typed, selectedPlan };

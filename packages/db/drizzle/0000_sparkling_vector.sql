@@ -1,3 +1,52 @@
+-- Neon Auth administra la identidad en `neon_auth.user`. Esta capa mínima conserva el contrato
+-- UUID que usa el dominio y permite que las FK/RLS existentes sean portables sin duplicar la
+-- autenticación. `auth.users` es un espejo interno, sincronizado por el driver de Neon Auth;
+-- jamás es la fuente de verdad de una sesión.
+CREATE SCHEMA IF NOT EXISTS "auth";--> statement-breakpoint
+DO $roles$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN CREATE ROLE anon NOLOGIN; END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN CREATE ROLE authenticated NOLOGIN; END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN CREATE ROLE service_role NOLOGIN BYPASSRLS; END IF;
+  ALTER ROLE service_role BYPASSRLS;
+  EXECUTE format('GRANT anon, authenticated, service_role TO %I', current_user);
+END
+$roles$;--> statement-breakpoint
+-- Neon no permite transferir ownership a un rol que no pueda crear en el schema. `service_role`
+-- es NOLOGIN, pero necesita ese permiso para ser dueño de las funciones SECURITY DEFINER; no
+-- recibe acceso de red ni permisos sobre schemas fuera de este contrato.
+GRANT USAGE, CREATE ON SCHEMA public TO service_role;--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS "auth"."users" (
+  "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+  "email" text NOT NULL UNIQUE,
+  "raw_app_meta_data" jsonb DEFAULT '{}'::jsonb NOT NULL,
+  "created_at" timestamp with time zone DEFAULT now() NOT NULL
+);--> statement-breakpoint
+CREATE OR REPLACE FUNCTION "auth"."uid"()
+RETURNS uuid
+LANGUAGE sql
+STABLE
+AS $function$
+  SELECT NULLIF(NULLIF(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub', '')::uuid
+$function$;--> statement-breakpoint
+CREATE OR REPLACE FUNCTION "auth"."jwt"()
+RETURNS jsonb
+LANGUAGE sql
+STABLE
+AS $function$
+  SELECT COALESCE(NULLIF(current_setting('request.jwt.claims', true), '')::jsonb, '{}'::jsonb)
+$function$;--> statement-breakpoint
+CREATE OR REPLACE FUNCTION "auth"."role"()
+RETURNS text
+LANGUAGE sql
+STABLE
+AS $function$
+  SELECT COALESCE(NULLIF(auth.jwt() ->> 'role', ''), current_user::text)
+$function$;--> statement-breakpoint
+GRANT USAGE ON SCHEMA auth TO anon, authenticated, service_role;--> statement-breakpoint
+GRANT EXECUTE ON FUNCTION auth.uid() TO anon, authenticated, service_role;--> statement-breakpoint
+GRANT EXECUTE ON FUNCTION auth.jwt() TO anon, authenticated, service_role;--> statement-breakpoint
+GRANT EXECUTE ON FUNCTION auth.role() TO anon, authenticated, service_role;--> statement-breakpoint
 CREATE TYPE "public"."chat_role" AS ENUM('user', 'assistant', 'system');--> statement-breakpoint
 CREATE TYPE "public"."fx_rounding_mode" AS ENUM('exact', 'ceil_100', 'nearest_1000', 'ceil_1000');--> statement-breakpoint
 CREATE TYPE "public"."imei_check_status" AS ENUM('not_checked', 'valid', 'blocked', 'invalid', 'inconclusive');--> statement-breakpoint

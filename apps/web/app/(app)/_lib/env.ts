@@ -21,14 +21,18 @@ const serverEnvSchema = z.object({
 
   /**
    * `local`  → driver de desarrollo: cookie firmada + Postgres local (`scripts/pg-local.sh`).
-   * `supabase` → GoTrue real. **Bloqueado en B2** (falta el proyecto y la service role key).
+   * `neon`   → Neon Auth real, administrado por la integración de Vercel.
+   * `supabase` → compatibilidad temporal para instalaciones anteriores.
    */
-  AUTH_DRIVER: z.enum(['local', 'supabase']).default('local'),
+  AUTH_DRIVER: z.enum(['local', 'neon', 'supabase']).default('local'),
 
   /** HMAC de la cookie de sesión del driver local. Sólo dev. */
   AUTH_LOCAL_SECRET: z.string().min(16, 'AUTH_LOCAL_SECRET necesita al menos 16 caracteres').optional(),
 
   DATABASE_URL: z.string().min(1).optional(),
+
+  NEON_AUTH_BASE_URL: z.string().optional(),
+  NEON_AUTH_COOKIE_SECRET: z.string().optional(),
 
   NEXT_PUBLIC_ROOT_DOMAIN: z.string().min(1).default('localhost:3000'),
   NEXT_PUBLIC_APP_URL: z.string().min(1).default('http://localhost:3000'),
@@ -91,8 +95,8 @@ export function serverEnv(): ServerEnv {
 export function assertLocalDriverAllowed(env: ServerEnv): void {
   if (env.NODE_ENV === 'production') {
     throw new Error(
-      'AUTH_DRIVER="local" está prohibido en producción. Configurá Supabase (blocker B2) y ' +
-        'poné AUTH_DRIVER="supabase".',
+      'AUTH_DRIVER="local" está prohibido en producción. Configurá Neon Auth y poné ' +
+        'AUTH_DRIVER="neon".',
     );
   }
 }
