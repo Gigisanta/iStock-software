@@ -115,6 +115,11 @@
       "revisit": "Si el callback agrega POST, acepta destinos externos o empieza a mutar datos de negocio, debe salir de la allowlist y recibir una regla especifica."
     },
     {
+      "route": "/api/auth/[...path]",
+      "reason": "Es el adaptador del proveedor Neon Auth: valida y enruta las operaciones de sesion y credenciales al backend de autenticacion, sin ejecutar lecturas ni escrituras del dominio iStock. La proteccion de abuso y los limites de autenticacion viven en Neon Auth; duplicar un bucket por IP en Vercel podria cortar usuarios legitimos detras de NAT sin agregar una barrera equivalente sobre el proveedor.",
+      "revisit": "Si esta ruta empieza a ejecutar operaciones de negocio, acepta endpoints fuera del contrato de Neon Auth o el proveedor deja de aplicar sus limites, debe salir de la allowlist y recibir una regla especifica."
+    },
+    {
       "route": "/_media/[...key]",
       "reason": "Sirve los BYTES de las fotos, o sea el mayor egress del producto, y aun asi no lleva regla: un visitante legitimo abre una grilla y pide veinte imagenes de una, asi que un bucket por IP con un techo util para un flood corta primero al comprador. Lo que acota este endpoint no es el rate limit sino el tamano de la variante (probes de S2/S3, techo medido de la card) y el hecho de que la key es content-addressed e inmutable, o sea 100% cacheable. Ademas es temporal: existe mientras B1 siga abierto y en produccion las mismas keys las sirve el CDN de Cloudflare desde otro host, donde Vercel ni las ve.",
       "revisit": "B1 (R2 real). Cuando el CDN sirva las fotos, esta ruta deja de existir en Vercel y la excepcion se borra en vez de quedar heredada."
