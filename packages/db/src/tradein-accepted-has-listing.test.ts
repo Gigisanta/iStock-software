@@ -65,6 +65,9 @@ interface Veredicto {
 
 /**
  * Corre N sentencias en **UNA** transacción, como `authenticated` y con el claim del tenant.
+ * Los casos de cleanup que borran listings/leads pasan explícitamente a `service_role`: 0016
+ * revoca DELETE del rol compartido, así que una eliminación administrativa no se simula como si
+ * fuera una mutación permitida del panel.
  *
  * Ésta es la única forma de medir un trigger diferido, y por eso no se usa `openSession()`: aquel
  * helper abre una transacción **por sentencia**, así que cada `query()` commitea sola y el estado
@@ -74,10 +77,10 @@ interface Veredicto {
  * El error se atrapa y se devuelve en vez de tirar: en un trigger diferido **el error llega en el
  * COMMIT**, no en la sentencia, y afirmar cuál de las dos cosas falló es la mitad del test.
  */
-async function enUnaTransaccion(sentencias: readonly string[]): Promise<Veredicto> {
+async function enUnaTransaccion(sentencias: readonly string[], role: 'authenticated' | 'service_role' = 'authenticated'): Promise<Veredicto> {
   try {
     await admin.begin(async (tx) => {
-      await tx.unsafe(`set local role authenticated`);
+      await tx.unsafe(`set local role ${role}`);
       await tx.unsafe(
         `select set_config('request.jwt.claims', $1, true)`,
         [claims] as Parameters<typeof tx.unsafe>[1],
@@ -254,7 +257,7 @@ describe('b · media operación NO commitea: `accepted` sin unidad rebota en el 
       leadNuevo(efimero, 'efimero'),
       `update tradein_leads set status = 'accepted' where tenant_id = '${TENANT}' and id = '${efimero}'`,
       `delete from tradein_leads where tenant_id = '${TENANT}' and id = '${efimero}'`,
-    ]);
+    ], 'service_role');
     expect(v.ok, `${v.code} ${v.message}`).toBe(true);
   });
 
@@ -271,7 +274,7 @@ describe('b · media operación NO commitea: `accepted` sin unidad rebota en el 
       `update tradein_leads set status = 'evaluating', created_listing_id = null
         where tenant_id = '${TENANT}' and id = '${lead}'`,
       `delete from listings where tenant_id = '${TENANT}' and id = '${listing}'`,
-    ]);
+    ], 'service_role');
     expect(v.ok, `${v.code} ${v.message}`).toBe(true);
   });
 });
@@ -293,7 +296,7 @@ describe('c · borrar la unidad de un canje aceptado: CAMBIO DE COMPORTAMIENTO, 
     // no tiene un camino que borre un `listing`.
     const v = await enUnaTransaccion([
       `delete from listings where tenant_id = '${TENANT}' and id = '${LISTING}'`,
-    ]);
+    ], 'service_role');
     expect(v.ok).toBe(false);
     expect(v.code).toBe('23503');
     expect(v.message).toContain('tradein_leads_tenant_created_listing_fk');
@@ -333,7 +336,7 @@ describe('c · borrar la unidad de un canje aceptado: CAMBIO DE COMPORTAMIENTO, 
     const v = await enUnaTransaccion([
       `delete from tradein_leads where tenant_id = '${TENANT}' and id = '${LEAD}'`,
       `delete from listings where tenant_id = '${TENANT}' and id = '${LISTING}'`,
-    ]);
+    ], 'service_role');
     expect(v.ok, `${v.code} ${v.message}`).toBe(true);
   });
 });

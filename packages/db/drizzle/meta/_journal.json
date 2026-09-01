@@ -113,6 +113,34 @@
       "when": 1788216713474,
       "tag": "0015_sales_cost_derivation",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1788226915631,
+      "tag": "0016_furry_champions",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1788227388047,
+      "tag": "0017_past_sage",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1788228000000,
+      "tag": "0018_repair_listing_update_surface",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1788229000000,
+      "tag": "0019_transition_listing_status",
+      "breakpoints": true
     }
   ]
 }

@@ -2,7 +2,7 @@ import 'server-only';
 import { randomUUID } from 'node:crypto';
 import { and, eq, sql } from 'drizzle-orm';
 import { checkTransition, createReservation, transitionEffects } from '@istock/domain';
-import { listingEvents, listings, reservations } from '@istock/db';
+import { listingEvents, reservations } from '@istock/db';
 import { DEADLOCK, isDeadlock, uniqueViolationConstraint } from '../db/pg-error';
 import { withTenantDb } from '../db/session';
 import { FEATURE_RESERVATIONS, featureAccess } from '../entitlements';
@@ -14,6 +14,7 @@ import {
   type PanelActor,
 } from '../listings/publish-listing';
 import { loadUnitForTransition } from '../listings/queries';
+import { transitionListingStatus } from '../listings/transition-listing-status';
 import { logError, logEvent } from '../log';
 import { invalidateStorefrontUnit } from '../tenants/storefront-cache';
 import { loadActiveReservation } from './queries';
@@ -35,7 +36,7 @@ import type { ReserveUnitInput } from './schema';
  * | capa | qué atrapa |
  * |---|---|
  * | `loadActiveReservation()` + `checkTransition()` | el caso normal: el equipo ya está reservado y el dueño lo ve venir con un mensaje |
- * | `update ... where status = 'available'` | el otro dispositivo que lo movió entre el render y el click |
+ * | RPC con estado esperado | el otro dispositivo que lo movió entre el render y el click |
  * | `reservations_one_active_per_listing` | los milisegundos: dos `POST` a la vez, uno escribe y el otro recibe `23505` |
  *
  * Y una constraint **desconocida se propaga**. Mapearla al mensaje de la que sí conocemos es cómo
@@ -84,10 +85,10 @@ const NO_CLOSING_STATUS = 'domain_no_closing_status';
 /**
  * `available → reserved`, con la reserva escrita en la misma transacción.
  *
- * El orden de adentro no es casual: primero se mueve el listing (guardado por
- * `status = 'available'`) y recién después nace la reserva. Al revés, perder la carrera del listing
- * dejaría una reserva activa colgada de una unidad que otro ya vendió — y esa reserva bloquearía
- * la próxima por el índice único, sin que nadie entienda por qué.
+ * El orden de adentro no es casual: primero se mueve el listing mediante el RPC (guardado por
+ * `expected_status = 'available'`) y recién después nace la reserva. Al revés, perder la carrera del
+ * listing dejaría una reserva activa colgada de una unidad que otro ya vendió — y esa reserva
+ * bloquearía la próxima por el índice único, sin que nadie entienda por qué.
  */
 export async function reserveUnit(
   actor: ReservationActor,
@@ -135,19 +136,15 @@ export async function reserveUnit(
   let written: boolean;
   try {
     written = await withTenantDb(ctx, async (tx) => {
-      const moved = await tx
-        .update(listings)
-        .set({ status: 'reserved', updatedAt: sql`now()` })
-        .where(
-          and(
-            eq(listings.tenantId, ctx.tenantId),
-            eq(listings.id, input.listingId),
-            eq(listings.status, 'available'),
-          ),
-        )
-        .returning({ id: listings.id });
+      const moved = await transitionListingStatus(
+        tx,
+        ctx,
+        input.listingId,
+        'available',
+        'reserved',
+      );
 
-      if (moved.length === 0) return false;
+      if (!moved) return false;
 
       await tx.insert(reservations).values({
         id: reservation.id,
@@ -273,8 +270,8 @@ export async function cancelReservation(
    * exactamente cuando `from !== 'reserved'`: una tab vieja apretando "Soltar" sobre una unidad que
    * mientras tanto se fue a service, o a `unavailable`. No se inventa un default —escribir
    * `'cancelled'` acá sería registrar el cierre de una reserva que esta arista no cierra— y no se
-   * escribe nada: el `update` de abajo va guardado por `status = 'reserved'`, así que igual habría
-   * afectado 0 filas, y el `listing_events` con `fromStatus: 'reserved'` habría sido una mentira.
+   * escribe nada: el RPC de abajo va guardado por `expected_status = 'reserved'`, así que devuelve
+   * 0, y el `listing_events` con `fromStatus: 'reserved'` habría sido una mentira.
    * Para quien está en el mostrador es la misma carrera perdida de siempre; queda logueado porque
    * el día que aparezca por otro motivo hay que verlo.
    */
@@ -291,19 +288,9 @@ export async function cancelReservation(
   let released: boolean;
   try {
     released = await withTenantDb(ctx, async (tx) => {
-      const moved = await tx
-        .update(listings)
-        .set({ status: 'available', updatedAt: sql`now()` })
-        .where(
-          and(
-            eq(listings.tenantId, ctx.tenantId),
-            eq(listings.id, listingId),
-            eq(listings.status, 'reserved'),
-          ),
-        )
-        .returning({ id: listings.id });
+      const moved = await transitionListingStatus(tx, ctx, listingId, 'reserved', 'available');
 
-      if (moved.length === 0) return false;
+      if (!moved) return false;
 
       /**
        * Cierra **la** reserva activa de esta unidad, sin nombrarla por id: el id que teníamos es de

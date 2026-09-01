@@ -1367,7 +1367,9 @@ describe('R2c · el visitante deja su canje en la vidriera de A y no toca nada m
 
   it('el dueño de B tampoco corrige ni borra un canje de A, ni le planta uno en el inbox', async () => {
     expect(await b.affected(`update tradein_leads set offer_usd = 1 where tenant_id = '${TENANT_A}'`)).toBe(0);
-    expect(await b.affected(`delete from tradein_leads where tenant_id = '${TENANT_A}'`)).toBe(0);
+    const failure = await b.error(`delete from tradein_leads where tenant_id = '${TENANT_A}'`);
+    expect(failure.code).toBe('42501');
+    expect(failure.message).toContain('permission denied');
     const { capa } = await veredicto(b, 'authenticated', canje({}, `'${TENANT_A}'`));
     expect(capa, 'un reseller logueado puede plantar un canje en el inbox del de al lado').toBe('POLICY');
   });
@@ -1637,8 +1639,10 @@ describe('R3 · un reseller no puede MODIFICAR el stock de otro', () => {
     expect(rows[0]?.price_usd).toBe('620.00');
   });
 
-  it('B no puede marcar como vendida una unidad de A (update masivo sin where)', async () => {
-    expect(await b.affected(`update listings set status = 'sold'`)).toBe(1); // sólo la suya
+  it('B no puede marcar como vendida una unidad de A por UPDATE directo: status se cambia por RPC', async () => {
+    const failure = await b.error(`update listings set status = 'sold'`);
+    expect(failure.code).toBe('42501');
+    expect(failure.message).toContain('permission denied');
     const rows = await adminRows<{ status: string }>(`select status from listings where id = '${LISTING_A}'`);
     expect(rows[0]?.status).toBe('available');
   });
@@ -1650,20 +1654,24 @@ describe('R3 · un reseller no puede MODIFICAR el stock de otro', () => {
 
 // ═══════════════════════════════════════════════════════════════════════════════════════════
 describe('R4 · un reseller no puede BORRAR el stock de otro', () => {
-  it('B borrando la unidad de A por id afecta 0 filas', async () => {
-    expect(await b.affected(`delete from listings where id = '${LISTING_A}'`)).toBe(0);
+  it('B no puede borrar la unidad de A por id: DELETE está revocado para authenticated', async () => {
+    const failure = await b.error(`delete from listings where id = '${LISTING_A}'`);
+    expect(failure.code).toBe('42501');
+    expect(failure.message).toContain('permission denied');
   });
 
-  it('el `delete from listings` sin where —el accidente de las 3am— no toca a nadie más', async () => {
-    expect(await b.affected(`delete from listings`)).toBe(1); // la suya y sólo la suya
-    const rows = await adminRows<{ n: string }>(
-      `select count(*)::text as n from listings where tenant_id = '${TENANT_A}'`,
+  it('el `delete from listings` sin where —el accidente de las 3am— rebota por GRANT y no toca a nadie', async () => {
+    const failure = await b.error(`delete from listings`);
+    expect(failure.code).toBe('42501');
+    expect(failure.message).toContain('permission denied');
+    const rows = await adminRows<{ tenant_id: string; n: string }>(
+      `select tenant_id, count(*)::text as n from listings
+       where tenant_id in ('${TENANT_A}', '${TENANT_B}') group by tenant_id order by tenant_id`,
     );
-    expect(rows[0]?.n).toBe('1');
-    await admin.unsafe(`
-      insert into listings (id, tenant_id, slug, title, condition, price_usd, status)
-      values ('${LISTING_B}', '${TENANT_B}', 'iphone-13-128', 'iPhone 13 128 Azul',
-              'used_excellent', 480.00, 'available')`);
+    expect(rows).toEqual([
+      { tenant_id: TENANT_A, n: '1' },
+      { tenant_id: TENANT_B, n: '1' },
+    ]);
   });
 
   it('B no puede borrar el tenant A (el borrado en cascada sería el peor de los casos)', async () => {
@@ -1674,7 +1682,9 @@ describe('R4 · un reseller no puede BORRAR el stock de otro', () => {
 
   it('B no puede borrar las ventas ni los leads de canje de A', async () => {
     expect(await b.affected(`delete from sales where id = '${SALE_A}'`)).toBe(0);
-    expect(await b.affected(`delete from tradein_leads where id = '${LEAD_A}'`)).toBe(0);
+    const failure = await b.error(`delete from tradein_leads where id = '${LEAD_A}'`);
+    expect(failure.code).toBe('42501');
+    expect(failure.message).toContain('permission denied');
   });
 });
 

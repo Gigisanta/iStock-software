@@ -126,16 +126,16 @@ describe('seller no puede leer ventas ni escribir campos financieros', () => {
 });
 
 describe('seller no puede escribir campos SENSITIVE de listings/canjes', () => {
-  it('el trigger rechaza costo/proveedor/notas del listing', async () => {
+  it('el GRANT de columna rechaza costo/proveedor/notas del listing antes del trigger', async () => {
     const failure = await sellerA.expectFailure(`update listings set cost_usd = 1, supplier = 'forjado' where id = '${LISTING_A}'`);
     expect(failure.code).toBe('42501');
-    expect(failure.message).toContain('seller cannot modify sensitive listing fields');
+    expect(failure.message).toContain('permission denied');
   });
 
-  it('el trigger rechaza offer_usd/notas internas del canje', async () => {
+  it('el GRANT de columna rechaza offer_usd junto a notas internas del canje', async () => {
     const failure = await sellerA.expectFailure(`update tradein_leads set offer_usd = 1, internal_notes = 'forjado' where id = '${LEAD_A}'`);
     expect(failure.code).toBe('42501');
-    expect(failure.message).toContain('seller cannot modify sensitive trade-in fields');
+    expect(failure.message).toContain('permission denied');
   });
 });
 

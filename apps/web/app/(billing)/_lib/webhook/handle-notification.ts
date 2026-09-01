@@ -37,8 +37,8 @@ import type { BillingEventLedger } from './ledger';
  * token. Un webhook que aplicara `body.status` sería un endpoint donde cualquiera que capture un
  * header viejo puede autorizarse un plan escribiendo un JSON.
  *
- * Por lo mismo, el recurso a consultar sale **de la query** (`data.id`), que sí está firmado, y
- * sólo cae al `data.id` del cuerpo si la query no lo trae.
+ * Por lo mismo, el recurso a consultar sale **de la query** (`data.id`), que sí está firmado. Un
+ * topic procesable sin ese dato se ignora: el `data.id` del cuerpo nunca autoriza una consulta.
  *
  * ══════════════════════════════════════════════════════════════════════════════════════════════
  *  Cuándo se responde qué
@@ -47,6 +47,8 @@ import type { BillingEventLedger } from './ledger';
  * | situación | HTTP | por qué |
  * |---|---|---|
  * | firma inválida, ausente, vieja, o sin secreto configurado | 401 | no sabemos quién es |
+ * | Content-Length inválido | 400 | el framing no es confiable |
+ * | body por encima de 64 KiB | 413 | se rechaza antes de parsear |
  * | cuerpo ilegible | 400 | no hay evento que procesar |
  * | topic que no nos interesa, estado que no mapeamos, referencia ilegible | 200 | **no reintentar** |
  * | duplicado | 200 | ya estaba hecho |
@@ -72,6 +74,7 @@ export interface WebhookDeps {
 export type WebhookOutcome =
   | 'unauthorized'
   | 'bad_request'
+  | 'payload_too_large'
   | 'ignored_topic'
   | 'missing_resource'
   | 'unknown_resource'
@@ -87,6 +90,20 @@ export interface WebhookResult {
 }
 
 const PROVIDER = 'mercadopago';
+/**
+ * Las notificaciones de MP sólo llevan metadatos y `data.id`; no necesitamos megabytes para
+ * procesarlas. El límite es deliberadamente holgado para el JSON del proveedor, pero finito para
+ * que un request chunked tampoco pueda crecer sin límite antes del parseo.
+ */
+export const MAX_WEBHOOK_BODY_BYTES = 64 * 1024;
+
+type ContentLength =
+  | { readonly ok: true; readonly bytes: number | null }
+  | { readonly ok: false };
+
+type BodyReadResult =
+  | { readonly ok: true; readonly raw: string }
+  | { readonly ok: false; readonly reason: 'payload_too_large' | 'body_read_failed' };
 
 /** Lo que se resuelve consultándole a MP, antes de tocar la base. */
 interface ResolvedEvent {
@@ -95,9 +112,15 @@ interface ResolvedEvent {
 }
 
 export async function handleWebhookNotification(request: Request, deps: WebhookDeps): Promise<WebhookResult> {
-  // El body se lee UNA vez y viaja como string. `CLAUDE.md` §3 prohíbe reusar un `Request` con
-  // otro `init` (CVE-2026-64648), y además el stream sólo se puede consumir una vez.
-  const raw = await request.text();
+  // `Content-Length` no es una prueba suficiente: Vercel puede entregar el request chunked y el
+  // header también es input no confiable. Primero usamos el dato sólo como rechazo temprano; si
+  // falta o está dentro del límite, `readBodyUpToLimit` vuelve a imponer el cap sobre el stream.
+  const contentLength = parseContentLength(request.headers.get('content-length'));
+  if (!contentLength.ok) {
+    logError('billing.webhook.rejected', 'invalid_content_length');
+    return { status: 400, outcome: 'bad_request' };
+  }
+
   const url = new URL(request.url);
   const signedDataId = signedDataIdFromUrl(url);
   const now = deps.now();
@@ -115,24 +138,41 @@ export async function handleWebhookNotification(request: Request, deps: WebhookD
     return { status: 401, outcome: 'unauthorized' };
   }
 
-  const parsed = parseNotificationBody(raw);
+  if (contentLength.bytes !== null && contentLength.bytes > MAX_WEBHOOK_BODY_BYTES) {
+    logError('billing.webhook.rejected', 'payload_too_large');
+    return { status: 413, outcome: 'payload_too_large' };
+  }
+
+  // La firma de MP no incluye el body, así que validar primero evita siquiera tocar el stream de
+  // una entrega no autorizada. El body se lee UNA vez y viaja como string sólo después del HMAC.
+  // `CLAUDE.md` §3 prohíbe reusar un `Request` con otro `init` (CVE-2026-64648).
+  const body = await readBodyUpToLimit(request);
+  if (!body.ok) {
+    logError('billing.webhook.rejected', body.reason);
+    return body.reason === 'payload_too_large'
+      ? { status: 413, outcome: 'payload_too_large' }
+      : { status: 400, outcome: 'bad_request' };
+  }
+
+  const parsed = parseNotificationBody(body.raw);
   if (!parsed.ok) {
     logError('billing.webhook.rejected', parsed.reason);
     return { status: 400, outcome: 'bad_request' };
   }
 
   const notification = parsed.notification;
-  const resourceId = signedDataId ?? notification.resourceId;
 
   if (notification.topic !== TOPIC_PREAPPROVAL && notification.topic !== TOPIC_AUTHORIZED_PAYMENT) {
     logEvent('billing.webhook.ignored', { topic: notification.topic, eventId: notification.eventId });
     return { status: 200, outcome: 'ignored_topic' };
   }
 
-  if (resourceId === null) {
-    logError('billing.webhook.rejected', 'missing_resource', { topic: notification.topic });
+  if (signedDataId === null) {
+    logError('billing.webhook.rejected', 'missing_signed_resource');
     return { status: 200, outcome: 'missing_resource' };
   }
+
+  const resourceId = signedDataId;
 
   let resolved: ResolvedEvent | { readonly outcome: WebhookOutcome };
   try {
@@ -278,4 +318,51 @@ function parseDate(raw: string | null): Date | null {
 function errorCode(error: unknown): string {
   if (error instanceof Error) return error.name;
   return 'unknown_error';
+}
+
+/** `Content-Length` sólo sirve como fast-fail; el stream siempre se limita por separado. */
+function parseContentLength(raw: string | null): ContentLength {
+  if (raw === null) return { ok: true, bytes: null };
+  if (!/^\d+$/.test(raw)) return { ok: false };
+
+  const bytes = Number(raw);
+  return Number.isSafeInteger(bytes) ? { ok: true, bytes } : { ok: false };
+}
+
+/**
+ * Lee como máximo `MAX_WEBHOOK_BODY_BYTES` y un chunk adicional para detectar overflow. No usa
+ * `request.text()`: esa API arma un string con todo el body antes de que podamos rechazarlo.
+ */
+async function readBodyUpToLimit(request: Request): Promise<BodyReadResult> {
+  if (request.body === null) return { ok: true, raw: '' };
+
+  const reader = request.body.getReader();
+  const bytes = new Uint8Array(MAX_WEBHOOK_BODY_BYTES);
+  let length = 0;
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value === undefined) return { ok: false, reason: 'body_read_failed' };
+
+      if (value.byteLength > MAX_WEBHOOK_BODY_BYTES - length) {
+        try {
+          await reader.cancel('webhook body exceeds limit');
+        } catch {
+          // El rechazo no depende de que el upstream acepte la cancelación.
+        }
+        return { ok: false, reason: 'payload_too_large' };
+      }
+
+      bytes.set(value, length);
+      length += value.byteLength;
+    }
+  } catch {
+    return { ok: false, reason: 'body_read_failed' };
+  } finally {
+    reader.releaseLock();
+  }
+
+  return { ok: true, raw: new TextDecoder().decode(bytes.subarray(0, length)) };
 }

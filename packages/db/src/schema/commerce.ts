@@ -168,7 +168,11 @@ export const sales = pgTable(
     }).onDelete('restrict'),
     ...ownerReadSellerInsertPolicies(
       'sales',
-      sql`cost_usd is not distinct from (select l.cost_usd from public.listings l where l.id = sales.listing_id and l.tenant_id = sales.tenant_id) and internal_notes is null and sold_by = (select auth.uid())`,
+      // `reject_seller_forged_sale_fields()` is SECURITY DEFINER and derives cost_usd from the
+      // listing before the row is checked. Keeping the sensitive subquery out of the policy is
+      // essential: authenticated must not receive SELECT on listings.cost_usd merely to insert a
+      // sale. The policy still binds tenant/member/sold_by and rejects seller internal notes.
+      sql`internal_notes is null and sold_by = (select auth.uid())`,
     ),
   ],
 ).enableRLS();

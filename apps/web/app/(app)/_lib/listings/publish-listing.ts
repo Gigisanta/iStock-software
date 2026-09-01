@@ -10,7 +10,7 @@ import {
   type TransitionDenyReason,
   type TransitionIntent,
 } from '@istock/domain';
-import { listingEvents, listings, reservations } from '@istock/db';
+import { listingEvents, reservations } from '@istock/db';
 import { DEADLOCK, isDeadlock, uniqueViolationConstraint } from '../db/pg-error';
 import { withTenantDb, type TenantContext } from '../db/session';
 import {
@@ -26,6 +26,7 @@ import type { SaleFields } from '../sales/schema';
 import type { ActiveSession } from '../session';
 import { invalidateStorefrontUnit } from '../tenants/storefront-cache';
 import { loadUnitForTransition, type UnitForTransition } from './queries';
+import { transitionListingStatus } from './transition-listing-status';
 
 /**
  * Publicar / despublicar una unidad.
@@ -461,21 +462,10 @@ export async function transitionUnit(
   let updated: boolean;
   try {
     updated = await withTenantDb(ctx, async (tx) => {
-      // `eq(status, from)` es el guard de concurrencia: si otro dispositivo ya lo movió, esta
-      // actualización afecta 0 filas en vez de pisar una transición que ya ocurrió.
-      const rows = await tx
-        .update(listings)
-        .set({ status: to, updatedAt: sql`now()` })
-        .where(
-          and(
-            eq(listings.tenantId, ctx.tenantId),
-            eq(listings.id, listingId),
-            eq(listings.status, from),
-          ),
-        )
-        .returning({ id: listings.id });
-
-      if (rows.length === 0) return false;
+      // El RPC actualiza status/updated_at y conserva el guard optimista dentro de esta transacción.
+      // Si otro dispositivo ganó, devuelve 0 y no se escriben efectos derivados.
+      const moved = await transitionListingStatus(tx, ctx, listingId, from, to);
+      if (!moved) return false;
 
       /**
        * Se cierra **la** reserva activa de esta unidad, sin nombrarla por id: el índice único

@@ -17,13 +17,12 @@ import { sql } from 'drizzle-orm';
 import { index, pgPolicy, pgTable, text } from 'drizzle-orm/pg-core';
 import { authUsers, authenticatedRole } from 'drizzle-orm/supabase';
 import { createdAt, pk, updatedAt } from './columns';
-import { tenantClaim } from './rls';
 
 const isSelf = sql`id = (select auth.uid())`;
 const sharesTenant = sql`exists (
     select 1 from public.memberships m
     where m.user_id = users.id
-      and m.tenant_id = ${tenantClaim()}
+      and public.is_current_user_tenant_member(m.tenant_id)
   )`;
 
 export const users = pgTable(

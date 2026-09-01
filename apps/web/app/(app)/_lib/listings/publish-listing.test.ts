@@ -101,17 +101,19 @@ vi.mock('../log', () => ({
 }));
 
 interface Recorded {
-  readonly op: 'insert' | 'update';
+  readonly op: 'insert' | 'update' | 'rpc';
   readonly table: unknown;
   readonly row: Record<string, unknown>;
 }
 
 const db = {
   writes: [] as Recorded[],
-  /** Filas afectadas por el `update ... where status = <from>`. 0 = otro dispositivo ganó. */
-  updated: 1,
-  /** Error a tirar en el `update(listings)`: es la primera fila que se lockea. */
-  listingUpdateError: null as unknown,
+  /** Resultado del RPC optimista. 0 = otro dispositivo ganó. */
+  rpcChanged: 1,
+  /** Cantidad de llamadas a la puerta de estado. */
+  rpcCalls: 0,
+  /** Error a tirar en el RPC: es la primera operación que toma el lock del listing. */
+  rpcError: null as unknown,
   /** Error a tirar en el `insert(sales)`. Sirve para el `23505` del índice único de D8. */
   saleInsertError: null as unknown,
   /**
@@ -154,13 +156,24 @@ const tx = {
   update: (table: unknown) => ({
     set: (row: Record<string, unknown>) =>
       thenable(() => {
-        const isListing = table === listings;
-        if (isListing && db.listingUpdateError !== null) throw db.listingUpdateError;
-        if (isListing && db.updated === 0) return [];
         db.writes.push({ op: 'update', table, row });
-        return isListing ? [{ id: LISTING_ID }] : db.reservationClosed;
+        return db.reservationClosed;
       }),
   }),
+  execute: async (query: unknown) => {
+    db.rpcCalls += 1;
+    if (db.rpcError !== null) throw db.rpcError;
+    if (db.rpcChanged === 0) return [{ changed: 0 }];
+    // `sql` conserva los parámetros en queryChunks; el último listing_status es el destino.
+    const chunks = (query as { queryChunks?: readonly unknown[] }).queryChunks;
+    const nextStatus = chunks?.[7];
+    db.writes.push({
+      op: 'rpc',
+      table: listings,
+      row: { status: typeof nextStatus === 'string' ? nextStatus : 'transitioned' },
+    });
+    return [{ changed: 1 }];
+  },
   insert: (table: unknown) => ({
     values: (row: Record<string, unknown>) =>
       thenable(() => {
@@ -235,10 +248,11 @@ function givenFxSettings(): void {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  db.updated = 1;
+  db.rpcChanged = 1;
+  db.rpcCalls = 0;
   db.writes = [];
   db.reads = [];
-  db.listingUpdateError = null;
+  db.rpcError = null;
   db.saleInsertError = null;
   db.fxRows = [];
   db.reservationClosed = [{ id: RESERVATION_ID }];
@@ -317,9 +331,9 @@ describe('transitionUnit · lo que NO invalida', () => {
   });
 
   /** El guard de concurrencia: otro dispositivo ya movió la unidad, así que no hubo cambio. */
-  it('si el update afectó 0 filas no se invalida nada', async () => {
+  it('si el RPC afectó 0 filas no se invalida nada', async () => {
     givenUnit('draft');
-    db.updated = 0;
+    db.rpcChanged = 0;
 
     const result = await transitionUnit(actor, LISTING_ID, { to: 'available' }, NOW);
 
@@ -384,7 +398,7 @@ describe('transitionUnit · una unidad RESERVADA (el bug de S6)', () => {
     const result = await transitionUnit(actor, LISTING_ID, { to: 'available' }, NOW);
 
     expect(result).toEqual({ ok: true, status: 'available' });
-    expect(rowsOf(listings)[0]?.row['status']).toBe('available');
+    expect(db.rpcCalls).toBe(1);
     expect(rowsOf(reservations)[0]?.op).toBe('update');
     expect(rowsOf(reservations)[0]?.row['status']).toBe('cancelled');
     expect(rowsOf(listingEvents)[0]?.row).toMatchObject({
@@ -423,7 +437,7 @@ describe('transitionUnit · una unidad RESERVADA (el bug de S6)', () => {
   it('si el listing ya se movió, no se cierra ninguna reserva ni se inventa un evento', async () => {
     givenUnit('reserved');
     givenExpiredReservation();
-    db.updated = 0;
+    db.rpcChanged = 0;
 
     const result = await transitionUnit(actor, LISTING_ID, { to: 'available' }, NOW);
 
@@ -439,7 +453,7 @@ describe('transitionUnit · una unidad RESERVADA (el bug de S6)', () => {
   it('un deadlock se cuenta como carrera perdida', async () => {
     givenUnit('reserved');
     givenExpiredReservation();
-    db.listingUpdateError = deadlock();
+    db.rpcError = deadlock();
 
     const result = await transitionUnit(actor, LISTING_ID, { to: 'available' }, NOW);
 

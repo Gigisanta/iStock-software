@@ -89,15 +89,64 @@ function seeOther(location: string): Response {
   });
 }
 
+// El body canónico del formulario es ASCII percent-encodeado, así que el mismo presupuesto
+// conserva los 6144 caracteres del parser y agrega el límite de bytes que faltaba en este borde.
+const MAX_TRADEIN_BODY_BYTES = MAX_TRADEIN_BODY_CHARS;
+
 /**
- * El cuerpo como texto, con techo de caracteres antes de mirarlo.
+ * El cuerpo como texto, con techo de bytes antes de procesarlo.
  *
  * No se mira el `content-type`: el formulario manda `application/x-www-form-urlencoded`, pero el
  * tipo lo declara quien llama y no es una garantía. Lo que decide es si el texto parsea.
  */
 async function readBody(request: Request): Promise<string> {
-  const text = await request.text();
-  return text.length > MAX_TRADEIN_BODY_CHARS ? '' : text;
+  const maxBytes = MAX_TRADEIN_BODY_BYTES;
+  const contentLength = request.headers.get('content-length');
+
+  // `Content-Length` es un dato no confiable: se valida antes de tocar el body y el stream se
+  // vuelve a acotar abajo por si el header falta, miente o llega desde un proxy mal configurado.
+  if (contentLength !== null) {
+    if (!/^\d+$/u.test(contentLength)) return '';
+    const declaredBytes = Number(contentLength);
+    if (!Number.isSafeInteger(declaredBytes) || declaredBytes > maxBytes) return '';
+  }
+
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+
+  try {
+    const body = request.body;
+    if (body === null) return '';
+
+    reader = body.getReader();
+    const chunks: Uint8Array[] = [];
+    let totalBytes = 0;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      totalBytes += value.byteLength;
+      if (totalBytes > maxBytes) {
+        await reader.cancel();
+        return '';
+      }
+      chunks.push(value);
+    }
+
+    const bytes = new Uint8Array(totalBytes);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    return new TextDecoder().decode(bytes);
+  } catch {
+    // Un body roto o que no se pudo cancelar tiene que caer en el mismo reintento opaco que
+    // cualquier otro input inválido. No se deja cruzar el error ni se loguea PII.
+    return '';
+  } finally {
+    reader?.releaseLock();
+  }
 }
 
 /**

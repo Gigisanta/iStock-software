@@ -77,19 +77,21 @@ vi.mock('../log', () => ({
 }));
 
 interface Recorded {
-  readonly op: 'insert' | 'update';
+  readonly op: 'insert' | 'update' | 'rpc';
   readonly table: unknown;
   readonly row: Record<string, unknown>;
 }
 
 const db = {
   writes: [] as Recorded[],
-  /** Filas que devuelve el `update ... where status = <from>`. 0 = otro dispositivo ganó. */
-  listingUpdated: 1,
+  /** Resultado del RPC optimista. 0 = otro dispositivo ganó. */
+  rpcChanged: 1,
+  /** Cantidad de llamadas a la puerta de estado. */
+  rpcCalls: 0,
   /** Error a tirar en el `insert(reservations)`. Es donde muere el índice único parcial. */
   reservationInsertError: null as unknown,
-  /** Error a tirar en el `update(listings)`. Es la primera fila que se lockea: ahí pega el `40P01`. */
-  listingUpdateError: null as unknown,
+  /** Error a tirar en el RPC. Es la primera operación que toma el lock del listing. */
+  rpcError: null as unknown,
 };
 
 function thenable<T>(produce: () => T): PromiseLike<T> & Record<string, unknown> {
@@ -106,13 +108,23 @@ const tx = {
   update: (table: unknown) => ({
     set: (row: Record<string, unknown>) =>
       thenable(() => {
-        const isListing = table === listings;
-        if (isListing && db.listingUpdateError !== null) throw db.listingUpdateError;
-        if (isListing && db.listingUpdated === 0) return [];
         db.writes.push({ op: 'update', table, row });
         return [{ id: LISTING_ID }];
       }),
   }),
+  execute: async (query: unknown) => {
+    db.rpcCalls += 1;
+    if (db.rpcError !== null) throw db.rpcError;
+    if (db.rpcChanged === 0) return [{ changed: 0 }];
+    const chunks = (query as { queryChunks?: readonly unknown[] }).queryChunks;
+    const nextStatus = chunks?.[7];
+    db.writes.push({
+      op: 'rpc',
+      table: listings,
+      row: { status: typeof nextStatus === 'string' ? nextStatus : 'transitioned' },
+    });
+    return [{ changed: 1 }];
+  },
   insert: (table: unknown) => ({
     values: (row: Record<string, unknown>) =>
       thenable(() => {
@@ -200,9 +212,10 @@ const INPUT = { listingId: LISTING_ID, minutes: 90, customerLabel: 'Juan de Cipo
 beforeEach(() => {
   vi.clearAllMocks();
   db.writes = [];
-  db.listingUpdated = 1;
+  db.rpcChanged = 1;
+  db.rpcCalls = 0;
   db.reservationInsertError = null;
-  db.listingUpdateError = null;
+  db.rpcError = null;
   featureAccess.mockResolvedValue({ ok: true });
   loadActiveReservation.mockResolvedValue(null);
   transitionEffects.mockImplementation(realTransitionEffects);
@@ -227,7 +240,7 @@ describe('reserveUnit · el camino feliz', () => {
     expect(result.expiresAt.toISOString()).toBe('2026-08-28T15:30:00.000Z');
     expect(reservation?.row['id']).toBe(result.reservationId);
 
-    expect(rowsOf(listings)[0]?.row['status']).toBe('reserved');
+    expect(db.rpcCalls).toBe(1);
     expect(rowsOf(listingEvents)[0]?.row).toMatchObject({
       tenantId: TENANT_ID,
       fromStatus: 'available',
@@ -353,7 +366,7 @@ describe('reserveUnit · la carrera la corta el motor', () => {
   });
 
   it('si otro dispositivo movió el listing primero, no nace ninguna reserva', async () => {
-    db.listingUpdated = 0;
+    db.rpcChanged = 0;
 
     const result = await reserveUnit(actor, INPUT, NOW);
 
@@ -369,7 +382,7 @@ describe('reserveUnit · la carrera la corta el motor', () => {
    * error boundary del panel porque el cron le tocó la misma fila.
    */
   it('un deadlock se cuenta como carrera perdida, no como 500', async () => {
-    db.listingUpdateError = deadlock();
+    db.rpcError = deadlock();
 
     const result = await reserveUnit(actor, INPUT, NOW);
 
@@ -400,7 +413,7 @@ describe('cancelReservation', () => {
     const result = await cancelReservation(actor, LISTING_ID, NOW);
 
     expect(result.ok).toBe(true);
-    expect(rowsOf(listings)[0]?.row['status']).toBe('available');
+    expect(db.rpcCalls).toBe(1);
     expect(rowsOf(reservations)[0]?.op).toBe('update');
     // El oráculo es el dominio, no el string: ver el bloque de más abajo.
     expect(rowsOf(reservations)[0]?.row['status']).toBe(
@@ -427,7 +440,7 @@ describe('cancelReservation', () => {
   });
 
   it('si el listing ya no está reservado, no se inventa un evento', async () => {
-    db.listingUpdated = 0;
+    db.rpcChanged = 0;
     const result = await cancelReservation(actor, LISTING_ID, NOW);
     expect(result.ok).toBe(false);
     expect(rowsOf(listingEvents)).toHaveLength(0);
@@ -435,7 +448,7 @@ describe('cancelReservation', () => {
 
   /** El mismo trato que en `reserveUnit`: esta era la función que no tenía `catch` (D1). */
   it('un deadlock contra el cron se cuenta como carrera perdida', async () => {
-    db.listingUpdateError = deadlock();
+    db.rpcError = deadlock();
 
     const result = await cancelReservation(actor, LISTING_ID, NOW);
 
@@ -460,7 +473,7 @@ describe('cancelReservation', () => {
     const result = await cancelReservation(actor, LISTING_ID, NOW);
 
     expect(result).toEqual({ ok: true });
-    expect(rowsOf(listings)[0]?.row['status']).toBe('available');
+    expect(db.rpcCalls).toBe(1);
   });
 });
 

@@ -38,7 +38,7 @@ vi.mock('../../../(app)/_lib/log', () => ({
   },
 }));
 
-const { handleWebhookNotification } = await import('./handle-notification');
+const { handleWebhookNotification, MAX_WEBHOOK_BODY_BYTES } = await import('./handle-notification');
 const { createInMemoryBillingEventLedger } = await import('./ledger');
 const { createMockMercadoPagoClient } = await import('../mercadopago/client');
 const { encodeExternalReference } = await import('../mercadopago/external-reference');
@@ -121,11 +121,13 @@ function givenPreapproval(overrides: Partial<Parameters<typeof client.seedPreapp
 interface DeliveryOptions {
   readonly eventId?: string;
   readonly dataId?: string;
+  readonly queryDataId?: string | null;
   readonly requestId?: string;
   readonly topic?: string;
   readonly ts?: string;
   readonly secret?: string;
   readonly signature?: string | null;
+  readonly contentLength?: string;
   /** Cuerpo crudo, para los casos en que el JSON tiene que estar roto o mentir. */
   readonly body?: string;
 }
@@ -139,6 +141,7 @@ interface DeliveryOptions {
 function delivery(options: DeliveryOptions = {}): Request {
   const eventId = options.eventId ?? 'notif-1';
   const dataId = options.dataId ?? PREAPPROVAL_ID;
+  const queryDataId = options.queryDataId === undefined ? dataId : options.queryDataId;
   const requestId = options.requestId ?? 'req-1';
   const topic = options.topic ?? TOPIC_PREAPPROVAL;
   const ts = options.ts ?? String(Math.floor(NOW.getTime() / 1000));
@@ -149,14 +152,17 @@ function delivery(options: DeliveryOptions = {}): Request {
 
   const signature =
     options.signature === undefined
-      ? `ts=${ts},v1=${signManifest(signatureManifest({ dataId, requestId, ts }), options.secret ?? SECRET)}`
+      ? `ts=${ts},v1=${signManifest(signatureManifest({ dataId: queryDataId, requestId, ts }), options.secret ?? SECRET)}`
       : options.signature;
 
   const headers: Record<string, string> = { 'content-type': 'application/json', 'x-request-id': requestId };
+  if (options.contentLength !== undefined) headers['content-length'] = options.contentLength;
   if (signature !== null) headers['x-signature'] = signature;
 
   return new Request(
-    `https://nortecel.maat.work/billing/webhooks/mercadopago?data.id=${encodeURIComponent(dataId)}&type=${topic}`,
+    `https://nortecel.maat.work/billing/webhooks/mercadopago${
+      queryDataId === null ? `?type=${topic}` : `?data.id=${encodeURIComponent(queryDataId)}&type=${topic}`
+    }`,
     { method: 'POST', headers, body },
   );
 }
@@ -245,6 +251,29 @@ describe('firma · sin origen verificado no pasa nada', () => {
     expect(client.calls.preapproval).toBe(0);
   });
 
+  it('firma inválida: no consume el body antes de rechazar', async () => {
+    const text = vi.fn(async () => {
+      throw new Error('el body no debe leerse');
+    });
+    const dataId = PREAPPROVAL_ID;
+    const request = {
+      url: `https://nortecel.maat.work/billing/webhooks/mercadopago?data.id=${dataId}&type=${TOPIC_PREAPPROVAL}`,
+      headers: new Headers({
+        'x-request-id': 'req-invalid-body',
+        'x-signature': `ts=${String(Math.floor(NOW.getTime() / 1000))},v1=invalid`,
+      }),
+      body: null,
+      text,
+    } as unknown as Request;
+
+    const result = await handleWebhookNotification(request, deps());
+
+    expect(result).toEqual({ status: 401, outcome: 'unauthorized' });
+    expect(text).not.toHaveBeenCalled();
+    expect(db.writes).toHaveLength(0);
+    expect(client.calls.preapproval).toBe(0);
+  });
+
   it('sin header de firma: 401', async () => {
     const result = await handleWebhookNotification(delivery({ signature: null }), deps());
     expect(result).toEqual({ status: 401, outcome: 'unauthorized' });
@@ -301,6 +330,51 @@ describe('el cuerpo no manda sobre el estado', () => {
     const result = await handleWebhookNotification(delivery({ body: 'no soy json' }), deps());
     expect(result).toEqual({ status: 400, outcome: 'bad_request' });
     expect(db.writes).toHaveLength(0);
+  });
+});
+
+describe('recurso del webhook · sólo la query firmada autoriza la consulta', () => {
+  it.each([TOPIC_PREAPPROVAL, TOPIC_AUTHORIZED_PAYMENT])(
+    '%s sin query data.id: ignora aunque el body tenga data.id',
+    async (topic) => {
+      const result = await handleWebhookNotification(
+        delivery({ topic, queryDataId: null, dataId: PREAPPROVAL_ID, eventId: `notif-body-${topic}` }),
+        deps(),
+      );
+
+      expect(result).toEqual({ status: 200, outcome: 'missing_resource' });
+      expect(client.calls.preapproval).toBe(0);
+      expect(client.calls.authorizedPayment).toBe(0);
+      expect(ledger.applied).toHaveLength(0);
+      expect(ledger.duplicates).toHaveLength(0);
+      expect(db.writes).toHaveLength(0);
+    },
+  );
+});
+
+describe('límite del body · rechazo antes del parseo', () => {
+  it('Content-Length sobre el límite: 413, sin leer ni consultar a MP', async () => {
+    const result = await handleWebhookNotification(
+      delivery({ contentLength: String(MAX_WEBHOOK_BODY_BYTES + 1), body: '{}' }),
+      deps(),
+    );
+
+    expect(result).toEqual({ status: 413, outcome: 'payload_too_large' });
+    expect(db.writes).toHaveLength(0);
+    expect(client.calls.preapproval).toBe(0);
+  });
+
+  it('sin Content-Length: corta la lectura cuando el stream supera el límite', async () => {
+    const result = await handleWebhookNotification(
+      delivery({
+        body: JSON.stringify({ id: 'notif-grande', data: { id: PREAPPROVAL_ID } }) + 'x'.repeat(MAX_WEBHOOK_BODY_BYTES),
+      }),
+      deps(),
+    );
+
+    expect(result).toEqual({ status: 413, outcome: 'payload_too_large' });
+    expect(db.writes).toHaveLength(0);
+    expect(client.calls.preapproval).toBe(0);
   });
 });
 
@@ -439,7 +513,7 @@ describe('cuota (authorized_payment)', () => {
 describe('lo que se ignora', () => {
   it('topic ajeno: 200, cero escrituras y cero llamadas a MP', async () => {
     const result = await handleWebhookNotification(
-      delivery({ topic: 'payment', eventId: 'notif-otro' }),
+      delivery({ topic: 'payment', queryDataId: null, eventId: 'notif-otro' }),
       deps(),
     );
 

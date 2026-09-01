@@ -4,7 +4,7 @@
  * ## Inventario (lo que reporta `db-agent`)
  * | grupo | tablas | RLS |
  * |---|---|---|
- * | negocio con `tenant_id` | 15 | ✅ |
+ * | negocio con `tenant_id` | 16 | ✅ |
  * | identidad (`tenants` por `id`, `users` por `auth.uid()` + membresía) | 2 | ✅ |
  * | catálogo **global** (`catalog_models`, `catalog_faqs`) | 2 | ❌ a propósito, ver `catalog.ts` |
  *

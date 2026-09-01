@@ -7,11 +7,11 @@ para todos los tenants** (ADR-001): el aislamiento es RLS, no un schema ni una b
 
 | grupo | tablas | RLS |
 |---|---|---|
-| negocio, con `tenant_id` | 15 | sí |
+| negocio, con `tenant_id` | 16 | sí |
 | identidad (`tenants`, `users`) | 2 | sí |
 | catálogo **global** (`catalog_models`, `catalog_faqs`) | 2 | no, a propósito |
 
-**19 tablas · 17 con RLS.** La diferencia son exactamente 2 y está explicada abajo.
+**20 tablas · 18 con RLS.** La diferencia son exactamente 2 y está explicada abajo.
 
 ### Por qué el catálogo no tiene `tenant_id`
 

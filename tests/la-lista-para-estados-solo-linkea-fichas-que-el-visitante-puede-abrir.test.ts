@@ -82,6 +82,9 @@ const TENANT_D = '00000000-0000-4000-9000-00000000d901';
 const SLUG_D = 'qa-lista-d';
 
 const USER_A = '00000000-0000-4000-9000-00000000a902';
+const USER_B = '00000000-0000-4000-9000-00000000b902';
+const USER_C = '00000000-0000-4000-9000-00000000c902';
+const USER_D = '00000000-0000-4000-9000-00000000d902';
 
 const TENANT_IDS = [TENANT_A, TENANT_B, TENANT_C, TENANT_D] as const;
 
@@ -226,15 +229,35 @@ async function wipe(): Promise<void> {
     await admin`delete from public.listings where tenant_id = ${id}::uuid`;
     await admin`delete from public.tenants where id = ${id}::uuid`;
   }
+  await admin`
+    delete from auth.users
+    where id in (${USER_A}::uuid, ${USER_B}::uuid, ${USER_C}::uuid, ${USER_D}::uuid)
+  `;
 }
 
 beforeAll(async () => {
   await wipe();
 
+  await admin`
+    insert into auth.users (id, email) values
+      (${USER_A}::uuid, 'a@qa-lista.local'),
+      (${USER_B}::uuid, 'b@qa-lista.local'),
+      (${USER_C}::uuid, 'c@qa-lista.local'),
+      (${USER_D}::uuid, 'd@qa-lista.local')
+  `;
+
   await seedTenant(TENANT_A, SLUG_A);
   await seedTenant(TENANT_B, SLUG_B);
   await seedTenant(TENANT_C, SLUG_C);
   await seedTenant(TENANT_D, SLUG_D);
+
+  await admin`
+    insert into public.memberships (tenant_id, user_id, role, accepted_at) values
+      (${TENANT_A}::uuid, ${USER_A}::uuid, 'owner', now()),
+      (${TENANT_B}::uuid, ${USER_B}::uuid, 'owner', now()),
+      (${TENANT_C}::uuid, ${USER_C}::uuid, 'owner', now()),
+      (${TENANT_D}::uuid, ${USER_D}::uuid, 'owner', now())
+  `;
 
   for (const u of UNIDADES_DE_A) {
     if (u.sellada) await seedUnidad(TENANT_A, u);
@@ -364,7 +387,7 @@ describe('Q4 · la lista para estados sólo linkea fichas que el visitante puede
 
 describe('Q5 · el techo de la lista no se toma en silencio', () => {
   it('con más stock publicado que el techo, la query dice cuántos equipos hay en total', async () => {
-    const ctxC: TenantContext = { userId: USER_A, tenantId: TENANT_C, role: 'owner' };
+    const ctxC: TenantContext = { userId: USER_C, tenantId: TENANT_C, role: 'owner' };
     const { rows, total } = await listPublishedUnitsForStockList(ctxC);
 
     expect(rows.length, 'la lista dejó de cortar en el techo').toBe(STOCK_LIST_MAX_UNITS);
@@ -376,7 +399,7 @@ describe('Q5 · el techo de la lista no se toma en silencio', () => {
   });
 
   it('con el stock justo en el techo no se anuncia un recorte que no existe', async () => {
-    const ctxD: TenantContext = { userId: USER_A, tenantId: TENANT_D, role: 'owner' };
+    const ctxD: TenantContext = { userId: USER_D, tenantId: TENANT_D, role: 'owner' };
     const { rows, total } = await listPublishedUnitsForStockList(ctxD);
 
     expect(rows.length, 'la lista perdió unidades antes del techo').toBe(STOCK_LIST_MAX_UNITS);

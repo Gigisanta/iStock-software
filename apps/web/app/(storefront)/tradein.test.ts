@@ -201,11 +201,18 @@ describe('el handler vive donde reescribe el proxy y sólo contesta POST', () =>
     expect(HANDLER).not.toMatch(/body[^\n]*tenant|tenant_?[iI]d\s*:\s*(z\.|body|json|input|form)/u);
   });
 
-  it('no lee ni un header del visitante: ni `request.headers`, ni `headers()`, ni `cookies()`', () => {
-    // W002 ya lo prohíbe para las páginas; acá importa por otro motivo: si el `Location` del 303
-    // se armara con el host del pedido, este handler pasaría a depender de un header que en la
-    // página de al lado mata el ISR. El `Location` relativo es lo que evita esa tentación.
-    expect(code(HANDLER)).not.toMatch(/request\.headers|\b(headers|cookies|draftMode)\s*\(\s*\)/u);
+  it('sólo lee `Content-Length`: nunca usa headers del host para resolver tenant o Location', () => {
+    // El tamaño declarado es una señal de rechazo temprano, no una fuente de identidad. El
+    // slug sigue llegando exclusivamente por params y el Location sigue siendo relativo.
+    expect(code(HANDLER)).toMatch(/request\.headers\.get\(['"]content-length['"]\)/u);
+    expect(code(HANDLER)).not.toMatch(/\b(headers|cookies|draftMode)\s*\(\s*\)/u);
+    expect(code(HANDLER)).not.toMatch(/request\.headers\.(?!get\(['"]content-length['"]\))/u);
+  });
+
+  it('no usa `request.text()`: el body se lee por stream con techo de bytes', () => {
+    expect(code(HANDLER)).not.toMatch(/request\.text\(\)/u);
+    expect(code(HANDLER)).toMatch(/getReader\(\)/u);
+    expect(code(HANDLER)).toMatch(/reader\.cancel\(\)/u);
   });
 
   it('abre la transacción de la vidriera, o sea que corre como `anon`', () => {

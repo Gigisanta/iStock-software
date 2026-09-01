@@ -152,12 +152,15 @@ describe('RLS cruzado — las 4 aserciones de la skill, tabla por tabla', () => 
           expect(failure.message).toContain('permission denied');
           return;
         }
-        const affected = await sessionB.affected(`update ${table} set tenant_id = tenant_id where id = '${rowA}'`);
+        // listings/tradein_leads ya no exponen UPDATE de tenant_id a authenticated; usar una
+        // columna ordinaria permitida conserva la prueba RLS (la fila ajena debe dar 0, no 42501).
+        const harmlessColumn = table === 'listings' ? 'title' : table === 'tradein_leads' ? 'model_text' : 'tenant_id';
+        const affected = await sessionB.affected(`update ${table} set ${harmlessColumn} = ${harmlessColumn} where id = '${rowA}'`);
         expect(affected).toBe(0);
       });
 
       it('tenant B NO puede BORRAR la fila de A (0 filas afectadas, sin error)', async () => {
-        if (table === 'billing_webhook_events') {
+        if (table === 'billing_webhook_events' || table === 'listings' || table === 'tradein_leads') {
           const failure = await sessionB.expectFailure(`delete from ${table} where id = '${rowA}'`);
           expect(failure.code).toBe('42501');
           expect(failure.message).toContain('permission denied');

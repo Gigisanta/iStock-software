@@ -81,6 +81,9 @@ beforeAll(async () => {
   await admin.unsafe(`
     insert into tenants (id, slug, name, wa_phone, status, accepts_trade_in)
     values ('${TENANT}', '${SLUG}', 'Canal', '5492990000061', 'active', true)`);
+  await admin.unsafe(`
+    insert into memberships (tenant_id, user_id, role)
+    values ('${TENANT}', '${USER}', 'owner')`);
 
   panel = openSession(claimsFor(USER, TENANT));
   vidriera = openStorefrontSession(SLUG);

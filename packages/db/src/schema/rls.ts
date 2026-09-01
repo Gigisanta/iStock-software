@@ -27,15 +27,20 @@ export function tenantClaim(): SQL {
   return sql`(select auth.jwt() -> 'app_metadata' ->> 'tenant_id')::uuid`;
 }
 
-/** Predicado estándar: la fila pertenece al tenant del claim. */
+/**
+ * Predicado estándar: el claim sólo selecciona el tenant activo; la membresía vigente en DB
+ * decide si la sesión todavía puede operar sobre él. Así un JWT stale falla cerrado al revocar
+ * la membresía, sin esperar la rotación del token.
+ */
 export function belongsToTenant(): SQL {
-  return sql`tenant_id = ${tenantClaim()}`;
+  return sql`tenant_id = ${tenantClaim()} and ${currentUserIsTenantMember()}`;
 }
 
 /**
  * Authorization basada en la fuente de verdad (`memberships`), no en un claim mutable por el
- * caller. El helper SQL se declara en la migración y corre como invoker, así que la consulta
- * interna también queda sometida a RLS.
+ * caller. El helper SQL se declara como SECURITY DEFINER, propiedad de `service_role`, para que
+ * la consulta de autorización pueda leer la membresía vigente aun cuando la tabla también está
+ * protegida por RLS. Devuelve sólo un booleano y nunca expone filas.
  */
 export function currentUserIsTenantMember(): SQL {
   return sql`public.is_current_user_tenant_member(tenant_id)`;
@@ -119,8 +124,9 @@ export function tenantPolicies(table: string, options: TenantPolicyOptions = {})
  */
 export function selfTenantPolicies(table: string) {
   const own = sql`id = ${tenantClaim()}`;
+  const member = sql`public.is_current_user_tenant_member(id)`;
   return [
-    pgPolicy(`${table}_tenant_select`, { as: 'permissive', for: 'select', to: authenticatedRole, using: own }),
+    pgPolicy(`${table}_tenant_select`, { as: 'permissive', for: 'select', to: authenticatedRole, using: sql`${own} and ${member}` }),
     // El alta de un tenant es bootstrap y corre con service_role. No se permite desde una
     // sesión autenticada: un claim de tenant no convierte a un seller en creador de negocios.
     // El predicado de identidad sigue presente aunque el bootstrap autenticado esté cerrado.

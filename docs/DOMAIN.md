@@ -169,16 +169,27 @@ priceArs = round(priceUsd * tenant.fxRate)
 | `imei` | ✅ | ✅ (panel) | ❌ **nunca** |
 | `internal_notes`, `supplier` | ✅ | ❌ | ❌ |
 | resultado ENACOM | ✅ | ✅ (panel) | ❌ |
-| `tradein_leads.offer_usd`, `tradein_leads.internal_notes` | ✅ | ❌ — **pero lo sostiene el servidor, no la base** (ver abajo) | ❌ |
+| `tradein_leads.offer_usd`, `tradein_leads.internal_notes` | ✅ (**RPC owner-only**) | ❌ **ni por `SELECT` directo ni por RPC owner-only** | ❌ |
 | `tradein_leads.customer_name`, `customer_wa_phone` | ✅ | ✅ (panel: hay que llamar al cliente) | ❌ — **y es PII de un tercero**, la primera del producto (**ADR-026**) |
 
-El filtro del seller ocurre en el **select del server**. Ocultar con CSS o con un `if` en el
-componente es un fallo de seguridad, no una decisión de UI.
+La rama del seller usa una **allowlist en el select del server**. Ocultar con CSS o con un `if` en
+el componente es un fallo de seguridad, no una decisión de UI. Esa allowlist no es la única barrera:
+en el estado actual la base también revoca los `SELECT` sensibles.
 
-**Sobre `tradein_leads` esa frase es todo lo que hay, y se declara en vez de taparse.** Medido por
-el LEAD contra Postgres real en S8: a nivel base un `seller` autenticado **sí puede** leer
-`offer_usd` e `internal_notes` de esa tabla — `membership_role` aparece **cero veces** en sus
-policies. Es la fila **P5** del board, sigue **abierta**, y dueño `db-agent`.
+**Historial de S8 (2026-08-28):** medido por el LEAD contra Postgres real, un `seller` autenticado
+**sí podía** leer `offer_usd` e `internal_notes` de `tradein_leads`: `membership_role` aparecía
+**cero veces** en sus policies. Esa era la evidencia de P5 en ese momento y explica por qué S8
+también ató la respuesta del servidor.
+
+**Estado verificado en la corrida local del 2026-09-01 UTC:** las migraciones
+`0012_owner_sensitive_read_functions.sql`, `0014_member_imei_lookup.sql` y el hardening posterior
+revocan el `SELECT`
+directo de las columnas sensibles para `authenticated` y dejan una allowlist explícita. Por eso
+`cost_usd`, `offer_usd` e `internal_notes` no son legibles por `SELECT` directo, tampoco para un
+owner. El owner obtiene `cost_usd` mediante `owner_get_listing_cost` y la oferta/notas mediante
+`owner_get_tradein_sensitive`; ambos son RPC `SECURITY DEFINER` con validación de tenant y rol
+owner. El seller no obtiene filas por esos RPC. La evidencia del árbol está en
+`packages/db/src/seller-authorization.test.ts` y en las queries del panel.
 
 Lo que **sí** está atado, y es más fuerte que un `if`: `listTradeinLeads()` devuelve una **unión
 discriminada** por `canSeeOffer`, y en la rama del `seller` la clave `offerUsdCents` **no existe en
