@@ -96,7 +96,7 @@ async function adminRows<T>(text: string): Promise<T[]> {
 
 function listingInsert(id: string, tenant: string, slug: string): string {
   return `insert into listings (id, tenant_id, slug, title, condition, price_usd, cost_usd, status)
-          values ('${id}', '${tenant}', '${slug}', 'iPhone 14 Pro', 'used_excellent', 620.00, 500.00, 'available')`;
+          values ('${id}', '${tenant}', '${slug}', 'iPhone 14 Pro', 'used_excellent', 620.00, 500.00, 'sold')`;
 }
 
 // ══════════════════════════════════════════════════════════════════════════════════════════════

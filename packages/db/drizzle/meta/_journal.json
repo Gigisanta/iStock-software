@@ -141,6 +141,13 @@
       "when": 1788229000000,
       "tag": "0019_transition_listing_status",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1788229100000,
+      "tag": "0020_listing_effect_integrity",
+      "breakpoints": true
     }
   ]
 }

@@ -115,6 +115,11 @@ const listingAtacanteSlug = uniqueSlug('iphone-13-128-azul');
 const TITULO = 'iPhone 14 Pro 256 Grafito';
 const PRECIO_USD = 620;
 
+/** El copy de negocio que tiene que llegar completo a la conversación, no sólo por fragmentos. */
+const MENSAJE_WA_EXACTO =
+  `Hola, vi el ${TITULO} (usado A) a USD ${String(PRECIO_USD)} en ` +
+  `${vidrieraSlug}.maat.work y lo quiero.`;
+
 /** El `wa_phone` que `seedTenant` le pone al fixture: es el número que tiene que estar en el href. */
 const WA_PHONE = '5492994123456';
 
@@ -305,6 +310,15 @@ test('con JavaScript apagado la ficha servida trae el único enlace a WhatsApp d
         'camino a la venta quedó dependiendo de que hidrate un bundle, o el texto del mensaje no ' +
         `es el de este equipo. href servido: ${href}`,
     ).toBe(true);
+
+    expect(
+      primero?.href,
+      'el href de WhatsApp no coincide exactamente con el mensaje comercial: un href que sólo ' +
+        'contiene algunos fragmentos puede perder el modelo, la condición, el precio o el host ' +
+        'y mandar una conversación ambigua',
+    ).toBe(
+      `https://wa.me/${WA_PHONE}?text=${encodeURIComponent(MENSAJE_WA_EXACTO)}`,
+    );
 
     // `target="_blank"` sin `rel="noopener"` le da a la pestaña de WhatsApp una referencia a
     // `window.opener` sobre la vidriera del reseller.

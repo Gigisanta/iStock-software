@@ -170,7 +170,14 @@ async function nuevaUnidad(tenantId: string, estado: string, costo: string | nul
   await cliente`
     insert into listings (id, tenant_id, slug, title, condition, price_usd, cost_usd, status)
     values (${id}::uuid, ${tenantId}::uuid, ${'u-' + id.slice(0, 8)}, 'iPhone de prueba',
-            'used_excellent', ${PRECIO}, ${costo}, ${estado})`;
+            'used_excellent', ${PRECIO}, ${costo}, 'draft')`;
+  await cliente`
+    insert into listing_photos (id, tenant_id, listing_id, sort_order, master_key, thumb_key, card_key, detail_key)
+    values (${randomUUID()}::uuid, ${tenantId}::uuid, ${id}::uuid, 0,
+            'probe-master', 'probe-thumb', 'probe-card', 'probe-detail')`;
+  if (estado !== 'draft') {
+    await cliente`update listings set status = ${estado} where id = ${id}::uuid`;
+  }
   return id;
 }
 
@@ -399,12 +406,15 @@ describe('S7 · la venta manual escribe una fila y congela lo que tiene que cong
   });
 
   it('E · vender una unidad reservada cierra la reserva como `confirmed`', async () => {
-    const listingId = await nuevaUnidad(tenantA, 'reserved');
+    const listingId = await nuevaUnidad(tenantA, 'available');
     const reservationId = randomUUID();
-    await cliente`
-      insert into reservations (id, tenant_id, listing_id, status, minutes, expires_at)
-      values (${reservationId}::uuid, ${tenantA}::uuid, ${listingId}::uuid, 'active', 60,
-              now() + interval '60 minutes')`;
+    await cliente.begin(async (tx) => {
+      await tx`update listings set status = 'reserved' where id = ${listingId}::uuid`;
+      await tx`
+        insert into reservations (id, tenant_id, listing_id, status, minutes, expires_at)
+        values (${reservationId}::uuid, ${tenantA}::uuid, ${listingId}::uuid, 'active', 60,
+                now() + interval '60 minutes')`;
+    });
 
     const out = await venderPorElBorde(tenantA, SLUG_A, USER_A, listingId);
     expect(out.ok, `la venta desde reserved no entró: ${out.ok ? '' : out.message}`).toBe(true);

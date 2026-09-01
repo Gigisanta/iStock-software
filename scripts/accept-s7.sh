@@ -67,7 +67,7 @@ sec 'V1 · `createsSale` lo consume alguien, y no es el dominio testeandose a si
 # correrlo antes de que existiera la implementacion.
 CONS=$(grep -rl 'createsSale' apps/web/app packages/*/src 2>/dev/null | grep -v node_modules | grep -vc '^packages/domain/' || true)
 if [ "${CONS:-0}" -ge 1 ]; then
-  ok "el efecto `createsSale` tiene $CONS consumidor(es) fuera de \`packages/domain\`"
+  ok "el efecto \`createsSale\` tiene $CONS consumidor(es) fuera de \`packages/domain\`"
 else
   no 'cero consumidores de `createsSale` fuera de `packages/domain`: la aplicacion volvio a descartar el efecto que el dominio declara — es el defecto que abrio S7'
 fi
