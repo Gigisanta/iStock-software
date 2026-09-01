@@ -1,7 +1,7 @@
 # Auditoría de costo de producción
 
 **Corte:** 2026-09-01
-**Checkout auditado:** `3fd4c1a` (commit de launch auditado)
+**Checkout auditado:** `8acb28930119b334390d91980940747f3e666e24` (base de comparación; los cambios de este corte están en el commit posterior)
 **Alcance:** costo marginal de infraestructura por tenant activo, hasta 100 tenants. El piso fijo de plataforma se informa aparte.
 **Regla:** la pregunta de esta auditoría es «¿esto agrega costo tonto?». Un dato de producción que no pudo observarse es `UNVERIFIED`; no se trata como cero.
 
