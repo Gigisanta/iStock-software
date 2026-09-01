@@ -25,20 +25,20 @@ body {
   --ui-ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
 }
 
-.flow-showcase { max-width: 64rem; margin: 0 auto; padding: 1.5rem 1rem 4rem; display: grid; gap: 1.25rem; }
-.flow-copy, .phone-stage { border: 1px solid rgb(229 229 229); border-radius: 1.5rem; background: color-mix(in srgb, white 96%, #dbeafe); padding: 1.5rem; }
+.flow-showcase { max-width: 64rem; margin: 0 auto; padding: 1.5rem 1rem 4rem; display: grid; gap: 1.25rem; color: #18181b; }
+.flow-copy, .phone-stage { border: 1px solid #d4d4d8; border-radius: 1.5rem; background: linear-gradient(145deg, #fff 0%, #f8fafc 100%); padding: 1.5rem; box-shadow: 0 14px 34px rgba(15,23,42,.08); }
 .flow-eyebrow { color: rgb(2 132 199); font-size: .72rem; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
-.flow-copy h2 { margin-top: .6rem; font-size: clamp(1.6rem, 4vw, 2.5rem); font-weight: 750; line-height: 1.05; letter-spacing: -.04em; }
-.flow-copy > p:not(.flow-eyebrow) { margin-top: 1rem; max-width: 34rem; color: rgb(82 82 91); line-height: 1.55; }
+.flow-copy h2 { margin-top: .6rem; color: #18181b; font-size: clamp(1.6rem, 4vw, 2.5rem); font-weight: 750; line-height: 1.05; letter-spacing: -.04em; }
+.flow-copy > p:not(.flow-eyebrow) { margin-top: 1rem; max-width: 34rem; color: #3f3f46; line-height: 1.55; }
 .flow-toolbar { display: flex; overflow-x: auto; gap: .5rem; padding: 1.25rem 0; mask-image: linear-gradient(to right, #000 90%, transparent); }
-.flow-toolbar button { display: inline-flex; flex: 0 0 auto; align-items: center; gap: .45rem; border: 1px solid rgb(212 212 216); border-radius: 999px; padding: .58rem .75rem; font-size: .82rem; font-weight: 650; transition: color 180ms var(--ui-ease-out), background-color 180ms var(--ui-ease-out), transform 140ms var(--ui-ease-out); }
+.flow-toolbar button { display: inline-flex; flex: 0 0 auto; align-items: center; gap: .45rem; border: 1px solid #d4d4d8; border-radius: 999px; padding: .58rem .75rem; color: #3f3f46; font-size: .82rem; font-weight: 650; transition: color 180ms var(--ui-ease-out), background-color 180ms var(--ui-ease-out), transform 140ms var(--ui-ease-out); }
 .flow-toolbar button span { display: grid; place-items: center; width: 1.2rem; height: 1.2rem; border-radius: 999px; background: rgb(228 228 231); font-size: .68rem; }
 .flow-toolbar button.is-active { border-color: rgb(9 9 11); background: rgb(9 9 11); color: white; }
 .flow-toolbar button.is-active span { background: white; color: rgb(9 9 11); }
 .flow-toolbar button:active, .metal-button:active, .dynamic-island:active, .screen-close:active { transform: scale(.97); }
 .metal-button { position: relative; overflow: hidden; border-radius: 999px; padding: .85rem 1.1rem; background: linear-gradient(115deg, #111 8%, #414141 24%, #d4d4d8 37%, #191919 51%, #737373 69%, #09090b 86%); color: white; font-size: .92rem; font-weight: 750; box-shadow: inset 0 1px 1px rgba(255,255,255,.45), 0 9px 24px rgba(9,9,11,.16); transition: transform 140ms var(--ui-ease-out), box-shadow 180ms var(--ui-ease-out); }
 .metal-button:hover { box-shadow: inset 0 1px 1px rgba(255,255,255,.55), 0 12px 30px rgba(9,9,11,.24); }
-.phone-stage { position: relative; min-height: 24rem; overflow: hidden; background: radial-gradient(circle at 80% 10%, #bae6fd, transparent 35%), #f8fafc; }
+.phone-stage { position: relative; min-height: 24rem; overflow: hidden; background: radial-gradient(circle at 80% 10%, #bae6fd, transparent 38%), #f8fafc; }
 .dynamic-island { display: flex; position: relative; z-index: 1; align-items: center; gap: .45rem; width: min(100%, 19rem); min-height: 2.8rem; margin: 0 auto; border-radius: 999px; padding: .7rem 1rem; background: #09090b; color: white; font-size: .76rem; font-weight: 700; text-align: left; transition: width 260ms var(--ui-ease-out), min-height 260ms var(--ui-ease-out), border-radius 260ms var(--ui-ease-out), transform 160ms var(--ui-ease-out); }
 .dynamic-island.stage-new-message, .dynamic-island.stage-qualified, .dynamic-island.stage-full { width: min(100%, 26rem); min-height: 3.4rem; border-radius: 1.15rem; }
 .island-dot { width: .5rem; height: .5rem; border-radius: 50%; background: #22c55e; box-shadow: 0 0 0 .22rem rgba(34,197,94,.17); }

@@ -8,7 +8,7 @@ const MESSAGES = [
   'Quiero entregar mi iPhone 12 como parte de pago. ¿Cuándo puedo pasar?',
 ] as const;
 
-type Stage = 'idle' | 'new-message' | 'qualified' | 'full';
+type Stage = 'idle' | 'new-message' | 'qualified';
 
 /**
  * Demo de la promesa central de iStock: no simula una integración de WhatsApp ni recibe mensajes.
@@ -30,20 +30,6 @@ export function WhatsAppFlowPreview() {
     }, 17);
     return () => window.clearInterval(timer);
   }, [message]);
-
-  useEffect(() => {
-    if (stage !== 'full') return;
-    const previousOverflow = document.body.style.overflow;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setStage('qualified');
-    };
-    document.body.style.overflow = 'hidden';
-    window.addEventListener('keydown', onKeyDown);
-    return () => {
-      document.body.style.overflow = previousOverflow;
-      window.removeEventListener('keydown', onKeyDown);
-    };
-  }, [stage]);
 
   const selectMessage = (index: number) => {
     setMessageIndex(index);
@@ -74,13 +60,6 @@ export function WhatsAppFlowPreview() {
           ))}
         </div>
 
-        <button
-          className="metal-button"
-          onClick={() => setStage('full')}
-          type="button"
-        >
-          Ver el flujo completo <span aria-hidden="true">↗</span>
-        </button>
       </div>
 
       <div className="phone-stage">
@@ -119,23 +98,6 @@ export function WhatsAppFlowPreview() {
         </div>
       </div>
 
-      {stage === 'full' ? (
-        <div className="expandable-screen" role="dialog" aria-modal="true" aria-labelledby="flow-dialog-title">
-          <div className="expandable-screen-panel">
-            <button className="screen-close" onClick={() => setStage('qualified')} type="button">
-              Cerrar ×
-            </button>
-            <p className="flow-eyebrow">Flujo que recibe tu equipo</p>
-            <h2 id="flow-dialog-title">Tres mensajes, tres próximos pasos claros.</h2>
-            <div className="flow-cards">
-              <article className="cutout-card"><b>1</b><h3>Compra concreta</h3><p>Equipo + precio + intención. Respondé disponibilidad y coordiná retiro.</p></article>
-              <article className="cutout-card"><b>2</b><h3>Consulta de stock</h3><p>El cliente ya cita el modelo. Confirmás antes de abrir una conversación larga.</p></article>
-              <article className="cutout-card"><b>3</b><h3>Canje</h3><p>Va al inbox de Canjes para evaluarlo sin mezclarlo con una venta directa.</p></article>
-            </div>
-            <p className="screen-footnote">No enviamos mensajes automáticos ni usamos WhatsApp Business API: el cliente abre su WhatsApp normal.</p>
-          </div>
-        </div>
-      ) : null}
     </section>
   );
 }
