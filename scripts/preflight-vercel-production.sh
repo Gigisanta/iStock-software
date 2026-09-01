@@ -98,11 +98,14 @@ else
   fail "DNS $DOMAIN no apunta a $VERCEL_IP (actual: ${DNS_A:-sin registro A})"
 fi
 
-DEPLOYMENTS=$(vercel ls "$PROJECT" --scope "$SCOPE" --limit 1 2>&1 || true)
-if printf '%s' "$DEPLOYMENTS" | grep -q 'No deployments found'; then
-  fail 'el proyecto todavía no tiene deployment verificable'
+if DEPLOYMENTS=$(vercel ls "$PROJECT" --scope "$SCOPE" --limit 1 2>&1); then
+  if printf '%s' "$DEPLOYMENTS" | grep -q 'No deployments found'; then
+    fail 'el proyecto todavía no tiene deployment verificable'
+  else
+    pass 'existe al menos un deployment en Vercel'
+  fi
 else
-  pass 'existe al menos un deployment en Vercel'
+  fail 'no se pudo consultar deployments en Vercel'
 fi
 
 if [ "$fail" -eq 0 ]; then
