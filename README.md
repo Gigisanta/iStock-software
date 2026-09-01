@@ -1,3 +1,8 @@
+<!-- maatwork-brand:maatwork-mw-20260901 -->
+<p align="center"><img src="docs/brand/istock-software-cover.png" alt="iStock · MaatWork" width="1200"></p>
+
+> Stock y vidriera para revendedores
+
 # iStock
 
 ### La vidriera operativa para revendedores de celulares
