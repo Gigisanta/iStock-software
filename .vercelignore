@@ -1,0 +1,17 @@
+# Vercel installs dependencies from pnpm-lock.yaml during the build. Local installs and
+# generated output must never be uploaded as source files (they inflate the upload and can
+# exhaust the Hobby API upload quota before the build even starts).
+node_modules
+**/node_modules
+**/.next
+**/.media-local
+coverage
+**/coverage
+e2e
+tests
+docs
+.codex
+.agents
+.claude
+.git
+*.log
