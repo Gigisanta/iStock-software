@@ -37,10 +37,13 @@ BEGIN
 END
 $fn$;--> statement-breakpoint
 ALTER FUNCTION public.reject_seller_forged_sale_fields() OWNER TO service_role;--> statement-breakpoint
-REVOKE ALL ON FUNCTION public.reject_seller_forged_sale_fields() FROM PUBLIC, anon, authenticated, service_role;--> statement-breakpoint
+-- Neon comprueba EXECUTE al crear el trigger con la identidad de la migración. Se abre sólo
+-- durante esta operación y se revoca inmediatamente después.
+GRANT EXECUTE ON FUNCTION public.reject_seller_forged_sale_fields() TO PUBLIC;--> statement-breakpoint
 CREATE TRIGGER sales_reject_seller_forged_fields
 BEFORE INSERT ON public.sales
 FOR EACH ROW EXECUTE FUNCTION public.reject_seller_forged_sale_fields();--> statement-breakpoint
+REVOKE ALL ON FUNCTION public.reject_seller_forged_sale_fields() FROM PUBLIC, anon, authenticated, service_role;--> statement-breakpoint
 
 ALTER POLICY "sales_tenant_insert" ON "sales" TO authenticated
 WITH CHECK (

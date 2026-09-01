@@ -4,6 +4,9 @@
 -- function and narrowing the event to INSERT keeps sales.cost_usd frozen at sale time without
 -- requiring authenticated to SELECT listings.cost_usd.
 
+-- 0013 deja esta función sin EXECUTE. Neon lo comprueba antes de aceptar CREATE OR REPLACE,
+-- por eso el permiso temporal debe preceder también al reemplazo, no sólo al trigger.
+GRANT EXECUTE ON FUNCTION public.reject_seller_forged_sale_fields() TO PUBLIC;--> statement-breakpoint
 CREATE OR REPLACE FUNCTION public.reject_seller_forged_sale_fields()
 RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = public, pg_catalog
@@ -37,6 +40,7 @@ DROP TRIGGER IF EXISTS sales_reject_seller_forged_fields ON public.sales;--> sta
 CREATE TRIGGER sales_reject_seller_forged_fields
 BEFORE INSERT ON public.sales
 FOR EACH ROW EXECUTE FUNCTION public.reject_seller_forged_sale_fields();--> statement-breakpoint
+REVOKE ALL ON FUNCTION public.reject_seller_forged_sale_fields() FROM PUBLIC, anon, authenticated, service_role;--> statement-breakpoint
 
 COMMENT ON FUNCTION public.reject_seller_forged_sale_fields() IS
   'Sales cost is derived from the tenant listing at insert time; seller cannot select or forge listings.cost_usd.';

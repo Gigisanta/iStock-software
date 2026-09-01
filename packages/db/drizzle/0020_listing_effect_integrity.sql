@@ -68,7 +68,9 @@ $fn$;
 
 ALTER FUNCTION public.assert_listing_effect_integrity() OWNER TO service_role;
 --> statement-breakpoint
-REVOKE ALL ON FUNCTION public.assert_listing_effect_integrity() FROM PUBLIC, anon, authenticated, service_role;
+-- Neon comprueba EXECUTE al crear el trigger con la identidad de la migración. Los tres
+-- permisos PUBLIC de este archivo son temporales y se cierran antes del chequeo final.
+GRANT EXECUTE ON FUNCTION public.assert_listing_effect_integrity() TO PUBLIC;
 --> statement-breakpoint
 
 DROP TRIGGER IF EXISTS listings_assert_effect_integrity ON public.listings;
@@ -107,7 +109,7 @@ $fn$;
 
 ALTER FUNCTION public.assert_reservation_listing_state() OWNER TO service_role;
 --> statement-breakpoint
-REVOKE ALL ON FUNCTION public.assert_reservation_listing_state() FROM PUBLIC, anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.assert_reservation_listing_state() TO PUBLIC;
 --> statement-breakpoint
 DROP TRIGGER IF EXISTS reservations_assert_listing_state ON public.reservations;
 --> statement-breakpoint
@@ -151,13 +153,18 @@ $fn$;
 
 ALTER FUNCTION public.assert_sale_listing_state() OWNER TO service_role;
 --> statement-breakpoint
-REVOKE ALL ON FUNCTION public.assert_sale_listing_state() FROM PUBLIC, anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.assert_sale_listing_state() TO PUBLIC;
 --> statement-breakpoint
 DROP TRIGGER IF EXISTS zz_sales_assert_listing_state ON public.sales;
 --> statement-breakpoint
 CREATE TRIGGER zz_sales_assert_listing_state
   BEFORE INSERT ON public.sales
   FOR EACH ROW EXECUTE FUNCTION public.assert_sale_listing_state();
+--> statement-breakpoint
+
+REVOKE ALL ON FUNCTION public.assert_listing_effect_integrity() FROM PUBLIC, anon, authenticated, service_role;
+REVOKE ALL ON FUNCTION public.assert_reservation_listing_state() FROM PUBLIC, anon, authenticated, service_role;
+REVOKE ALL ON FUNCTION public.assert_sale_listing_state() FROM PUBLIC, anon, authenticated, service_role;
 --> statement-breakpoint
 
 DO $check$
