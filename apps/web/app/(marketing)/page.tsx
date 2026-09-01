@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { WhatsAppFlowPreview } from './_components/whatsapp-flow-preview';
 
 /**
  * Home de marketing.
@@ -89,6 +90,8 @@ export default function MarketingHomePage() {
           Sin tarjeta para probar. Sin instalar nada.
         </p>
       </section>
+
+      <WhatsAppFlowPreview />
 
       <section className="border-y border-neutral-200 bg-neutral-50 px-4 py-12 dark:border-neutral-800 dark:bg-neutral-900/50">
         <div className="mx-auto w-full max-w-5xl">
