@@ -34,7 +34,8 @@ fi
 ACCOUNT=$(vercel whoami 2>/dev/null || true)
 if [ "$ACCOUNT" = 'gigisanta' ]; then pass 'sesión Vercel: gigisanta'; else fail "sesión Vercel inesperada: ${ACCOUNT:-ausente}"; fi
 
-TEAM_JSON=$(vercel api "/v2/teams/$TEAM_ID" --scope "$SCOPE" 2>/dev/null || true)
+VERCEL_API_ARGS=(api "/v2/teams/$TEAM_ID")
+TEAM_JSON=$(vercel "${VERCEL_API_ARGS[@]}" --scope "$SCOPE" 2>/dev/null || true)
 PLAN=$(printf '%s' "$TEAM_JSON" | jq -r '.billing.plan // empty' 2>/dev/null || true)
 if [ "$PLAN" = 'pro' ]; then pass 'team Vercel en Pro'; else fail "team Vercel en ${PLAN:-plan desconocido}; el cron de 5 minutos requiere Pro"; fi
 
