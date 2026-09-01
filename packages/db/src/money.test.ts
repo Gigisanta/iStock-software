@@ -61,7 +61,7 @@ describe('ida y vuelta contra Postgres real', () => {
     expect(decimalToCents(r[0]?.margin_usd ?? '')).toBe(10_000);
   });
 
-  it('el TC del dueño vuelve como centavos de ARS por USD, listo para `applyFx`', async () => {
+  it('el TC automático vuelve como centavos de ARS por USD, listo para `applyFx`', async () => {
     const r = (await sql.unsafe(`select ars_per_usd from fx_settings limit 1`)) as unknown as {
       ars_per_usd: string;
     }[];

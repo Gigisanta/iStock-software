@@ -58,11 +58,11 @@ export async function loadTenantSettings(ctx: TenantContext): Promise<TenantSett
 }
 
 /**
- * El TC del tenant, tal como está guardado. `null` = todavía no cargó ninguno.
+ * El TC automático del tenant, tal como está guardado. `null` = todavía no sincronizó ninguno.
  *
  * **`null` no se rellena con un default**, y es la misma decisión que toma la vidriera en
  * `fxContext()`: publicar pesos calculados con un TC inventado por nosotros es peor que no
- * publicarlos. `CLAUDE.md` §1: *"el TC lo setea el DUEÑO, manualmente, por tenant"*.
+ * publicarlos. La fila la siembra el alta usando BCRA y la mantiene el cron diario.
  *
  * Es una lectura suelta y **no** reemplaza al `freezeFx()` de `_lib/sales/record-sale.ts`: aquel
  * corre adentro de la transacción de la venta porque congela el TC del instante en que se movió el

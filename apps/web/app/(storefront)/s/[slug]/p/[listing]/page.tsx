@@ -57,8 +57,9 @@ import { WaButton } from '../../../../_components/wa-button';
  * que lo va a leer del otro lado. Por eso esta página **no transcribe** `listing.waMessage`.
  *
  * ── El ARS es informativo, y la ficha lo dice (LEAD, FASE 2, punto 3) ────────────────────────
- * El TC lo carga el dueño a mano y el redondeo por default es `ceil_1000`. Publicar un peso sin
- * decir que es orientativo lo convierte en una oferta, y la operación se cierra por WhatsApp.
+ * El TC viene de la cotización oficial automática y el redondeo por default es `ceil_1000`.
+ * Publicar un peso sin decir que es orientativo lo convierte en una oferta, y la operación se
+ * cierra por WhatsApp.
  *
  * ── El equipo que no existe: `<ListingMiss />`, no `notFound()` (medido, 2026-08-28) ──────────
  * Acá se lanzaba `notFound()`, con el argumento de que ADR-011 gobernaba otra pregunta
@@ -284,7 +285,7 @@ export default async function ListingPage({ params }: ListingPageProps) {
         </div>
         <p className="mt-1 text-xs leading-relaxed text-neutral-500 dark:text-neutral-400">
           El precio en pesos es <strong className="font-semibold">informativo</strong> y sale de
-          convertir {listing.priceUsd.formatted} al tipo de cambio que carga el local (TC{' '}
+          convertir {listing.priceUsd.formatted} con la cotización oficial diaria (TC{' '}
           {listing.fxRateUsed}). Es una referencia: la operación se cierra por WhatsApp.
         </p>
         <p className="mt-3">

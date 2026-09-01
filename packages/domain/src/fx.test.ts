@@ -12,7 +12,7 @@ import { formatArs } from './money';
 
 const TC_1487_50 = fxRateFromDecimal('1487.50');
 
-describe('applyFx — el TC lo pone el dueño y entra por parámetro', () => {
+describe('applyFx — la cotización entra validada por parámetro', () => {
   it('U1 — la regla por default es techo al millar de pesos', () => {
     expect(DEFAULT_FX_ROUNDING).toBe('ceil_1000');
     // USD 620 * 1487,50 = ARS 922.250 exactos → techo al millar → 923.000
@@ -66,7 +66,7 @@ describe('applyFx — el TC lo pone el dueño y entra por parámetro', () => {
     expect(() => applyFx(1_000_000, huge)).toThrow(/rango seguro/u);
   });
 
-  it('acepta el TC decimal tal como lo tipea el dueño', () => {
+  it('acepta una cotización decimal normalizada', () => {
     expect(fxRateFromDecimal('1487.50').arsCentsPerUsd).toBe(148_750);
     expect(fxRateFromDecimal('1487,50').arsCentsPerUsd).toBe(148_750);
     expect(fxRateFromDecimal('1487').arsCentsPerUsd).toBe(148_700);

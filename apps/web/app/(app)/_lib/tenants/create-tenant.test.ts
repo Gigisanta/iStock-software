@@ -27,6 +27,11 @@ vi.mock('../auth/driver', () => ({
   authDriver: () => ({ syncTenantClaim: (...args: unknown[]) => syncTenantClaim(...args) }),
 }));
 
+const fetchAutomaticFxQuote = vi.fn();
+vi.mock('../fx/automatic-rate', () => ({
+  fetchAutomaticFxQuote: () => fetchAutomaticFxQuote(),
+}));
+
 const invalidateStorefront = vi.fn();
 vi.mock('./storefront-cache', () => ({
   invalidateStorefront: (slug: string) => {
@@ -133,7 +138,6 @@ const VALID_INPUT = {
   name: 'Norte Cel',
   slug: 'nortecel',
   waPhone: '2995551234',
-  fxArsCentsPerUsd: '1487,50',
   acceptsTradeIn: true,
 };
 
@@ -151,23 +155,16 @@ beforeEach(() => {
   db.inserts = [];
   db.selectRows = [];
   db.insertError = null;
+  fetchAutomaticFxQuote.mockResolvedValue({
+    arsCentsPerUsd: 148_750,
+    asOf: '2026-08-31',
+    source: 'bcra',
+  });
 });
 
-describe('createTenantSchema · el TC entra por el borde, con Zod', () => {
-  it('convierte el TC tipeado a centavos de ARS por USD', () => {
-    expect(parsedInput().fxArsCentsPerUsd).toBe(148_750);
-  });
-
-  it('sin TC no hay alta: es un campo obligatorio, no un default nuestro', () => {
-    const parsed = createTenantSchema.safeParse({ ...VALID_INPUT, fxArsCentsPerUsd: '' });
-    expect(parsed.success).toBe(false);
-  });
-
-  it('un TC con separador de miles se rechaza con el campo apuntado', () => {
-    const parsed = createTenantSchema.safeParse({ ...VALID_INPUT, fxArsCentsPerUsd: '1.487' });
-    expect(parsed.success).toBe(false);
-    if (parsed.success) return;
-    expect(parsed.error.issues[0]?.path).toEqual(['fxArsCentsPerUsd']);
+describe('createTenantSchema · el tipo de cambio no se pide al dueño', () => {
+  it('valida sólo los datos que la persona necesita cargar', () => {
+    expect(createTenantSchema.safeParse(VALID_INPUT).success).toBe(true);
   });
 });
 
@@ -357,15 +354,28 @@ describe('createTenant · un 23505 no es un mensaje: hay que mirar QUÉ constrai
   });
 });
 
-describe('createTenant · el TC sembrado es el que puso el dueño', () => {
-  it('guarda los centavos que salieron del borde, no un número nuestro', async () => {
+describe('createTenant · el TC sembrado viene de la cotización automática', () => {
+  it('guarda la cotización validada del BCRA y no la identidad del dueño como actualizador', async () => {
     await createTenant(USER_ID, parsedInput());
 
     expect(rowsOf(fxSettings)[0]?.row).toMatchObject({
       tenantId: TENANT_ID,
       arsPerUsd: 148_750,
-      updatedBy: USER_ID,
+      updatedBy: null,
     });
+  });
+
+  it('si el proveedor no responde no crea un negocio con precios inciertos', async () => {
+    fetchAutomaticFxQuote.mockRejectedValue(new Error('provider unavailable'));
+
+    const result = await createTenant(USER_ID, parsedInput());
+
+    expect(result).toEqual({
+      ok: false,
+      field: 'form',
+      message: 'No pudimos obtener la cotización del día. Esperá unos minutos y probá de nuevo.',
+    });
+    expect(db.inserts).toEqual([]);
   });
 
   /** `ceil_1000` es lo ratificado en FASE 2: nunca publica menos ARS que USD × TC. */
@@ -411,7 +421,7 @@ describe('createTenant · lo que ya hacía y sigue haciendo', () => {
     expect(invalidateStorefront).toHaveBeenCalledWith('nortecel');
   });
 
-  it('el log deja la señal de S3.1 y no el valor del TC', async () => {
+  it('el log deja la señal de S3.1 y el origen de la cotización, no el valor', async () => {
     await createTenant(USER_ID, parsedInput());
 
     expect(logEvent).toHaveBeenCalledWith('tenant.created', {
@@ -419,6 +429,8 @@ describe('createTenant · lo que ya hacía y sigue haciendo', () => {
       userId: USER_ID,
       plan: 'trial',
       fxSeeded: true,
+      fxSource: 'bcra',
+      fxAsOf: '2026-08-31',
       pickupPoints: 1,
     });
     expect(JSON.stringify(logEvent.mock.calls)).not.toContain('148750');

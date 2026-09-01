@@ -148,11 +148,16 @@ Con cache sano, el costo DB público esperado es cero en hits. El objetivo del c
 
 - `s/[slug]/api/track/route.ts`: un `INSERT ... SELECT` por beacon válido, con máximo una fila `wa_click_events`; el beacon no devuelve payload.
 - `tradein/route.ts`: un `INSERT ... SELECT` por lead válido, una fila `tradein_leads` por envío.
-- `vercel.json`: un único cron `*/5 * * * *`, equivalente a `12 × 24 × 30 = 8.640 invocaciones/mes`.
+- `vercel.json`: un único cron diario `0 3 * * *`, equivalente a `30 invocaciones/mes`.
 - `expire-reservations/route.ts` autentica primero con `CRON_SECRET`; no hay worker 24/7.
+- El mismo cron consulta una vez la API pública y gratuita del BCRA, ejecuta una actualización de
+  `fx_settings` para todos los tenants y revalida sus dos tags de vidriera. No agrega otro
+  servicio ni consultas por visitante; el costo incremental es una invocación HTTP saliente diaria,
+  una actualización de Postgres diaria y una revalidación por tenant. CPU/egress de Vercel y el
+  número final de tenants quedan `UNVERIFIED` y dependen del crecimiento.
 - `expireDueReservations`: incluso sin vencimientos hace al menos dos SELECT por ejecución; el batch máximo es 200 y cada fila cambiada puede hacer hasta un UPDATE de listing, un UPDATE de reservation y un INSERT de event.
 
-Mínimo mensual del cron, plataforma completa: `8.640 × 2 = 17.280 SELECT`; distribuido aritméticamente en 100 tenants: `172.8 SELECT/tenant/mes`, antes de las filas realmente vencidas. A la tarifa de referencia de invocación Vercel: `8.640 × USD 0.0000006 = USD 0.005184 total`, `USD 0.00005184/tenant`; el crédito Pro y la clasificación vigente son `UNVERIFIED`. El costo Neon por fila/consulta no se puede inventar a partir del precio del plan.
+Mínimo mensual del barrido de reservas: `30 × 2 = 60 SELECT`, antes de las filas realmente vencidas; el refresh de FX agrega una consulta y una actualización por corrida. A la tarifa de referencia de invocación Vercel: `30 × USD 0.0000006 = USD 0.000018 total`; la clasificación vigente y el costo Neon por fila/consulta son `UNVERIFIED`.
 
 ### Conexiones y Realtime
 

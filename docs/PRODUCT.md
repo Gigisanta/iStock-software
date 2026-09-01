@@ -62,8 +62,9 @@ ARCA/AFIP · WhatsApp Business API · sync con MercadoLibre · carrito · checko
 reseller · POS · landing custom en el signup · LLM dentro de WhatsApp.
 
 ## Realidad local que el software modela
-- **El TC lo pone el dueño**, a mano, por tenant. No hay API de dólar en el hot path.
-  El dueño no quiere el dólar "real": quiere **su** dólar.
+- **El TC se actualiza automáticamente** una vez por día con la última cotización oficial disponible
+  del BCRA, por tenant. No se consulta ningún proveedor en el hot path de la vidriera.
+  El ARS es informativo y la operación se cierra por WhatsApp.
 - **Condiciones:** sellado · open box · tester A+ · usado excelente · usado con detalle.
 - **Canje presencial** como flujo de primera clase (no una nota al pie). **Existe desde S8**
   (2026-08-28): formulario público en la vidriera → inbox en el panel → aceptar crea la unidad en

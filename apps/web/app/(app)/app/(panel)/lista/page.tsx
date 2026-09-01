@@ -160,8 +160,8 @@ function StockListBlocks({ businessName, slug, published, fx, tenantId }: StockL
 
       {fx === null ? (
         <Note>
-          Todavía no tenemos tu tipo de cambio, así que la lista sale sólo en dólares. Cargalo y
-          vuelve a salir con los dos precios.
+          Todavía no tenemos la cotización sincronizada, así que la lista sale sólo en dólares.
+          Volvé a intentarlo en unos minutos para verla con los dos precios.
         </Note>
       ) : null}
 

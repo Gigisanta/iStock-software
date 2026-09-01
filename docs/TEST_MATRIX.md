@@ -209,7 +209,7 @@ mockea la base**: la fila de venta la escribe el mismo camino que corre en produ
 | PS7-A | vender una unidad disponible escribe **UNA** venta, con el costo de `listings` y **no** el del form | el costo lo copia un subselect adentro del `INSERT`; si el form pudiera dictarlo, el margen sería un dato del cliente |
 | PS7-B | mover el costo y el TC **después** de la venta **no reescribe** la venta | la venta es un hecho congelado, no una vista sobre `listings` |
 | PS7-C | ni el doble submit ni un estado revertido escriben una **segunda** venta | los dos reintentos rebotan en guardianes **distintos** —el doble submit lo para la máquina de estados (`same_state`), el estado revertido a `available` **lo deja pasar**—, así que lo único que queda parado es el índice único de D8. La primera versión hacía sólo el primer caso y **salía verde con el índice borrado** |
-| PS7-D | un tenant **sin TC cargado** vende igual, con `price_ars` en NULL | el TC lo carga el dueño a mano (`CLAUDE.md` §1); no tenerlo no puede bloquear una venta |
+| PS7-D | un tenant **sin TC sincronizado** vende igual, con `price_ars` en NULL | una caída de la fuente automática no puede bloquear una venta ya iniciada ni inventar un precio |
 | PS7-E | vender una unidad **reservada** cierra la reserva como `confirmed` | es la transición que ADR-019 dejó explícita: en qué queda una reserva cerrada lo decide la tabla del dominio |
 
 > **Sin conteos de PASS acá.** Los cinco casos están leídos del fuente por `docs-keeper`; el

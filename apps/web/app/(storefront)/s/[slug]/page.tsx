@@ -320,10 +320,9 @@ function TradeinInvite({ tenantName }: { readonly tenantName: string }) {
  * ══════════════════════════════════════════════════════════════════════════════════════════════
  *
  * - `publishedCount === 0`: el dueño todavía no publicó nada. La vidriera está bien; falta stock.
- * - `publishedCount > 0` con grilla vacía: hay equipos publicados y **falta el tipo de cambio**.
- *   El TC lo carga el dueño a mano, por tenant (`CLAUDE.md` §1: no hay API de dólar en el hot
- *   path), y sin él no hay ARS, que es uno de los 15 campos obligatorios de la ficha. Antes que
- *   inventarle un dólar al dueño, la vidriera no publica y **lo dice**.
+ * - `publishedCount > 0` con grilla vacía: hay equipos publicados y **todavía no se sincronizó la
+ *   cotización**. Sin ella no hay ARS, que es uno de los 15 campos obligatorios de la ficha. Antes
+ *   que inventar un dólar, la vidriera no publica y **lo dice**.
  *
  * Que sean dos textos y no uno no es cortesía: el segundo caso es el dueño que cargó 15 equipos
  * una tarde y ve la misma pantalla que si no hubiera cargado ninguno. Es la tarde en la que decide
@@ -351,7 +350,7 @@ function EmptyStorefront({
       </h2>
       <p className="mt-2 text-sm leading-relaxed text-neutral-600 dark:text-neutral-400">
         {pending
-          ? `${tenantName} ya cargó equipos, pero todavía falta el tipo de cambio del día para publicar los precios en pesos. Volvé en un rato.`
+          ? `${tenantName} ya cargó equipos, pero todavía no se pudo sincronizar la cotización del día para publicar los precios en pesos. Volvé en unos minutos.`
           : `Todavía no hay equipos publicados en esta dirección. Cuando ${tenantName} cargue el stock, vas a ver acá cada equipo con fotos, condición, batería, garantía y el precio en dólares y en pesos.`}
       </p>
 

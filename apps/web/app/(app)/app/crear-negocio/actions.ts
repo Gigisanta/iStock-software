@@ -14,8 +14,6 @@ import type { CreateTenantField, CreateTenantFormState } from './form-state';
  *    cualquiera con un `POST` crudo al endpoint de la acción crea tenants: las Server Functions
  *    no están cubiertas por el matcher del proxy.
  * 2. **Zod después.** Nada del `FormData` se toca antes de pasar por el schema.
- *    El TC entra por acá como el string que tipeó el dueño y sale en centavos: `CLAUDE.md` §1
- *    manda que lo ponga una persona, así que es un campo del formulario y no un default nuestro.
  * 3. **Disponibilidad del slug al final**, y aun así el `insert` puede fallar con `23505`: entre
  *    el chequeo y el insert hay una carrera. La verdad la tiene el `unique index`
  *    `tenants_slug_key`, no este `select`. El chequeo previo existe sólo para dar un mensaje
@@ -37,7 +35,6 @@ export async function createTenantAction(
     name: readString(formData, 'name'),
     slug: readString(formData, 'slug'),
     waPhone: readString(formData, 'waPhone'),
-    fxRate: readString(formData, 'fxRate'),
     acceptsTradeIn: formData.get('acceptsTradeIn') !== null,
   };
 
@@ -45,17 +42,13 @@ export async function createTenantAction(
     name: values.name,
     slug: values.slug,
     waPhone: values.waPhone,
-    // El input se llama `fxRate` (pesos, como los tipea el dueño) y el campo del schema
-    // `fxArsCentsPerUsd` (centavos, como se guarda). El nombre cambia justo donde cambia la
-    // unidad: es el único lugar del panel donde hay que acordarse de la conversión.
-    fxArsCentsPerUsd: values.fxRate,
     acceptsTradeIn: values.acceptsTradeIn,
   });
   if (!parsed.success) {
     const errors: Partial<Record<CreateTenantField, string>> = {};
     for (const issue of parsed.error.issues) {
-      const field = issue.path[0] === 'fxArsCentsPerUsd' ? 'fxRate' : issue.path[0];
-      if (field === 'name' || field === 'slug' || field === 'waPhone' || field === 'fxRate') {
+      const field = issue.path[0];
+      if (field === 'name' || field === 'slug' || field === 'waPhone') {
         errors[field] ??= issue.message;
       } else {
         errors.form ??= issue.message;

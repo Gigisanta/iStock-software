@@ -25,8 +25,7 @@ import { initialStatusActionState } from '../status-action-state';
  * **El costo.** `sales.margin_usd` la deriva Postgres de `price_usd - cost_usd`, así que un input
  * de costo acá sería un input de margen. El valor se copia de `listings.cost_usd` adentro de la
  * transacción (D2). Tampoco tiene el ARS ni el tipo de cambio: los congela el server con el
- * `fx_settings` del negocio (D4). Pedirle a alguien que tipee el TC en el mostrador es pedirle que
- * se equivoque.
+ * `fx_settings` del negocio (D4), que se actualiza automáticamente.
  *
  * ── Las opciones de pago llegan por props ────────────────────────────────────────────────────
  * Se arman en el Server Component con `_lib/sales/presentation.ts`. Es la misma razón que en

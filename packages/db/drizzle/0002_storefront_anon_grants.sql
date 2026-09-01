@@ -168,7 +168,7 @@ GRANT SELECT (
 GRANT SELECT ("id", "tenant_id", "name", "address", "hours", "city", "is_active", "sort_order")
   ON TABLE "locations" TO anon;--> statement-breakpoint
 
--- 3.e · fx_settings — el TC que puso el dueño, para el ARS informativo de la ficha.
+-- 3.e · fx_settings — el TC automático diario, para el ARS informativo de la ficha.
 -- `updated_by` (uuid de un usuario real) queda afuera.
 GRANT SELECT ("tenant_id", "ars_per_usd", "rounding") ON TABLE "fx_settings" TO anon;--> statement-breakpoint
 

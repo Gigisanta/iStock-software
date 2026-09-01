@@ -6,10 +6,10 @@ import { fxSettings, locations, memberships, tenants } from '@istock/db';
 import { authDriver } from '../auth/driver';
 import { uniqueViolationConstraint } from '../db/pg-error';
 import { withServiceDb } from '../db/session';
+import { fetchAutomaticFxQuote } from '../fx/automatic-rate';
 import { logError, logEvent } from '../log';
 import { slugSchema } from '../slug';
 import { normalizeArWaPhone } from '../wa-phone';
-import { parseFxArsPerUsd } from './parse-fx';
 import { invalidateStorefront } from './storefront-cache';
 
 /** Trial de 14 días (`CLAUDE.md` §1 · `PRODUCT.md` §Planes). El trial no toca Mercado Pago. */
@@ -35,24 +35,14 @@ export const TRIAL_DAYS = 14;
  * no sea el del seed. Por eso las dos filas se escriben en la **misma transacción** que el tenant:
  * un negocio a medio nacer es peor que uno que no nació.
  *
- * ── El TC se PREGUNTA, no se inventa ────────────────────────────────────────────────────────
- * `CLAUDE.md` §1: *"el TC lo setea el DUEÑO, manualmente, por tenant. No hay API de dólar en el
- * hot path."* Las tres salidas posibles eran:
- *
- * | opción | qué pasa |
- * |---|---|
- * | no sembrar `fx_settings` | la vidriera no publica **nada** hasta que exista la pantalla de TC (S4+) |
- * | sembrar un TC de relleno | se publica un ARS que el dueño no dijo, en la ficha que él pegó en un estado |
- * | **preguntarlo en el alta** | el TC es del dueño desde el segundo cero y la vidriera nace viva |
- *
- * Se eligió la tercera, y hay una cuarta que **no** existe: no hay forma de sembrar un TC
- * "sin confirmar". El esquema no tiene columna para eso y el sentinel obvio —`ars_per_usd = 0`—
- * hace que `fxRateFromArsCents()` **tire** adentro de un render con `'use cache'`, que bajo PPR
- * no es un 500 sino un stream que nunca cierra. `updated_by` tampoco sirve de señal: no está en
- * el `GRANT` de columnas de `anon` (migración 0002), así que la vidriera ni lo ve.
+ * ── El TC se obtiene automáticamente ───────────────────────────────────────────────────────
+ * El alta consulta la última cotización oficial disponible del BCRA. No se inventa un valor ni se
+ * le pide al dueño que lo escriba: el primer precio en ARS nace con la misma fuente que actualiza
+ * el cron diario. Si el proveedor no responde, el alta falla cerrado y no crea un negocio con
+ * precios potencialmente equivocados.
  *
  * El redondeo sí es nuestro y es `ceil_1000` (ratificado en FASE 2): así publica el reseller y
- * nunca deja el ARS por debajo del USD × TC. Se cambia por tenant, no por deploy.
+ * nunca deja el ARS por debajo del USD × TC.
  *
  * ── El punto de retiro sembrado es un placeholder VERDADERO ─────────────────────────────────
  * Sale publicado en la ficha de un desconocido, así que no puede ser una dirección inventada de
@@ -103,30 +93,10 @@ const waPhoneSchema = z
     return result.value;
   });
 
-/**
- * El TC inicial. Es un campo obligatorio del alta y no un "después lo cargás": ver el encabezado
- * del módulo. El parseo vive en `parse-fx.ts` (puro, con test propio) y el dominio tiene la
- * última palabra sobre la forma del número.
- *
- * El valor que sale de acá está en **centavos de ARS por USD** — el nombre del campo lo dice para
- * que nadie lo inserte creyendo que son pesos.
- */
-const fxRateSchema = z
-  .string({ error: 'Poné a cuánto tomás el dólar hoy.' })
-  .transform((raw, ctx) => {
-    const result = parseFxArsPerUsd(raw);
-    if (!result.ok) {
-      ctx.addIssue({ code: 'custom', message: result.reason });
-      return z.NEVER;
-    }
-    return result.arsCentsPerUsd;
-  });
-
 export const createTenantSchema = z.object({
   name: businessNameSchema,
   slug: slugSchema,
   waPhone: waPhoneSchema,
-  fxArsCentsPerUsd: fxRateSchema,
   acceptsTradeIn: z.boolean().default(false),
 });
 
@@ -134,7 +104,7 @@ export type CreateTenantInput = z.infer<typeof createTenantSchema>;
 
 export interface CreateTenantFailure {
   readonly ok: false;
-  readonly field: 'slug' | 'name' | 'waPhone' | 'fxRate' | 'form';
+  readonly field: 'slug' | 'name' | 'waPhone' | 'form';
   readonly message: string;
 }
 
@@ -271,6 +241,17 @@ export async function createTenant(userId: string, input: CreateTenantInput): Pr
     return ALREADY_HAS_TENANT;
   }
 
+  let automaticFx: Awaited<ReturnType<typeof fetchAutomaticFxQuote>>;
+  try {
+    automaticFx = await fetchAutomaticFxQuote();
+  } catch {
+    return {
+      ok: false,
+      field: 'form',
+      message: 'No pudimos obtener la cotización del día. Esperá unos minutos y probá de nuevo.',
+    };
+  }
+
   const trialEndsAt = new Date(Date.now() + TRIAL_DAYS * 24 * 60 * 60 * 1000);
 
   let tenantId: string;
@@ -300,14 +281,14 @@ export async function createTenant(userId: string, input: CreateTenantInput): Pr
       });
 
       /**
-       * El TC que la persona acaba de tipear en el alta. `updated_by` es quien lo puso, y es
-       * quien lo puso de verdad: no hay TC de sistema en este producto.
+       * La cotización del BCRA que obtuvo el alta. `updated_by` queda null porque la actualización
+       * la hizo el sistema, no una persona.
        */
       await tx.insert(fxSettings).values({
         tenantId: row.id,
-        arsPerUsd: input.fxArsCentsPerUsd,
+        arsPerUsd: automaticFx.arsCentsPerUsd,
         rounding: DEFAULT_FX_ROUNDING,
-        updatedBy: userId,
+        updatedBy: null,
       });
 
       /** Un punto de retiro, activo, verdadero y editable. Ver el encabezado del módulo. */
@@ -384,6 +365,8 @@ export async function createTenant(userId: string, input: CreateTenantInput): Pr
     userId,
     plan: 'trial',
     fxSeeded: true,
+    fxSource: automaticFx.source,
+    fxAsOf: automaticFx.asOf,
     pickupPoints: 1,
   });
 

@@ -46,7 +46,7 @@ const PLANS: readonly Plan[] = [
       'Stock por unidad y por lote',
       'Vidriera en tunegocio.maat.work',
       'Botón de WhatsApp con el mensaje armado',
-      'Precio en dólares y en pesos con tu tipo de cambio',
+      'Precio en dólares y en pesos con cotización oficial diaria',
       '1 punto de retiro',
       'Canje presencial',
       'Texto listo para estados de IG y WhatsApp',

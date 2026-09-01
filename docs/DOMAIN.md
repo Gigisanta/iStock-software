@@ -25,7 +25,7 @@ _Owner: **`docs-keeper`** por `CLAUDE.md` §4 (`docs/**` menos `research/` y `CO
 | **lot** | N unidades intercambiables (accesorios, fundas, cargadores). Tiene `qty`. |
 | **catalog_model** | modelo Apple **global** (no por tenant). Un listing apunta a uno. |
 | **slug** | subdominio del tenant: `{slug}.maat.work`. Inmutable después del signup. |
-| **TC / fx rate** | tipo de cambio que **el dueño** define, por tenant. |
+| **TC / fx rate** | cotización oficial diaria que el sistema sincroniza por tenant. |
 | **canje / trade-in** | compra presencial de un equipo usado al cliente. |
 
 ## Máquina de estados de `listing`
@@ -146,7 +146,9 @@ cambiarla.
 ```
 priceArs = round(priceUsd * tenant.fxRate)
 ```
-- El TC vive en `fx_settings` por tenant, con `updated_at` y quién lo cambió.
+- El TC vive en `fx_settings` por tenant, con `updated_at`; el alta y el cron diario lo obtienen de
+  la API pública del BCRA y `updated_by` queda `null` cuando lo actualiza el sistema.
+- La fuente se consulta fuera del hot path: la vidriera sólo lee la última cotización persistida.
 - **Regla de redondeo: `ceil_1000` — techo al millar de ARS — es el default del tenant.** No es
   propuesta: lo ratificó el LEAD en FASE 2 (`CLAUDE.md` §1) y está implementado en
   `packages/domain/src/fx.ts` (`DEFAULT_FX_ROUNDING`, `:35`; `applyFx`, `:117`). Es como se publica en

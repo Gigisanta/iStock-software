@@ -18,8 +18,8 @@ const STEPS = [
   {
     title: 'Cargás el equipo una vez',
     body:
-      'Fotos con el celular, condición, batería, GB, color y precio en dólares. El tipo de cambio ' +
-      'lo ponés vos: no usamos ninguna API de dólar, usamos el tuyo.',
+      'Fotos con el celular, condición, batería, GB, color y precio en dólares. El precio en pesos ' +
+      'se actualiza solo con la cotización oficial diaria.',
   },
   {
     title: 'Tenés tu vidriera',
@@ -38,7 +38,7 @@ const STEPS = [
 const INCLUDED = [
   'Stock por unidad (con IMEI) y por lote (accesorios).',
   'Vidriera pública con fotos reales, condición, batería, GB, color y garantía.',
-  'Precio en dólares y en pesos, con el tipo de cambio que cargás vos.',
+  'Precio en dólares y en pesos, con cotización oficial actualizada diariamente.',
   'Puntos de retiro con dirección y horario.',
   'Botón de WhatsApp con el mensaje ya armado.',
   'Canje presencial: el cliente te deja los datos de su equipo antes de ir.',

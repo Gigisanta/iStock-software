@@ -162,9 +162,9 @@ export interface StockListUnit {
   readonly condition: Condition;
   readonly priceUsdCents: number;
   /**
-   * ARS **ya calculado** por el caller con `applyFx`, el TC del tenant y su modo de redondeo.
-   * Esta función no hace FX: el TC lo setea el dueño y no hay API de dólar en el hot path
-   * (`CLAUDE.md` §1). `null` = el tenant no publica ARS, y entonces el renglón sale sólo en USD.
+   * ARS **ya calculado** por el caller con `applyFx`, el TC automático del tenant y su modo de
+   * redondeo. Esta función no hace FX: no hay API de dólar en el hot path (`CLAUDE.md` §1).
+   * `null` = el tenant no publica ARS, y entonces el renglón sale sólo en USD.
    */
   readonly priceArsCents: number | null;
   readonly status: PublicStatus;

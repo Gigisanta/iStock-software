@@ -94,7 +94,7 @@ async function SettingsContent() {
       </p>
 
       <div className="mt-6">
-        <NotReadyYet what="Editar estos datos, el tipo de cambio y los puntos de retiro llega en la próxima entrega." />
+        <NotReadyYet what="Editar estos datos y los puntos de retiro llega en la próxima entrega. La cotización se actualiza automáticamente una vez por día." />
       </div>
     </>
   );

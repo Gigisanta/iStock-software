@@ -2380,3 +2380,18 @@ segundo repite componentes que no están activos. Ya mordió una vez en este rep
 de `accept-s3.sh` cuenta **anchors** `<a … href="https://wa.me/…">` y no ocurrencias de `wa.me`,
 porque en la ficha el texto aparece **3 veces** y el botón es **uno**. **Un gate que mide sobre HTML
 servido cuenta la estructura (`<meta name="robots">`, anchors), nunca el substring.**
+
+### 2026-09-01 · La cotización ARS es automática y diaria
+
+El formulario de alta deja de pedir **"¿A cuánto tomás el dólar?"**. El sistema obtiene la última
+cotización USD publicada por la API pública de Estadísticas Cambiarias del BCRA, sin API key, y la
+guarda en `fx_settings` como centavos de ARS por USD. El alta usa esa fuente para que el negocio
+nazca con precios completos; el cron diario reutiliza el mismo endpoint, actualiza todos los
+tenants y llama a `invalidateStorefront()` para que grilla y fichas no conserven el valor anterior.
+
+La vidriera no consulta al BCRA: lee el último valor persistido. Si el proveedor falla, los tenants
+existentes conservan el último valor bueno y el cron responde `500` para que la falla sea visible;
+un alta nueva falla cerrado y no crea precios inciertos. La fuente es oficial, gratuita y no agrega
+otro servicio de infraestructura. [API del BCRA](https://www.bcra.gob.ar/apis-banco-central/) y
+[manual de Estadísticas Cambiarias](https://www.bcra.gob.ar/archivos/Catalogo/Content/files/pdf/estadisticascambiarias-v1.pdf),
+consultados el 2026-09-01.

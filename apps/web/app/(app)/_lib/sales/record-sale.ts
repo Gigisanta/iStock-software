@@ -50,7 +50,7 @@ import type { PaymentMethod } from './schema';
  * un `INSERT` que la mencione. La deriva el motor, siempre, con el costo congelado de esta fila.
  *
  * ══════════════════════════════════════════════════════════════════════════════════════════════
- *  Sin TC no se bloquea la venta (D4)
+ *  Sin TC sincronizado no se bloquea la venta (D4)
  * ══════════════════════════════════════════════════════════════════════════════════════════════
  *
  * `price_ars` y `fx_ars_per_usd` son nullable a propósito. Si el tenant no tiene `fx_settings`
@@ -79,7 +79,7 @@ interface FrozenFx {
 }
 
 /**
- * El ARS congelado, o `null` si este tenant no tiene TC cargado.
+ * El ARS congelado, o `null` si este tenant todavía no tiene TC sincronizado.
  *
  * Se lee **dentro de la transacción de la venta**: el "congelado al momento de la venta" del que
  * habla `sales.price_ars` es el TC que estaba cuando se movió el listing, no el de un instante

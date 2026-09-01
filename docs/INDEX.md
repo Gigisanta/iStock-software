@@ -182,8 +182,8 @@ Lo que hay que saber sin leer nada más:
   W015 se ejerció **fuera del repo**, y es exactamente la situación en la que `guard-firewall` tenía
   seis reglas que no fallaban nunca hasta que la polaridad se volvió un archivo.
 - **S5 (FX → ARS) está `done`, y figuraba `todo` con las tres partes en `main`** — el mismo drift que
-  tuvo a S1 en `doing` un día. El TC lo carga el dueño en el alta (`fxRate` → `fx_settings` por
-  tenant), `applyFx` con default `ceil_1000` tiene 187 tests verdes en `@istock/domain`, y el ARS de
+  tuvo a S1 en `doing` un día. El alta y el cron diario sincronizan el TC oficial del BCRA en
+  `fx_settings` por tenant, `applyFx` con default `ceil_1000` tiene 187 tests verdes en `@istock/domain`, y el ARS de
   la ficha lo exige M3 de `accept-s3.sh` en la corrida de 58 PASS del LEAD. **El hueco que queda no
   es de S5: es T12**, que el dueño no puede *editar* el TC después del alta. Contarlo dos veces
   escondía que lo que falta es una pantalla, no el FX.

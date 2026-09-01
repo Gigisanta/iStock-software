@@ -4,7 +4,8 @@
  * Reglas del paquete (CLAUDE.md §4, AGENTS.md §domain-agent):
  * - Cero imports de `next`, `drizzle`, `@supabase/*`, `fetch`, `process.env`.
  * - `Date.now()` prohibido: el tiempo entra por parámetro (`now: Date`).
- * - El tipo de cambio entra por parámetro: no hay API de dólar en el hot path.
+ * - El tipo de cambio entra por parámetro: la fuente automática vive en `apps/web`, fuera del
+ *   dominio puro y del hot path.
  * - Plata en **enteros de centavos**. Nunca `float`.
  * - Todo export público tiene test (`src/*.test.ts`).
  *

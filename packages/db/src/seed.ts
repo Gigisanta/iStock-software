@@ -159,7 +159,7 @@ async function main(): Promise<void> {
       { id: '00000000-0000-4000-8000-000000000502', tenantId: SEED_TENANT_ID, name: 'Punto Cipolletti', address: 'Roca 1100, Cipolletti', hours: 'lun a vie de 11 a 19', city: 'Cipolletti', sortOrder: 1, createdAt: SEED_NOW, updatedAt: SEED_NOW },
     ]);
 
-    // TC del dueño, a mano, por tenant. 1487,50 ARS por USD. No hay API de dólar en el hot path.
+    // Fixture de desarrollo: producción lo reemplaza con la cotización automática diaria del BCRA.
     await db.insert(fxSettings).values({
       id: '00000000-0000-4000-8000-000000000601',
       tenantId: SEED_TENANT_ID,

@@ -77,7 +77,8 @@ Commits chicos. Un concepto por commit.
   recibe WhatsApps esa noche.
 
 ### Realidad local que el software debe modelar
-- **TC (tipo de cambio) lo setea el DUEÑO**, manualmente, por tenant. No hay API de dólar en el hot path.
+- **TC (tipo de cambio) se actualiza automáticamente** una vez por día con la última cotización
+  oficial disponible del BCRA. No se consulta ningún proveedor en el hot path de la vidriera.
 - **Condiciones:** `sealed` · `open_box` · `tester_a_plus` · `used_excellent` · `used_with_detail`.
 - **Canje presencial** (trade-in) como flujo de primera clase.
 - **Puntos de retiro** Neuquén / Cipolletti, con horario.

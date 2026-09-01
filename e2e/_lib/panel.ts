@@ -27,25 +27,8 @@ export interface NewBusiness {
   readonly name: string;
   readonly slug: string;
   readonly waPhone?: string;
-  /**
-   * El TC en pesos por dólar, **tal cual lo tipea el dueño**: el input es `type="text"` y el
-   * parser del borde (`_lib/tenants/parse-fx.ts`) acepta coma o punto y rechaza el separador de
-   * miles. Es obligatorio en el alta desde S3.1 y no es un olvido de UX: `CLAUDE.md` §1 manda que
-   * el TC lo ponga una persona, y sin fila en `fx_settings` la vidriera no publica **nada**.
-   *
-   * Opcional acá porque a la mayoría de los specs el número les da igual — lo que necesitan es un
-   * negocio que exista. El que publica ARS y afirma el precio lo pasa explícito.
-   */
-  readonly fxRate?: number | string;
   readonly acceptsTradeIn?: boolean;
 }
-
-/**
- * TC de los fixtures. Es el mismo `1487.50` que siembra `seedFxSettings()` en `_lib/db.ts`, a
- * propósito: los specs que además upsertean el TC por SQL escriben el número que el alta ya dejó,
- * así que ese `insert ... on conflict` no puede cambiar en silencio lo que la vidriera publica.
- */
-export const FIXTURE_FX_RATE = '1487.50';
 
 /**
  * El `<form>` del alta. Se ancla en un campo que el panel ya tenía (`slug`) y no en un testid: el
@@ -59,10 +42,8 @@ function createBusinessForm(page: Page): Locator {
  * Los controles `required` del alta que quedaron **vacíos**, por `name`.
  *
  * ## Por qué existe esta función
- * El día que el panel agregó `fxRate` required, este helper siguió llenando tres campos, apretó
- * el botón, el alta se rechazó y los **seis** specs que crean un negocio murieron en el mismo
- * `waitForURL` con la palabra "Timeout" y nada más. El costo no fue el rojo — el rojo estaba
- * bien— sino que el rojo no nombraba la causa.
+ * Si el panel agrega otro campo obligatorio, este helper tiene que detectarlo con el nombre exacto
+ * antes de enviar. Así el rojo nombra la causa y no aparece 30 segundos después como un timeout.
  *
  * Se lee el DOM en vez de `form.checkValidity()` porque el formulario se sirve con `noValidate`
  * (el panel valida en el server y muestra los mensajes en castellano): con `noValidate` el browser
@@ -128,10 +109,6 @@ export async function createBusiness(page: Page, business: NewBusiness): Promise
   // no quiere el link sugerido.
   await page.locator('input[name="slug"]').fill(business.slug);
   await page.locator('input[name="waPhone"]').fill(business.waPhone ?? '299 555 1234');
-  // El TC. Sin él el alta se rechaza entera: es un campo del formulario, no un default nuestro.
-  await page
-    .locator('input[name="fxRate"]')
-    .fill(business.fxRate === undefined ? FIXTURE_FX_RATE : String(business.fxRate));
   if (business.acceptsTradeIn === true) {
     await page.locator('input[name="acceptsTradeIn"]').check();
   }

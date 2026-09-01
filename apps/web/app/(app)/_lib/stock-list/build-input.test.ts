@@ -60,7 +60,7 @@ describe('listingUrl · el renglón que factura', () => {
   });
 });
 
-describe('resolveFx · sin TC del dueño no hay pesos inventados', () => {
+describe('resolveFx · sin TC sincronizado no hay pesos inventados', () => {
   it('sin fila de TC, no hay TC', () => {
     expect(resolveFx(null)).toBeNull();
   });

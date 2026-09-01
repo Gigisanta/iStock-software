@@ -75,8 +75,8 @@ export const STOREFRONT_PAGE_SIZE = 60;
 /**
  * Lo que la grilla necesita saber, y una cosa más que parece de más y no lo es.
  *
- * `publishedCount` distingue **"este negocio todavía no publicó nada"** de **"publicó y le falta
- * cargar el tipo de cambio"**. Sin ese número las dos se ven igual —grilla vacía— y el dueño que
+ * `publishedCount` distingue **"este negocio todavía no publicó nada"** de **"publicó y todavía
+ * no tiene una cotización sincronizada"**. Sin ese número las dos se ven igual —grilla vacía— y el dueño que
  * cargó 15 equipos una tarde ve exactamente la misma pantalla que el que no cargó ninguno. Es el
  * peor momento posible para ser ambiguo: es la tarde en la que decide si el producto sirve.
  */
@@ -127,11 +127,11 @@ async function tenantContext(tx: StorefrontTx, slug: string): Promise<TenantCont
 }
 
 /**
- * El TC que puso el dueño, a mano, para su tenant. **No hay API de dólar en el hot path.**
+ * El TC diario sincronizado para el tenant. **No hay API de dólar en el hot path.**
  *
- * Devuelve `null` si el tenant todavía no cargó ninguno, y ese `null` **no se rellena con un
+ * Devuelve `null` si el tenant todavía no sincronizó ninguno, y ese `null` **no se rellena con un
  * default**. Publicar un precio en pesos calculado con un TC inventado por nosotros es peor que no
- * publicarlo: el ARS de la ficha lo dice el dueño, y si no lo dijo, no lo decimos por él.
+ * publicarlo: el ARS de la ficha sólo sale de la cotización automática validada.
  */
 async function fxContext(tx: StorefrontTx, tenantId: string) {
   const rows = await tx

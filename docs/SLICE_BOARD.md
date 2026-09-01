@@ -1657,8 +1657,8 @@ por qué este board escribe **qué falta** al lado del estado, y no sólo el est
 >
 > **Lo que el código ya hacía desde `eaccfee` (`docs-keeper`, verificado contra el repo).**
 > `create-tenant.ts` inserta hoy `tenants` + `memberships` + `fx_settings` (`:320`) + un punto de
-> retiro (`:328`) en una sola transacción, el alta pide el TC en ARS/USD, y `parse-fx.ts` delega en
-> `fxRateFromDecimal` de `@istock/domain` en vez de re-implementar la aritmética de plata. El punto
+> retiro (`:328`) en una sola transacción, y `automatic-rate.ts` valida la cotización oficial del
+> BCRA antes de sembrar el TC. El punto
 > de retiro sembrado es un placeholder honesto (*"A coordinar por WhatsApp"*, `city` en `null` a
 > propósito: no se le inventa una dirección al dueño), y **por eso existe T12** — sin pantalla de
 > edición, ese placeholder es permanente. Se deja abajo el diagnóstico original, que es el que
@@ -1854,20 +1854,20 @@ que el log quedaba en **cero bytes** y el `grep` de "skipped" sobre un archivo v
 skipeados" **siempre**, incluso con la suite entera skipeada. Ahora exige **5 resúmenes de vitest**
 antes de opinar sobre skips, y si el log no trae resumen la regla **no midió y falla**.
 
-### T12 · el TC no se puede cambiar después del alta  ·  `app-agent`  ·  es producto, no cosmética
+### T12 · el TC manual fue reemplazado por sincronización diaria; quedan los puntos de retiro  ·  `app-agent`
 
-`apps/web/app/(app)/app/(panel)/ajustes/page.tsx` es **sólo lectura**, y no por olvido: no hay ni
-una Server Action en el directorio (cero `'use server'`), y la propia pantalla lo admite con un
-`NotReadyYet` que dice *"Editar estos datos, el tipo de cambio y los puntos de retiro llega en la
-próxima entrega"*. La única mutación de `fx_settings` y de `locations` en todo el repo es el
-`insert` del alta (`create-tenant.ts:320` y `:328` en `main`, sembrados por **S3.1**).
+> **Actualización 2026-09-01:** el campo manual de tipo de cambio que describía esta sección fue
+> retirado. El alta y el cron diario usan la cotización oficial del BCRA; la vidriera sólo lee el
+> último valor persistido. La parte pendiente de esta fila es editar los puntos de retiro después
+> del alta.
 
-**Por qué esto es producto.** El TC lo setea el **dueño**, a mano, por tenant, y **no hay API de
-dólar en el hot path** (`CLAUDE.md` §1): es la decisión de diseño, no una carencia. Pero de ahí se
-sigue lo contrario de lo que hay hoy — si el número lo pone una persona, esa persona lo va a mover,
-y más de una vez por semana. Hoy la única forma de moverlo es **volver a crear el negocio**, que
-además quema el slug: es inmutable después del alta porque ya está pegado en estados de Instagram y
-en chats de WhatsApp que no controlamos.
+`apps/web/app/(app)/app/(panel)/ajustes/page.tsx` es **sólo lectura** para estos datos; la pantalla
+aclara que la cotización se actualiza sola. No hay una mutación manual de `fx_settings`: el alta la
+siembra y el cron diario la mantiene.
+
+**Por qué esto es producto.** El TC se sincroniza una vez por día desde la cotización oficial del
+BCRA y no se consulta en el hot path (`CLAUDE.md` §1). Así el dueño no carga valores a mano, el alta
+nace con ARS y la vidriera se actualiza con invalidación de cache al correr el cron.
 
 Lo mismo con los puntos de retiro: el alta siembra **uno solo** y es un placeholder honesto
 (*"A coordinar por WhatsApp"*, `city` en `null` a propósito). El plan Negocio vende **3 puntos de
@@ -2300,7 +2300,7 @@ código, no contra la memoria.
 
 | tercio del gate | dónde está | quién lo afirma |
 |---|---|---|
-| **TC del dueño** | campo `fxRate` en `crear-negocio/create-tenant-form.tsx:192`, validado y con error propio (`:200`, `:207`); se escribe en `fx_settings` **por tenant** en la misma transacción del alta (`create-tenant.ts:320`) | **S3.1**, cerrada por la corrida de `accept-s3.sh` del LEAD |
+| **cotización automática** | `automatic-rate.ts` valida la API pública del BCRA; el alta siembra `fx_settings` y el cron diario actualiza todos los tenants | **S5**, verificado con tests de parser, alta y cron |
 | **redondeo testeado** | `applyFx` (`packages/domain/src/fx.ts:117`), `FxRoundingMode = 'exact' \| 'ceil_100' \| 'nearest_1000' \| 'ceil_1000'` (`:33`), `DEFAULT_FX_ROUNDING = 'ceil_1000'` (`:35`) — el default ratificado por el LEAD en FASE 2, punto 2 | `packages/domain/src/fx.test.ts`; `pnpm --filter @istock/domain test` → **187 passed / 12 archivos** (2026-08-28) |
 | **ARS visible en ficha** | `s/[slug]/p/[listing]/page.tsx`, con el cartel de que el peso es **informativo** (FASE 2, punto 3) | **M3 de `scripts/accept-s3.sh`**, que exige el ARS con la forma de `formatArs`; corrida del LEAD **58 PASS · 0 FAIL** |
 

@@ -1,15 +1,17 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { pgErrorCode } from '../../../(app)/_lib/db/pg-error';
 import { cronSecret } from '../../../(app)/_lib/env';
+import { refreshAutomaticFxSettings } from '../../../(app)/_lib/fx/automatic-rate';
 import { logError, logEvent } from '../../../(app)/_lib/log';
 import { expireDueReservations } from '../../../(app)/_lib/reservations/expire-reservations';
 
 /**
- * `GET /api/cron/expire-reservations` — devuelve al stock los equipos cuya reserva venció.
+ * `GET /api/cron/expire-reservations` — devuelve al stock los equipos cuya reserva venció y
+ * actualiza la cotización diaria automática.
  *
  * Lo dispara **Vercel Cron** con el schedule que vive en `vercel.json` (archivo del LEAD; esta
- * ruta sólo se expone). El trabajo de verdad es `expireDueReservations()`; acá sólo se decide
- * quién puede pedirlo.
+ * ruta sólo se expone). El trabajo de verdad es `expireDueReservations()` más
+ * `refreshAutomaticFxSettings()`; acá sólo se decide quién puede pedirlo.
  *
  * ══════════════════════════════════════════════════════════════════════════════════════════════
  *  Es la única puerta HTTP sin sesión que ESCRIBE. Todo lo demás sigue de eso.
@@ -133,6 +135,19 @@ export async function GET(request: Request): Promise<Response> {
   try {
     const sweep = await expireDueReservations();
 
+    let fxRefresh;
+    try {
+      fxRefresh = await refreshAutomaticFxSettings();
+    } catch {
+      // El último valor bueno queda en la base, pero el cron debe quedar rojo para que una caída
+      // del proveedor gratuito no pase desapercibida durante varios días.
+      logError('cron.fx_refresh.crashed', 'automatic_fx_unavailable', {});
+      return Response.json(
+        { ok: false, ...sweep },
+        { status: 500, headers: { 'cache-control': 'no-store' } },
+      );
+    }
+
     /**
      * ══════════════════════════════════════════════════════════════════════════════════════════
      *  Cuándo una corrida que no explotó igual es un fracaso
@@ -165,18 +180,29 @@ export async function GET(request: Request): Promise<Response> {
     if (degraded) {
       // Números, siempre. Ni un id de listing entero, ni la fila: `logError` no acepta objetos. Los
       // ids de las filas que rompieron ya salieron, uno por línea, desde el barrido.
-      logError('cron.expire_reservations.degraded', 'sweep_not_draining', { ...sweep });
+      logError('cron.expire_reservations.degraded', 'sweep_not_draining', {
+        ...sweep,
+        fxUpdated: fxRefresh.updatedTenants,
+      });
 
       return Response.json(
-        { ok: false, ...sweep },
+        { ok: false, ...sweep, fxUpdated: fxRefresh.updatedTenants },
         { status: 500, headers: { 'cache-control': 'no-store' } },
       );
     }
 
     // Números, siempre. Ni un id de listing entero, ni la fila: `logEvent` no acepta objetos.
-    logEvent('cron.expire_reservations.done', { ...sweep });
+    logEvent('cron.expire_reservations.done', {
+      ...sweep,
+      fxUpdated: fxRefresh.updatedTenants,
+      fxAsOf: fxRefresh.asOf,
+      fxSource: fxRefresh.source,
+    });
 
-    return Response.json({ ok: true, ...sweep }, { headers: { 'cache-control': 'no-store' } });
+    return Response.json(
+      { ok: true, ...sweep, fxUpdated: fxRefresh.updatedTenants },
+      { headers: { 'cache-control': 'no-store' } },
+    );
   } catch (error) {
     /**
      * Un fallo del barrido entero (la base se cayó, timeout de conexión). Se devuelve **500** y no

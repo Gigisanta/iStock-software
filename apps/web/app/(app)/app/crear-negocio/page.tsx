@@ -11,9 +11,9 @@ import { CreateTenantForm } from './create-tenant-form';
  * compartido, entrar acá sería un loop de redirecciones.
  *
  * Tres campos y un check. Ni uno más. Es la única pantalla entre "me registré" y "tengo mi link",
- * y cada campo extra acá es gente que abandona antes de ver el producto. Los medios de pago, los
- * puntos de retiro y el tipo de cambio se cargan después, desde Ajustes, cuando ya hay algo que
- * mostrar.
+ * y cada campo extra acá es gente que abandona antes de ver el producto. Los medios de pago y los
+ * puntos de retiro se cargan después, desde Ajustes, cuando ya hay algo que mostrar; el tipo de
+ * cambio se actualiza automáticamente una vez por día.
  */
 
 export const metadata: Metadata = {

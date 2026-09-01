@@ -33,6 +33,11 @@ vi.mock('../../../(app)/_lib/reservations/expire-reservations', () => ({
   expireDueReservations: (now?: Date) => expireDueReservations(now),
 }));
 
+const refreshAutomaticFxSettings = vi.fn();
+vi.mock('../../../(app)/_lib/fx/automatic-rate', () => ({
+  refreshAutomaticFxSettings: () => refreshAutomaticFxSettings(),
+}));
+
 const cronSecret = vi.fn();
 vi.mock('../../../(app)/_lib/env', () => ({
   cronSecret: () => cronSecret(),
@@ -86,6 +91,12 @@ beforeEach(() => {
   vi.clearAllMocks();
   cronSecret.mockReturnValue(SECRET);
   expireDueReservations.mockResolvedValue({ ...EMPTY_SWEEP, scanned: 3, expired: 2, released: 2 });
+  refreshAutomaticFxSettings.mockResolvedValue({
+    arsCentsPerUsd: 150_850,
+    asOf: '2026-08-31',
+    source: 'bcra',
+    updatedTenants: 4,
+  });
 });
 
 describe('GET /api/cron/expire-reservations · sin credencial no hace nada', () => {
@@ -193,6 +204,7 @@ describe('GET /api/cron/expire-reservations · con la credencial correcta', () =
 
     expect(response.status).toBe(200);
     expect(expireDueReservations).toHaveBeenCalledTimes(1);
+    expect(refreshAutomaticFxSettings).toHaveBeenCalledTimes(1);
     await expect(response.json()).resolves.toEqual({
       ok: true,
       scanned: 3,
@@ -203,6 +215,7 @@ describe('GET /api/cron/expire-reservations · con la credencial correcta', () =
       stuck: 0,
       unrecorded: 0,
       abandoned: 0,
+      fxUpdated: 4,
     });
   });
 
@@ -247,6 +260,15 @@ describe('GET /api/cron/expire-reservations · con la credencial correcta', () =
 
     expect(response.status).toBe(500);
     expect(logError).toHaveBeenCalledWith('cron.expire_reservations.crashed', '08006', {});
+  });
+
+  it('si la fuente diaria falla devuelve 500 y deja el cron marcado como fallido', async () => {
+    refreshAutomaticFxSettings.mockRejectedValue(new Error('provider unavailable'));
+
+    const response = await call({ authorization: `Bearer ${SECRET}` });
+
+    expect(response.status).toBe(500);
+    expect(logError).toHaveBeenCalledWith('cron.fx_refresh.crashed', 'automatic_fx_unavailable', {});
   });
 });
 

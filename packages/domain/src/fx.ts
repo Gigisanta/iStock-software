@@ -1,7 +1,7 @@
 /**
- * FX — USD → ARS con el tipo de cambio que pone **el dueño**, por tenant.
+ * FX — USD → ARS con el tipo de cambio diario del tenant.
  *
- * No hay API de dólar en el hot path (CLAUDE.md §1). El TC entra SIEMPRE por parámetro.
+ * No hay API de dólar en el hot path (CLAUDE.md §1). La cotización entra SIEMPRE por parámetro.
  *
  * ## Representación
  * El TC se guarda como **entero**: centavos de ARS por 1 USD (`arsCentsPerUsd`).
@@ -38,8 +38,8 @@ const CENTS_PER_ARS = 100n;
 const CENTS_PER_1000_ARS = 100_000n;
 
 /**
- * Construye un `FxRate` desde lo que tipeó el dueño.
- * Acepta `"1487.50"`, `"1487,50"`, `"1487"` o el entero `1487` (pesos enteros).
+ * Construye un `FxRate` desde la cotización ya normalizada.
+ * Acepta strings decimales y el entero en pesos para fixtures o migraciones.
  * Rechaza floats de JS y más de 2 decimales: truncar plata en silencio es un bug de negocio.
  */
 export function fxRateFromDecimal(input: string | number): FxRate {

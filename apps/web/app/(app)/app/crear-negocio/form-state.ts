@@ -3,7 +3,7 @@
  * puede exportar funciones async.
  */
 
-export type CreateTenantField = 'name' | 'slug' | 'waPhone' | 'fxRate' | 'form';
+export type CreateTenantField = 'name' | 'slug' | 'waPhone' | 'form';
 
 export interface CreateTenantFormState {
   readonly errors: Partial<Record<CreateTenantField, string>>;
@@ -12,13 +12,11 @@ export interface CreateTenantFormState {
     readonly name: string;
     readonly slug: string;
     readonly waPhone: string;
-    /** El TC tal cual lo tipeó, en pesos. Se convierte a centavos en el borde (Zod). */
-    readonly fxRate: string;
     readonly acceptsTradeIn: boolean;
   };
 }
 
 export const initialCreateTenantState: CreateTenantFormState = {
   errors: {},
-  values: { name: '', slug: '', waPhone: '', fxRate: '', acceptsTradeIn: false },
+  values: { name: '', slug: '', waPhone: '', acceptsTradeIn: false },
 };
