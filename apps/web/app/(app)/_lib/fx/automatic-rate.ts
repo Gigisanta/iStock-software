@@ -69,11 +69,12 @@ export async function fetchAutomaticFxQuote(): Promise<AutomaticFxQuote> {
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
   try {
-    const response = await fetch(BCRA_FX_URL, {
+    const requestInit = {
       headers: { accept: 'application/json' },
       cache: 'no-store',
       signal: controller.signal,
-    });
+    } as RequestInit & { cache: 'no-store' };
+    const response = await fetch(BCRA_FX_URL, requestInit);
     if (!response.ok) throw new AutomaticFxError();
 
     const quote = parseBcraUsdQuote(await response.json());
