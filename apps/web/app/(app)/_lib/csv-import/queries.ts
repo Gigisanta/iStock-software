@@ -1,6 +1,6 @@
 import 'server-only';
-import { and, eq, inArray, isNotNull } from 'drizzle-orm';
-import { catalogModels, listings } from '@istock/db';
+import { eq, sql } from 'drizzle-orm';
+import { catalogModels } from '@istock/db';
 import type { Tx } from '../db/connection';
 import type { CatalogEntry } from './build-import';
 
@@ -44,11 +44,12 @@ export async function readCatalogForImport(tx: Tx): Promise<readonly CatalogEntr
  *
  * Se pregunta por los del archivo (`inArray`) y no se trae la columna entera: con 3.000 equipos,
  * traer todos los IMEIs a memoria para comparar 200 sería mover datos sensibles sin necesidad.
+ * La función DB devuelve sólo las coincidencias del tenant reclamado; el rol autenticado no tiene
+ * SELECT directo sobre `listings.imei`.
  *
- * Dos capas de tenant, como pide `CLAUDE.md` §2: RLS por `withTenantDb` **y** el
- * `eq(listings.tenantId, ctx.tenantId)` explícito. Acá la segunda capa no es ceremonia: sin ella,
- * una policy aflojada convertiría esta lectura en un oráculo que dice si **otro** negocio tiene
- * cargado un IMEI determinado.
+ * Dos capas de tenant, como pide `CLAUDE.md` §2: RLS por `withTenantDb` **y** el tenant explícito
+ * que recibe la función. Acá la segunda capa no es ceremonia: sin ella, una policy aflojada
+ * convertiría esta lectura en un oráculo que dice si **otro** negocio tiene cargado un IMEI.
  */
 export async function readTakenImeis(
   tx: Tx,
@@ -57,12 +58,11 @@ export async function readTakenImeis(
 ): Promise<ReadonlySet<string>> {
   if (imeis.length === 0) return new Set();
 
-  const rows = await tx
-    .select({ imei: listings.imei })
-    .from(listings)
-    .where(
-      and(eq(listings.tenantId, tenantId), isNotNull(listings.imei), inArray(listings.imei, [...imeis])),
-    );
+  const requestedImeis = sql`ARRAY[${sql.join(imeis.map((imei) => sql`${imei}::text`), sql`, `)}]::text[]`;
+  const rows = (await tx.execute<{ imei: string }>(sql`
+    SELECT imei
+    FROM public.member_get_taken_imeis(${tenantId}::uuid, ${requestedImeis})
+  `)) as unknown as readonly { imei: string }[];
 
   const taken = new Set<string>();
   for (const row of rows) {

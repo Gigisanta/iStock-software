@@ -85,6 +85,34 @@
       "when": 1788216713470,
       "tag": "0011_careful_midnight",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1788216713471,
+      "tag": "0012_owner_sensitive_read_functions",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1788216713472,
+      "tag": "0013_sales_sensitive_trigger",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1788216713473,
+      "tag": "0014_member_imei_lookup",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1788216713474,
+      "tag": "0015_sales_cost_derivation",
+      "breakpoints": true
     }
   ]
 }

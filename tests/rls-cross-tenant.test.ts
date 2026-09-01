@@ -790,17 +790,16 @@ describe('R1 · un reseller no puede LEER el stock de otro reseller', () => {
     expect(rows.map((r) => r.tenant_id)).toEqual([TENANT_B]);
   });
 
-  it('el costo de A no se filtra ni por agregación (SUM no devuelve filas, devuelve el secreto)', async () => {
-    const rows = await b.rows<{ total: string | null; n: string }>(
-      `select coalesce(sum(cost_usd), 0)::text as total, count(*)::text as n from listings`,
-    );
-    expect(rows[0]?.n).toBe('1'); // sólo la unidad propia de B
-    expect(rows[0]?.total).toBe('0'); // y esa no tiene costo cargado: el de A no entra
+  it('el costo de A no se puede consultar ni por agregación (columna SENSITIVE)', async () => {
+    const failure = await b.error(`select coalesce(sum(cost_usd), 0)::text as total from listings`);
+    expect(failure.code).toBe('42501');
+    expect(failure.message).toContain('permission denied');
   });
 
   it('el IMEI de A no aparece en la sesión de B ni buscándolo de prepo', async () => {
-    const rows = await b.rows<{ imei: string }>(`select imei from listings where imei = '${IMEI_A}'`);
-    expect(rows).toEqual([]);
+    const failure = await b.error(`select imei from listings where imei = '${IMEI_A}'`);
+    expect(failure.code).toBe('42501');
+    expect(failure.message).toContain('permission denied');
   });
 
   it('los datos personales del canje de A (nombre y WhatsApp del cliente) no cruzan de tenant', async () => {

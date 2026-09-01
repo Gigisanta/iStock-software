@@ -181,13 +181,12 @@ describe('RLS cruzado — casos que no son "una fila más"', () => {
     expect(rows.map((r) => r.tenant_id)).toEqual([TENANT_B]);
   });
 
-  it('el costo de A no se filtra ni con una agregación (SUM sobre columna SENSITIVE)', async () => {
-    // Una agregación es el vector de fuga más silencioso: no devuelve filas ajenas, devuelve
-    // el promedio de ellas. Con RLS bien puesta, B agrega sobre cero filas de A.
-    const rows = await sessionB.query<{ n: string }>(
-      `select count(*)::text as n from listings where cost_usd is not null and tenant_id = '${TENANT_A}'`,
-    );
-    expect(rows[0]?.n).toBe('0');
+  it('el costo de A no se puede consultar ni con una agregación (columna SENSITIVE)', async () => {
+    // La defensa de privilegios es más fuerte que confiar en el filtro de filas: la sentencia no
+    // compila para authenticated, así que tampoco puede convertirse en un promedio o un count.
+    const failure = await sessionB.expectFailure(`select sum(cost_usd) from listings`);
+    expect(failure.code).toBe('42501');
+    expect(failure.message).toContain('permission denied');
   });
 
   it('B no puede mover una fila propia al tenant de A (UPDATE ... SET tenant_id)', async () => {

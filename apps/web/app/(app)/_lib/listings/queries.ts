@@ -1,7 +1,7 @@
 import 'server-only';
-import { and, asc, desc, eq, inArray } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
 import type { Condition, ListingKind, ListingStatus } from '@istock/domain';
-import { listingPhotos, listings } from '@istock/db';
+import { decimalToCents, listingPhotos, listings } from '@istock/db';
 import { withTenantDb, type TenantContext } from '../db/session';
 
 /**
@@ -134,11 +134,18 @@ export async function listUnits(ctx: TenantContext): Promise<readonly UnitRow[]>
     // Segunda query, sólo para `owner`. El seller no tiene ningún campo de costo en su objeto.
     const costs = new Map<string, number | null>();
     if (ctx.role === 'owner') {
-      const costRows = await tx
-        .select({ id: listings.id, costUsdCents: listings.costUsd })
-        .from(listings)
-        .where(and(eq(listings.tenantId, ctx.tenantId), inArray(listings.id, ids)));
-      for (const row of costRows) costs.set(row.id, row.costUsdCents);
+      const requestedIds = sql`ARRAY[${sql.join(ids.map((id) => sql`${id}::uuid`), sql`, `)}]::uuid[]`;
+      const sensitive = (await tx.execute<{ listing_id: string; cost_usd: string | null }>(sql`
+        SELECT sensitive.listing_id, sensitive.cost_usd::text
+        FROM unnest(${requestedIds}) AS requested(listing_id)
+        CROSS JOIN LATERAL public.owner_get_listing_cost(
+          ${ctx.tenantId}::uuid,
+          requested.listing_id
+        ) AS sensitive
+      `)) as unknown as readonly { listing_id: string; cost_usd: string | null }[];
+      for (const row of sensitive) {
+        costs.set(row.listing_id, row.cost_usd === null ? null : decimalToCents(row.cost_usd));
+      }
     }
 
     return rows.map((row) => {

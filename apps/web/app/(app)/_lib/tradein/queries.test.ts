@@ -39,6 +39,7 @@
  */
 import { userInfo } from 'node:os';
 import postgres from 'postgres';
+import { PgDialect } from 'drizzle-orm/pg-core';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Tx } from '../db/connection';
 import type { TenantContext } from '../db/session';
@@ -52,6 +53,7 @@ vi.mock('server-only', () => ({}));
 
 /** Todo el SQL que se ejecutó desde que se llamó a `empezarACapturar()`. */
 const sqlCapturado: string[] = [];
+const pgDialect = new PgDialect();
 
 /**
  * Envuelve un objeto de Drizzle para espiar el SQL que construye.
@@ -79,6 +81,15 @@ function tieneMetodo(value: unknown, name: string): boolean {
 function espiar<T extends object>(target: T): T {
   return new Proxy(target, {
     get(t, prop, receiver) {
+      if (prop === 'execute') {
+        return (...args: unknown[]) => {
+          const statement = args[0] as { toQuery?: () => { sql: string } } | undefined;
+          if (statement !== undefined) {
+            sqlCapturado.push(pgDialect.sqlToQuery(statement as never).sql);
+          }
+          return (Reflect.get(t, prop, t) as (...a: unknown[]) => unknown).apply(t, args);
+        };
+      }
       if (prop === 'then' && tieneMetodo(t, 'toSQL')) {
         sqlCapturado.push((t as unknown as { toSQL: () => { sql: string } }).toSQL().sql);
       }

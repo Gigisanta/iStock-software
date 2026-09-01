@@ -1,7 +1,7 @@
 import 'server-only';
-import { and, desc, eq, inArray } from 'drizzle-orm';
+import { and, desc, eq, sql } from 'drizzle-orm';
 import type { Condition } from '@istock/domain';
-import { tradeinLeads } from '@istock/db';
+import { decimalToCents, tradeinLeads } from '@istock/db';
 import { withTenantDb, type TenantContext } from '../db/session';
 import type { TradeinStatus } from './status';
 
@@ -126,23 +126,32 @@ export async function listTradeinLeads(ctx: TenantContext): Promise<readonly Tra
     if (ctx.role !== 'owner') return rows.map(sellerView);
 
     const ids = rows.map((row) => row.id);
-    const sensitive = await tx
-      .select({
-        id: tradeinLeads.id,
-        offerUsdCents: tradeinLeads.offerUsd,
-        internalNotes: tradeinLeads.internalNotes,
-      })
-      .from(tradeinLeads)
-      .where(and(eq(tradeinLeads.tenantId, ctx.tenantId), inArray(tradeinLeads.id, ids)));
+    const requestedIds = sql`ARRAY[${sql.join(ids.map((id) => sql`${id}::uuid`), sql`, `)}]::uuid[]`;
+    const sensitive = (await tx.execute<{
+      tradein_lead_id: string;
+      offer_usd: string | null;
+      internal_notes: string | null;
+    }>(sql`
+      SELECT sensitive.tradein_lead_id, sensitive.offer_usd::text, sensitive.internal_notes
+      FROM unnest(${requestedIds}) AS requested(lead_id)
+      CROSS JOIN LATERAL public.owner_get_tradein_sensitive(
+        ${ctx.tenantId}::uuid,
+        requested.lead_id
+      ) AS sensitive
+    `)) as unknown as readonly {
+      tradein_lead_id: string;
+      offer_usd: string | null;
+      internal_notes: string | null;
+    }[];
 
-    const byId = new Map(sensitive.map((row) => [row.id, row]));
+    const byId = new Map(sensitive.map((row) => [row.tradein_lead_id, row]));
     return rows.map((row) => {
       const extra = byId.get(row.id);
       return {
         ...row,
         canSeeOffer: true,
-        offerUsdCents: extra?.offerUsdCents ?? null,
-        internalNotes: extra?.internalNotes ?? null,
+        offerUsdCents: extra?.offer_usd === null || extra === undefined ? null : decimalToCents(extra.offer_usd),
+        internalNotes: extra?.internal_notes ?? null,
       } satisfies TradeinLeadForOwner;
     });
   });
@@ -170,21 +179,25 @@ export async function loadTradeinLead(
     if (row === undefined) return null;
     if (ctx.role !== 'owner') return sellerView(row);
 
-    const sensitive = await tx
-      .select({
-        offerUsdCents: tradeinLeads.offerUsd,
-        internalNotes: tradeinLeads.internalNotes,
-      })
-      .from(tradeinLeads)
-      .where(and(eq(tradeinLeads.tenantId, ctx.tenantId), eq(tradeinLeads.id, leadId)))
-      .limit(1);
+    const sensitive = (await tx.execute<{
+      tradein_lead_id: string;
+      offer_usd: string | null;
+      internal_notes: string | null;
+    }>(sql`
+      SELECT tradein_lead_id, offer_usd::text, internal_notes
+      FROM public.owner_get_tradein_sensitive(${ctx.tenantId}::uuid, ${leadId}::uuid)
+    `)) as unknown as readonly {
+      tradein_lead_id: string;
+      offer_usd: string | null;
+      internal_notes: string | null;
+    }[];
 
     const extra = sensitive[0];
     return {
       ...row,
       canSeeOffer: true,
-      offerUsdCents: extra?.offerUsdCents ?? null,
-      internalNotes: extra?.internalNotes ?? null,
+      offerUsdCents: extra?.offer_usd === null || extra === undefined ? null : decimalToCents(extra.offer_usd),
+      internalNotes: extra?.internal_notes ?? null,
     } satisfies TradeinLeadForOwner;
   });
 }

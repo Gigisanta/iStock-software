@@ -1,5 +1,5 @@
 import 'server-only';
-import { eq, sql } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { applyFx, fxRateFromArsCents, type FxRoundingMode } from '@istock/domain';
 import { fxSettings, sales } from '@istock/db';
 import type { Tx } from '../db/connection';
@@ -29,8 +29,8 @@ import type { PaymentMethod } from './schema';
  *  El costo NUNCA entra al proceso de Node (D2 + D6)
  * ══════════════════════════════════════════════════════════════════════════════════════════════
  *
- * `cost_usd` se copia con un **subselect dentro del mismo `INSERT`**, no se lee a una variable de
- * JS para volver a escribirla. Dos consecuencias, y las dos son el punto:
+ * `cost_usd` se deriva en un trigger SECURITY DEFINER dentro del mismo `INSERT`, no se lee a una
+ * variable de JS ni se pide con un SELECT al rol autenticado. Dos consecuencias, y las dos son el punto:
  *
  *   1. El costo no existe en el heap del server durante esta operación, así que no puede filtrarse
  *      a un log, a un `PublishOutcome`, ni a un payload RSC. `CLAUDE.md` §0.9 ("el seller no ve
@@ -42,10 +42,9 @@ import type { PaymentMethod } from './schema';
  *   2. Es exacto sin ida y vuelta: `numeric(12, 2)` → `numeric(12, 2)`, sin pasar por los centavos
  *      de `moneyCents`.
  *
- * El subselect lleva `tenant_id` **además** de correr bajo RLS (`CLAUDE.md` §2), y por eso está
- * escrito con los nombres de Postgres y no interpolando columnas de Drizzle: así lo ve `W015`, que
- * censa el SQL crudo por nombre de tabla. Una query que el gate no puede leer es una query
- * invisible, y da igual que esté bien.
+ * El trigger usa `tenant_id` y `listing_id` del INSERT y lee la fuente como operador de base; la
+ * policy sigue validando el tenant del caller, y el seller no obtiene ningún privilegio SELECT
+ * sobre el costo.
  *
  * `margin_usd` **no se nombra**: es `generatedAlwaysAs(price_usd - cost_usd)` y Postgres rechaza
  * un `INSERT` que la mencione. La deriva el motor, siempre, con el costo congelado de esta fila.
@@ -130,12 +129,8 @@ export async function recordSale(tx: Tx, ctx: TenantContext, facts: SaleFacts): 
     priceArs: fx === null ? null : fx.priceArsCents,
     fxArsPerUsd: fx === null ? null : fx.arsCentsPerUsd,
     paymentMethod: facts.paymentMethod,
-    /**
-     * D2. El costo viaja de columna a columna sin pasar por acá. `listings` está lockeada por el
-     * `update` que corrió antes en esta misma transacción, así que el valor es el de la unidad
-     * que se acaba de vender y no puede moverse en el medio.
-     */
-    costUsd: sql`(select cost_usd from listings where id = ${facts.listingId} and tenant_id = ${ctx.tenantId})`,
+    // D2. El trigger de la base copia el costo de la unidad lockeada en esta transacción. No se
+    // nombra `cost_usd` acá: el caller autenticado no tiene SELECT sobre esa columna.
     soldBy: ctx.userId,
   });
 }

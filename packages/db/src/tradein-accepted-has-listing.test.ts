@@ -103,10 +103,11 @@ function aceptarComoElPanel(lead: string, listing: string, slug: string): readon
     //     dos unidades. Acá la fila queda `accepted` con `created_listing_id` NULL.
     `update tradein_leads set status = 'accepted', offer_usd = 400.00, updated_at = now()
       where tenant_id = '${TENANT}' and id = '${lead}' and status <> 'accepted'`,
-    // (2) la unidad, en `draft`, con el costo copiado del lead dentro de la misma transacción.
+    // (2) la unidad, en `draft`, con el costo copiado por la función owner-only dentro de la
+    //     misma transacción; el rol authenticated no tiene SELECT directo sobre offer_usd.
     `insert into listings (id, tenant_id, slug, title, condition, price_usd, cost_usd, status, acquisition_channel)
       values ('${listing}', '${TENANT}', '${slug}', 'iPhone 12 128', 'used_excellent', 500.00,
-              (select offer_usd from tradein_leads where id = '${lead}' and tenant_id = '${TENANT}'),
+              (select offer_usd from public.owner_get_tradein_sensitive('${TENANT}', '${lead}')),
               'draft', 'trade_in')`,
     // (3) el link. Sin esto, la transacción no puede commitear.
     `update tradein_leads set created_listing_id = '${listing}'

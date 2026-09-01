@@ -18,6 +18,7 @@ const SALE_A = '00000000-0000-4000-9007-000000000023';
 const admin = openAdmin();
 let ownerA: Session;
 let sellerA: Session;
+let ownerB: Session;
 
 beforeAll(async () => {
   await admin.unsafe(`delete from sales where tenant_id in ('${TENANT_A}', '${TENANT_B}')`);
@@ -52,11 +53,13 @@ beforeAll(async () => {
 
   ownerA = openSession(claimsFor(OWNER_A, TENANT_A));
   sellerA = openSession(claimsFor(SELLER_A, TENANT_A));
+  ownerB = openSession(claimsFor(OWNER_B, TENANT_B));
 });
 
 afterAll(async () => {
   await ownerA?.close();
   await sellerA?.close();
+  await ownerB?.close();
   await admin.unsafe(`delete from sales where tenant_id in ('${TENANT_A}', '${TENANT_B}')`);
   await admin.unsafe(`delete from tenants where id in ('${TENANT_A}', '${TENANT_B}')`);
   await admin.unsafe(`delete from auth.users where id in ('${OWNER_A}', '${SELLER_A}', '${OWNER_B}')`);
@@ -113,7 +116,7 @@ describe('seller no puede leer ventas ni escribir campos financieros', () => {
       insert into sales (tenant_id, listing_id, price_usd, cost_usd, internal_notes, sold_by)
       values ('${TENANT_A}', '${LISTING_A}', 900.00, 1.00, 'exfiltrar', '${SELLER_A}')`);
     expect(failure.code).toBe('42501');
-    expect(failure.message).toContain('row-level security');
+    expect(failure.message).toContain('seller cannot set sale internal notes');
   });
 
   it('no puede modificar ni borrar una venta', async () => {
@@ -136,11 +139,134 @@ describe('seller no puede escribir campos SENSITIVE de listings/canjes', () => {
   });
 });
 
+describe('lectura sensible: sólo owner por funciones SECURITY DEFINER', () => {
+  it('seller y owner no pueden leer cost_usd directamente desde listings', async () => {
+    const sellerFailure = await sellerA.expectFailure(
+      `select cost_usd, margin_usd, supplier, internal_notes, imei from listings where tenant_id = '${TENANT_A}' and id = '${LISTING_A}'`,
+    );
+    const ownerFailure = await ownerA.expectFailure(
+      `select cost_usd, margin_usd, supplier, internal_notes, imei from listings where tenant_id = '${TENANT_A}' and id = '${LISTING_A}'`,
+    );
+    expect(sellerFailure.code).toBe('42501');
+    expect(ownerFailure.code).toBe('42501');
+    expect(sellerFailure.message).toContain('permission denied');
+    expect(ownerFailure.message).toContain('permission denied');
+  });
+
+  it('seller y owner no pueden leer offer_usd/internal_notes directamente desde tradein_leads', async () => {
+    const sellerFailure = await sellerA.expectFailure(
+      `select offer_usd, internal_notes from tradein_leads where tenant_id = '${TENANT_A}' and id = '${LEAD_A}'`,
+    );
+    const ownerFailure = await ownerA.expectFailure(
+      `select offer_usd, internal_notes from tradein_leads where tenant_id = '${TENANT_A}' and id = '${LEAD_A}'`,
+    );
+    expect(sellerFailure.code).toBe('42501');
+    expect(ownerFailure.code).toBe('42501');
+    expect(sellerFailure.message).toContain('permission denied');
+    expect(ownerFailure.message).toContain('permission denied');
+  });
+
+  it('owner lee cost_usd de su tenant por RPC y seller no obtiene filas', async () => {
+    const ownerRows = await ownerA.query<{ listing_id: string; cost_usd: string }>(
+      `select * from public.owner_get_listing_cost('${TENANT_A}', '${LISTING_A}')`,
+    );
+    const sellerRows = await sellerA.query(
+      `select * from public.owner_get_listing_cost('${TENANT_A}', '${LISTING_A}')`,
+    );
+    expect(ownerRows).toEqual([{ listing_id: LISTING_A, cost_usd: '500.00' }]);
+    expect(sellerRows).toEqual([]);
+  });
+
+  it('owner lee offer_usd/internal_notes de su tenant por RPC y seller no obtiene filas', async () => {
+    const ownerRows = await ownerA.query<{ tradein_lead_id: string; offer_usd: string; internal_notes: string }>(
+      `select * from public.owner_get_tradein_sensitive('${TENANT_A}', '${LEAD_A}')`,
+    );
+    const sellerRows = await sellerA.query(
+      `select * from public.owner_get_tradein_sensitive('${TENANT_A}', '${LEAD_A}')`,
+    );
+    expect(ownerRows).toEqual([{
+      tradein_lead_id: LEAD_A,
+      offer_usd: '400.00',
+      internal_notes: 'nota de canje',
+    }]);
+    expect(sellerRows).toEqual([]);
+  });
+
+  it('las RPC validan el tenant solicitado contra el claim y no cruzan tenants', async () => {
+    expect(await ownerA.query(
+      `select * from public.owner_get_listing_cost('${TENANT_B}', '${LISTING_A}')`,
+    )).toEqual([]);
+    expect(await ownerA.query(
+      `select * from public.owner_get_tradein_sensitive('${TENANT_B}', '${LEAD_A}')`,
+    )).toEqual([]);
+    expect(await ownerB.query(
+      `select * from public.owner_get_listing_cost('${TENANT_A}', '${LISTING_A}')`,
+    )).toEqual([]);
+    expect(await ownerB.query(
+      `select * from public.owner_get_tradein_sensitive('${TENANT_A}', '${LEAD_A}')`,
+    )).toEqual([]);
+  });
+});
+
+describe('superficie de privilegios de lectura sensible', () => {
+  it('authenticated sólo tiene SELECT sobre la allowlist no sensible', async () => {
+    const rows = await admin.unsafe(`
+      select table_name || '.' || column_name as column_name
+      from information_schema.column_privileges
+      where table_schema = 'public'
+        and grantee = 'authenticated'
+        and privilege_type = 'SELECT'
+        and ((table_name = 'listings' and column_name in ('cost_usd', 'margin_usd', 'supplier', 'internal_notes', 'imei'))
+          or (table_name = 'tradein_leads' and column_name in ('offer_usd', 'internal_notes')))
+      order by 1`);
+    expect(rows).toEqual([]);
+  });
+
+  it('las dos RPC son SECURITY DEFINER, propiedad de service_role y sólo ejecutables por authenticated', async () => {
+    const rows = await admin.unsafe(`
+      select p.proname, p.prosecdef, r.rolname as owner, r.rolbypassrls,
+             has_function_privilege('authenticated', p.oid, 'EXECUTE') as authenticated_exec,
+             has_function_privilege('anon', p.oid, 'EXECUTE') as anon_exec,
+             array_to_string(p.proconfig, ',') as config
+      from pg_proc p
+      join pg_namespace n on n.oid = p.pronamespace
+      join pg_roles r on r.oid = p.proowner
+      where n.nspname = 'public'
+        and p.oid in (
+          'public.owner_get_listing_cost(uuid,uuid)'::regprocedure,
+          'public.owner_get_tradein_sensitive(uuid,uuid)'::regprocedure
+        )
+      order by p.proname`);
+    expect(rows).toEqual([
+      {
+        proname: 'owner_get_listing_cost',
+        prosecdef: true,
+        owner: 'service_role',
+        rolbypassrls: true,
+        authenticated_exec: true,
+        anon_exec: false,
+        config: 'search_path=pg_catalog, public',
+      },
+      {
+        proname: 'owner_get_tradein_sensitive',
+        prosecdef: true,
+        owner: 'service_role',
+        rolbypassrls: true,
+        authenticated_exec: true,
+        anon_exec: false,
+        config: 'search_path=pg_catalog, public',
+      },
+    ]);
+  });
+});
+
 describe('owner sigue teniendo acceso de operador', () => {
   it('ve sus datos de billing y sus campos financieros', async () => {
     const billing = await ownerA.query<{ n: string }>(`select count(*)::text as n from entitlements where tenant_id = '${TENANT_A}'`);
-    const listing = await ownerA.query<{ cost_usd: string }>(`select cost_usd::text from listings where id = '${LISTING_A}'`);
     const sale = await ownerA.query<{ cost_usd: string }>(`select cost_usd::text from sales where id = '${SALE_A}'`);
+    const listing = await ownerA.query<{ cost_usd: string }>(
+      `select cost_usd from public.owner_get_listing_cost('${TENANT_A}', '${LISTING_A}')`,
+    );
     expect(billing[0]?.n).toBe('1');
     expect(listing[0]?.cost_usd).toBe('500.00');
     expect(sale[0]?.cost_usd).toBe('500.00');

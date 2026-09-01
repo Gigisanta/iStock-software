@@ -63,8 +63,8 @@ import { ACCEPTED } from './status';
  * ══════════════════════════════════════════════════════════════════════════════════════════════
  *
  * Lo que el dueño paga por el equipo del visitante **es** el costo de la unidad. El `insert` lo
- * copia con un **subselect** contra el lead que se acaba de actualizar y lockear en esta misma
- * transacción, en vez de volver a escribir el número que trajo el formulario. Doctrina de
+ * copia con un **subselect** contra la función owner-only que lee el lead que se acaba de
+ * actualizar y lockear en esta misma transacción, en vez de volver a escribir el número que trajo el formulario. Doctrina de
  * `recordSale()`, y acá suma dos cosas concretas:
  *
  *   1. Hace **cierto en el SQL** que es el mismo dato. Si mañana el costo se carga en otra pantalla
@@ -237,7 +237,10 @@ export async function acceptToStock(
           condition: input.condition,
           batteryPct: input.batteryPct,
           priceUsd: input.priceUsd,
-          costUsd: sql`(select offer_usd from tradein_leads where id = ${input.leadId} and tenant_id = ${ctx.tenantId})`,
+          costUsd: sql`(
+            select offer_usd
+            from public.owner_get_tradein_sensitive(${ctx.tenantId}::uuid, ${input.leadId}::uuid)
+          )`,
           qty: 1,
           status: 'draft',
           // El canal es un hecho, no una deducción. Ver §7.
