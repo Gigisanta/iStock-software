@@ -14,6 +14,9 @@ import { APEX_URL } from './env';
 export async function signIn(page: Page, email: string): Promise<void> {
   await page.goto(`${APEX_URL}/ingresar`);
   await page.locator('input[name="email"]').fill(email);
+  // El formulario de producción también exige contraseña para Neon Auth. El driver local la
+  // ignora a propósito, pero el helper tiene que recorrer el mismo contrato de formulario.
+  await page.locator('input[name="password"]').fill('qa-e2e-password');
   await page.getByRole('button', { name: /entrar/iu }).click();
   // El driver local (sin B2) crea el usuario y redirige al panel. Si la sesión no quedó, la
   // siguiente navegación a `/app/*` vuelve a `/ingresar` y el test muere sin decir por qué.
