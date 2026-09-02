@@ -11,7 +11,7 @@ Argumento recibido: `$ARGUMENTS`
 
 ## Qué hacer
 
-1. Leé `CLAUDE.md`, `AGENTS.md` y `docs/SLICE_BOARD.md`. Si el board dice `doing` en algo,
+1. Leé `AGENTS.md`, `docs/OWNERSHIP.md` y `docs/SLICE_BOARD.md`. Si el board dice `doing` en algo,
    **primero resolvé eso** — no arranques trabajo nuevo en paralelo sobre el mismo directorio.
 2. Determiná la FASE a partir del argumento. Sin argumento → la siguiente fase pendiente del board.
 3. **Anotá el SHA de HEAD antes de lanzar** (`git rev-parse --short HEAD`) y pasalo como `base`.

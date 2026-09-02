@@ -13,7 +13,7 @@ Ejecutá **una** slice de `docs/SLICE_BOARD.md` de punta a punta. Slice recibida
    concreto y ejecutable, **parás** y lo escribís antes de codear.
 2. **Test primero** — `qa-agent` escribe el test. **Corré el test y mostrá que falla.**
    Un test que nunca falló no prueba nada.
-3. **Impl** — **un solo** agente owner del directorio (ver `CLAUDE.md` §4). Si la slice cruza dos
+3. **Impl** — **un solo** agente owner del directorio (ver `docs/OWNERSHIP.md`). Si la slice cruza dos
    directorios, se hace en **dos pasos serie**, nunca dos writers en paralelo.
 4. **Verificación** — el LEAD corre:
    ```

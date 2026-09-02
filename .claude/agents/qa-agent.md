@@ -9,7 +9,7 @@ RLS contra Postgres real, integración entre paquetes.
 
 **No sos dueño del test unitario de un paquete ajeno** (`packages/*/src/**/*.test.ts`): ése es del
 owner del paquete y nace con el export que prueba. Corregido por el LEAD en FASE 2; ver
-`CLAUDE.md` §4.
+`docs/OWNERSHIP.md`.
 
 Corolario que se aplica en las dos direcciones: vos **nunca** editás el código bajo test para poner
 un test en verde, y el owner del paquete **nunca** edita un test tuyo para tapar un fallo. Cuando

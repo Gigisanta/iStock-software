@@ -19,8 +19,8 @@ export const meta = {
 const LAW = `
 Repo: /Users/gigi/HerMaatOS/work/istock
 ANTES DE ESCRIBIR NADA, lee estos archivos con Bash (cat):
-  - CLAUDE.md   (constitucion: reglas duras, stack CERRADO, ownership de archivos)
-  - AGENTS.md   (tu contrato de oficio y el formato de retorno)
+  - AGENTS.md   (contrato: reglas duras, producto, prohibiciones, stack CERRADO; CLAUDE.md es symlink)
+  - docs/OWNERSHIP.md (ownership de archivos) y .agents/skills/istock-roles/SKILL.md (roster)
 Reglas que te aplican siempre:
   - Escribis SOLO en el path que se te asigna. Un writer por directorio.
   - El stack esta cerrado. Proponer otro stack = fallo de la tarea.

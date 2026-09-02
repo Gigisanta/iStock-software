@@ -38,8 +38,12 @@ scripts/.wafpol-tmp/
 # tras un Ctrl-C no puede ensuciar ninguna otra medicion. Y aunque pudiera: un fixture visible
 # que pone algo en rojo es ruidoso y se borra; un fixture invisible que apaga una polaridad no
 # avisa nunca.
-# Herramientas locales de Codex/Neon; no forman parte del producto desplegable.
-.agents/
+# Herramientas locales de Codex/Neon; no forman parte del producto desplegable. La única
+# excepción es `.agents/skills/istock-roles/` (router de roles, contrato del repo).
+.agents/*
+!.agents/skills/
+.agents/skills/*
+!.agents/skills/istock-roles/
 .codex/
 skills-lock.json
 .env*
