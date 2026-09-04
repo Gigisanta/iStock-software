@@ -213,17 +213,20 @@ re-ejecución del LEAD, y esa no existe todavía.
 | K2 | auth + crear tenant + slug | todo | `app-agent` | `bash scripts/accept-fase3.sh` §K2 | `apps/web/app/(app)/` |
 | K3 | proxy de host (`proxy.ts`) | todo | `storefront-agent` | `bash scripts/accept-fase3.sh` §K3 + §K3b (todo cache tag lleva slug) | `apps/web/proxy.ts` |
 | K4 | layout del panel (mobile-first) | todo | `app-agent` | `bash scripts/accept-fase3.sh` §K4 | `apps/web/app/(app)/` |
-| K5 | probe de upload a R2 | todo | `media-agent` | **bloqueado por B1** — ver nota abajo | `packages/media/src/` |
+| K5 | probe de upload a R2 | todo | `media-agent` | **pendiente de probe real de byte con credenciales ya cargadas** — ver nota abajo | `packages/media/src/` |
 
-> **K5 no puede pasar a `done` mientras B1 siga abierto, y el motivo no es el que decía este board.**
+> **K5 no puede pasar a `done` mientras no exista una probe real de byte en R2, y el motivo no es el
+> que decía este board.** Las credenciales de B1 ya están cargadas en Production.
 > Corregido el 2026-08-27 contra el código: **el driver de R2 existe y está cableado** —
 > `packages/media/src/storage/r2.ts` (151 líneas, `R2Driver` sobre la S3 API) y
 > `storage/index.ts` lo elige con `MEDIA_DRIVER=r2`. El driver local no es lo único que hay: es el
 > **default mientras B1 esté abierto** (`env.ts` exige las credenciales sólo si `MEDIA_DRIVER=r2`).
 > Lo que falta es la otra mitad de la palabra *probe*: `accept-fase3.sh` §K5 es una verificación
 > **estática** del paquete (existen las 3 variantes, `card ≤150KB` presupuestado, `CacheControl` por
-> parámetro del SDK y no `httpMetadata`, unlink sin `DeleteObject`). **Ningún byte viajó nunca a un
-> bucket real**, porque no hay bucket. Eso es B1 y no se puede simular.
+> parámetro del SDK y no `httpMetadata`, unlink sin `DeleteObject`). **Ningún byte del flujo de upload
+> de iStock viajó todavía a un bucket real.** La request pública a
+> `/_media/nonexistent.webp` devuelve 404 controlado en Production, lo que acredita wiring y manejo
+> de una key inexistente, pero no sustituye una carga real. La probe de byte queda pendiente.
 
 ## FASE 4 — Slices Capa 1 (ORDEN FIJO, no reordenar)
 
@@ -336,7 +339,8 @@ re-ejecución del LEAD, y esa no existe todavía.
 > el mismo corolario que dejó la corrección medida de ADR-014 para el panel.
 >
 > **Aceptar la slice no cierra sus deudas.** Siguen abiertas, con dueño y sin tocar: **T2** (guard de
-> query sin filtro de tenant), **S2.1** (`blocked` por **B1**), **S2.2**, **S2.3** y **S2.4**.
+> query sin filtro de tenant), **S2.1** (`blocked` hasta la probe real de R2), **S2.2**, **S2.3** y
+> **S2.4**.
 > **T1** cerró su **nivel 1** el 2026-08-28 (`4fce968`) — declarada y validada, **no aplicada**.
 >
 > **El aviso de drift de FASE 2 se cerró.** D1–D4 pasaron a `done` con la re-ejecución registrada
@@ -514,7 +518,7 @@ re-ejecución del LEAD, y esa no existe todavía.
 
 | id | título | estado | owner | bloqueo | gate de aceptación | artefacto |
 |---|---|---|---|---|---|---|
-| S2.1 | upload directo a R2 por URL prefirmada | blocked | `media-agent` → `app-agent` | **B1** + pregunta abierta de abajo | 8 fotos sin round-trip por foto; el original **nunca** es alcanzable; `card` sigue ≤150KB | `packages/media/src/*`, `apps/web/app/api/**` |
+| S2.1 | upload directo a R2 por URL prefirmada | blocked | `media-agent` → `app-agent` | **probe real de R2 pendiente** + pregunta abierta de abajo | 8 fotos sin round-trip por foto; el original **nunca** es alcanzable; `card` sigue ≤150KB | `packages/media/src/*`, `apps/web/app/api/**` |
 | P1 | `robots.txt` / `sitemap.xml` por tenant — **decisión de diseño** | **done** | `storefront-agent` + `qa-agent` | — | decisión escrita **antes** de arrancar S3 → **ADR-015**, verificada por el LEAD (30 URLs contra el `path-to-regexp` compilado) | `docs/DECISIONS.md` ADR-015 · `apps/web/proxy.ts` (`117c4f0`) |
 | P2 | metadata file conventions bajo host de tenant — **decisión de diseño** | **done** | `storefront-agent` + `qa-agent` | — | ídem P1: misma causa raíz, misma ADR, mismo commit | ADR-015 · `apps/web/proxy.ts` · `tests/proxy-matcher-no-deja-la-vidriera-sin-vigilar.test.ts` |
 | T1 | rate limiting en el edge: las 2 reglas de Vercel Firewall | **done** — nivel 1 | **LEAD** (`config/**` + `scripts/**`, §4) | — | **el gate original decía "2 reglas activas + prueba de que disparan" y eso NO se cumple entero**: las reglas están declaradas y validadas, y **no están aplicadas** (no hay proyecto Vercel — **B2**/**B5** —, y aplicar es un paso operativo aparte que `vercel deploy` **no** hace). Cerrado el **nivel 1**: el archivo existe, pasa las restricciones reales de Pro, **el censo de route handlers no deja entrar una ruta sin decidir**, y desde `3199a78` **el gate y su polaridad tienen step en CI** (`ci.yml:118` y `:126`) — *step declarado*, no ejecutado: `ci.yml` nunca corrió, ver §"Seis gates rojos o dormidos". `bash scripts/guard-firewall.sh` → `GUARD-FIREWALL: PASS` (re-corrido el 2026-08-28). **Cero** contador en Postgres sobre la vidriera. Con S4 (`c9611b1`) `storefront-track-rl` pasó de `planned` a **`active`**: el endpoint no nace sin techo. Ver §T1 abajo | `config/firewall-rules.json` + `scripts/guard-firewall.sh` + `scripts/guard-firewall.test.sh` (`4fce968`, `3199a78`) · **ADR-016** |
@@ -789,7 +793,7 @@ board viene cazando: un gate que da PASS por la pata que no es.
 > Lo que faltaba para las dos era lo mismo —**la corrida verde de `bash scripts/accept-s3.sh`**— y
 > llegó el 2026-08-28. Las dos son `done`.
 
-### S2.1 · upload directo a R2 por URL prefirmada  ·  **blocked por B1**
+### S2.1 · upload directo a R2 por URL prefirmada  ·  **blocked por probe real pendiente**
 
 **El hecho.** Hay tres techos de request body encima nuestro y **el que manda es 4 MB**, no 4.5.
 Verificado por el LEAD contra la doc oficial el 2026-08-27; el detalle con URLs está en
@@ -844,12 +848,13 @@ alcanza para satisfacer la regla 1, o si la regla 1 hay que reescribir, es exact
 que falta tomar** — y es de `media-agent` + ratificación del LEAD, no de quien escriba el Route
 Handler.
 
-**Por qué B1 bloquea:** sin bucket real no se construye ni se testea un presigned — firmar una URL
-contra un endpoint que no existe no prueba nada. El driver de R2 **sí existe**
+**Por qué la probe real sigue pendiente:** ahora hay bucket y credenciales de alcance exclusivo en
+Production, pero todavía no se construyó ni se ejecutó un presigned contra ese bucket. La sonda de
+key inexistente devuelve 404, pero no prueba un PUT. El driver de R2 **sí existe**
 (`packages/media/src/storage/r2.ts`, elegido con `MEDIA_DRIVER=r2`); lo que no existe es la firma de
 un PUT directo, y lo dice el propio código: `packages/media/src/upload.ts:6`. Mientras tanto se
-trabaja con el driver local (`storage/local.ts`, el default hasta que cierre B1), donde **no hay
-techo de 4 MB** — o sea que lo que S2 entregó es correcto *y* verificable.
+trabaja con el driver local (`storage/local.ts`), donde **no hay techo de 4 MB** — o sea que lo que
+S2 entregó es correcto *y* verificable en local, pero todavía no aceptado contra R2 real.
 
 ### P1 y P2 · CERRADAS el 2026-08-28 → **ADR-015**  ·  eran requisito previo a S3
 
@@ -2400,8 +2405,8 @@ invalidación medido) · V10/V10b (barrido sin bloqueo detrás de una fila rota 
 scheduler sobre el árbol integrado. V1–V10 pasaron y el comando imprimió **S6: ACEPTADA**; S6 queda
 `done` localmente. La cuenta/app de Inngest, la sincronización, las claves
 `INNGEST_SIGNING_KEY`/`INNGEST_EVENT_KEY`, el deployment y un run real son **UNVERIFIED** y quedan
-como blockers de producción. La aceptación local no cierra los blockers externos B1 (R2), B3
-(Mercado Pago) ni B7–B9 (Inngest, elegibilidad de Vercel, deployment y run real).
+como blockers de producción. La aceptación local no cierra la probe real de R2, B3 (Mercado Pago)
+ni B7–B9 (Inngest, elegibilidad de Vercel, deployment y run real).
 
 **La V8 es el cuarto caso del repo de la misma familia**, y lo marcó `qa-agent` **en su propio
 reporte, con el gate ya en verde y a su favor**: grepeaba el **fuente** buscando `MEDIDO s6 reserva`,
@@ -2940,7 +2945,7 @@ env · seed · wildcard local (nip.io) · **cómo NO apagar el spend cap**.
 
 | # | blocker | bloquea | quién lo destraba |
 |---|---|---|---|
-| B1 | credenciales de Cloudflare R2 (account id, bucket, access key) | K5, S2, **S2.1** | **humano** |
+| B1 | probe de byte real contra R2 con credenciales ya cargadas en Production | K5, S2, **S2.1** | **LEAD** |
 | B2 | proyecto Neon Postgres/Auth + credenciales de Production | D2, D3 | **humano** |
 | B3 | credenciales de Mercado Pago (**sandbox** + app + webhook secret) | FASE 6, **ADR-008** | **humano** |
 | B4 | API key de Gemini y/o Groq | FASE 5 | **humano** |

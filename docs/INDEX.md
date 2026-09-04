@@ -88,8 +88,9 @@ Lo que hay que saber sin leer nada más:
   research. (ADR-008)
 - Blocker con más lead time: **B5**, migrar los nameservers de `maat.work` a Vercel (24–48 h).
 - **El techo de request body que manda es 4 MB** (Routing Middleware), no 4.5. Por eso entra **una
-  foto por request**. La slice que lo levanta es **S2.1** y está `blocked` en B1 — y arrastra una
-  pregunta abierta entre las reglas 1 y 4 de `media-agent` que hay que contestar antes de empezar.
+  foto por request**. La slice que lo levanta es **S2.1** y sigue `blocked` hasta ejecutar la probe
+  real de byte en R2 — y arrastra una pregunta abierta entre las reglas 1 y 4 de `media-agent` que
+  hay que contestar antes de empezar.
 - **S1 y S2 están `done`: el LEAD re-ejecutó los dos gates enteros el 2026-08-28** — `accept-s1.sh`
   26 PASS / 0 FAIL, `accept-s2.sh` 21 PASS / 0 FAIL, los dos con `EXIT=0`. **Repetido más tarde ese
   día en el barrido serial sobre `68c0bd6`: `s1 PASS=39` y `s2 PASS=21`.** El salto de S1 **no es
@@ -98,8 +99,9 @@ Lo que hay que saber sin leer nada más:
   ausencia: S2 imprimió bytes (`card=50692B` contra `techo=153600B`, más `detail`, `thumb`, `master`
   y los 4 objetos), y S1, que no imprime `MEDIDO`, pega HTTP en vivo, consulta Postgres y corre la
   suite e2e entera con censo (`10/10 archivos · 70/70 tests · 0 salteados`). **Aceptar la slice no
-  cierra sus deudas:** siguen abiertas **S2.1** (`blocked` en B1), **S2.2**, **S2.3**
-  y **S2.4** (**T1** cerró su nivel 1 el 2026-08-28 y **T2** cerró entero, ver abajo). Y sigue viva la deuda declarada de **ADR-011**: el miss contesta `200`, así que **deja
+  cierra sus deudas:** siguen abiertas **S2.1** (`blocked` hasta la probe real de R2), **S2.2**, **S2.3**
+  y **S2.4** (**T1** cerró su nivel 1 el 2026-08-28 y **T2** cerró entero, ver abajo). La probe real
+  de R2 sigue pendiente aunque las credenciales ya estén en Production. Y sigue viva la deuda declarada de **ADR-011**: el miss contesta `200`, así que **deja
   de ser distinguible por status code en los logs de acceso** — el gate lo imprime, no lo esconde, y
   vuelve a morder en FASE 8.
 - **S3 está `done`: el LEAD re-ejecutó `bash scripts/accept-s3.sh` el 2026-08-28 — 50 PASS, 0 FAIL,
@@ -524,8 +526,10 @@ Lo que hay que saber sin leer nada más:
   existen pero **ninguno corre en cada push**— y el **borrado de un objeto de R2 por key**
   (**T14.3**: hay cobertura estática y un test del propio paquete, falta la auditoría de referencia
   del **efecto**). Todo eso es **T14**, `qa-agent`.
-- **El driver de R2 existe** (`packages/media/src/storage/r2.ts`, `MEDIA_DRIVER=r2`). Lo que falta
-  para K5 es el bucket real: ningún byte viajó nunca a R2. Eso es **B1**.
+- **El driver de R2 existe** (`packages/media/src/storage/r2.ts`, `MEDIA_DRIVER=r2`) y las credenciales
+  de alcance exclusivo ya están cargadas en Production. La sonda pública de una key inexistente devuelve
+  404 controlado; lo que falta para K5 es subir un byte real y verificar el recorrido completo. Eso
+  mantiene **B1** abierto como probe, no como credencial faltante.
 - **Ocho comandos de aceptación corrían la suite entera creyendo filtrar** (**T10**, LEAD,
   **cerrada** en `0d647c6`). El diagnóstico viejo —*"el comando no resuelve"*— era **falso y más
   benigno que la realidad**: `pnpm --filter web test -- storefront` **sí** resolvía y corría los 147
