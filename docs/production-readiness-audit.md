@@ -1,7 +1,7 @@
 # Auditoría de preparación para producción
 
 **Fecha:** 2026-09-04
-**Estado:** localmente verificable; producción bloqueada por configuración externa
+**Estado:** localmente verificable; dominio wildcard operativo; producción pendiente de R2, despliegue y plan Vercel
 **Workflow:** diagnóstico profundo → correcciones de catálogo, vidriera, UX y billing → gates → preflight
 
 ## Resultado ejecutivo
@@ -21,11 +21,12 @@ build y la suite E2E. La última corrida completa fue **109/109 tests, 19/19 spe
 los contratos S11 de roles y S12 de onboarding cobrable (cuenta nueva → negocio → primer equipo
 publicado → link público), además del acceso directo a suscripción sin sesión y la propagación del
 nombre y precio publicado del panel a la vidriera pública. La duración configurable de reserva se
-validó también en una corrida enfocada de S12. El
-preflight real, sin embargo, termina en **FAIL**: el equipo de Vercel sigue en Hobby, faltan las dos
-credenciales de R2 y las dos variables de Mercado Pago en Production, y `demo.maat.work` no resuelve.
-Por lo tanto no corresponde
-afirmar que hoy se puede cobrar ni que un link `{slug}.maat.work` funciona públicamente hasta
+validó también en una corrida enfocada de S12. El preflight real todavía termina en **FAIL**: el
+equipo de Vercel sigue en Hobby, faltan las dos credenciales de R2 y el alias de producción todavía
+sirve un build anterior. Mercado Pago ya está presente en Production, pero el checkout corregido no
+está live y el cobro real B3 todavía no fue verificado. El wildcard `*.maat.work` ahora tiene DNS,
+delegación ACME y certificado administrado activos; por lo tanto el bloqueo restante es de despliegue
+y credenciales, no de resolución del link. No corresponde afirmar que hoy se puede cobrar hasta
 desplegar el HEAD y cerrar esos bloqueos.
 
 ## Última evidencia ejecutada
@@ -38,6 +39,8 @@ desplegar el HEAD y cerrar esos bloqueos.
 - `pnpm test`: PASS; **2.975 tests aprobados y 4 skips intencionales** de Mercado Pago porque
   requieren credenciales de una cuenta de prueba.
 - `pnpm build`: PASS con Next.js 16.3.3; las rutas de marketing, billing y vidriera compilan.
+- `git status --short --branch`: `main` sincronizada con `origin/main` en `c16b087`; sólo queda el
+  directorio local no versionado `.serena/`, que se conserva intacto.
 - `pnpm --filter @istock/e2e typecheck`: PASS.
 - La ruta local `/_media` expone `Timing-Allow-Origin: *`; el e2e de media lo verifica sobre la
   respuesta HTTP real. El LCP con throttling y el header del CDN productivo siguen sin medirse.
@@ -132,6 +135,11 @@ desplegar el HEAD y cerrar esos bloqueos.
 - La diferencia visual también quedó medida: el HTML/CSS entregado por el deployment público vigente
   todavía contiene 16 referencias a `emerald` y el H1 anterior, mientras que el build local actual
   no contiene utilidades verdes y sirve la UI monocromática en claro y oscuro.
+- El dominio wildcard quedó verificado en Vercel con certificado `*.maat.work` y renovación automática.
+  Cloudflare conserva sus nameservers y sus registros existentes; sólo se agregaron los dos NS de
+  `_acme-challenge` y el CNAME wildcard según la guía de Vercel. Un smoke HTTPS con `demo.maat.work`
+  devuelve `HTTP/2 200` usando ambos edges de Vercel. La resolución del resolver local puede tardar
+  por caché, pero los nameservers autoritativos ya entregan el CNAME correcto.
 - El preflight ahora también falla explícitamente si el deployment público no contiene el H1
   monocromático actual o si el enlace anónimo de Base pierde `plan=base`; ambos controles fallaron
   contra la versión pública inspeccionada el 2026-09-04.
@@ -190,6 +198,9 @@ desplegar el HEAD y cerrar esos bloqueos.
   experimentos de cuenta real siguen siendo B3; los tests locales del handler no sustituyen ese
   cobro. Fuentes: [webhooks de Mercado Pago](https://www.mercadopago.com.ar/developers/es/docs/your-integrations/notifications/webhooks)
   y [obtener pago](https://www.mercadopago.com.ar/developers/es/reference/online-payments/subscriptions/get-payment/get).
+- `MP_ACCESS_TOKEN` y `MP_WEBHOOK_SECRET` ya existen en las variables Production de Vercel sin
+  exponer sus valores. La corrección que agrega `notification_url` al alta de la suscripción está en
+  `c16b087`, todavía pendiente de un despliegue que el plan Hobby rechaza por el cron.
 
 ### Configuración operativa
 
@@ -219,10 +230,10 @@ desplegar el HEAD y cerrar esos bloqueos.
 |---|---|---|
 | Sesión Vercel | PASS | usuario esperado disponible |
 | Plan del equipo | **FAIL: Hobby** | iStock comercial requiere Pro |
-| Variables Production | **FAIL: faltan `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `MP_ACCESS_TOKEN` y `MP_WEBHOOK_SECRET`** | fotos y checkout reales deben quedar cerrados |
+| Variables Production | **FAIL: faltan `R2_ACCESS_KEY_ID` y `R2_SECRET_ACCESS_KEY`; MP presente** | las fotos reales siguen cerradas; el checkout MP corregido aún no está live |
 | Cron de reservas | PASS | hay una ruta cada 5 minutos declarada; requiere Vercel Pro |
 | `istock.maat.work` | PASS | el apex llega a Vercel |
-| `demo.maat.work` / wildcard | **FAIL: sin CNAME ni A** | los links `{slug}.maat.work` no llegan a la app |
+| `demo.maat.work` / wildcard | **PASS: CNAME, delegación ACME, certificado y HTTPS 200** | los links wildcard ya llegan a Vercel; falta comprobar un tenant real luego del deploy |
 | Deployment existente | PASS | existe historial, pero no implica que sea este HEAD |
 | Landing pública actual | **FAIL: sirve H1 y utilidades verdes de una versión anterior** | hay que desplegar el HEAD monocromático |
 | Suscripción anónima Base | **FAIL: el deployment no conserva `plan=base` al derivar a login** | validar el flujo en el deployment actualizado |
@@ -231,21 +242,24 @@ El comando es sólo lectura y no imprime secretos: `bash scripts/preflight-verce
 
 ## Bloqueos externos antes de cobrar
 
-1. Pasar el equipo Vercel a Pro y migrar el DNS del dominio a la configuración que soporte el
-   wildcard `*.maat.work`; comprobar `demo.maat.work` y un slug real desde una red externa.
-2. Configurar en Production el proveedor de autenticación/Neon, R2 privado para originales y R2/CDN
+1. Mantener el cron `*/5` y elegir cómo salir de Hobby: pasar el equipo Vercel a Pro cuando haya un
+   cliente, o reabrir formalmente la ADR de jobs con research antes de cambiar de proveedor. No se
+   puede desplegar con un cron diario: rompería la expiración de reservas.
+2. Crear las credenciales S3 de alcance exclusivo para `istock-media` y `istock-originals` y cargarlas
+   en Production. R2 ya tiene `img.maat.work` activo con SSL y `r2.dev` deshabilitado en ambos buckets.
+3. Configurar en Production el proveedor de autenticación/Neon, R2 privado para originales y R2/CDN
    para variantes públicas, junto con `MEDIA_DRIVER`, las credenciales S3 server-only y
    `NEXT_PUBLIC_MEDIA_BASE_URL`. El preflight confirma la presencia de variables, no la validez de
    sus credenciales.
-3. Crear/configurar la aplicación y el vendedor de Mercado Pago, cargar `BILLING_DRIVER=mercadopago`,
-   `MP_ACCESS_TOKEN` y `MP_WEBHOOK_SECRET`, y registrar el webhook público
+4. Confirmar que la aplicación y el vendedor de Mercado Pago correspondan a Production, mantener
+   `BILLING_DRIVER=mercadopago`, y registrar el webhook público
    `/billing/webhooks/mercadopago`.
-4. Ejecutar B3 con una cuenta compradora de prueba para ambos planes: abrir checkout, confirmar el
+5. Ejecutar B3 con una cuenta compradora de prueba para ambos planes: abrir checkout, confirmar el
    importe ARS, terminar la adhesión, recibir `subscription_preapproval`/pago autorizado, repetir
    el mismo webhook, simular rechazo/reintentos y confirmar que el tenant queda habilitado o
    degradado según el estado real. La prueba debe verificar también el medio elegido; la presencia
    de un valor en el enum de la API no prueba que pueda adherirse en esta cuenta.
-5. Desplegar el HEAD por el pipeline normal, ejecutar `pnpm db:migrate` en el entorno objetivo y
+6. Desplegar el HEAD por el pipeline normal, ejecutar `pnpm db:migrate` en el entorno objetivo y
    repetir el preflight, los smoke tests HTTPS y la E2E con dominio real. No activar cobros en
    Production antes de ese paso.
 
@@ -295,10 +309,9 @@ bash scripts/preflight-vercel-production.sh
   por contenido del driver. No se ejecuta en el hot path de visitantes.
 
 **UNVERIFIED:** cuenta real de Mercado Pago, medios de pago y trial en checkout, webhook público y
-reintentos reales, credenciales R2/Neon/Auth/observabilidad en Production, wildcard DNS, deployment
-del HEAD y aplicación de las migraciones `0022_thankful_boomer.sql` y `0023_unknown_loners.sql` en el
-entorno objetivo.
+reintentos reales, credenciales R2/Neon/Auth/observabilidad en Production, asociación del wildcard a
+un tenant real después del deploy y aplicación de las migraciones `0022_thankful_boomer.sql` y
+`0023_unknown_loners.sql` en el entorno objetivo.
 
-**BLOCKERS:** Vercel Hobby; credenciales R2 y variables Production de Mercado Pago ausentes;
-`demo.maat.work` sin DNS; prueba B3 humana pendiente; deploy del HEAD y migraciones `0022`/`0023`
-pendientes en Production.
+**BLOCKERS:** Vercel Hobby rechaza el cron `*/5`; faltan las credenciales R2; el deployment público
+no es `c16b087`; prueba B3 humana pendiente; migraciones `0022`/`0023` pendientes en Production.
