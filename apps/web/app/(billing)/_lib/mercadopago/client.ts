@@ -90,6 +90,8 @@ export interface CreatePreapprovalInput {
   readonly plan: PaidPlanTier;
   readonly payerEmail: string;
   readonly backUrl: string;
+  /** HTTPS callback for subscription status and recurring payment notifications. */
+  readonly notificationUrl: string;
   /** Centavos ARS; se convierte a unidades sólo al cruzar el JSON de MP. */
   readonly amountArsCents: number;
 }
@@ -346,6 +348,7 @@ export function createHttpMercadoPagoClient(accessToken: string): MercadoPagoCli
         external_reference: encodeExternalReference({ tenantId: input.tenantId, plan: input.plan }),
         payer_email: input.payerEmail,
         back_url: input.backUrl,
+        notification_url: input.notificationUrl,
         auto_recurring: {
           frequency: 1,
           frequency_type: 'months',

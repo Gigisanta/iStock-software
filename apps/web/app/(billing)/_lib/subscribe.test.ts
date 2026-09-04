@@ -4,6 +4,7 @@ vi.mock('server-only', () => ({}));
 
 import {
   buildBillingBackUrl,
+  buildBillingWebhookUrl,
   createSubscriptionCheckout,
   parseSubscriptionRequest,
   type SubscriptionCheckoutDeps,
@@ -14,6 +15,7 @@ const TENANT_ID = '11111111-2222-4333-8444-555555555555';
 function deps(overrides: Partial<SubscriptionCheckoutDeps> = {}): SubscriptionCheckoutDeps {
   return {
     backUrl: 'https://maat.work/billing',
+    notificationUrl: 'https://maat.work/billing/webhooks/mercadopago',
     amountArsCents: 2_900_000,
     client: {
       createPreapproval: vi.fn().mockResolvedValue({
@@ -63,6 +65,7 @@ describe('createSubscriptionCheckout', () => {
       plan: 'negocio',
       payerEmail: 'dueno@nortecel.test',
       backUrl: 'https://maat.work/billing',
+      notificationUrl: 'https://maat.work/billing/webhooks/mercadopago',
       amountArsCents: 2_900_000,
     });
     expect(dependencies.client.createPreapproval).not.toHaveBeenCalledWith(
@@ -148,5 +151,15 @@ describe('back_url pública', () => {
     expect(buildBillingBackUrl('http://localhost:3000')).toBe('http://localhost:3000/billing');
     expect(buildBillingBackUrl('http://evil.example')).toBeNull();
     expect(buildBillingBackUrl('https://user:pass@maat.work')).toBeNull();
+  });
+
+  it('construye el callback del webhook en el mismo origen seguro', () => {
+    expect(buildBillingWebhookUrl('https://maat.work')).toBe(
+      'https://maat.work/billing/webhooks/mercadopago',
+    );
+    expect(buildBillingWebhookUrl('http://localhost:3000')).toBe(
+      'http://localhost:3000/billing/webhooks/mercadopago',
+    );
+    expect(buildBillingWebhookUrl('http://evil.example')).toBeNull();
   });
 });

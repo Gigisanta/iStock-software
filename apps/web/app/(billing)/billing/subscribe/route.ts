@@ -11,6 +11,7 @@ import {
 import { createHttpMercadoPagoClient } from '../../_lib/mercadopago/client';
 import {
   buildBillingBackUrl,
+  buildBillingWebhookUrl,
   createSubscriptionCheckout,
   monthlySubscriptionAmountArsCents,
   parseSubscriptionRequest,
@@ -102,8 +103,11 @@ export async function POST(request: Request): Promise<Response> {
 
   let accessToken: string | null;
   let backUrl: string | null = null;
+  let notificationUrl: string | null = null;
   try {
-    backUrl = buildBillingBackUrl(serverEnv().NEXT_PUBLIC_APP_URL);
+    const appUrl = serverEnv().NEXT_PUBLIC_APP_URL;
+    backUrl = buildBillingBackUrl(appUrl);
+    notificationUrl = buildBillingWebhookUrl(appUrl);
     if (billingDriver() !== 'mercadopago') {
       report('billing.subscription.misconfigured', 'driver_unavailable');
       return subscriptionErrorResponse(request, backUrl, 'El pago no está disponible en este momento.', 503);
@@ -115,7 +119,7 @@ export async function POST(request: Request): Promise<Response> {
     return subscriptionErrorResponse(request, backUrl, 'El pago no está disponible en este momento.', 503);
   }
 
-  if (accessToken === null || backUrl === null) {
+  if (accessToken === null || backUrl === null || notificationUrl === null) {
     report('billing.subscription.misconfigured', 'missing_config');
     return subscriptionErrorResponse(request, backUrl, 'El pago no está disponible en este momento.', 503);
   }
@@ -189,6 +193,7 @@ export async function POST(request: Request): Promise<Response> {
     {
       client: createHttpMercadoPagoClient(accessToken),
       backUrl,
+      notificationUrl,
       amountArsCents,
     },
   );

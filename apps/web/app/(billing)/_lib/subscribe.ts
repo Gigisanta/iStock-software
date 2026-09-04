@@ -28,6 +28,8 @@ export type SubscriptionCheckoutInput = {
 export type SubscriptionCheckoutDeps = {
   readonly client: Pick<MercadoPagoClient, 'createPreapproval'>;
   readonly backUrl: string;
+  /** HTTPS callback configured server-side; never accepted from the browser. */
+  readonly notificationUrl: string;
   /** Centavos ARS calculados desde `fx_settings` y congelados para este checkout. */
   readonly amountArsCents: number;
 };
@@ -86,6 +88,23 @@ export function buildBillingBackUrl(appUrl: string): string | null {
 }
 
 /**
+ * URL pública y estable para las notificaciones de Mercado Pago.
+ *
+ * Se valida con las mismas reglas que `back_url`: HTTPS fuera de hosts locales explícitos y sin
+ * credenciales embebidas. El callback se fija en código para que ningún navegador pueda desviar
+ * los eventos de billing a un endpoint ajeno.
+ */
+export function buildBillingWebhookUrl(appUrl: string): string | null {
+  const backUrl = buildBillingBackUrl(appUrl);
+  if (backUrl === null) return null;
+
+  const url = new URL(backUrl);
+  url.pathname = '/billing/webhooks/mercadopago';
+  url.search = '';
+  return url.toString();
+}
+
+/**
  * Calcula el importe que se manda a Mercado Pago en la primera adhesión.
  *
  * Mercado Pago factura en ARS; la lista comercial vive en USD. El tipo de cambio es el último
@@ -131,6 +150,7 @@ export async function createSubscriptionCheckout(
       plan: parsed.data.plan,
       payerEmail: parsed.data.payerEmail,
       backUrl: parsed.data.backUrl,
+      notificationUrl: deps.notificationUrl,
       amountArsCents: parsed.data.amountArsCents,
     });
 

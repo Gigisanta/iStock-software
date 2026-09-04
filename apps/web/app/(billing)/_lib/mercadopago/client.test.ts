@@ -55,6 +55,7 @@ describe('mock · devuelve lo que se le sembró, no simula el negocio de MP', ()
       plan: 'negocio',
       payerEmail: 'dueño@nortecel.test',
       backUrl: 'https://nortecel.maat.work/app/plan',
+      notificationUrl: 'https://nortecel.maat.work/billing/webhooks/mercadopago',
       amountArsCents: 5_300_000,
     });
 
@@ -182,6 +183,7 @@ describe('driver HTTP · mapeo de campos, con fetch stubeado', () => {
       plan: 'base',
       payerEmail: 'dueño@nortecel.test',
       backUrl: 'https://nortecel.maat.work/app/plan',
+      notificationUrl: 'https://nortecel.maat.work/billing/webhooks/mercadopago',
       amountArsCents: 2_900_000,
     });
 
@@ -197,6 +199,7 @@ describe('driver HTTP · mapeo de campos, con fetch stubeado', () => {
     expect(body['reason']).toBe('MaatWork Base');
     expect(body).not.toHaveProperty('payment_methods_allowed');
     expect(body['external_reference']).toBe('istock:v1:11111111-2222-4333-8444-555555555555:base');
+    expect(body['notification_url']).toBe('https://nortecel.maat.work/billing/webhooks/mercadopago');
     expect(body['auto_recurring']).toEqual({
       frequency: 1,
       frequency_type: 'months',

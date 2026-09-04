@@ -90,6 +90,7 @@ describe('POST /billing/subscribe', () => {
       plan: 'negocio',
       payerEmail: 'dueno@nortecel.test',
       backUrl: 'https://maat.work/billing',
+      notificationUrl: 'https://maat.work/billing/webhooks/mercadopago',
       amountArsCents: 10_500_000,
     });
     expect(mocks.claimSubscriptionCheckout).toHaveBeenCalledWith(
