@@ -43,3 +43,7 @@ Salida final: `out/istock-reel-v10.mp4` (H.264 High, yuv420p, BT.709, AAC 192k 4
 ## Herramientas locales
 
 `tools/ACE-Step-1.5/` (ignorado por git) corre `start_api_server_macos.sh` en `127.0.0.1:8001`; las tomas se piden con `POST /release_task` y se leen con `POST /query_result`.
+
+## Método
+
+Cómo se produce e itera este reel (pipeline, música, lecciones por versión): skill `.claude/skills/video-ads/SKILL.md` en la raíz del repo.
