@@ -32,7 +32,19 @@
 - Regla: cada cambio de geometría se revisa con `remotion still` en 6 frames (uno por escena) y
   una tira `hstack` antes de renderizar los 540.
 
+## Sistema de specs (2026-09-04, pedido de Gio: "un sistema y anuncios distintos")
+- El reel v10 tenía los beats y las escenas cableados. → `AdSpec` (escenas con `frames`) +
+  `timeline()` + `cuesFor()`: el SFX se deriva de la timeline, nunca se escribe a mano.
+- `Storefront` y `Detail` eran la misma escena con otra captura. → `Screen` genérica (archivo,
+  scroll, host, highlight). Cualquier captura nueva del panel entra sin componente nuevo.
+- Música por anuncio: no recortar por duración; camas de 24 s y fade en `SoundDesign`.
+- `remotion compositions --log=error` calla también el listado. → sin `--log` en el build.
+- El slug se deriva del id de la composición: así el build no necesita leer TS desde Node.
+- Highlight sobre una captura con scroll se corre con el scroll; si la idea es un campo (precio
+  en pesos, botón de copiar link), la escena va sin scroll.
+- El lint prohíbe `cost` en `src/`, y con eso la palabra "costo" en cualquier título.
+
 ## Pendientes conocidos
-- Escucha humana de la música (UNVERIFIED al cierre de v10).
+- Escucha humana de la música y de los tres anuncios nuevos (UNVERIFIED al cierre de 2026-09-04).
 - Fotos generadas: sirven para el demo, reemplazar por stock real de un cliente cuando exista.
 - Probar el master subido a Instagram en un teléfono chico con audio.

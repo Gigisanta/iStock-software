@@ -36,7 +36,8 @@ hasta que Gio la apruebe.
 
 ## Recorte a 18 s
 ```
-ffmpeg -y -i alt-1.wav -af "atrim=0:18,asetpts=N/SR/TB,afade=t=out:st=16.6:d=1.4" -ar 48000 -ac 2 public/v10/music.wav
+# Desde 2026-09-04 las tomas se guardan enteras (24 s) como camas y SoundDesign hace el fade:
+ffmpeg -y -i alt-0.wav -ar 48000 -ac 2 public/music/bright.wav   # alt-1 → night.wav, alt-2 → warm.wav
 ```
 
 ## Lo aprendido

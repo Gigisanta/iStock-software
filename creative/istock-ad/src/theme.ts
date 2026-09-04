@@ -2,7 +2,6 @@ export const VIDEO = {
   width: 1080,
   height: 1920,
   fps: 30,
-  durationInFrames: 540,
 } as const;
 
 // Meta Reels review rectangle: overlay text, logo and CTA stay inside.
@@ -49,16 +48,6 @@ export const PHONE = {
   bezel: 22,
   screenRadius: 84,
   statusHeight: 50,
-} as const;
-
-// Scene boundaries in frames (30 fps).
-export const BEATS = {
-  hookEnd: 84,
-  uploadEnd: 147,
-  storefrontEnd: 246,
-  detailEnd: 348,
-  whatsappEnd: 456,
-  end: 540,
 } as const;
 
 export const PRODUCT = {

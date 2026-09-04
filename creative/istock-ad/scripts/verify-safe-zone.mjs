@@ -2,7 +2,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-// Declared overlay boxes for v10 (text, logo, CTA). The device sits below the captions and is fully visible.
+// Declared overlay boxes shared by every ad spec (text, logo, CTA). The device sits below the captions and is fully visible.
 const projectRoot = fileURLToPath(new URL('../', import.meta.url));
 const outputArgument = process.argv.find((argument) => argument.startsWith('--output='));
 const output = outputArgument ? outputArgument.slice('--output='.length) : 'out/v10-safe-zone-report.json';
@@ -12,6 +12,7 @@ const safeZone = { left: 65, top: 269, right: 1015, bottom: 1248 };
 const keyLayout = [
   { id: 'hook-bubbles', kind: 'text', x: 180, y: 309, width: 720, height: 708 },
   { id: 'hook-headline', kind: 'text', x: 65, y: 1087, width: 950, height: 160 },
+  { id: 'headline-hook-block', kind: 'text', x: 65, y: 595, width: 950, height: 330 },
   { id: 'caption-upload', kind: 'text', x: 65, y: 299, width: 950, height: 200 },
   { id: 'caption-storefront', kind: 'text', x: 65, y: 299, width: 950, height: 200 },
   { id: 'storefront-host-pill', kind: 'text', x: 330, y: 519, width: 420, height: 60 },
@@ -28,9 +29,9 @@ const violations = keyLayout.filter((box) => (
 ));
 
 const report = {
-  version: 'v10',
+  version: 'ads',
   status: violations.length === 0 ? 'pass' : 'fail',
-  canvas: { width: 1080, height: 1920, fps: 30, durationInFrames: 540 },
+  canvas: { width: 1080, height: 1920, fps: 30 },
   safeZone,
   keyLayout,
   violations,

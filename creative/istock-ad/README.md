@@ -1,8 +1,8 @@
-# iStock reel v10
+# iStock ads
 
-Anuncio vertical de iStock (SaaS de MaatWork para resellers de celulares) para Instagram Reels y Meta Ads. Composición `IstockReelV10` en Remotion: 1080x1920, 30 fps, 18 s (540 frames). Brief y guion: `BRIEF-v10.md`.
+Anuncios verticales de iStock (SaaS de MaatWork para resellers de celulares) para Instagram Reels y Meta Ads, en Remotion: 1080x1920, 30 fps. Cada anuncio es un spec de escenas en `src/ads/index.ts` (`ADS.md` explica el sistema); hoy hay cuatro: `reel-v10` (18 s), `pesos` (12 s), `quince` (11 s) y `estados` (14.6 s). Brief y guion del primero: `BRIEF-v10.md`.
 
-## Idea
+## Idea (reel-v10)
 
 Seis beats, un teléfono, la app real:
 
@@ -25,7 +25,7 @@ Seis beats, un teléfono, la app real:
 
 - `public/v10/ui/*.png`: capturas 390x844 a DPR 3 del panel y la vidriera con fotos inyectadas.
 - `public/v10/photos/*`: fotos de equipos generadas (Higgsfield `nano_banana_pro`), sólo para el demo.
-- `public/v10/music.wav`: instrumental generado localmente con ACE-Step 1.5 (Apache 2.0, backend MLX). Prompt: `bright indie electronic instrumental, 120 bpm, punchy clap, warm plucky synth arpeggio, deep clean bass, uplifting and modern, tech product commercial, minimal intro for 2 s, full groove from 3 s, energetic final chorus from 12 s`, recortado a 18 s con fade final.
+- `public/music/{night,bright,warm}.wav`: tres tomas instrumentales de 24 s generadas localmente con ACE-Step 1.5 (Apache 2.0, backend MLX). Prompt: `bright indie electronic instrumental, 120 bpm, punchy clap, warm plucky synth arpeggio, deep clean bass, uplifting and modern, tech product commercial, minimal intro for 2 s, full groove from 3 s, energetic final chorus from 12 s`. `SoundDesign` les hace el fade según la duración del anuncio.
 - `public/sfx/*.wav`: efectos sintetizados propios.
 - `public/istock-mark.svg`: marca.
 
@@ -35,10 +35,11 @@ Seis beats, un teléfono, la app real:
 pnpm capture      # requiere apps/web en :3101 con el tenant demo seedeado
 pnpm typecheck && pnpm lint && pnpm test
 pnpm safe-zone
-pnpm render && pnpm finalize && pnpm still
+pnpm compositions            # lista los ids y duraciones
+pnpm build [IstockPesos ...] # render + master + portada + copia a publish/<slug>/
 ```
 
-Salida final: `out/istock-reel-v10.mp4` (H.264 High, yuv420p, BT.709, AAC 192k 48 kHz, loudnorm I=-17 TP=-1.5) y `out/istock-reel-v10-cover.png`. Lo publicable se copia a `publish/reel-v10/`.
+Salida por anuncio: `out/istock-<slug>.mp4` (H.264 High, yuv420p, BT.709, AAC 192k 48 kHz, loudnorm I=-17 TP=-1.5) y `out/istock-<slug>-cover.png`, copiados a `publish/<slug>/` junto al caption.
 
 ## Herramientas locales
 

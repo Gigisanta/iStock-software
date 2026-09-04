@@ -2,16 +2,14 @@ import type { CSSProperties } from 'react';
 import { Caption } from '../components/Caption';
 import { Phone } from '../components/Phone';
 import { Screenshot } from '../components/Screenshot';
-import { BEATS, COLORS, PRODUCT, TYPE } from '../theme';
+import type { TimedScene } from '../ads/spec';
+import { COLORS, PRODUCT, TYPE } from '../theme';
 import { ease, pop } from '../motion';
 
-type WhatsAppProps = { frame: number };
+type WhatsAppProps = { frame: number; scene: TimedScene & { kind: 'whatsapp' } };
 
-export const WA = {
-  textAt: BEATS.detailEnd + 18,
-  sendAt: BEATS.detailEnd + 58,
-  bubbleAt: BEATS.detailEnd + 62,
-} as const;
+// Frame offsets from the scene start: message appears, send is tapped, bubble lands.
+export const WA_OFFSETS = { text: 18, send: 58, bubble: 62 } as const;
 
 const KEY_ROWS = ['QWERTYUIOP', 'ASDFGHJKL', 'ZXCVBNM'];
 
@@ -37,19 +35,22 @@ function Keyboard() {
 }
 
 // A WhatsApp-style chat, drawn by hand: wa.me opens with the product message already written.
-export function WhatsApp({ frame }: WhatsAppProps) {
-  const start = BEATS.detailEnd;
-  const end = BEATS.whatsappEnd;
-  const slide = ease(frame, start, start + 16);
+export function WhatsApp({ frame, scene }: WhatsAppProps) {
+  const { start, end, prev } = scene;
+  const rise = prev ? 1 : ease(frame, start - 2, start + 18);
+  const slide = prev ? ease(frame, start, start + 16) : 1;
   const previousX = -390 * slide;
-  const text = pop(frame, WA.textAt, { damping: 15, stiffness: 180 });
-  const sent = frame >= WA.bubbleAt;
-  const bubble = pop(frame, WA.bubbleAt, { damping: 14, stiffness: 170 });
-  const sendTap = pop(frame, WA.sendAt, { damping: 12, stiffness: 240 });
-  const sendTapLife = 1 - ease(frame, WA.sendAt + 5, WA.sendAt + 10);
+  const textAt = start + WA_OFFSETS.text;
+  const sendAt = start + WA_OFFSETS.send;
+  const bubbleAt = start + WA_OFFSETS.bubble;
+  const text = pop(frame, textAt, { damping: 15, stiffness: 180 });
+  const sent = frame >= bubbleAt;
+  const bubble = pop(frame, bubbleAt, { damping: 14, stiffness: 170 });
+  const sendTap = pop(frame, sendAt, { damping: 12, stiffness: 240 });
+  const sendTapLife = 1 - ease(frame, sendAt + 5, sendAt + 10);
   const screen: CSSProperties = {
     position: 'absolute',
-    left: 390 + previousX,
+    left: prev ? 390 + previousX : 0,
     top: 0,
     width: 390,
     height: 844,
@@ -60,9 +61,9 @@ export function WhatsApp({ frame }: WhatsAppProps) {
   };
   return (
     <>
-      <Caption frame={frame} start={start + 2} end={end + 2} kicker="4" title="Te escriben con el equipo ya escrito." />
-      <Phone>
-        <Screenshot file="detail.png" x={previousX} opacity={1 - slide} scroll={760} />
+      <Caption frame={frame} start={start + 2} end={end + 2} kicker={scene.kicker} title={scene.title} />
+      <Phone offsetY={(1 - rise) * 240}>
+        {prev ? <Screenshot file={prev.file} x={previousX} opacity={1 - slide} scroll={prev.scroll} /> : null}
         <div style={screen}>
           <div style={{ position: 'absolute', left: 0, top: 0, width: 390, height: 108, background: COLORS.waHeader, borderBottom: '1px solid #d9d9d9' }}>
             <div style={{ position: 'absolute', left: 18, top: 18, fontSize: 16, fontWeight: 600 }}>23:52</div>

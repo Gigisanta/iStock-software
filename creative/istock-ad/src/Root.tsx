@@ -1,16 +1,24 @@
 import { Composition } from 'remotion';
-import { Reel } from './Reel';
+import { Ad } from './Ad';
+import { ADS } from './ads';
+import { timeline } from './ads/spec';
 import { VIDEO } from './theme';
 
 export function RemotionRoot() {
   return (
-    <Composition
-      id="IstockReelV10"
-      component={Reel}
-      durationInFrames={VIDEO.durationInFrames}
-      fps={VIDEO.fps}
-      width={VIDEO.width}
-      height={VIDEO.height}
-    />
+    <>
+      {ADS.map((spec) => (
+        <Composition
+          key={spec.id}
+          id={spec.id}
+          component={Ad}
+          defaultProps={{ spec }}
+          durationInFrames={timeline(spec).durationInFrames}
+          fps={VIDEO.fps}
+          width={VIDEO.width}
+          height={VIDEO.height}
+        />
+      ))}
+    </>
   );
 }

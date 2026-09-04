@@ -6,8 +6,9 @@ description: Sistema de producción de video ads verticales de iStock (Reels + M
 # video-ads
 
 Sistema con el que se produjo `creative/istock-ad` v10 (2026-09-04), el primer reel aprobado
-después de nueve versiones rechazadas. Lo que está acá es el **método**; el estado vivo se lee del
-repo (`creative/istock-ad/README.md`, `BRIEF-v<N>.md`, `src/theme.ts`).
+después de nueve versiones rechazadas, y con el que ese mismo día se generaron tres anuncios más
+(`pesos`, `quince`, `estados`) como **specs de escenas**. Lo que está acá es el **método**; el
+estado vivo se lee del repo (`creative/istock-ad/README.md`, `ADS.md`, `src/ads/index.ts`).
 
 ## Principio rector
 El producto es la prueba. Un video de iStock muestra **la app real capturada**, con un solo
@@ -24,16 +25,18 @@ plano: `references/lessons.md`.
    `fullPage`, fotos inyectadas por `alt`, marca del tenant demo reescrita en el DOM, IMEI y
    costo ocultos, geometría de campos a `form-geom.json`. Scroll y taps se animan en Remotion,
    nunca se graban en video.
-4. **Música**: ACE-Step 1.5 local (Apache 2.0, MLX, `127.0.0.1:8001`), 3 tomas por prompt,
-   24 s → recorte 18 s con fade: `references/music-acestep.md`.
-5. **Composición Remotion**: `src/theme.ts` (VIDEO, SAFE_ZONE, COLORS, PHONE, BEATS, PRODUCT) es
-   la única fuente de constantes; escenas en `src/scenes/`, primitivas en `src/components/`,
-   audio en `SoundDesign.tsx` con cues por frame y ducking de música.
-6. **Render + master**: `pnpm render` (crf 17) → `pnpm finalize` (ffmpeg: H.264 High yuv420p
-   BT.709, loudnorm I=-17 TP=-1.5 LRA=7, AAC 192k 48 kHz, faststart) → `pnpm still` (portada).
+4. **Música**: ACE-Step 1.5 local (Apache 2.0, MLX, `127.0.0.1:8001`), 3 tomas por prompt de
+   24 s → camas `public/music/{night,bright,warm}.wav`; el fade lo hace `SoundDesign` según la
+   duración del anuncio: `references/music-acestep.md`.
+5. **Composición Remotion**: un anuncio es un `AdSpec` en `src/ads/index.ts` (escenas
+   `chat-hook · headline-hook · upload · screen · whatsapp · close`, cada una con sus frames);
+   `timeline()` y `cuesFor()` derivan tiempos y SFX, `Ad.tsx` lo construye. `src/theme.ts`
+   (VIDEO, SAFE_ZONE, COLORS, PHONE, PRODUCT) es la única fuente de constantes.
+6. **Render + master**: `pnpm build [<id>]` = render crf 17 → ffmpeg (H.264 High yuv420p
+   BT.709, loudnorm I=-17 TP=-1.5 LRA=7, AAC 192k 48 kHz, faststart) → portada → `publish/<slug>/`.
 7. **QA**: `pnpm typecheck && pnpm lint && pnpm test && pnpm safe-zone`, contact sheet de 30
    frames mirado con los ojos, `ffprobe` + `loudnorm print_format=json` del master.
-8. **Publicación**: `publish/reel-v<N>/01-*.mp4 · 02-*-cover.png · 03-caption.txt`. Commit con
+8. **Publicación**: `publish/<slug>/01-*.mp4 · 02-*-cover.png · 03-caption.txt`. Commit con
    paths nombrados, nunca `out/`, `tools/`, ni PNG masters.
 
 ## Reglas duras (las chequea `scripts/lint.mjs` y `scripts/smoke-test.mjs`)
@@ -43,16 +46,17 @@ plano: `references/lessons.md`.
 - Sin gradientes ni `backdrop-filter`: paleta plana, papel claro y tinta oscura.
 - Texto, logo y CTA dentro de la safe zone de Reels `x 65..1015, y 269..1248`.
 - Texto WhatsApp exacto del producto (mapa `usado A`), ARS con `ceil_1000` como lo muestra la ficha.
-- 18 s, un solo CTA: `istock.maat.work` + 14 días gratis. Copy rioplatense, voseo.
+- 11–18 s, un solo CTA: `istock.maat.work` + 14 días gratis. Copy rioplatense, voseo.
 
 ## Cómo iterar (la próxima versión)
-1. Copiá `BRIEF-v<N>.md` → `BRIEF-v<N+1>.md` y escribí primero qué cambia y por qué.
-2. Tocá una capa por vez, en este orden de costo creciente: copy/beats (`theme.ts`) →
+1. Anuncio nuevo con las escenas existentes: un spec en `src/ads/index.ts` + caption; nada más.
+   Escena nueva: primero el brief (`BRIEF-v<N>.md`, qué cambia y por qué), después el componente.
+2. Tocá una capa por vez, en este orden de costo creciente: copy/frames (el spec) →
    composición → capturas (`pnpm capture`, requiere dev server) → fotos (créditos) → música.
 3. Cada cambio de timing se verifica con un contact sheet (`references/pipeline.md` §QA), no de
    memoria. Dos renders seguidos que no mejoran → parar y re-plantear el brief.
-4. Variantes para ads (A/B): mismo `src/`, distinto `PRODUCT`/`HOOK_MESSAGES`/cierre; una
-   `Composition` por variante en `src/Root.tsx`, mismo pipeline.
+4. Variantes para ads (A/B): otro spec con distinto gancho/cierre; `Root.tsx` registra una
+   `Composition` por spec y `pnpm build` las renderiza todas.
 5. Lo que se descubre va a `references/lessons.md` con fecha, no a la memoria de nadie.
 
 ## Herramientas y sus límites (medidos)

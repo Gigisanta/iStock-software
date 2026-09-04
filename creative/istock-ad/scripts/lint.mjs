@@ -36,7 +36,7 @@ for (const file of sourceFiles) {
 }
 
 // Every capture the composition references must exist and be a real image.
-const captures = ['storefront.png', 'detail.png', 'form-0.png', 'form-1.png', 'form-2.png', 'form-3.png', 'form-4.png'];
+const captures = ['storefront.png', 'detail.png', 'panel-home.png', 'form-0.png', 'form-1.png', 'form-2.png', 'form-3.png', 'form-4.png'];
 for (const capture of captures) {
   try {
     const info = await stat(join(root, 'public/v10/ui', capture));
