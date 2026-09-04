@@ -4,7 +4,7 @@
 **Para quién:** LEAD y quienes destraban credenciales, cuentas y despliegue.
 **Cuándo se actualiza:** después de cada preflight, gate de aceptación o cambio de proveedor.
 **Fecha:** 2026-09-04
-**Estado:** implementación local de Inngest presente y aceptada; cuenta, claves, sincronización, despliegue del HEAD y ejecución real pendientes de verificación
+**Estado:** deployment de Production `istock-5k4ac7kij-giolivos-projects.vercel.app` en estado Ready; landing, plan Base y health públicos pasan; Inngest expone la ruta pero devuelve 500 por claves faltantes; Vercel Hobby, R2, sincronización/ejecución de Inngest y B3 siguen bloqueando el cobro
 **Workflow:** diagnóstico profundo → correcciones de catálogo, vidriera, UX y billing → gates → preflight
 
 ## Resultado ejecutivo
@@ -24,16 +24,17 @@ build y la suite E2E. La última corrida completa fue **109/109 tests, 19/19 spe
 los contratos S11 de roles y S12 de onboarding cobrable (cuenta nueva → negocio → primer equipo
 publicado → link público), además del acceso directo a suscripción sin sesión y la propagación del
 nombre y precio publicado del panel a la vidriera pública. La duración configurable de reserva se
-validó también en una corrida enfocada de S12. El preflight real todavía termina en **FAIL**: el
-equipo de Vercel sigue en Hobby, faltan `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`,
-`INNGEST_SIGNING_KEY` e `INNGEST_EVENT_KEY`, y el alias de producción todavía sirve un build
-anterior. `vercel.json` ya no declara Vercel Cron: la agenda local está en Inngest y el wiring
-estático pasa S6 V1–V10. Eso prueba el código local, no la cuenta, la sincronización, las claves,
-el despliegue del HEAD ni una ejecución firmada real. Mercado Pago ya está presente en Production,
-pero el checkout corregido no está live y el cobro real B3 todavía no fue verificado. El wildcard
-`*.maat.work` tiene DNS, delegación ACME y certificado administrado activos; el bloqueo es de plan,
-credenciales, sincronización y despliegue, no de resolución del link. No corresponde afirmar que hoy
-se puede cobrar.
+validó también en una corrida enfocada de S12. Después del push `b23fd47`, Vercel produjo
+automáticamente el deployment de Production `istock-5k4ac7kij-giolivos-projects.vercel.app`, en
+estado **Ready**. La landing pública ya pasa el control monocromático, `/billing/suscribirse?plan=base`
+conserva el plan y `/api/health` devuelve 200. El preflight todavía termina en **FAIL**: el equipo de
+Vercel sigue en Hobby, faltan `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `INNGEST_SIGNING_KEY` e
+`INNGEST_EVENT_KEY`, y `/api/inngest` existe pero responde 500 sin esas claves. `vercel.json` ya no
+declara Vercel Cron: la agenda local está en Inngest y el wiring estático pasa S6 V1–V10. Eso prueba
+el código y las sondas públicas indicadas, no la sincronización de la cuenta, las claves R2/Inngest,
+una ejecución firmada real ni B3 con Mercado Pago. El wildcard `*.maat.work` tiene DNS, delegación
+ACME y certificado administrado activos; el bloqueo es de plan, credenciales, sincronización y
+ejecución real. No corresponde afirmar que hoy se puede cobrar.
 
 ## Última evidencia ejecutada
 
@@ -85,9 +86,14 @@ se puede cobrar.
 - `bash scripts/guard-artifacts.sh --harness`: PASS; 14 agents, 10 skills, 4 commands y 12 docs.
 - `git diff --check`: PASS.
 - `pnpm audit --audit-level=high`: PASS; `No known vulnerabilities found`.
-- `bash scripts/preflight-vercel-production.sh`: **FAIL** por Hobby, cuatro claves ausentes, la
-  build pública vieja y el endpoint público de Inngest viejo; el detalle está abajo. Los PASS de
-  DNS y de historial de deployment son históricos y no prueban que el HEAD esté desplegado.
+- `bash scripts/preflight-vercel-production.sh`: **FAIL** por Hobby, cuatro claves ausentes y el
+  endpoint público de Inngest en 500 sin firma. Pasan los comandos y la sesión, el deployment de
+  Production, `vercel.json` sin Cron, la integración estática de Inngest, DNS apex/wildcard, la
+  landing monocromática y la conservación de `plan=base`; el detalle está abajo.
+- Tras `b23fd47`, el deployment de Production `istock-5k4ac7kij-giolivos-projects.vercel.app` quedó
+  **Ready**. Las sondas públicas actuales devuelven 200 en `/api/health`, conservan `plan=base` al
+  pedir `/billing/suscribirse?plan=base` y alcanzan `/api/inngest`, cuya respuesta 500 se explica por
+  las claves `INNGEST_SIGNING_KEY` e `INNGEST_EVENT_KEY` ausentes.
 
 ## Hallazgos y correcciones
 
@@ -143,21 +149,21 @@ se puede cobrar.
   no cruzan el DTO público.
 - La invalidación de stock usa los tags del tenant, y la E2E verifica lectura cacheada, publicación,
   reserva, liberación y WhatsApp.
-- El entorno público inspeccionado todavía sirve una versión anterior. `istock.maat.work` responde,
-  pero no prueba el código local; `/demo` responde con redirección a `demo.maat.work`, cuyo DNS,
-  certificado y HTTPS 200 están activos. La resolución del wildcard no es el bloqueo: el link que se
-  pega en un estado todavía apunta a una build pública anterior.
-- La diferencia visual también quedó medida: el HTML/CSS entregado por el deployment público vigente
-  todavía contiene 16 referencias a `emerald` y el H1 anterior, mientras que el build local actual
-  no contiene utilidades verdes y sirve la UI monocromática en claro y oscuro.
+- El deployment público de Production `istock-5k4ac7kij-giolivos-projects.vercel.app` quedó Ready y
+  `istock.maat.work` responde con la landing actual; `/demo` responde con redirección a
+  `demo.maat.work`, cuyo DNS, certificado y HTTPS 200 están activos. La resolución del wildcard no
+  es el bloqueo.
+- La inspección anterior había medido 16 referencias a `emerald` y el H1 anterior en la build pública
+  vieja. Después de `b23fd47`, la landing pública pasa el control monocromático: conserva el H1 actual
+  y no entrega esas utilidades verdes.
 - El dominio wildcard quedó verificado en Vercel con certificado `*.maat.work` y renovación automática.
   Cloudflare conserva sus nameservers y sus registros existentes; sólo se agregaron los dos NS de
   `_acme-challenge` y el CNAME wildcard según la guía de Vercel. Un smoke HTTPS con `demo.maat.work`
   devuelve `HTTP/2 200` usando ambos edges de Vercel. La resolución del resolver local puede tardar
   por caché, pero los nameservers autoritativos ya entregan el CNAME correcto.
 - El preflight ahora también falla explícitamente si el deployment público no contiene el H1
-  monocromático actual o si el enlace anónimo de Base pierde `plan=base`; ambos controles fallaron
-  contra la versión pública inspeccionada el 2026-09-04.
+  monocromático actual o si el enlace anónimo de Base pierde `plan=base`; ambos controles pasan en el
+  deployment de Production inspeccionado el 2026-09-04.
 - En desarrollo, la base local de media ahora es `/_media` relativa al host: las fotos no quedan
   atadas al puerto `3000` cuando la app se prueba en `3101` u otro puerto.
 - El seed técnico del tenant `demo` ya no deja mappings de fotos huérfanos: `pnpm db:seed` hidrata
@@ -215,8 +221,9 @@ se puede cobrar.
   y [obtener pago](https://www.mercadopago.com.ar/developers/es/reference/online-payments/subscriptions/get-payment/get).
 - `MP_ACCESS_TOKEN` y `MP_WEBHOOK_SECRET` ya existen en las variables Production de Vercel sin
   exponer sus valores. La corrección que agrega `notification_url` al alta de la suscripción fue
-  introducida en `c16b087`, incluido en el HEAD actual; sigue pendiente de que el HEAD llegue al
-  deployment público. El fallo observado en el billing anónimo pertenece a la build pública vieja.
+  introducida en `c16b087`, incluido en el HEAD que produjo el deployment Ready. La sonda pública
+  actual confirma la conservación de `plan=base`; los cuatro escenarios de B3 con Mercado Pago real
+  siguen sin ejecutarse.
 
 ### Scheduler de reservas
 
@@ -225,10 +232,13 @@ se puede cobrar.
 - La ruta local `/api/inngest` está cableada con `serve`, expone `GET`/`POST`/`PUT` y fija
   `maxDuration = 300`. La aceptación S6 V1–V10 pasó con `E2E_PORT=3160`, incluida la probe de
   reachability a través de `proxy.ts`; es PASS de código local.
-- El preflight encontró el endpoint público de Inngest en `404` y faltan las claves de Production.
-  Eso indica que la build pública vigente es vieja; no prueba que el wiring del HEAD esté sincronizado
-  con la cuenta Inngest. La sincronización, el endpoint del HEAD, las claves y una ejecución programada
-  firmada son `UNVERIFIED`.
+- El deployment de Production actual expone `/api/inngest`, pero la request sin firma responde `500`
+  porque faltan `INNGEST_SIGNING_KEY` e `INNGEST_EVENT_KEY`. La ruta existe y el código local está
+  cableado; la sincronización con la cuenta Inngest y una ejecución programada firmada siguen siendo
+  `UNVERIFIED`. La evidencia previa de `404` pertenece a la build anterior y no describe este
+  deployment.
+- La sonda pública del deployment actual devuelve `200` en `/api/health`; sólo acredita la señal de
+  vida del deploy, no la configuración de R2, Inngest ni Mercado Pago.
 
 ### Configuración operativa
 
@@ -256,17 +266,19 @@ se puede cobrar.
 
 | Control | Resultado | Consecuencia |
 |---|---|---|
+| Comandos del preflight | PASS | `jq`, `vercel`, `dig` y `curl` disponibles |
 | Sesión Vercel | PASS | usuario esperado disponible |
 | Plan del equipo | **FAIL: Hobby** | iStock comercial requiere Pro |
-| Variables Production | **FAIL: faltan `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `INNGEST_SIGNING_KEY` e `INNGEST_EVENT_KEY`; MP presente** | fotos reales y callback firmado de Inngest siguen cerrados; el checkout MP corregido aún no está live |
+| Variables Production | **FAIL: faltan `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `INNGEST_SIGNING_KEY` e `INNGEST_EVENT_KEY`; MP presente** | fotos reales y callback firmado de Inngest siguen cerrados; B3 real de Mercado Pago sigue sin verificar |
 | `vercel.json` sin crons | PASS | Vercel no agenda reservas; el schedule vive en Inngest |
 | Integración Inngest estática | PASS | el código local declara route, `serve`, timeout y `*/5`; no verifica cuenta ni sincronización |
 | `istock.maat.work` | PASS | el apex llega a Vercel |
 | `demo.maat.work` / wildcard | **PASS: CNAME, delegación ACME, certificado y HTTPS 200** | los links wildcard ya llegan a Vercel; falta comprobar un tenant real luego del deploy |
-| Deployment histórico | PASS | existe historial, pero no implica que el HEAD esté desplegado ni sincronizado |
-| Landing pública actual | **FAIL: sirve H1 y utilidades verdes de una versión anterior** | hay que desplegar el HEAD monocromático |
-| Suscripción anónima Base | **FAIL: el deployment no conserva `plan=base` al derivar a login** | validar el flujo en el deployment actualizado |
-| Endpoint público de Inngest | **FAIL: respondió 404 en el deployment vigente** | sincronización, deploy del HEAD y ejecución firmada real quedan sin verificar |
+| Deployment Production | **PASS: `istock-5k4ac7kij-giolivos-projects.vercel.app` Ready, generado automáticamente tras `b23fd47`** | el deployment actual está disponible; no sustituye B3 ni la verificación real de R2/Inngest |
+| Landing pública actual | PASS | sirve el H1 actual y pasa el control monocromático |
+| Suscripción anónima Base | PASS | conserva `plan=base` al derivar a login |
+| `/api/health` | PASS: 200 | la señal de vida pública responde; no acredita integraciones externas |
+| Endpoint público de Inngest | **FAIL: existe pero respondió 500 sin firma por claves `INNGEST_SIGNING_KEY` e `INNGEST_EVENT_KEY` ausentes** | sincronización y ejecución firmada real quedan sin verificar; todavía no se alcanza el 401 esperado |
 
 El comando es sólo lectura y no imprime secretos: `bash scripts/preflight-vercel-production.sh`.
 
@@ -277,8 +289,9 @@ El comando es sólo lectura y no imprime secretos: `bash scripts/preflight-verce
 2. Crear las credenciales S3 de alcance exclusivo para `istock-media` y `istock-originals` y cargarlas
    en Production. R2 ya tiene `img.maat.work` activo con SSL y `r2.dev` deshabilitado en ambos buckets.
 3. Cargar `INNGEST_SIGNING_KEY` e `INNGEST_EVENT_KEY` en Production y sincronizar la función con la
-   cuenta Inngest. Luego verificar el endpoint público del HEAD (401 sin firma) y una ejecución
-   programada firmada; hasta entonces son `UNVERIFIED`.
+   cuenta Inngest. La ruta pública actual existe pero responde 500 sin esas claves; luego verificar
+   que falle con 401 sin firma y una ejecución programada firmada. Hasta entonces, sincronización y
+   ejecución son `UNVERIFIED`.
 4. Configurar en Production el proveedor de autenticación/Neon, R2 privado para originales y R2/CDN
    para variantes públicas, junto con `MEDIA_DRIVER`, las credenciales S3 server-only y
    `NEXT_PUBLIC_MEDIA_BASE_URL`. El preflight confirma la presencia de variables, no la validez de
@@ -291,9 +304,9 @@ El comando es sólo lectura y no imprime secretos: `bash scripts/preflight-verce
    el mismo webhook, simular rechazo/reintentos y confirmar que el tenant queda habilitado o
    degradado según el estado real. La prueba debe verificar también el medio elegido; la presencia
    de un valor en el enum de la API no prueba que pueda adherirse en esta cuenta.
-7. Desplegar el HEAD por el pipeline normal, repetir el preflight, comprobar landing, billing anónimo
-   y endpoint Inngest sobre el deployment nuevo, y ejecutar la E2E con dominio real. No activar
-   cobros en Production antes de ese paso.
+7. Después de destrabar el plan y las credenciales, repetir el preflight sobre el deployment Ready,
+   comprobar el endpoint Inngest con firma y ejecutar la E2E con dominio real. No activar cobros en
+   Production antes de ese paso y de B3.
 
 ## Riesgos que permanecen declarados
 
@@ -345,12 +358,12 @@ claves, deployment ni ejecución real. El preflight debe repetirse después de d
   hasta 120 escrituras de objetos (master privado + thumb/card/detail por foto), con deduplicación
   por contenido del driver. No se ejecuta en el hot path de visitantes.
 
-**UNVERIFIED:** plan comercial Vercel y uso de Production, sincronización de la cuenta Inngest,
-claves `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `INNGEST_SIGNING_KEY` e `INNGEST_EVENT_KEY`,
-deployment del HEAD, endpoint del HEAD y ejecución programada firmada, cuenta real de Mercado Pago,
-medios de pago y trial en checkout, webhook público y reintentos reales, validez de credenciales
-R2/Neon/Auth/observabilidad en Production, asociación del wildcard a un tenant real después del deploy.
+**UNVERIFIED:** sincronización de la cuenta Inngest y ejecución programada firmada, configuración y
+validez de credenciales R2 en Production (faltan `R2_ACCESS_KEY_ID` y `R2_SECRET_ACCESS_KEY`), cuenta
+real de Mercado Pago, medios de pago y trial en checkout, webhook público y reintentos reales,
+validez de credenciales R2/Neon/Auth/observabilidad en Production, asociación del wildcard a un
+tenant real después del deploy.
 
 **BLOCKERS:** Vercel Hobby no cumple el requisito comercial; faltan las credenciales R2 y las dos
-claves de Inngest; el deployment público sirve una build vieja, incluido un endpoint Inngest 404;
-sincronización/deploy del HEAD y prueba B3 humana pendientes. No se declara producción cobrable.
+claves de Inngest; `/api/inngest` existe pero responde 500 sin firma; sincronización/ejecución de
+Inngest y prueba B3 humana siguen pendientes. No se declara producción cobrable.
