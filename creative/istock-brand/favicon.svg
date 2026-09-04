@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" role="img" aria-labelledby="favicon-title">
+  <title id="favicon-title">iStock</title>
+  <style>
+    :root {
+      --istock-paper: #f1f3ee;
+      --istock-accent: #2f8f68;
+    }
+  </style>
+  <rect width="64" height="64" rx="12" fill="var(--istock-paper)"/>
+  <g transform="translate(-3.5 -3.5) scale(.75)" fill="var(--istock-accent)">
+    <rect x="12" y="12" width="72" height="20"/>
+    <rect x="12" y="32" width="20" height="8"/>
+    <rect x="24" y="40" width="60" height="20"/>
+    <rect x="64" y="60" width="20" height="8"/>
+    <rect x="12" y="68" width="60" height="20"/>
+  </g>
+</svg>

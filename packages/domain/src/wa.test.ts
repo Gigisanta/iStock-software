@@ -67,7 +67,7 @@ describe('buildWaMessage — el botón que factura', () => {
    * ══════════════════════════════════════════════════════════════════════════════════════════════
    *
    * El texto viejo era *«... Dice que está reservado, ¿me avisás si se libera?»*. Contra el CTA que
-   * la vidriera fijó en S6 —**«Lo quiero igual — escribir por WhatsApp»**— eso es un botón que
+   * la vidriera fijó en S6 —**«Lo quiero igual por WhatsApp»**— eso es un botón que
    * promete una cosa y un mensaje que manda otra: el visitante aprieta declarando compra y del otro
    * lado llega un pedido de aviso para más adelante, que se archiva.
    *

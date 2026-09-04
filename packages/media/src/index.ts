@@ -15,6 +15,9 @@
 export { uploadListingPhoto } from './upload';
 export type { UploadListingPhotoInput, UploadListingPhotoDeps } from './upload';
 
+export { buildDemoPhotoSource } from './demo-source';
+export type { DemoPhotoSourceOptions } from './demo-source';
+
 export {
   variantUrl,
   variantUrls,

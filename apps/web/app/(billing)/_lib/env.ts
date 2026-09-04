@@ -1,6 +1,5 @@
 import 'server-only';
 import { z } from 'zod';
-import type { PaidPlanTier } from './plans';
 
 /**
  * Borde de entorno de **billing**. `CLAUDE.md` §5: Zod en todos los bordes, y `process.env` es uno.
@@ -42,11 +41,12 @@ const optionalSecret = (min: number, message: string) =>
 const billingEnvSchema = z
   .object({
     NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
+    /** Vercel lo inyecta; permite distinguir un preview sin cobros de Production. */
+    VERCEL_ENV: z.string().trim().optional(),
 
     /**
      * `mock` → cliente de MP en memoria, sin red. `mercadopago` → HTTP real contra
-     * `api.mercadopago.com`, que hoy **no se puede ejercer**: B3 (sandbox + app + secret) es un
-     * blocker humano abierto.
+     * `api.mercadopago.com`.
      */
     BILLING_DRIVER: z.enum(BILLING_DRIVERS).default('mock'),
 
@@ -64,23 +64,23 @@ const billingEnvSchema = z
      */
     MP_WEBHOOK_SECRET: optionalSecret(16, 'MP_WEBHOOK_SECRET parece truncado (mínimo 16 caracteres)'),
 
-    /**
-     * `preapproval_plan_id` por plan pago. **Plan asociado, no suscripción suelta**: editar el
-     * `transaction_amount` del plan propaga a todas las suscripciones vivas, que con inflación en
-     * ARS es la diferencia entre un `PUT` y N. Además `billing_day` sólo existe con plan asociado.
-     */
-    MP_PREAPPROVAL_PLAN_BASE: optionalSecret(1, 'MP_PREAPPROVAL_PLAN_BASE vacío'),
-    MP_PREAPPROVAL_PLAN_NEGOCIO: optionalSecret(1, 'MP_PREAPPROVAL_PLAN_NEGOCIO vacío'),
   })
   .superRefine((env, ctx) => {
+    if (env.VERCEL_ENV === 'production' && env.BILLING_DRIVER !== 'mercadopago') {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['BILLING_DRIVER'],
+        message:
+          'BILLING_DRIVER tiene que ser "mercadopago" en producción (VERCEL_ENV=production). ' +
+          'El driver mock sólo se permite en desarrollo y previews.',
+      });
+    }
     if (env.BILLING_DRIVER !== 'mercadopago') return;
-    // Con el driver real, las cuatro son obligatorias. Un driver `mercadopago` a medio configurar
+    // Con el driver real, las dos son obligatorias. Un driver `mercadopago` a medio configurar
     // es peor que el mock: cobra a medias y activa a medias.
     for (const key of [
       'MP_ACCESS_TOKEN',
       'MP_WEBHOOK_SECRET',
-      'MP_PREAPPROVAL_PLAN_BASE',
-      'MP_PREAPPROVAL_PLAN_NEGOCIO',
     ] as const) {
       if (env[key] === undefined) {
         ctx.addIssue({
@@ -135,8 +135,11 @@ export function mpAccessToken(): string | null {
   return billingEnv().MP_ACCESS_TOKEN ?? null;
 }
 
-/** `preapproval_plan_id` del plan pago, o `null` si B3 todavía no aterrizó. */
-export function mpPreapprovalPlanId(tier: PaidPlanTier): string | null {
-  const env = billingEnv();
-  return (tier === 'base' ? env.MP_PREAPPROVAL_PLAN_BASE : env.MP_PREAPPROVAL_PLAN_NEGOCIO) ?? null;
+/** El CTA sólo se habilita cuando el driver real puede autenticar alta y webhook. */
+export function billingReady(): boolean {
+  try {
+    return billingDriver() === 'mercadopago' && mpAccessToken() !== null && mpWebhookSecret() !== null;
+  } catch {
+    return false;
+  }
 }

@@ -64,6 +64,9 @@ export async function generateStaticParams(): Promise<Array<{ slug: string }>> {
   return [{ slug: PRERENDER_SEED_SLUG }];
 }
 
+/** El formulario público entrega HTML completo; la navegación es por `<a>` y POST/Redirect/GET. */
+export const instant = false;
+
 interface TradeinPageProps {
   readonly params: Promise<{ readonly slug: string }>;
 }
@@ -92,7 +95,7 @@ export async function generateMetadata({ params }: TradeinPageProps): Promise<Me
   cacheLife('max');
 
   return {
-    title: { absolute: `Canje — ${tenant.name}` },
+    title: { absolute: `Canje - ${tenant.name}` },
     description: `Entregá tu equipo usado como parte de pago en ${tenant.name}.`,
     robots: { index: false, follow: true },
   };
@@ -123,10 +126,10 @@ export default async function TradeinPage({ params }: TradeinPageProps) {
     <main data-storefront="tradein">
       <meta name="robots" content="noindex, follow" />
 
-      <p className="text-xs font-medium uppercase tracking-wide text-neutral-500">
+      <p className="storefront-kicker">
         {tenant.name}
       </p>
-      <h1 className="mt-1 text-2xl font-semibold leading-tight sm:text-3xl">
+      <h1>
         Entregá tu equipo en parte de pago
       </h1>
 

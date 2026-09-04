@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { FeatureShowcase } from './_ui/feature-showcase';
 
 /**
  * Home de marketing.
@@ -24,7 +25,7 @@ const STEPS = [
   {
     title: 'Tenés tu vidriera',
     body:
-      'Queda en tunegocio.maat.work. La pegás en un estado de Instagram o en tu bio y listo. No ' +
+      'Queda en tu-negocio.maat.work. La pegás en un estado de Instagram o en tu bio y listo. No ' +
       'hay carrito, no hay checkout, no hay cuenta que el cliente tenga que crearse.',
   },
   {
@@ -55,77 +56,108 @@ const NOT_INCLUDED = [
   ['Landing a medida', 'La vidriera es la misma plantilla para todos. Un diseño propio se cotiza aparte.'],
 ] as const;
 
+const PROOF_POINTS = [
+  '14 días sin tarjeta',
+  'Modelo, GB y color elegidos',
+  'Vidriera en .maat.work',
+  'WhatsApp con contexto',
+] as const;
+
 export default function MarketingHomePage() {
   return (
     <>
-      <section className="mx-auto w-full max-w-5xl px-4 py-14 sm:py-20">
-        <p className="text-sm font-semibold uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
-          Para revendedores de celulares
-        </p>
-        <h1 className="mt-3 text-3xl font-bold leading-tight tracking-tight sm:text-5xl">
-          Tu stock, con vidriera propia y el WhatsApp ya escrito.
-        </h1>
-        <p className="mt-5 max-w-2xl text-lg text-neutral-600 dark:text-neutral-300">
-          Cargás los equipos una vez y tenés un link para mandar. El que entra ve fotos reales,
-          condición, batería y precio en dólares y en pesos. Cuando te escribe, ya sabe qué quiere.
-        </p>
+      <section className="marketing-hero">
+        <div className="marketing-hero-copy">
+          <p className="marketing-eyebrow">Para revendedores de celulares</p>
+          <h1>Tu stock, listo para vender.</h1>
+          <p className="marketing-lede">
+            Una vidriera simple para mostrar tus equipos y recibir consultas con el WhatsApp ya escrito.
+          </p>
 
-        <div className="mt-8 flex flex-col gap-3 sm:flex-row">
-          <Link
-            href="/ingresar"
-            className="inline-flex items-center justify-center rounded-xl bg-neutral-900 px-6 py-3.5 text-base font-semibold text-white hover:bg-neutral-700 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
-          >
-            Empezar la prueba de 14 días
-          </Link>
-          <Link
-            href="/precios"
-            className="inline-flex items-center justify-center rounded-xl border border-neutral-300 px-6 py-3.5 text-base font-semibold hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-900"
-          >
-            Ver precios
-          </Link>
+          <div className="marketing-actions">
+            <Link href="/ingresar">Probar gratis</Link>
+            <Link href="/precios">Ver precios</Link>
+          </div>
         </div>
 
-        <p className="mt-4 text-sm text-neutral-500 dark:text-neutral-400">
-          Sin tarjeta para probar. Sin instalar nada.
-        </p>
+        <aside
+          className="marketing-hero-side"
+          aria-label="Vista previa real de una vidriera con equipos publicados"
+        >
+          <figure className="marketing-preview">
+            <div className="preview-browserbar" aria-hidden="true">
+              <span className="preview-url">tu-negocio.maat.work</span>
+            </div>
+            <img
+              className="marketing-preview-image"
+              src="/marketing/storefront-preview.png"
+              alt="Tres equipos publicados en una vidriera online"
+              width="896"
+              height="390"
+              fetchPriority="high"
+              decoding="async"
+            />
+            <figcaption className="marketing-preview-caption">
+              <span>Vidriera pública</span>
+              <strong>Stock visible. Conversaciones con contexto.</strong>
+            </figcaption>
+          </figure>
+        </aside>
       </section>
 
-      <section className="border-y border-neutral-200 bg-neutral-50 px-4 py-12 dark:border-neutral-800 dark:bg-neutral-900/50">
-        <div className="mx-auto w-full max-w-5xl">
-          <h2 className="text-xl font-bold tracking-tight sm:text-2xl">Cómo funciona</h2>
-          <ol className="mt-6 grid gap-6 sm:grid-cols-3">
-            {STEPS.map((step, index) => (
+      <section className="marketing-proof-rail" aria-label="Lo esencial de iStock">
+        <div className="marketing-proof-track">
+          {[0, 1].map((set) => (
+            <ul
+              key={set}
+              className="marketing-proof-set"
+              aria-hidden={set === 1 ? 'true' : undefined}
+            >
+              {PROOF_POINTS.map((point) => (
+                <li key={point}>
+                  <span className="marketing-proof-mark" aria-hidden="true" />
+                  {point}
+                </li>
+              ))}
+            </ul>
+          ))}
+        </div>
+      </section>
+
+      <FeatureShowcase />
+
+      <section className="marketing-band">
+        <div className="marketing-band-inner">
+          <h2>Cómo funciona</h2>
+          <ol className="marketing-workflow">
+            {STEPS.map((step) => (
               <li key={step.title}>
-                <span className="inline-flex size-8 items-center justify-center rounded-full bg-neutral-900 text-sm font-bold text-white dark:bg-white dark:text-neutral-900">
-                  {index + 1}
-                </span>
-                <h3 className="mt-3 font-semibold">{step.title}</h3>
-                <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-300">{step.body}</p>
+                <div>
+                  <h3>{step.title}</h3>
+                  <span>{step.body}</span>
+                </div>
               </li>
             ))}
           </ol>
         </div>
       </section>
 
-      <section className="mx-auto w-full max-w-5xl px-4 py-12">
-        <h2 className="text-xl font-bold tracking-tight sm:text-2xl">Para quién es</h2>
-        <p className="mt-3 max-w-2xl text-neutral-600 dark:text-neutral-300">
+      <section className="marketing-audience">
+        <h2>Para quién es</h2>
+        <p>
           Para el que mueve entre 20 y 200 equipos, atiende por WhatsApp, toma equipos en canje y
           hoy lleva el stock en una planilla. Si vendés dos celulares por mes, no te hace falta. Si
           tenés una cadena con depósito y facturación integrada, todavía no somos para vos.
         </p>
       </section>
 
-      <section className="mx-auto w-full max-w-5xl px-4 pb-12">
-        <div className="grid gap-8 sm:grid-cols-2">
+      <section className="marketing-scope">
+        <div className="marketing-scope-grid">
           <div>
-            <h2 className="text-xl font-bold tracking-tight">Lo que iStock hace</h2>
-            <ul className="mt-4 space-y-2.5 text-sm text-neutral-700 dark:text-neutral-200">
+            <h2>Lo que iStock hace</h2>
+            <ul>
               {INCLUDED.map((item) => (
-                <li key={item} className="flex gap-2.5">
-                  <span aria-hidden="true" className="select-none font-bold text-emerald-600">
-                    ✓
-                  </span>
+                <li key={item}>
                   <span>{item}</span>
                 </li>
               ))}
@@ -133,15 +165,12 @@ export default function MarketingHomePage() {
           </div>
 
           <div>
-            <h2 className="text-xl font-bold tracking-tight">Lo que iStock no hace</h2>
-            <ul className="mt-4 space-y-2.5 text-sm text-neutral-700 dark:text-neutral-200">
+            <h2>Lo que iStock no hace</h2>
+            <ul>
               {NOT_INCLUDED.map(([title, detail]) => (
-                <li key={title} className="flex gap-2.5">
-                  <span aria-hidden="true" className="select-none font-bold text-neutral-400">
-                    ✕
-                  </span>
+                <li key={title}>
                   <span>
-                    <strong className="font-semibold">{title}.</strong> {detail}
+                    <strong>{title}.</strong> {detail}
                   </span>
                 </li>
               ))}
@@ -150,17 +179,19 @@ export default function MarketingHomePage() {
         </div>
       </section>
 
-      <section className="mx-auto w-full max-w-5xl px-4 pb-16">
-        <div className="rounded-2xl border border-amber-300 bg-amber-50 p-5 text-sm dark:border-amber-800/60 dark:bg-amber-950/30">
-          <h2 className="font-bold">Listo para empezar</h2>
-          <p className="mt-2 text-neutral-700 dark:text-neutral-200">
-            Creás tu cuenta, cargás equipos con fotos y publicás tu vidriera en minutos. El cliente
-            ve la información completa y te escribe por WhatsApp con el mensaje ya armado.
-          </p>
-          <p className="mt-2 text-neutral-700 dark:text-neutral-200">
-            La prueba dura 14 días sin tarjeta. Cuando termina, elegís Base o Negocio y completás el
-            pago de forma segura en Mercado Pago; nunca recibimos datos de tu tarjeta.
-          </p>
+      <section className="marketing-callout">
+        <div className="marketing-callout-inner">
+          <h2>Listo para empezar</h2>
+          <div>
+            <p>
+              Creás tu cuenta, cargás equipos con fotos y publicás tu vidriera en minutos. El cliente
+              ve la información completa y te escribe por WhatsApp con el mensaje ya armado.
+            </p>
+            <p>
+              La prueba dura 14 días sin tarjeta. Cuando termina, elegís Base o Negocio y completás el
+              pago de forma segura en Mercado Pago; nunca recibimos datos de tu tarjeta.
+            </p>
+          </div>
         </div>
       </section>
     </>

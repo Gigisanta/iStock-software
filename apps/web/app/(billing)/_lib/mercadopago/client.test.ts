@@ -36,6 +36,7 @@ describe('mock · devuelve lo que se le sembró, no simula el negocio de MP', ()
     const client = createMockMercadoPagoClient();
     expect(await client.getPreapproval('nope')).toBeNull();
     expect(await client.getAuthorizedPayment('nope')).toBeNull();
+    expect(await client.getPayment('nope')).toBeNull();
   });
 
   it('cuenta las llamadas: es lo que deja medir que el webhook pregunte una vez por evento', async () => {
@@ -52,9 +53,9 @@ describe('mock · devuelve lo que se le sembró, no simula el negocio de MP', ()
     const { preapprovalId, initPoint } = await client.createPreapproval({
       tenantId,
       plan: 'negocio',
-      preapprovalPlanId: 'plan-negocio',
       payerEmail: 'dueño@nortecel.test',
       backUrl: 'https://nortecel.maat.work/app/plan',
+      amountArsCents: 5_300_000,
     });
 
     // El redirect va al init_point de la SUSCRIPCIÓN (`?preapproval_id=`), no al del plan
@@ -84,9 +85,10 @@ describe('driver HTTP · mapeo de campos, con fetch stubeado', () => {
     const spy = stubFetch(200, {
       id: 987654,
       status: 'authorized',
-      external_reference: 'istock:v1:11111111-2222-4333-8444-555555555555:base',
+      external_reference: 123456789,
       preapproval_plan_id: 'plan-base',
       payment_method_id: 'account_money',
+      auto_recurring: { transaction_amount: '19000' },
       next_payment_date: '2026-09-28T14:00:00.000Z',
     });
 
@@ -95,15 +97,17 @@ describe('driver HTTP · mapeo de campos, con fetch stubeado', () => {
     expect(snapshot).toEqual({
       id: '987654',
       status: 'authorized',
-      externalReference: 'istock:v1:11111111-2222-4333-8444-555555555555:base',
+      externalReference: '123456789',
       preapprovalPlanId: 'plan-base',
       paymentMethodId: 'account_money',
+      amountArsCents: 1_900_000,
       nextPaymentDate: '2026-09-28T14:00:00.000Z',
     });
 
     const [url, init] = spy.mock.calls[0] as [string, RequestInit];
     expect(url).toBe('https://api.mercadopago.com/preapproval/987654');
     expect((init.headers as Record<string, string>)['authorization']).toBe('Bearer token-secreto');
+    expect(init.signal).toBeInstanceOf(AbortSignal);
   });
 
   it('authorized_payment: transaction_amount viene en UNIDADES y se guarda en centavos', async () => {
@@ -111,9 +115,11 @@ describe('driver HTTP · mapeo de campos, con fetch stubeado', () => {
       id: 1,
       preapproval_id: 2,
       status: 'processed',
+      external_reference: 'istock:v1:11111111-2222-4333-8444-555555555555:negocio',
       payment_method_id: 'debin_transfer',
-      transaction_amount: 35000.5,
+      transaction_amount: '35000.50',
       next_payment_date: null,
+      payment: { id: 3, status: 'approved' },
     });
 
     const pago = await createHttpMercadoPagoClient('t0ken-de-prueba-largo').getAuthorizedPayment('1');
@@ -121,6 +127,32 @@ describe('driver HTTP · mapeo de campos, con fetch stubeado', () => {
     // Si esto se leyera como centavos, un plan de $35.000 se registraría como $350. Es el bug de
     // unidades clásico y no se ve hasta que alguien mira un reporte.
     expect(pago?.amountArsCents).toBe(3500050);
+    expect(pago).toMatchObject({
+      externalReference: 'istock:v1:11111111-2222-4333-8444-555555555555:negocio',
+      paymentId: '3',
+      paymentStatus: 'approved',
+    });
+  });
+
+  it('payment: consulta /v1/payments y mapea referencia, estado, medio e importe', async () => {
+    const spy = stubFetch(200, {
+      id: 4,
+      status: 'approved',
+      external_reference: 'istock:v1:11111111-2222-4333-8444-555555555555:base',
+      payment_method_id: 'account_money',
+      transaction_amount: 19000,
+    });
+
+    const pago = await createHttpMercadoPagoClient('t0ken-de-prueba-largo').getPayment('4');
+
+    expect(pago).toEqual({
+      id: '4',
+      status: 'approved',
+      externalReference: 'istock:v1:11111111-2222-4333-8444-555555555555:base',
+      paymentMethodId: 'account_money',
+      amountArsCents: 1900000,
+    });
+    expect((spy.mock.calls[0] as [string, RequestInit])[0]).toBe('https://api.mercadopago.com/v1/payments/4');
   });
 
   it('404 es "no existe", no un error', async () => {
@@ -138,7 +170,7 @@ describe('driver HTTP · mapeo de campos, con fetch stubeado', () => {
     await expect(client.getPreapproval('x')).rejects.toThrow(/^Mercado Pago respondió 500 en \/preapproval\/x$/u);
   });
 
-  it('createPreapproval NO restringe medios de pago por default', async () => {
+  it('createPreapproval usa el flujo pendiente sin plan asociado', async () => {
     const spy = stubFetch(201, {
       id: 'pre-1',
       status: 'pending',
@@ -148,40 +180,29 @@ describe('driver HTTP · mapeo de campos, con fetch stubeado', () => {
     await createHttpMercadoPagoClient('t0ken-de-prueba-largo').createPreapproval({
       tenantId: '11111111-2222-4333-8444-555555555555',
       plan: 'base',
-      preapprovalPlanId: 'plan-base',
       payerEmail: 'dueño@nortecel.test',
       backUrl: 'https://nortecel.maat.work/app/plan',
+      amountArsCents: 2_900_000,
     });
 
     const body = JSON.parse(((spy.mock.calls[0] as [string, RequestInit])[1].body ?? '{}') as string) as Record<
       string,
       unknown
     >;
+    expect((spy.mock.calls[0] as [string, RequestInit])[1].signal).toBeInstanceOf(AbortSignal);
 
-    // Una lista restrictiva escrita de memoria deja afuera el dinero en cuenta de MP y empuja a
-    // todos a tarjeta de crédito, que es el medio caro. Se restringe cuando el experimento 1 de
-    // ADR-008 diga qué se puede adherir de verdad; hasta entonces, no restringir es lo barato.
+    // El flujo pendiente permite que el pagador elija el medio hospedado por MP y exige el
+    // contrato recurrente porque no hay un plan asociado que lo aporte.
+    expect(body['preapproval_plan_id']).toBeUndefined();
+    expect(body['reason']).toBe('MaatWork Base');
     expect(body).not.toHaveProperty('payment_methods_allowed');
     expect(body['external_reference']).toBe('istock:v1:11111111-2222-4333-8444-555555555555:base');
-  });
-
-  it('si el llamador SÍ pide una lista, viaja tal cual', async () => {
-    const spy = stubFetch(201, { id: 'pre-1', status: 'pending', init_point: 'https://x' });
-
-    await createHttpMercadoPagoClient('t0ken-de-prueba-largo').createPreapproval({
-      tenantId: '11111111-2222-4333-8444-555555555555',
-      plan: 'base',
-      preapprovalPlanId: 'plan-base',
-      payerEmail: 'dueño@nortecel.test',
-      backUrl: 'https://x',
-      paymentMethodsAllowed: ['account_money'],
+    expect(body['auto_recurring']).toEqual({
+      frequency: 1,
+      frequency_type: 'months',
+      transaction_amount: 29_000,
+      currency_id: 'ARS',
     });
-
-    const body = JSON.parse(((spy.mock.calls[0] as [string, RequestInit])[1].body ?? '{}') as string) as Record<
-      string,
-      unknown
-    >;
-    expect(body['payment_methods_allowed']).toEqual(['account_money']);
   });
 });
 

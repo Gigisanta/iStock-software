@@ -1,6 +1,7 @@
 'use server';
 
 import { redirect } from 'next/navigation';
+import { selectedPlanFromFormValue, SUBSCRIPTION_REDIRECTS } from '../../_lib/auth/selected-plan';
 import { requireUser } from '../../_lib/session';
 import { createTenant, createTenantSchema, isSlugTaken } from '../../_lib/tenants/create-tenant';
 import type { CreateTenantField, CreateTenantFormState } from './form-state';
@@ -37,6 +38,11 @@ export async function createTenantAction(
     waPhone: readString(formData, 'waPhone'),
     acceptsTradeIn: formData.get('acceptsTradeIn') !== null,
   };
+  const rawPlan = readString(formData, 'plan');
+  const selectedPlan = selectedPlanFromFormValue(rawPlan);
+  if (rawPlan !== '' && selectedPlan === null) {
+    return { errors: { form: 'Elegí un plan válido.' }, selectedPlan: null, values };
+  }
 
   const parsed = createTenantSchema.safeParse({
     name: values.name,
@@ -54,18 +60,18 @@ export async function createTenantAction(
         errors.form ??= issue.message;
       }
     }
-    return { errors, values };
+    return { errors, selectedPlan, values };
   }
 
   if (await isSlugTaken(parsed.data.slug)) {
-    return { errors: { slug: 'Ese link ya lo está usando otro negocio.' }, values };
+    return { errors: { slug: 'Ese link ya lo está usando otro negocio.' }, selectedPlan, values };
   }
 
   const result = await createTenant(identity.userId, parsed.data);
   if (!result.ok) {
-    return { errors: { [result.field]: result.message }, values };
+    return { errors: { [result.field]: result.message }, selectedPlan, values };
   }
 
   // Fuera del try/catch: `redirect()` navega tirando una excepción.
-  redirect('/app');
+  redirect(selectedPlan === null ? '/app' : SUBSCRIPTION_REDIRECTS[selectedPlan]);
 }

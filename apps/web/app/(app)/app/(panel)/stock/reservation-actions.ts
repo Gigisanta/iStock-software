@@ -60,10 +60,11 @@ export async function reserveUnitAction(
   formData: FormData,
 ): Promise<ReservationActionState> {
   const session = await requireTenant();
+  const rawMinutes = formData.get('minutes');
 
   const parsed = reserveUnitSchema.safeParse({
     listingId: formData.get('listingId'),
-    minutes: formData.get('minutes'),
+    minutes: rawMinutes === null || rawMinutes === '' ? String(session.tenant.reservationMinutes) : rawMinutes,
     customerLabel: formData.get('customerLabel'),
   });
 

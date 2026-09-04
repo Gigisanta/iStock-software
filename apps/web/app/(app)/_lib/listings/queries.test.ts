@@ -18,7 +18,7 @@ process.env.DATABASE_URL = URL_DB;
 
 vi.mock('server-only', () => ({}));
 
-const { listUnits } = await import('./queries');
+const { countUnits, listUnits } = await import('./queries');
 const { db } = await import('../db/connection');
 
 const TENANT_ID = crypto.randomUUID();
@@ -82,6 +82,10 @@ afterAll(async () => {
 });
 
 describe('S11 · lista de stock del seller', () => {
+  it('cuenta stock total y publicado sin traer datos de las filas', async () => {
+    await expect(countUnits(ctxSeller)).resolves.toEqual({ total: 2, published: 0 });
+  }, 30_000);
+
   it('el tipo seller no declara una propiedad de costo', () => {
     const sellerHasCost: 'costUsdCents' extends keyof SellerUnitRow ? true : false = false;
 

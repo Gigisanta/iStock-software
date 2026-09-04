@@ -11,19 +11,15 @@
     "build": "pnpm -r --no-bail build",
     "lint": "pnpm -r --no-bail lint",
     "test": "pnpm -r --no-bail test",
+    "dev": "pnpm --filter @istock/web dev",
     "e2e": "pnpm --filter @istock/e2e e2e",
     "db:generate": "pnpm --filter @istock/db generate",
     "db:migrate": "pnpm --filter @istock/db migrate",
-    "db:seed": "pnpm --filter @istock/db seed",
+    "db:seed": "MEDIA_LOCAL_ROOT=$(pwd)/.media-local pnpm --filter @istock/db seed && MEDIA_LOCAL_ROOT=$(pwd)/.media-local pnpm --filter @istock/web seed:demo-media",
     "db:local": "./scripts/pg-local.sh",
     "vercel:preflight": "./scripts/preflight-vercel-production.sh",
-    "guard": "./scripts/guard-artifacts.sh",
+    "guard": "./scripts/guard-artifacts.sh --harness",
     "audit": "pnpm audit --audit-level=high"
-  },
-  "pnpm": {
-    "overrides": {
-      "@esbuild-kit/core-utils>esbuild": "0.25.12"
-    }
   },
   "devDependencies": {
     "typescript": "^5.9.3",

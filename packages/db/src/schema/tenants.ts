@@ -6,7 +6,7 @@
  */
 
 import { sql } from 'drizzle-orm';
-import { boolean, check, index, pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
+import { boolean, check, index, integer, pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
 import { createdAt, pk, updatedAt } from './columns';
 import { planTierEnum, tenantStatusEnum } from './enums';
 import { selfTenantPolicies, storefrontAnonSelectPolicy, storefrontSlugClaim } from './rls';
@@ -23,6 +23,8 @@ export const tenants = pgTable(
     /** Medios de pago que se muestran en la ficha. Texto libre corto, español rioplatense. */
     paymentMethods: text('payment_methods').array().notNull().default(sql`'{}'::text[]`),
     acceptsTradeIn: boolean('accepts_trade_in').notNull().default(false),
+    /** Preset inicial del formulario de reservas. Es configuración del panel, no dato público. */
+    reservationMinutes: integer('reservation_minutes').notNull().default(60),
     plan: planTierEnum('plan').notNull().default('trial'),
     status: tenantStatusEnum('status').notNull().default('active'),
     trialEndsAt: timestamp('trial_ends_at', { withTimezone: true }),
@@ -38,6 +40,7 @@ export const tenants = pgTable(
     // y colisión de tags. El regex es el mismo que valida el proxy.
     check('tenants_slug_format', sql`slug ~ '^[a-z0-9](?:[a-z0-9-]{1,30}[a-z0-9])$'`),
     check('tenants_wa_phone_digits', sql`wa_phone ~ '^[0-9]{8,15}$'`),
+    check('tenants_reservation_minutes_options', sql`reservation_minutes in (30, 60, 90, 120)`),
     ...selfTenantPolicies('tenants'),
     // Vidriera anónima: el tenant SE RESUELVE por el slug del host, y sólo si está `active`.
     // Un tenant `suspended`/`cancelled` no tiene vidriera (misma regla que el DAL de storefront).

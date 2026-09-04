@@ -86,7 +86,7 @@ export function ListingMiss() {
       {/* Capa 2 del `noindex`. Ver el docblock: va con el cuerpo, no con la metadata. */}
       <meta name="robots" content="noindex, nofollow" />
 
-      <h1 className="mt-6 text-xl font-semibold leading-tight">{LISTING_MISS_TITLE}</h1>
+      <h1>{LISTING_MISS_TITLE}</h1>
       <p className="mt-3 text-sm leading-relaxed text-neutral-600 dark:text-neutral-400">
         Puede que se haya vendido o que el local lo haya dado de baja. El resto del stock sigue
         acá, con fotos, condición, batería, garantía y precio.

@@ -1,0 +1,2 @@
+ALTER TABLE "tenants" ADD COLUMN "reservation_minutes" integer DEFAULT 60 NOT NULL;--> statement-breakpoint
+ALTER TABLE "tenants" ADD CONSTRAINT "tenants_reservation_minutes_options" CHECK (reservation_minutes in (30, 60, 90, 120));

@@ -4,11 +4,11 @@
  * ## Inventario (lo que reporta `db-agent`)
  * | grupo | tablas | RLS |
  * |---|---|---|
- * | negocio con `tenant_id` | 16 | ✅ |
+ * | negocio con `tenant_id` | 17 | ✅ |
  * | identidad (`tenants` por `id`, `users` por `auth.uid()` + membresía) | 2 | ✅ |
  * | catálogo **global** (`catalog_models`, `catalog_faqs`) | 2 | ❌ a propósito, ver `catalog.ts` |
  *
- * 20 tablas · 18 con RLS · 2 globales sin RLS y con `GRANT` de sólo lectura.
+ * 21 tablas · 19 con RLS · 2 globales sin RLS y con `GRANT` de sólo lectura.
  */
 
 export * from './enums';

@@ -142,7 +142,7 @@ export default async function FotosPage({ params }: { params: Promise<{ id: stri
       <section
         data-testid="fotos-de-la-unidad"
         aria-label="Fotos cargadas"
-        className="rounded-2xl border border-neutral-200 bg-white p-3 dark:border-neutral-800 dark:bg-neutral-900"
+        className="panel-card rounded-2xl border border-neutral-200 bg-white p-3 dark:border-neutral-800 dark:bg-neutral-900"
       >
         {unit.photos.length === 0 ? (
           <p className="py-4 text-center text-sm text-neutral-600 dark:text-neutral-300">

@@ -117,7 +117,7 @@ límites reales de Pro (`keys ⊆ {ip, ja4}` — `header:` es Enterprise —, `a
 ventana 10–600 s) y, sobre todo, **censa `apps/web/app` ENTERO** — no `apps/web/app/api`: todo
 `route.ts` está cubierto por una regla o exceptuado con motivo escrito. Una ruta nueva sin decidir
 rompe el gate el día que se crea. **El alcance ancho es a propósito y esta línea decía lo contrario
-hasta el 2026-08-28** (lo marcó `docs-keeper`, lo verifiqué en `guard-firewall.sh:154-168`): la
+hasta el 2026-08-28** (lo marcó `docs-keeper`, lo verifiqué en `guard-firewall.sh:rutaPublica`): la
 primera versión del gate censaba sólo `app/api` y por eso **no veía `/_media/[...key]`**, que vive en
 el route group `(app)` y es el que sirve los BYTES de las fotos — o sea el de mayor egress del
 producto. Un censo que no ve el endpoint más caro es peor que no tener censo: da tranquilidad.

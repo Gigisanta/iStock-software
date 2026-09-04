@@ -75,7 +75,14 @@ describe('statusBadge', () => {
       'el único botón `wa.me` de la ficha (`CLAUDE.md` §1) volvió a ser una consulta tibia. ' +
         'Sobre una unidad reservada el CTA no se disculpa: el visitante que igual quiere el ' +
         'equipo tiene que poder decirlo',
-    ).toBe('Lo quiero igual — escribir por WhatsApp');
+    ).toBe('Lo quiero igual por WhatsApp');
+  });
+
+  it('mantiene el copy público limpio y legible en móvil', () => {
+    for (const status of PUBLIC_STATUSES) {
+      const badge = statusBadge(status);
+      expect(`${badge.label} ${badge.detail} ${badge.ctaLabel}`).not.toMatch(/[—–]/u);
+    }
   });
 
   it('`reserved` mantiene el CTA de comprar, no uno degradado', () => {

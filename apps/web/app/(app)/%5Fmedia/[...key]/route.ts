@@ -91,6 +91,9 @@ export async function GET(
       'content-length': String(bytes.byteLength),
       // La key es un hash del contenido: cambiar el byte cambia la URL. Nunca hay que purgar.
       'cache-control': IMMUTABLE_CACHE_CONTROL,
+      // La vidriera vive en otro subdominio que el CDN de imágenes. Sin este header la Resource
+      // Timing API oculta los bytes cross-origin y cualquier medición de LCP queda en cero.
+      'timing-allow-origin': '*',
       'x-content-type-options': 'nosniff',
     },
   });

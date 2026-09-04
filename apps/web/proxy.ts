@@ -112,7 +112,7 @@ function passthrough(headers: Headers | null): NextResponse {
  * `Cache-Control` acá es sólo para el browser: la respuesta del proxy no entra al CDN de Vercel.
  */
 function malformedHost(reason: string): NextResponse {
-  return new NextResponse(`404 — no existe una vidriera en este dominio.\n${reason}\n`, {
+  return new NextResponse(`404. No existe una vidriera en este dominio.\n${reason}\n`, {
     status: 404,
     headers: {
       'content-type': 'text/plain; charset=utf-8',
@@ -426,9 +426,9 @@ export const config = {
     // `/app/canjes/basura-991.json` —match de la ruta `/app/canjes/:id`, con el segmento dinámico
     // en el ÚLTIMO lugar— ya no se saltea `stripInboundTenantHeaders()`. Subárbol, no ruta: una
     // excepción por ruta reabriría el mismo agujero con la próxima. Cubre `/app` sin entrada aparte.
-    // (Los comentarios de este array van SIN corchetes a propósito: el guard lo lee del FUENTE con
-    // un regex no-goloso que corta en el primer corchete de cierre, así que un corchete adentro de
-    // un comentario le esconde la mitad de las entradas y el rojo que da no habla de eso.)
+    // Los comentarios pueden contener corchetes: el guard escanea el array con profundidad y saltea
+    // comentarios y literales antes de decidir dónde termina. Si el escáner no puede cerrar el array,
+    // falla explícitamente para no convertir una cobertura incompleta en un falso verde.
     '/app/:path*',
     // Neon Auth atiende este subárbol en el dominio principal. También debe pasar por el proxy para
     // que el saneo de `x-tenant-*` sea total si alguien lo solicita bajo un host de tenant.

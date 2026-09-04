@@ -1,8 +1,9 @@
 'use client';
 
-import { useActionState, useId } from 'react';
+import { useActionState, useEffect, useId, useState } from 'react';
 import { CONDITIONS, conditionLabel } from '@istock/domain';
 import type { CatalogModelOption } from '../../../../_lib/catalog/queries';
+import { buildUnitTitle } from '../../../../_lib/catalog/unit-title';
 import { acceptTradeinAction } from './actions';
 import {
   initialAcceptFormState,
@@ -31,10 +32,10 @@ import {
  * ══════════════════════════════════════════════════════════════════════════════════════════════
  *  Los valores vienen PRECARGADOS del lead, y son del visitante
  * ══════════════════════════════════════════════════════════════════════════════════════════════
- * Modelo, GB, color y batería los escribió alguien desde el teléfono, sin que nadie mire el
- * equipo. Se precargan para no volver a tipearlos y se pueden corregir todos: lo que se guarda es
- * lo que confirma quien tiene el equipo en la mano. La condición **no** se precarga a ciegas —
- * arranca en la declarada, pero el `<select>` es el mismo del alta, con las cinco.
+ * El visitante pudo escribir cualquier cosa desde el teléfono, sin que nadie mire el equipo. El
+ * dueño elige el modelo real del catálogo y, a partir de ahí, recibe sólo sus capacidades y
+ * colores válidos. La condición **no** se precarga a ciegas — arranca en la declarada, pero el
+ * `<select>` es el mismo del alta, con las cinco. El título se deriva de esas elecciones.
  *
  * ── Mobile-first ─────────────────────────────────────────────────────────────────────────────
  * Se usa parado en el mostrador con el cliente enfrente: campos apilados, `text-base` (menos de
@@ -66,7 +67,6 @@ function FieldError({ message }: { message: string | undefined }) {
 const ERROR_ORDER = [
   'form',
   'leadId',
-  'title',
   'catalogModelId',
   'condition',
   'priceUsd',
@@ -103,6 +103,19 @@ export function AcceptForm({ leadId, catalogModels, prefill }: AcceptFormProps) 
   // El eco del último intento gana sobre la precarga: si falló, la persona ve lo que escribió ella.
   const values = state.values ?? prefill;
 
+  const [selectedModelId, setSelectedModelId] = useState(values.catalogModelId);
+  const [storageGb, setStorageGb] = useState(values.storageGb);
+  const [color, setColor] = useState(values.color);
+
+  // Server Actions vuelven con los valores del POST cuando algo falla. Rehidratar los tres
+  // controles evita que el navegador muestre una variante distinta de la que se va a reintentar.
+  useEffect(() => {
+    if (state.values === null) return;
+    setSelectedModelId(state.values.catalogModelId);
+    setStorageGb(state.values.storageGb);
+    setColor(state.values.color);
+  }, [state.values]);
+
   const titleId = useId();
   const modelId = useId();
   const conditionId = useId();
@@ -113,6 +126,18 @@ export function AcceptForm({ leadId, catalogModels, prefill }: AcceptFormProps) 
   const offerId = useId();
 
   const topError = firstError(state);
+  const selectedModel = catalogModels.find((model) => model.id === selectedModelId);
+  const storageOptions = selectedModel?.storageOptionsGb ?? [];
+  const colorOptions = selectedModel?.colors ?? [];
+  const selectedStorageGb =
+    selectedModel === undefined || storageGb === '' || !storageOptions.includes(Number(storageGb))
+      ? null
+      : Number(storageGb);
+  const selectedColor = selectedModel?.colors.includes(color) === true ? color : null;
+  const generatedTitle =
+    selectedModel === undefined
+      ? ''
+      : buildUnitTitle(selectedModel.displayName, selectedStorageGb, selectedColor);
 
   return (
     <form data-testid="form-aceptar-canje" action={formAction} className="mt-2 space-y-5" noValidate>
@@ -129,25 +154,6 @@ export function AcceptForm({ leadId, catalogModels, prefill }: AcceptFormProps) 
       )}
 
       <div>
-        <label htmlFor={titleId} className="block text-sm font-medium">
-          Qué equipo es
-        </label>
-        <input
-          id={titleId}
-          name="title"
-          type="text"
-          required
-          maxLength={120}
-          autoComplete="off"
-          defaultValue={values.title}
-          placeholder="iPhone 13 128 Medianoche"
-          aria-invalid={state.errors.title !== undefined}
-          className={INPUT_CLASS}
-        />
-        <FieldError message={state.errors.title} />
-      </div>
-
-      <div>
         <label htmlFor={modelId} className="block text-sm font-medium">
           Modelo
         </label>
@@ -156,7 +162,13 @@ export function AcceptForm({ leadId, catalogModels, prefill }: AcceptFormProps) 
           name="catalogModelId"
           data-testid="select-catalog-model"
           required
-          defaultValue={values.catalogModelId}
+          value={selectedModelId}
+          onChange={(event) => {
+            setSelectedModelId(event.target.value);
+            setStorageGb('');
+            setColor('');
+          }}
+          disabled={catalogModels.length === 0}
           aria-invalid={state.errors.catalogModelId !== undefined}
           className={INPUT_CLASS}
         >
@@ -172,9 +184,15 @@ export function AcceptForm({ leadId, catalogModels, prefill }: AcceptFormProps) 
           ))}
         </select>
         <FieldError message={state.errors.catalogModelId} />
-        <p className="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
-          Sin modelo no lo vas a poder publicar.
-        </p>
+        {catalogModels.length === 0 ? (
+          <p role="alert" className="mt-2 text-sm font-medium text-red-600">
+            Todavía no hay modelos cargados. Actualizá la pantalla en unos segundos.
+          </p>
+        ) : (
+          <p className="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
+            Elegí el modelo que tenés en la mano; el nombre se arma solo.
+          </p>
+        )}
       </div>
 
       <div>
@@ -204,17 +222,24 @@ export function AcceptForm({ leadId, catalogModels, prefill }: AcceptFormProps) 
           <label htmlFor={storageId} className="block text-sm font-medium">
             GB
           </label>
-          <input
+          <select
             id={storageId}
             name="storageGb"
-            type="text"
-            inputMode="numeric"
-            autoComplete="off"
-            defaultValue={values.storageGb}
-            placeholder="128"
+            value={storageGb}
+            onChange={(event) => setStorageGb(event.target.value)}
+            disabled={selectedModel === undefined}
             aria-invalid={state.errors.storageGb !== undefined}
             className={INPUT_CLASS}
-          />
+          >
+            <option value="">
+              {selectedModel === undefined ? 'Elegí un modelo primero' : 'No especificado'}
+            </option>
+            {storageOptions.map((option) => (
+              <option key={option} value={String(option)}>
+                {String(option)} GB
+              </option>
+            ))}
+          </select>
           <FieldError message={state.errors.storageGb} />
         </div>
         <div>
@@ -240,18 +265,45 @@ export function AcceptForm({ leadId, catalogModels, prefill }: AcceptFormProps) 
         <label htmlFor={colorId} className="block text-sm font-medium">
           Color
         </label>
-        <input
-          id={colorId}
-          name="color"
-          type="text"
-          maxLength={40}
-          autoComplete="off"
-          defaultValue={values.color}
-          placeholder="Medianoche"
-          aria-invalid={state.errors.color !== undefined}
-          className={INPUT_CLASS}
-        />
+          <select
+            id={colorId}
+            name="color"
+            value={color}
+            onChange={(event) => setColor(event.target.value)}
+            disabled={selectedModel === undefined}
+            aria-invalid={state.errors.color !== undefined}
+            className={INPUT_CLASS}
+        >
+          <option value="">
+            {selectedModel === undefined ? 'Elegí un modelo primero' : 'No especificado'}
+          </option>
+          {colorOptions.map((option) => (
+            <option key={option} value={option}>
+              {option}
+            </option>
+          ))}
+        </select>
         <FieldError message={state.errors.color} />
+      </div>
+
+      <div>
+        <label htmlFor={titleId} className="block text-sm font-medium">
+          Así va a figurar
+        </label>
+        <input
+          id={titleId}
+          name="title"
+          type="text"
+          readOnly
+          maxLength={120}
+          value={generatedTitle}
+          placeholder="Elegí el modelo"
+          aria-live="polite"
+          className={`${INPUT_CLASS} bg-neutral-50 dark:bg-neutral-950`}
+        />
+        <p className="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
+          Lo armamos con el catálogo. No tenés que escribir el nombre del equipo.
+        </p>
       </div>
 
       <div>

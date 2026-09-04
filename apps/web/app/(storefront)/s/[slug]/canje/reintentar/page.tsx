@@ -41,6 +41,9 @@ export async function generateStaticParams(): Promise<Array<{ slug: string }>> {
   return [{ slug: PRERENDER_SEED_SLUG }];
 }
 
+/** El reintento entrega HTML completo; no hay navegación instantánea de Next en esta ruta. */
+export const instant = false;
+
 interface TradeinRetryPageProps {
   readonly params: Promise<{ readonly slug: string }>;
 }
@@ -67,7 +70,7 @@ export async function generateMetadata({ params }: TradeinRetryPageProps): Promi
   cacheLife('max');
 
   return {
-    title: { absolute: `El canje no se envió — ${tenant.name}` },
+    title: { absolute: `El canje no se envió - ${tenant.name}` },
     robots: { index: false, follow: true },
   };
 }
@@ -102,7 +105,7 @@ export default async function TradeinRetryPage({ params }: TradeinRetryPageProps
 
       <a
         href={TRADEIN_PATH}
-        className="mt-6 flex min-h-12 w-full items-center justify-center rounded-xl bg-neutral-900 px-4 text-base font-semibold text-white dark:bg-white dark:text-neutral-900"
+        className="storefront-outcome-action mt-6 flex min-h-12 w-full items-center justify-center rounded-xl bg-neutral-900 px-4 text-base font-semibold text-white dark:bg-white dark:text-neutral-900"
       >
         Volver al formulario
       </a>

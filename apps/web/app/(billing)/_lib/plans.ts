@@ -62,11 +62,10 @@ export interface PlanSpec {
    * Precio de lista en **centavos de USD**. Enteros a propósito: `19.00` en punto flotante es la
    * clase de número que termina facturando `18,999999`.
    *
-   * **No es lo que se le cobra a MP.** Con plan asociado el importe en ARS vive en el
-   * `preapproval_plan` de Mercado Pago (`MP_PREAPPROVAL_PLAN_*`), no en este repo: editar el plan
-   * allá propaga a todas las suscripciones vivas, que con inflación en ARS es la diferencia entre
-   * un `PUT` y N. Este número es el precio **de referencia** que se muestra y con el que se razona
-   * el margen.
+   * **No es lo que se le cobra a MP.** El checkout hospedado crea una suscripción pendiente sin
+   * plan asociado; el importe ARS se calcula en el servidor con el TC persistido del tenant y se
+   * congela para esa adhesión. Este número es el precio **de referencia** que se muestra y con el
+   * que se razona el margen.
    */
   readonly monthlyUsdCents: number;
   readonly features: readonly string[];

@@ -3,9 +3,11 @@ import { randomUUID, randomFillSync } from 'node:crypto';
 import { sanitizeDescription } from '@istock/domain';
 import { uploadListingPhoto, type UploadedListingPhoto } from '@istock/media';
 import { listingEvents, listingPhotos, listings } from '@istock/db';
+import { getCatalogModel } from '../catalog/queries';
 import { uniqueViolationConstraint } from '../db/pg-error';
 import { withTenantDb, type TenantContext } from '../db/session';
 import { logError, logEvent } from '../log';
+import { buildUnitTitle } from '../catalog/unit-title';
 import { buildListingSlug } from './listing-slug';
 import type { NewUnitInput } from './schema';
 
@@ -57,7 +59,7 @@ export interface CreateUnitResult {
 
 export interface CreateUnitFailure {
   readonly ok: false;
-  readonly field: 'title' | 'imei' | 'photo' | 'form';
+  readonly field: 'title' | 'catalogModelId' | 'storageGb' | 'color' | 'imei' | 'photo' | 'form';
   readonly message: string;
 }
 
@@ -89,7 +91,33 @@ export async function createUnit(
   input: NewUnitInput,
   photo: Uint8Array,
 ): Promise<CreateUnitResult | CreateUnitFailure> {
+  const catalogModel = await getCatalogModel(ctx, input.catalogModelId);
+  if (catalogModel === null) {
+    return {
+      ok: false,
+      field: 'catalogModelId',
+      message: 'Elegí un modelo disponible de la lista.',
+    };
+  }
+  if (input.storageGb === null || !catalogModel.storageOptionsGb.includes(input.storageGb)) {
+    return {
+      ok: false,
+      field: 'storageGb',
+      message: 'Elegí una capacidad disponible para ese modelo.',
+    };
+  }
+  if (input.color === null || !catalogModel.colors.includes(input.color)) {
+    return {
+      ok: false,
+      field: 'color',
+      message: 'Elegí un color disponible para ese modelo.',
+    };
+  }
+
   const listingId = randomUUID();
+  // El título se deriva del catálogo en el server: el campo visible es una ayuda, no una fuente
+  // confiable. Así un POST manual no puede guardar un modelo distinto del que eligió.
+  const title = buildUnitTitle(catalogModel.displayName, input.storageGb, input.color);
 
   let uploaded: UploadedListingPhoto;
   try {
@@ -118,7 +146,7 @@ export async function createUnit(
   const description = input.description === null ? null : sanitizeDescription(input.description);
 
   for (let attempt = 0; attempt < 3; attempt += 1) {
-    const slug = newSlug(input.title);
+    const slug = newSlug(title);
     try {
       await withTenantDb(ctx, async (tx) => {
         await tx.insert(listings).values({
@@ -126,7 +154,7 @@ export async function createUnit(
           tenantId: ctx.tenantId,
           slug,
           kind: 'unit',
-          title: input.title,
+          title,
           // Sin esto la unidad nace impublicable: `checkPublishable` deniega
           // `missing_catalog_model` para todo `kind: 'unit'`. Ver `schema.ts`.
           catalogModelId: input.catalogModelId,

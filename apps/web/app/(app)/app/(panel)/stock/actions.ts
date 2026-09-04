@@ -7,8 +7,11 @@ import {
   transitionUnit,
   type TransitionRequest,
 } from '../../../_lib/listings/publish-listing';
+import { updateListingPrice } from '../../../_lib/listings/update-listing-price';
 import { requireTenant } from '../../../_lib/session';
+import { parsePriceForm } from './price-action-schema';
 import { parseStatusForm } from './status-action-schema';
+import type { PriceActionState } from './price-action-state';
 import type { StatusActionState } from './status-action-state';
 
 /**
@@ -112,5 +115,27 @@ export async function setListingStatusAction(
   // o la fila sigue mostrando el estado anterior. Ver el encabezado.
   refresh();
 
+  return { error: null };
+}
+
+/** Edita el precio público sin cambiar el estado comercial de la unidad. */
+export async function updateListingPriceAction(
+  _prev: PriceActionState,
+  formData: FormData,
+): Promise<PriceActionState> {
+  const session = await requireTenant();
+
+  const parsed = parsePriceForm(formData);
+  if (!parsed.ok) return { error: parsed.error };
+
+  const result = await updateListingPrice(
+    session.ctx,
+    session.tenant.slug,
+    parsed.data.listingId,
+    parsed.data.priceUsd,
+  );
+  if (!result.ok) return { error: result.message };
+
+  refresh();
   return { error: null };
 }

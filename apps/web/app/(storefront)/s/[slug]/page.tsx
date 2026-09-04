@@ -140,6 +140,14 @@ export async function generateStaticParams(): Promise<Array<{ slug: string }>> {
   return [{ slug: PRERENDER_SEED_SLUG }];
 }
 
+/**
+ * La vidriera devuelve el HTML completo en la primera respuesta para sostener el contrato sin JS y
+ * el cache de la ficha. Sus enlaces públicos son `<a>` deliberadamente, así que no hay navegación
+ * instantánea de Next que optimizar acá; este opt-out evita que su validación trate el `params`
+ * cacheado como un shell parcial. No cambia el render ni los perfiles de cache.
+ */
+export const instant = false;
+
 interface StorefrontPageProps {
   readonly params: Promise<{ readonly slug: string }>;
 }
@@ -252,19 +260,19 @@ export default async function StorefrontHomePage({ params }: StorefrontPageProps
   const catalog = await getStorefrontCatalog(slug);
 
   return (
-    <main>
-      <header className="border-b border-neutral-200 pb-5 dark:border-neutral-800">
-        <p className="text-xs font-medium uppercase tracking-wide text-neutral-500">{host}</p>
-        <h1 className="mt-1 text-2xl font-semibold leading-tight sm:text-3xl">{tenant.name}</h1>
+    <main className="storefront-main">
+      <header className="storefront-header">
+        <p className="storefront-host">{host}</p>
+        <h1 className="storefront-title">{tenant.name}</h1>
       </header>
 
       {catalog.listings.length > 0 ? (
-        <section aria-labelledby="stock" className="mt-6">
+        <section aria-labelledby="stock" className="storefront-catalog">
           <h2 id="stock" className="sr-only">
             Equipos publicados
           </h2>
           <ListingGrid listings={catalog.listings} />
-          <p className="mt-5 text-xs leading-relaxed text-neutral-500 dark:text-neutral-400">
+          <p className="storefront-hint">
             Tocá un equipo para ver fotos, batería, garantía, punto de retiro y el precio en pesos.
           </p>
         </section>
@@ -296,7 +304,7 @@ function TradeinInvite({ tenantName }: { readonly tenantName: string }) {
   return (
     <section
       aria-labelledby="canje"
-      className="mt-8 rounded-xl border border-neutral-200 p-4 dark:border-neutral-800"
+      className="storefront-panel storefront-tradein-panel"
     >
       <h2 id="canje" className="text-base font-semibold">
         ¿Entregás el tuyo como parte de pago?
@@ -343,7 +351,7 @@ function EmptyStorefront({
   return (
     <section
       aria-labelledby="estado-vidriera"
-      className="mt-6 rounded-xl border border-neutral-200 p-4 dark:border-neutral-800"
+      className="storefront-panel storefront-empty-panel"
     >
       <h2 id="estado-vidriera" className="text-base font-semibold">
         {pending ? 'Vidriera casi lista' : 'Vidriera en preparación'}

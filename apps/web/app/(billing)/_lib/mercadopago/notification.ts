@@ -30,10 +30,11 @@ import { z } from 'zod';
  * Tampoco es `x-request-id`, que identifica el **envío** y no el evento.
  */
 
-/** Topics del árbol de Suscripciones. Se acepta cualquier otro string y se ignora explícito. */
+/** Topics de Suscripciones y sus pagos. Se acepta cualquier otro string y se ignora explícito. */
 export const TOPIC_PREAPPROVAL = 'subscription_preapproval';
 export const TOPIC_AUTHORIZED_PAYMENT = 'subscription_authorized_payment';
 export const TOPIC_PREAPPROVAL_PLAN = 'subscription_preapproval_plan';
+export const TOPIC_PAYMENT = 'payment';
 
 /** `123` y `"123"` son el mismo id. MP manda el del cuerpo como número y el de la query como texto. */
 const idLike = z.union([z.string().trim().min(1), z.number().int()]).transform((v) => String(v));
@@ -54,7 +55,7 @@ const notificationBodySchema = z.object({
 export interface MpNotification {
   /** Clave de idempotencia. Ver el encabezado. */
   readonly eventId: string;
-  /** `subscription_preapproval` · `subscription_authorized_payment` · lo que venga. */
+  /** `subscription_preapproval` · `subscription_authorized_payment` · `payment` · lo que venga. */
   readonly topic: string;
   /** `created` · `updated` · `null`. */
   readonly action: string | null;

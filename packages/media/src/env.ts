@@ -19,10 +19,12 @@ const nonEmpty = z.string().trim().min(1);
 
 /**
  * Base pública cuando no se setea nada. **Sólo legítima con `MEDIA_DRIVER=local`** (dev/test):
- * la sirve `apps/web/app/(app)/_media/[...key]/route.ts`. Con `r2` es obligatoria de verdad, ver
- * el `superRefine` de abajo.
+ * la sirve `apps/web/app/(app)/_media/[...key]/route.ts`. Es relativa a propósito: el servidor de
+ * desarrollo puede correr en cualquier puerto y una base absoluta fija en `3000` rompe las fotos
+ * cuando el panel se abre en `3101` o desde otro host local. Con `r2` es obligatoria de verdad,
+ * ver el `superRefine` de abajo.
  */
-const LOCAL_MEDIA_BASE_URL = 'http://localhost:3000/_media';
+const LOCAL_MEDIA_BASE_URL = '/_media';
 
 const baseSchema = z.object({
   MEDIA_DRIVER: z.enum(MEDIA_DRIVERS).default('local'),
@@ -32,7 +34,7 @@ const baseSchema = z.object({
    * `optional()` y no `default()`, igual que las credenciales de R2: el default se aplica recién
    * en el `transform` final, así el `superRefine` puede distinguir "no la setearon" de "la
    * setearon". Con `default()` la ausencia era indistinguible del valor de dev y el boot con
-   * `MEDIA_DRIVER=r2` salía verde sirviendo `<img src="http://localhost:3000/…">` a todas las
+   * `MEDIA_DRIVER=r2` salía verde sirviendo `<img src="/_media/…">` a todas las
    * vidrieras, sin una sola excepción en Sentry (falla en el browser del visitante) y cacheado
    * por ISR hasta la próxima invalidación.
    */
@@ -78,7 +80,7 @@ const schema = baseSchema
             'bucket público y sin barra final, p.ej. ' +
             'NEXT_PUBLIC_MEDIA_BASE_URL=https://img.maat.work, y volvé a deployar: es ' +
             'NEXT_PUBLIC_* y se inlinea en el build. Sin ella la vidriera sirve ' +
-            '<img src="http://localhost:3000/_media/…"> y no carga ninguna foto. El default sólo ' +
+            '<img src="/_media/…"> y no carga ninguna foto. El default sólo ' +
             'vale con MEDIA_DRIVER=local.',
         });
       }

@@ -9,7 +9,7 @@
  * tenant corre contra Postgres real."* Con un solo proyecto Supabase para los 100 tenants, esto
  * no es un test de feature: es el test de que el producto se puede vender.
  *
- * Las 4 aserciones se corren sobre **las 16 tablas tenant-scoped con `tenant_id`**, no sobre una de
+ * Las 4 aserciones se corren sobre **las 17 tablas tenant-scoped con `tenant_id`**, no sobre una de
  * muestra. Una tabla con la policy de `select` puesta y la de `delete` olvidada se ve idéntica a
  * una tabla bien hecha hasta el día que alguien borra el stock de otro.
  */
@@ -36,7 +36,7 @@ function ids(tenant: 'a' | 'b') {
   return {
     membership: n(1), location: n(2), fx: n(3), listing: n(4), photo: n(5), event: n(6),
     waClick: n(7), reservation: n(8), sale: n(9), lead: n(10), checklist: n(11),
-    thread: n(12), message: n(13), subscription: n(14), entitlement: n(15), webhookEvent: n(16),
+    thread: n(12), message: n(13), subscription: n(14), entitlement: n(15), webhookEvent: n(16), checkoutIntent: n(17),
   };
 }
 
@@ -65,6 +65,7 @@ function insertsFor(tenantId: string, tenant: 'a' | 'b', userId: string, suffix 
     subscriptions: `insert into subscriptions (id, tenant_id) values ('${u(i.subscription)}', '${tenantId}')`,
     entitlements: `insert into entitlements (id, tenant_id, feature) values ('${u(i.entitlement)}', '${tenantId}', 'chatbot${suffix}')`,
     billing_webhook_events: `insert into billing_webhook_events (id, tenant_id, provider_event_id, topic) values ('${u(i.webhookEvent)}', '${tenantId}', 'rls-${tenant}-${u(i.webhookEvent)}', 'subscription')`,
+    billing_checkout_intents: `insert into billing_checkout_intents (id, tenant_id, plan, amount_ars, status, lease_expires_at) values ('${u(i.checkoutIntent)}', '${tenantId}', 'base', 190.00, 'creating', now() + interval '10 minutes')`,
   };
 }
 
@@ -117,11 +118,11 @@ describe('RLS cruzado — las 4 aserciones de la skill, tabla por tabla', () => 
     listing_photos: 'photo', listing_events: 'event', wa_click_events: 'waClick',
     reservations: 'reservation', sales: 'sale', tradein_leads: 'lead',
     tradein_checklists: 'checklist', chatbot_threads: 'thread', chatbot_messages: 'message',
-    subscriptions: 'subscription', entitlements: 'entitlement', billing_webhook_events: 'webhookEvent',
+    subscriptions: 'subscription', entitlements: 'entitlement', billing_webhook_events: 'webhookEvent', billing_checkout_intents: 'checkoutIntent',
   };
 
-  it('cubre las 16 tablas tenant-scoped con tenant_id', () => {
-    expect(TENANT_TABLES).toHaveLength(16);
+  it('cubre las 17 tablas tenant-scoped con tenant_id', () => {
+    expect(TENANT_TABLES).toHaveLength(17);
   });
 
   for (const table of TENANT_TABLES) {

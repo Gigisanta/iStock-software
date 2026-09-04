@@ -36,6 +36,9 @@ export async function generateStaticParams(): Promise<Array<{ slug: string }>> {
   return [{ slug: PRERENDER_SEED_SLUG }];
 }
 
+/** La confirmación entrega HTML completo; no hay navegación instantánea de Next en esta ruta. */
+export const instant = false;
+
 interface TradeinDonePageProps {
   readonly params: Promise<{ readonly slug: string }>;
 }
@@ -62,7 +65,7 @@ export async function generateMetadata({ params }: TradeinDonePageProps): Promis
   cacheLife('max');
 
   return {
-    title: { absolute: `Canje enviado — ${tenant.name}` },
+    title: { absolute: `Canje enviado - ${tenant.name}` },
     robots: { index: false, follow: true },
   };
 }

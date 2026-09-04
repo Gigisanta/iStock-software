@@ -8,7 +8,7 @@ import { serverEnv } from '../env';
  * `packages/db` deja el default en `max: 1` y explica por qué: *"Postgres cobra por conexión, y
  * Vercel abre una función por request"*. Lo que agrega este archivo es **no abrir y cerrar** el
  * pool en cada request: `createDb().close()` por request convierte cada página del panel en un
- * handshake TCP + TLS contra Supabase.
+ * handshake TCP + TLS contra Neon Postgres.
  *
  * El módulo vive en el runtime de la app (no en `proxy.ts`), así que memoizar acá **sí** es un
  * cache: la advertencia de Next sobre módulos y globals aplica al proxy, no a los Server

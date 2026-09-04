@@ -13,6 +13,8 @@ import { DomainError } from './errors';
 export const RESERVATION_MIN_MINUTES = 30;
 export const RESERVATION_MAX_MINUTES = 120;
 export const RESERVATION_DEFAULT_MINUTES = 60;
+/** Presets for the counter; the domain still accepts every integer in the full range per unit. */
+export const RESERVATION_MINUTE_OPTIONS = [30, 60, 90, 120] as const;
 
 const MS_PER_MINUTE = 60_000;
 

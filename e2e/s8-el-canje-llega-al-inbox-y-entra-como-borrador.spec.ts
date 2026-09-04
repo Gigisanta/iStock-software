@@ -82,12 +82,20 @@ test('el visitante deja un canje y el dueño lo acepta como unidad borrador del 
 
     const acceptForm = owner.getByTestId('form-aceptar-canje');
     await expect(acceptForm, 'la ficha del canje no mostró el formulario del dueño').toBeVisible();
-    await expect(owner.locator('input[name="title"]')).toHaveValue(visitorModel);
     await owner.locator('select[name="condition"]').selectOption('used_excellent');
     const models = await catalogOptions(owner);
-    const model = models[0];
+    const model = models.find((candidate) => candidate.label === 'iPhone 12') ?? models[0];
     if (model === undefined) throw new Error('el catálogo global no tiene un modelo seleccionable');
     await owner.locator('select[name="catalogModelId"]').selectOption(model.value);
+    const storage = owner.locator('select[name="storageGb"]');
+    const color = owner.locator('select[name="color"]');
+    await expect(storage.locator('option').nth(1)).toBeAttached();
+    await expect(color.locator('option').nth(1)).toBeAttached();
+    await storage.selectOption({ index: 1 });
+    await color.selectOption({ index: 1 });
+    const generatedTitle = owner.locator('input[name="title"]');
+    await expect(generatedTitle).toHaveValue(/iPhone 12/u);
+    const canonicalTitle = await generatedTitle.inputValue();
     await owner.locator('input[name="offerUsd"]').fill('300');
     await owner.locator('input[name="priceUsd"]').fill('500');
     await owner.getByRole('button', { name: 'Aceptar y cargar al stock' }).click();
@@ -101,7 +109,9 @@ test('el visitante deja un canje y el dueño lo acepta como unidad borrador del 
     const listing = await listingById(listingId);
     expect(listing, 'aceptar el canje no creó la unidad').not.toBeNull();
     expect(listing?.tenantId, 'la unidad creada no pertenece al tenant del canje').toBe(tenantId);
-    expect(listing?.title, 'la unidad no conservó el equipo confirmado por el dueño').toBe(visitorModel);
+    expect(listing?.title, 'la unidad no conservó el modelo y la variante confirmados').toBe(
+      canonicalTitle,
+    );
     expect(listing?.status, 'un canje aceptado debe entrar como borrador sin fotos').toBe('draft');
     expect(
       (await listingsByTenant(tenantId ?? '')).filter((row) => row.id === listingId),

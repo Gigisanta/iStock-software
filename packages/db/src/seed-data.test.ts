@@ -53,6 +53,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   SEED_LISTINGS,
+  SEED_MODELS,
   SEED_TENANT_ID,
   seedMasterKey,
   seedMediaKey,
@@ -339,6 +340,20 @@ describe('composición del seed demo (gate de aceptación, no decorativo)', () =
   it('los accesorios (`lot`) no tienen IMEI', () => {
     for (const l of SEED_LISTINGS.filter((x) => x.kind === 'lot')) {
       expect(l.imei).toBeNull();
+    }
+  });
+});
+
+describe('catálogo Apple del seed', () => {
+  it('trae las 32 líneas de modelo y no duplica slugs', () => {
+    expect(SEED_MODELS).toHaveLength(32);
+    expect(new Set(SEED_MODELS.map((model) => model.slug)).size).toBe(SEED_MODELS.length);
+  });
+
+  it('cada modelo tiene al menos una capacidad y un color seleccionables', () => {
+    for (const model of SEED_MODELS) {
+      expect(model.storageOptionsGb.length, model.slug).toBeGreaterThan(0);
+      expect(model.colors.length, model.slug).toBeGreaterThan(0);
     }
   });
 });

@@ -20,7 +20,7 @@ export const STOREFRONT_404_H1 = 'No hay ninguna vidriera en esta dirección';
  * se sirvió, y no sólo que no se sirvió la vidriera: `expect(h1).not.toBe(404_H1)` da verde
  * también el día que `www` devuelve una página vacía, un error de Next o el panel.
  */
-export const MARKETING_H1 = 'Tu stock, con vidriera propia y el WhatsApp ya escrito.';
+export const MARKETING_H1 = 'Tu stock, listo para vender.';
 
 // ══════════════════════════════════════════════════════════════════════════════════════════════
 //  RONDA 2 · "en castellano" es una afirmación verificable, no una intención

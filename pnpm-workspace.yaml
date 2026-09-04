@@ -3,3 +3,6 @@ packages:
   - 'packages/*'
   - 'tests'
   - 'e2e'
+
+overrides:
+  '@esbuild-kit/core-utils>esbuild': 0.25.12

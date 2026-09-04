@@ -1,3 +1,4 @@
+// gate-owner: LEAD — este lint audita el artefacto creativo que ejecuta el paquete.
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 import process from 'node:process';

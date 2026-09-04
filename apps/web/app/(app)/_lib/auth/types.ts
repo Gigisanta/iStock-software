@@ -3,12 +3,9 @@ import type { SelectedPlan } from './selected-plan';
 
 /**
  * Puerto de autenticación. `neon` es el driver de producción y `local` queda sólo para desarrollo.
- * Se conserva `supabase` como compatibilidad de migración mientras se retiran instalaciones viejas.
  *
- * El puerto existe por una razón concreta, no por purismo: sin credenciales de Supabase el panel
- * tenía que quedar sin escribirse o escribirse contra un mock que después se tira. Con el puerto,
- * lo que se escribe una vez es el **flujo** —quién sos, a qué tenant pertenecés, con qué rol— y lo
- * que cambia cuando llegue B2 es un solo archivo.
+ * El puerto existe para que el desarrollo local no dependa del proveedor externo. El flujo de
+ * identidad y membresía queda igual en ambos modos; lo que cambia es sólo cómo se obtiene la sesión.
  *
  * Lo que el puerto **no** hace, a propósito:
  * - No decide autorización. Eso pasa dentro de cada Server Function (`_lib/session.ts`).
@@ -30,7 +27,7 @@ export interface AuthIdentity {
 
 export interface SignInInput {
   readonly email: string;
-  /** Contraseña de Neon Auth. El driver local y el legado la ignoran. */
+  /** Contraseña de Neon Auth. El driver local la ignora porque sólo existe para desarrollo. */
   readonly password?: string;
   /** El formulario distingue explícitamente alta de ingreso. */
   readonly mode?: 'sign_in' | 'sign_up';
@@ -59,7 +56,7 @@ export class AuthError extends Error {
 }
 
 export interface AuthDriver {
-  readonly name: 'local' | 'neon' | 'supabase';
+  readonly name: 'local' | 'neon';
 
   /**
    * `true` si el driver da de alta usuarios sin verificar el mail. La UI **tiene que decirlo**:
@@ -78,7 +75,7 @@ export interface AuthDriver {
   /**
    * Propaga `app_metadata.tenant_id` al proveedor de identidad después de crear el tenant.
    *
-   * **`app_metadata`, jamás `user_metadata`** (`CLAUDE.md` §2, lint `0015` de Supabase, severidad
+   * **`app_metadata`, jamás `user_metadata`** (`CLAUDE.md` §2, lint `0015`, severidad
    * ERROR): el usuario puede escribir su propio `user_metadata`, así que un `tenant_id` ahí es
    * escalación de tenant directa. La firma de este método no acepta otro destino.
    */
@@ -87,7 +84,7 @@ export interface AuthDriver {
 
 /**
  * Claims tal como los ve Postgres en `request.jwt.claims`. Es **exactamente** la forma que
- * emula `scripts/pg-local.sh` y la que produce el Custom Access Token Hook de Supabase.
+ * emula `scripts/pg-local.sh` y la que usa la sesión server-side de Neon Auth.
  *
  * El tipo no tiene `user_metadata`. No es un olvido: si el campo no existe, nadie puede meter
  * `tenant_id` ahí por descuido.

@@ -20,9 +20,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * El ledger es el de memoria, y eso hay que decirlo con todas las letras: **la idempotencia de
  * producción la garantiza un índice único en Postgres**, no este `Set`. Lo que este archivo mide
  * es que el handler *use* el ledger para envolver el efecto, y que un duplicado no llegue a
- * escribir. Que el índice exista es responsabilidad de la migración de `db-agent`
- * (`billing_webhook_events`, pedida al LEAD) y su ausencia hoy hace fallar el driver real con un
- * error con nombre propio, no lo hace degradar a "procesar sin deduplicar".
+ * escribir. El deploy debe haber aplicado la migración de billing (`billing_webhook_events`); si
+ * falta, el driver real falla con un error con nombre propio, no degrada a "procesar sin
+ * deduplicar".
  */
 
 vi.mock('server-only', () => ({}));
@@ -43,13 +43,13 @@ const { createInMemoryBillingEventLedger } = await import('./ledger');
 const { createMockMercadoPagoClient } = await import('../mercadopago/client');
 const { encodeExternalReference } = await import('../mercadopago/external-reference');
 const { signManifest, signatureManifest } = await import('../mercadopago/signature');
-const { subscriptions, tenants } = await import('@istock/db');
-const { TOPIC_AUTHORIZED_PAYMENT, TOPIC_PREAPPROVAL } = await import('../mercadopago/notification');
+const { billingCheckoutIntents, subscriptions, tenants } = await import('@istock/db');
+const { TOPIC_AUTHORIZED_PAYMENT, TOPIC_PAYMENT, TOPIC_PREAPPROVAL } = await import('../mercadopago/notification');
 
 // ── Postgres de mentira ────────────────────────────────────────────────────────────────────────
 
 interface Recorded {
-  readonly op: 'insert' | 'update';
+  readonly op: 'insert' | 'update' | 'delete';
   readonly table: unknown;
   readonly row: Record<string, unknown>;
 }
@@ -60,7 +60,7 @@ const db = {
   failNextWrite: null as unknown,
 };
 
-function record(op: 'insert' | 'update', table: unknown, row: Record<string, unknown>): unknown[] {
+function record(op: 'insert' | 'update' | 'delete', table: unknown, row: Record<string, unknown>): unknown[] {
   if (db.failNextWrite !== null) {
     const error = db.failNextWrite;
     db.failNextWrite = null;
@@ -88,6 +88,9 @@ const tx = {
   update: (table: unknown) => ({
     set: (row: Record<string, unknown>) => thenable(() => record('update', table, row)),
   }),
+  delete: (table: unknown) => ({
+    where: () => thenable(() => record('delete', table, {})),
+  }),
 };
 
 const rowsOf = (table: unknown): Recorded[] => db.writes.filter((w) => w.table === table);
@@ -113,6 +116,7 @@ function givenPreapproval(overrides: Partial<Parameters<typeof client.seedPreapp
     externalReference: encodeExternalReference({ tenantId: TENANT_ID, plan: 'negocio' }),
     preapprovalPlanId: 'plan-negocio',
     paymentMethodId: 'account_money',
+    amountArsCents: 3_500_000,
     nextPaymentDate: '2026-09-28T14:00:00.000Z',
     ...overrides,
   });
@@ -196,9 +200,10 @@ describe('idempotencia · el mismo evento entregado dos veces', () => {
     expect(segunda).toEqual({ status: 200, outcome: 'duplicate' });
 
     // EL CONTEO. Es la aserción de este archivo; todo lo demás es contexto.
-    expect(db.writes).toHaveLength(2); // un upsert de subscriptions + un update de tenants
+    expect(db.writes).toHaveLength(3); // upsert de subscriptions + cleanup de intent + update de tenant
     expect(rowsOf(subscriptions)).toHaveLength(1);
     expect(rowsOf(tenants)).toHaveLength(1);
+    expect(rowsOf(billingCheckoutIntents)).toHaveLength(1);
     expect(ledger.applied).toHaveLength(1);
     expect(ledger.duplicates).toHaveLength(1);
   });
@@ -345,6 +350,7 @@ describe('recurso del webhook · sólo la query firmada autoriza la consulta', (
       expect(result).toEqual({ status: 200, outcome: 'missing_resource' });
       expect(client.calls.preapproval).toBe(0);
       expect(client.calls.authorizedPayment).toBe(0);
+      expect(client.calls.payment).toBe(0);
       expect(ledger.applied).toHaveLength(0);
       expect(ledger.duplicates).toHaveLength(0);
       expect(db.writes).toHaveLength(0);
@@ -464,9 +470,12 @@ describe('cuota (authorized_payment)', () => {
       id: 'pay-1',
       preapprovalId: PREAPPROVAL_ID,
       status: 'processed',
+      externalReference: encodeExternalReference({ tenantId: TENANT_ID, plan: 'negocio' }),
       paymentMethodId: 'debin_transfer',
       amountArsCents: 3500000,
       nextPaymentDate: '2026-09-28T14:00:00.000Z',
+      paymentId: 'payment-1',
+      paymentStatus: 'approved',
     });
   });
 
@@ -483,9 +492,9 @@ describe('cuota (authorized_payment)', () => {
       amountArs: 3500000,
       paymentMethod: 'debin_transfer',
     });
-    // La cuota no trae `external_reference`: hay que subir a la suscripción para saber de quién es.
+    // La factura trae `external_reference`; no hace falta una segunda lectura a MP.
     expect(client.calls.authorizedPayment).toBe(1);
-    expect(client.calls.preapproval).toBe(1);
+    expect(client.calls.preapproval).toBe(0);
   });
 
   it('en reintento de cobro (recycling): queda payment_failed y el plan NO se baja', async () => {
@@ -493,9 +502,12 @@ describe('cuota (authorized_payment)', () => {
       id: 'pay-2',
       preapprovalId: PREAPPROVAL_ID,
       status: 'recycling',
+      externalReference: encodeExternalReference({ tenantId: TENANT_ID, plan: 'negocio' }),
       paymentMethodId: 'credit_card',
       amountArsCents: 3500000,
       nextPaymentDate: null,
+      paymentId: 'payment-2',
+      paymentStatus: 'rejected',
     });
 
     await handleWebhookNotification(
@@ -508,12 +520,92 @@ describe('cuota (authorized_payment)', () => {
     // iba a pagar. MP recicla; si termina cancelando, llega por el topic de preapproval.
     expect(rowsOf(tenants)).toHaveLength(0);
   });
+
+  it('processed con pago rechazado no habilita el plan', async () => {
+    client.seedAuthorizedPayment({
+      id: 'pay-3',
+      preapprovalId: PREAPPROVAL_ID,
+      status: 'processed',
+      externalReference: encodeExternalReference({ tenantId: TENANT_ID, plan: 'negocio' }),
+      paymentMethodId: 'credit_card',
+      amountArsCents: 3500000,
+      nextPaymentDate: null,
+      paymentId: 'payment-3',
+      paymentStatus: 'rejected',
+    });
+
+    const result = await handleWebhookNotification(
+      delivery({ topic: TOPIC_AUTHORIZED_PAYMENT, dataId: 'pay-3', eventId: 'notif-pago-rechazado' }),
+      deps(),
+    );
+
+    expect(result).toEqual({ status: 200, outcome: 'applied' });
+    expect(rowsOf(subscriptions)[0]?.row).toMatchObject({ status: 'payment_failed' });
+    expect(rowsOf(tenants)).toHaveLength(0);
+  });
+
+  it('si la factura sólo trae el ID del pago, consulta su estado antes de habilitar', async () => {
+    client.seedAuthorizedPayment({
+      id: 'pay-4',
+      preapprovalId: PREAPPROVAL_ID,
+      status: 'processed',
+      externalReference: encodeExternalReference({ tenantId: TENANT_ID, plan: 'negocio' }),
+      paymentMethodId: null,
+      amountArsCents: null,
+      nextPaymentDate: '2026-09-28T14:00:00.000Z',
+      paymentId: 'payment-6',
+      paymentStatus: null,
+    });
+    client.seedPayment({
+      id: 'payment-6',
+      status: 'approved',
+      externalReference: encodeExternalReference({ tenantId: TENANT_ID, plan: 'negocio' }),
+      paymentMethodId: 'account_money',
+      amountArsCents: 3500000,
+    });
+
+    const result = await handleWebhookNotification(
+      delivery({ topic: TOPIC_AUTHORIZED_PAYMENT, dataId: 'pay-4', eventId: 'notif-pago-4' }),
+      deps(),
+    );
+
+    expect(result).toEqual({ status: 200, outcome: 'applied' });
+    expect(client.calls.payment).toBe(1);
+    expect(rowsOf(subscriptions)[0]?.row).toMatchObject({
+      status: 'authorized',
+      amountArs: 3500000,
+      paymentMethod: 'account_money',
+    });
+  });
+});
+
+describe('pago (payment)', () => {
+  it('no usa un pago aislado para habilitar un plan aunque tenga external_reference válido', async () => {
+    client.seedPayment({
+      id: 'payment-4',
+      status: 'approved',
+      externalReference: encodeExternalReference({ tenantId: TENANT_ID, plan: 'base' }),
+      paymentMethodId: 'account_money',
+      amountArsCents: 1900000,
+    });
+
+    const result = await handleWebhookNotification(
+      delivery({ topic: TOPIC_PAYMENT, dataId: 'payment-4', eventId: 'notif-payment-4' }),
+      deps(),
+    );
+
+    expect(result).toEqual({ status: 200, outcome: 'ignored_topic' });
+    expect(client.calls.payment).toBe(0);
+    expect(rowsOf(subscriptions)).toHaveLength(0);
+    expect(rowsOf(tenants)).toHaveLength(0);
+    expect(ledger.applied).toHaveLength(0);
+  });
 });
 
 describe('lo que se ignora', () => {
   it('topic ajeno: 200, cero escrituras y cero llamadas a MP', async () => {
     const result = await handleWebhookNotification(
-      delivery({ topic: 'payment', queryDataId: null, eventId: 'notif-otro' }),
+      delivery({ topic: 'merchant_order', queryDataId: null, eventId: 'notif-otro' }),
       deps(),
     );
 

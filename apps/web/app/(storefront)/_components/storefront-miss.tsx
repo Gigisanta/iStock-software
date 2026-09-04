@@ -87,10 +87,10 @@ export function StorefrontMiss() {
       {/* Capa 2 del `noindex`. Ver el docblock de arriba: va con el cuerpo, no con la metadata. */}
       <meta name="robots" content="noindex, nofollow" />
 
-      <p className="text-xs font-medium uppercase tracking-wide text-neutral-500">
+      <p className="storefront-kicker">
         Dirección sin vidriera
       </p>
-      <h1 className="mt-2 text-2xl font-semibold leading-tight sm:text-3xl">
+      <h1>
         {STOREFRONT_MISS_TITLE}
       </h1>
       <p className="mt-3 text-sm leading-relaxed text-neutral-600 dark:text-neutral-400">

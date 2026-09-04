@@ -91,11 +91,11 @@ export async function withTenantDb<T>(ctx: TenantContext, fn: (tx: Tx) => Promis
  *
  * 1. `resolveMembership()` — (a). Leer a qué tenant pertenece un usuario. Es el problema del huevo y
  *    la gallina: para leer `memberships` bajo RLS hace falta el claim de tenant, y el claim de
- *    tenant sale de `memberships`. En Supabase esto lo resuelve el Custom Access Token Hook, que
- *    también corre con privilegios. Está acotado por `user_id = auth.uid()` verificado antes.
+ *    tenant sale de `memberships`. Neon Auth entrega la identidad y el servidor revalida esa
+ *    membresía antes de abrir el contexto RLS. Está acotado por `user_id` verificado antes.
  * 2. `createTenant()` — (a). El usuario todavía no tiene claim, así que la policy
  *    `tenants_tenant_insert` (`with check id = <claim>`) lo rechazaría con el claim en `null`.
- * 3. El driver local de auth — (a). Emula el alta de `auth.users` que en producción hace GoTrue.
+ * 3. El driver local de auth — (a). Emula el alta de `auth.users` que en producción hace Neon Auth.
  * 4. `expireDueReservations()` (S6) — (b). El cron de expiración: lo dispara Vercel Cron, no una
  *    persona. Es el primero que **no** es bootstrap de sesión. Bajo `withTenantDb` no vencería una
  *    sola reserva y no habría error. Acotado por lo que escribe: los tres `update`/`insert` llevan

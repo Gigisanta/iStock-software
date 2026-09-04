@@ -4,9 +4,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "next dev",
+    "dev": "MEDIA_LOCAL_ROOT=\"$(cd ../.. && pwd)/.media-local\" next dev",
     "build": "next build",
     "start": "next start",
+    "seed:demo-media": "tsx scripts/seed-demo-media.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "node ./scripts/web-lint.mjs",
     "test": "vitest run --passWithNoTests"
@@ -16,8 +17,6 @@
     "@istock/domain": "workspace:*",
     "@istock/media": "workspace:*",
     "@neondatabase/auth": "0.5.0-beta",
-    "@supabase/ssr": "^0.8.0",
-    "@supabase/supabase-js": "^2.60.0",
     "next": "16.3.3",
     "react": "19.2.8",
     "react-dom": "19.2.8",

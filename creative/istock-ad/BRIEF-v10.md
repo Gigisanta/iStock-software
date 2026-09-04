@@ -29,7 +29,7 @@ Fecha: 2026-09-04. Reemplaza a v9 (rechazada: mockups estáticos, sin gancho, co
 | 1 | 84–147 | **Cargalo una vez** | Corte a claro. Teléfono real con `/app/stock/nuevo`: se elige modelo, GB, color, estado, precio, batería; "Así va a figurar" se arma solo. Titular: **Cargá el equipo una vez.** | tick de UI por campo, downbeat en el corte |
 | 2 | 147–246 | **Tu vidriera** | Vidriera real scrolleando, fotos reales, badges Disponible/Reservado/Vendido. Titular: **Queda en tu vidriera, con tu link.** Chip: `altovalle.maat.work` | música en groove |
 | 3 | 246–348 | **La ficha** | Tap en el iPhone 14 Pro → ficha: USD 620 ≈ $ 923.000, batería 89 %, iCloud libre, garantía 90 días, retiro Neuquén/Cipolletti. Titular: **Dólares, pesos, batería, garantía. Todo dicho.** | tap + scroll |
-| 4 | 348–456 | **WhatsApp** | Tap en **Lo quiero — escribir por WhatsApp** → pantalla estilo WhatsApp con el mensaje ya escrito, enviado. Titular: **Te escriben con el equipo ya escrito.** | swoosh + "sent" |
+| 4 | 348–456 | **WhatsApp** | Tap en **Lo quiero por WhatsApp** → pantalla estilo WhatsApp con el mensaje ya escrito, enviado. Titular: **Te escriben con el equipo ya escrito.** | swoosh + "sent" |
 | 5 | 456–540 | **Cierre** | Logo iStock (tres barras + wordmark) · **14 días gratis** · `istock.maat.work` · "Producto de MaatWork". | acorde final, cola de reverb, silencio limpio al final |
 
 ## Piezas a producir

@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96" role="img" aria-labelledby="mark-title mark-description">
+  <title id="mark-title">Marca iStock</title>
+  <desc id="mark-description">Forma modular de tres tramos rectos que representa stock ordenado y en movimiento.</desc>
+  <style>
+    :root {
+      --istock-accent: #2f8f68;
+    }
+  </style>
+  <g id="istock-mark" fill="var(--istock-accent)">
+    <rect x="12" y="12" width="72" height="20"/>
+    <rect x="12" y="32" width="20" height="8"/>
+    <rect x="24" y="40" width="60" height="20"/>
+    <rect x="64" y="60" width="20" height="8"/>
+    <rect x="12" y="68" width="60" height="20"/>
+  </g>
+</svg>

@@ -1,6 +1,6 @@
 import 'server-only';
-import { eq } from 'drizzle-orm';
-import { fxSettings, tenants } from '@istock/db';
+import { and, asc, eq } from 'drizzle-orm';
+import { fxSettings, locations, tenants } from '@istock/db';
 import type { FxRoundingMode } from '@istock/domain';
 import { withTenantDb, type TenantContext } from '../db/session';
 
@@ -27,23 +27,35 @@ export interface TenantSettings {
   readonly id: string;
   readonly slug: string;
   readonly name: string;
+  readonly isDemo: boolean;
   readonly waPhone: string;
   readonly acceptsTradeIn: boolean;
+  readonly reservationMinutes: number;
   readonly paymentMethods: readonly string[];
   readonly plan: 'trial' | 'base' | 'negocio';
   readonly status: 'active' | 'suspended' | 'cancelled';
   readonly trialEndsAt: Date | null;
+  readonly pickup: TenantPickupSettings | null;
+}
+
+export interface TenantPickupSettings {
+  readonly id: string;
+  readonly name: string;
+  readonly address: string;
+  readonly hours: string;
 }
 
 export async function loadTenantSettings(ctx: TenantContext): Promise<TenantSettings | null> {
-  const rows = await withTenantDb(ctx, async (tx) =>
-    tx
+  return withTenantDb(ctx, async (tx) => {
+    const rows = await tx
       .select({
         id: tenants.id,
         slug: tenants.slug,
         name: tenants.name,
+        isDemo: tenants.isDemo,
         waPhone: tenants.waPhone,
         acceptsTradeIn: tenants.acceptsTradeIn,
+        reservationMinutes: tenants.reservationMinutes,
         paymentMethods: tenants.paymentMethods,
         plan: tenants.plan,
         status: tenants.status,
@@ -51,10 +63,27 @@ export async function loadTenantSettings(ctx: TenantContext): Promise<TenantSett
       })
       .from(tenants)
       .where(eq(tenants.id, ctx.tenantId))
-      .limit(1),
-  );
+      .limit(1);
+    const row = rows[0];
+    if (row === undefined) return null;
 
-  return rows[0] ?? null;
+    const pickupRows = await tx
+      .select({
+        id: locations.id,
+        name: locations.name,
+        address: locations.address,
+        hours: locations.hours,
+      })
+      .from(locations)
+      .where(and(eq(locations.tenantId, ctx.tenantId), eq(locations.isActive, true)))
+      .orderBy(asc(locations.sortOrder), asc(locations.name))
+      .limit(1);
+
+    return {
+      ...row,
+      pickup: pickupRows[0] ?? null,
+    };
+  });
 }
 
 /**

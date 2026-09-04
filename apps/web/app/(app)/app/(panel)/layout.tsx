@@ -1,9 +1,11 @@
 import { Suspense } from 'react';
 import { signOutAction } from '../../_lib/auth/actions';
-import { storefrontHostForSlug, storefrontUrlForSlug } from '../../_lib/env';
+import { requestRootDomain, storefrontHostForSlug, storefrontUrlForPanel } from '../../_lib/env';
 import { requireTenant } from '../../_lib/session';
+import { panelStorefrontLabel, panelTenantName } from '../../_lib/tenants/panel-identity';
 import { BottomNav } from './_ui/bottom-nav';
 import { BottomNavView } from './_ui/bottom-nav-view';
+import { PanelBrand } from './_ui/panel-brand';
 
 /**
  * Chrome del panel. **Mobile-first sin excepción**: el ancho base es el de un teléfono y
@@ -11,10 +13,12 @@ import { BottomNavView } from './_ui/bottom-nav-view';
  *
  * Tres decisiones de layout que responden a "se usa parado en un local, con una mano":
  *
- * 1. La navegación va **abajo** (`BottomNav`), donde llega el pulgar.
+ * 1. La navegación va **abajo en móvil** (`BottomNav`) y se convierte en sidebar en escritorio,
+ *    sin cambiar los destinos ni la forma de marcar la sección activa.
  * 2. `pb-28` en el `main`: el contenido nunca termina debajo de la barra fija. Un botón de
  *    "guardar" tapado por la nav es un bug, no un detalle de espaciado.
- * 3. El header es `sticky` y corto: se ve de qué negocio es el panel sin gastar media pantalla.
+ * 3. El header es `sticky` y corto: se ve que estás usando iStock y de qué negocio es el panel,
+ *    sin gastar media pantalla.
  *
  * Sobre los dos `<Suspense>`: con `cacheComponents: true` todo acceso dinámico tiene que estar
  * adentro de un límite de suspenso, y acá hay dos fuentes distintas de dato dinámico.
@@ -35,12 +39,12 @@ import { BottomNavView } from './_ui/bottom-nav-view';
 
 export default function PanelLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex min-h-dvh flex-col">
+    <div className="panel-shell flex min-h-dvh flex-col">
       <Suspense fallback={<HeaderSkeleton />}>
         <PanelHeader />
       </Suspense>
 
-      <main className="mx-auto w-full max-w-2xl flex-1 px-4 pb-28 pt-4">{children}</main>
+      <main className="panel-main mx-auto w-full max-w-2xl flex-1 px-4 pb-28 pt-4">{children}</main>
 
       {/*
         El fallback dibuja la MISMA barra sin item activo. Ver `bottom-nav-view.tsx`: es lo que
@@ -62,19 +66,24 @@ export default function PanelLayout({ children }: { children: React.ReactNode })
  */
 async function PanelHeader() {
   const { tenant } = await requireTenant();
+  const domain = await requestRootDomain();
+  const storefrontUrl = storefrontUrlForPanel(tenant, domain);
+  const storefrontLabel = panelStorefrontLabel(tenant, storefrontHostForSlug(tenant.slug, domain));
 
   return (
-    <header className="sticky top-0 z-10 border-b border-neutral-200 bg-white/90 backdrop-blur dark:border-neutral-800 dark:bg-neutral-950/90">
-      <div className="mx-auto flex w-full max-w-2xl items-center justify-between gap-3 px-4 py-2.5">
-        <div className="min-w-0">
-          <p className="truncate text-base font-semibold leading-tight">{tenant.name}</p>
+    <header className="panel-header sticky top-0 z-10 border-b border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-950">
+      <div className="mx-auto flex w-full max-w-2xl items-center gap-3 px-4 py-2.5">
+        <PanelBrand variant="compact" />
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-base font-semibold leading-tight">{panelTenantName(tenant)}</p>
           <a
-            href={storefrontUrlForSlug(tenant.slug)}
+            href={storefrontUrl}
             target="_blank"
             rel="noreferrer"
+            aria-label={tenant.isDemo ? 'Abrir tu vidriera' : `Abrir ${storefrontLabel}`}
             className="block truncate text-xs text-neutral-500 underline-offset-2 hover:underline dark:text-neutral-400"
           >
-            {storefrontHostForSlug(tenant.slug)} ↗
+            {storefrontLabel} ↗
           </a>
         </div>
 
@@ -100,9 +109,10 @@ function HeaderSkeleton() {
   return (
     <header
       aria-hidden="true"
-      className="sticky top-0 z-10 border-b border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-950"
+      className="panel-header sticky top-0 z-10 border-b border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-950"
     >
-      <div className="mx-auto flex w-full max-w-2xl items-center px-4 py-2.5">
+      <div className="mx-auto flex w-full max-w-2xl items-center gap-3 px-4 py-2.5">
+        <div className="h-8 w-8 animate-pulse rounded-lg bg-neutral-100 dark:bg-neutral-900" />
         <div className="h-9 w-40 animate-pulse rounded-lg bg-neutral-100 dark:bg-neutral-900" />
       </div>
     </header>

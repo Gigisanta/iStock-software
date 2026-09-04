@@ -26,9 +26,9 @@ if [ "${1:-}" = "--harness" ]; then
     else printf '%-9s %s  <-- ESPERADO %s\n' "$que:" "$n" "$esperado"; fail=1; fi
   }
   count agents   14 .claude/agents/*.md
-  count skills    9 .claude/skills/*/SKILL.md
+  count skills    10 .claude/skills/*/SKILL.md
   count commands  4 .claude/commands/*.md
-  count docs      9 docs/*.md
+  count docs      12 docs/*.md
 elif [ "$#" -eq 0 ]; then
   # Sin argumentos esto iteraba sobre una lista vacia y salia `GUARD: PASS` con exit 0 habiendo
   # chequeado CERO archivos. O sea: el guard que existe para hacer cumplir "ausencia de medicion =

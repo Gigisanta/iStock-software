@@ -1,0 +1,944 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#f1f3ee" />
+    <title>iStock | Identidad visual inicial</title>
+    <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="./brand-tokens.css" />
+    <style>
+      :root {
+        --page-width: 1180px;
+        --page-gutter: 24px;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        scroll-behavior: smooth;
+      }
+
+      body {
+        margin: 0;
+        background: var(--istock-paper);
+        color: var(--istock-ink);
+        font-family: var(--istock-font-sans);
+        font-size: var(--istock-type-body);
+        line-height: 1.5;
+      }
+
+      a {
+        color: inherit;
+      }
+
+      img,
+      svg {
+        display: block;
+        max-width: 100%;
+      }
+
+      .site-header {
+        position: sticky;
+        top: 0;
+        z-index: 2;
+        border-bottom: 1px solid var(--istock-line);
+        background: var(--istock-paper);
+      }
+
+      .header-inner {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 24px;
+        width: min(var(--page-width), calc(100% - (var(--page-gutter) * 2)));
+        min-height: 72px;
+        margin: 0 auto;
+      }
+
+      .header-brand {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        color: var(--istock-ink);
+        font-size: 0.94rem;
+        font-weight: 700;
+        letter-spacing: -0.02em;
+        text-decoration: none;
+      }
+
+      .header-brand img {
+        width: 28px;
+        height: 28px;
+      }
+
+      .header-note {
+        color: var(--istock-muted);
+        font-family: var(--istock-font-mono);
+        font-size: var(--istock-type-meta);
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+      }
+
+      .header-nav {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        gap: 18px;
+        color: var(--istock-muted);
+        font-size: 0.84rem;
+      }
+
+      .header-nav a {
+        text-decoration: none;
+      }
+
+      .header-nav a:hover,
+      .header-nav a:focus-visible {
+        color: var(--istock-accent-action);
+      }
+
+      .page {
+        width: min(var(--page-width), calc(100% - (var(--page-gutter) * 2)));
+        margin: 0 auto;
+      }
+
+      .hero {
+        display: grid;
+        grid-template-columns: minmax(0, 0.88fr) minmax(320px, 1.12fr);
+        min-height: min(720px, 78dvh);
+        border-bottom: 1px solid var(--istock-line);
+      }
+
+      .hero-copy {
+        display: flex;
+        flex-direction: column;
+        justify-content: flex-end;
+        padding: clamp(40px, 7vw, 88px) clamp(0px, 4vw, 48px) 64px 0;
+      }
+
+      .eyebrow {
+        margin: 0 0 18px;
+        color: var(--istock-accent-action);
+        font-family: var(--istock-font-mono);
+        font-size: var(--istock-type-meta);
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      h1,
+      h2,
+      h3,
+      p {
+        margin-top: 0;
+      }
+
+      h1,
+      h2,
+      h3 {
+        font-family: var(--istock-font-display);
+        letter-spacing: -0.055em;
+      }
+
+      h1 {
+        max-width: 8ch;
+        margin-bottom: 24px;
+        font-size: clamp(3.8rem, 8vw, 7.2rem);
+        font-weight: 700;
+        line-height: 0.94;
+      }
+
+      .hero-copy > p:not(.eyebrow) {
+        max-width: 33rem;
+        margin-bottom: 32px;
+        color: var(--istock-ink-soft);
+        font-size: clamp(1.05rem, 1.8vw, 1.28rem);
+        line-height: 1.4;
+      }
+
+      .hero-actions {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 18px;
+      }
+
+      .button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 46px;
+        padding: 0 18px;
+        border: 1px solid var(--istock-accent-action);
+        border-radius: var(--istock-radius-control);
+        background: var(--istock-accent-action);
+        color: var(--istock-accent-contrast);
+        font-size: 0.88rem;
+        font-weight: 700;
+        text-decoration: none;
+        white-space: nowrap;
+      }
+
+      .button:hover,
+      .button:focus-visible {
+        box-shadow: var(--istock-shadow-accent);
+        transform: translateY(-2px);
+      }
+
+      .button:active {
+        transform: translateY(1px) scale(0.98);
+      }
+
+      .hero-note {
+        max-width: 220px;
+        color: var(--istock-muted);
+        font-size: 0.84rem;
+        line-height: 1.35;
+      }
+
+      .hero-mark {
+        position: relative;
+        display: grid;
+        place-items: center;
+        min-height: 440px;
+        overflow: hidden;
+        border-left: 1px solid var(--istock-line);
+        border-radius: var(--istock-radius-surface);
+        background: var(--istock-surface);
+      }
+
+      .hero-mark::before,
+      .hero-mark::after {
+        position: absolute;
+        content: "";
+        pointer-events: none;
+      }
+
+      .hero-mark::before {
+        inset: 12%;
+        border: 1px solid var(--istock-line);
+        border-radius: var(--istock-radius-surface);
+      }
+
+      .hero-mark::after {
+        right: 16%;
+        bottom: 12%;
+        width: 24%;
+        height: 2px;
+        background: var(--istock-accent);
+        transform-origin: right center;
+      }
+
+      .hero-mark img {
+        position: relative;
+        z-index: 1;
+        width: min(46%, 320px);
+        min-width: 180px;
+        filter: drop-shadow(0 18px 22px rgb(17 21 19 / 0.13));
+      }
+
+      .section {
+        padding: clamp(88px, 12vw, 160px) 0;
+        border-bottom: 1px solid var(--istock-line);
+      }
+
+      .section-heading {
+        max-width: 700px;
+        margin-bottom: 48px;
+      }
+
+      .section-heading h2 {
+        margin-bottom: 14px;
+        font-size: var(--istock-type-heading);
+        line-height: 0.98;
+      }
+
+      .section-heading p {
+        max-width: 50ch;
+        margin-bottom: 0;
+        color: var(--istock-ink-soft);
+        font-size: 1.05rem;
+      }
+
+      .lockup-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1.45fr) minmax(220px, 0.55fr);
+        gap: 24px;
+        align-items: stretch;
+      }
+
+      .lockup-stage,
+      .hierarchy-note,
+      .mark-board,
+      .mini-board,
+      .type-specimen,
+      .use-panel {
+        border: 1px solid var(--istock-line);
+        border-radius: var(--istock-radius-surface);
+      }
+
+      .lockup-stage {
+        display: grid;
+        place-items: center;
+        min-height: 270px;
+        padding: 40px;
+        background: var(--istock-paper-strong);
+      }
+
+      .lockup-stage img {
+        width: min(100%, 560px);
+      }
+
+      .hierarchy-note {
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        gap: 18px;
+        padding: 28px;
+        background: var(--istock-surface);
+      }
+
+      .hierarchy-note strong {
+        display: block;
+        margin-bottom: 5px;
+        font-family: var(--istock-font-display);
+        font-size: 1.35rem;
+        letter-spacing: -0.04em;
+      }
+
+      .hierarchy-note span {
+        color: var(--istock-muted);
+        font-size: 0.86rem;
+      }
+
+      .mark-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1.15fr) minmax(240px, 0.85fr);
+        gap: 24px;
+      }
+
+      .mark-board {
+        display: grid;
+        place-items: center;
+        min-height: 420px;
+        background: var(--istock-ink);
+      }
+
+      .mark-board img {
+        width: min(48%, 260px);
+        min-width: 170px;
+      }
+
+      .mini-stack {
+        display: grid;
+        grid-template-rows: 1fr 1fr;
+        gap: 24px;
+      }
+
+      .mini-board {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 180px;
+        padding: 28px;
+        background: var(--istock-paper-strong);
+      }
+
+      .mini-board img {
+        width: 88px;
+        height: 88px;
+      }
+
+      .mini-board.reverse {
+        justify-content: space-between;
+        gap: 18px;
+        background: var(--istock-accent);
+        color: var(--istock-ink);
+      }
+
+      .mini-board.reverse img {
+        width: 64px;
+        height: 64px;
+      }
+
+      .mini-board.reverse span {
+        max-width: 13ch;
+        font-size: 0.86rem;
+        font-weight: 700;
+        line-height: 1.2;
+      }
+
+      .palette-grid {
+        display: grid;
+        grid-template-columns: 1.6fr 1fr 1fr 1fr;
+        gap: 12px;
+      }
+
+      .swatch {
+        min-height: 190px;
+        padding: 18px;
+        border: 1px solid var(--istock-line);
+        border-radius: var(--istock-radius-surface);
+        background: var(--swatch);
+        color: var(--swatch-ink, var(--istock-ink));
+      }
+
+      .swatch:first-child {
+        min-height: 230px;
+      }
+
+      .swatch strong,
+      .swatch span {
+        display: block;
+      }
+
+      .swatch strong {
+        margin-bottom: 8px;
+        font-size: 0.95rem;
+      }
+
+      .swatch span {
+        font-family: var(--istock-font-mono);
+        font-size: 0.72rem;
+        letter-spacing: 0.04em;
+      }
+
+      .swatch.paper {
+        --swatch: var(--istock-paper);
+        --swatch-ink: var(--istock-ink);
+      }
+
+      .swatch.ink {
+        --swatch: var(--istock-ink);
+        --swatch-ink: var(--istock-paper);
+      }
+
+      .swatch.surface {
+        --swatch: var(--istock-surface);
+      }
+
+      .swatch.accent {
+        --swatch: var(--istock-accent);
+        --swatch-ink: var(--istock-ink);
+      }
+
+      .type-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1.35fr) minmax(240px, 0.65fr);
+        gap: 24px;
+      }
+
+      .type-specimen {
+        padding: clamp(28px, 5vw, 58px);
+        background: var(--istock-paper-strong);
+      }
+
+      .type-display {
+        max-width: 8ch;
+        margin-bottom: 28px;
+        font-family: var(--istock-font-display);
+        font-size: clamp(3.2rem, 8vw, 7rem);
+        font-weight: 700;
+        letter-spacing: -0.07em;
+        line-height: 0.9;
+      }
+
+      .type-body {
+        max-width: 38ch;
+        margin-bottom: 0;
+        color: var(--istock-ink-soft);
+        font-size: 1.08rem;
+      }
+
+      .type-notes {
+        display: grid;
+        gap: 24px;
+      }
+
+      .type-note {
+        padding-top: 18px;
+        border-top: 1px solid var(--istock-line);
+      }
+
+      .type-note strong,
+      .type-note span {
+        display: block;
+      }
+
+      .type-note strong {
+        margin-bottom: 7px;
+        font-size: 0.88rem;
+      }
+
+      .type-note span {
+        color: var(--istock-muted);
+        font-size: 0.84rem;
+      }
+
+      .type-note.mono span {
+        font-family: var(--istock-font-mono);
+        font-size: 0.76rem;
+      }
+
+      .uses-grid {
+        display: grid;
+        grid-template-columns: minmax(240px, 0.65fr) minmax(0, 1.35fr);
+        gap: 24px;
+        align-items: stretch;
+      }
+
+      .vertical-frame {
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        aspect-ratio: 9 / 16;
+        min-height: 500px;
+        padding: 24px;
+        border-radius: var(--istock-radius-surface);
+        background: var(--istock-ink);
+        color: var(--istock-paper);
+      }
+
+      .vertical-frame img {
+        width: 70px;
+        height: 70px;
+      }
+
+      .vertical-frame strong {
+        max-width: 8ch;
+        font-size: clamp(2.5rem, 5vw, 4.8rem);
+        letter-spacing: -0.07em;
+        line-height: 0.9;
+      }
+
+      .vertical-frame small {
+        color: var(--istock-accent-soft);
+        font-family: var(--istock-font-mono);
+        font-size: 0.68rem;
+        letter-spacing: 0.04em;
+      }
+
+      .use-panels {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 24px;
+      }
+
+      .use-panel {
+        display: flex;
+        min-height: 240px;
+        flex-direction: column;
+        justify-content: space-between;
+        padding: 28px;
+        background: var(--istock-surface);
+      }
+
+      .use-panel:first-child {
+        grid-column: 1 / -1;
+        min-height: 290px;
+        background: var(--istock-paper-strong);
+      }
+
+      .use-panel img {
+        width: 58px;
+        height: 58px;
+      }
+
+      .use-panel strong {
+        display: block;
+        margin-top: 22px;
+        font-family: var(--istock-font-display);
+        font-size: 1.35rem;
+        letter-spacing: -0.04em;
+      }
+
+      .use-panel p {
+        max-width: 25ch;
+        margin: 8px 0 0;
+        color: var(--istock-ink-soft);
+        font-size: 0.9rem;
+      }
+
+      .footer {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 24px;
+        padding: 28px 0 38px;
+        color: var(--istock-muted);
+        font-size: 0.82rem;
+      }
+
+      .footer strong {
+        color: var(--istock-ink);
+      }
+
+      [data-reveal] {
+        opacity: 0;
+        transform: translateY(22px);
+      }
+
+      [data-reveal].is-visible {
+        opacity: 1;
+        transform: translateY(0);
+      }
+
+      :focus-visible {
+        outline: 3px solid var(--istock-accent);
+        outline-offset: 4px;
+      }
+
+      @media (prefers-reduced-motion: no-preference) {
+        [data-reveal] {
+          transition:
+            opacity 700ms cubic-bezier(0.16, 1, 0.3, 1),
+            transform 700ms cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        [data-reveal].is-visible {
+          transition-delay: var(--reveal-delay, 0ms);
+        }
+
+        .hero-mark img {
+          animation: mark-arrival 900ms cubic-bezier(0.16, 1, 0.3, 1) both;
+        }
+
+        .hero-mark::after {
+          animation: line-arrival 900ms 340ms cubic-bezier(0.16, 1, 0.3, 1) both;
+        }
+
+        .button {
+          transition:
+            transform 180ms cubic-bezier(0.16, 1, 0.3, 1),
+            box-shadow 180ms cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        @keyframes mark-arrival {
+          from {
+            opacity: 0;
+            transform: scale(0.82) rotate(-4deg);
+          }
+          to {
+            opacity: 1;
+            transform: scale(1) rotate(0deg);
+          }
+        }
+
+        @keyframes line-arrival {
+          from {
+            opacity: 0;
+            transform: scaleX(0);
+          }
+          to {
+            opacity: 1;
+            transform: scaleX(1);
+          }
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        html {
+          scroll-behavior: auto;
+        }
+
+        [data-reveal] {
+          opacity: 1;
+          transform: none;
+        }
+
+        .hero-mark img,
+        .hero-mark::after {
+          animation: none;
+        }
+
+        .button {
+          transition: none;
+        }
+      }
+
+      @media (max-width: 767px) {
+        :root {
+          --page-gutter: 16px;
+        }
+
+        .header-inner {
+          align-items: flex-start;
+          flex-direction: column;
+          gap: 12px;
+          padding: 16px 0;
+        }
+
+        .header-nav {
+          justify-content: flex-start;
+          gap: 10px 16px;
+        }
+
+        .hero,
+        .lockup-grid,
+        .mark-grid,
+        .type-grid,
+        .uses-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .hero {
+          min-height: auto;
+        }
+
+        .hero-copy {
+          padding: 56px 0 48px;
+        }
+
+        h1 {
+          max-width: 7ch;
+          font-size: clamp(3.8rem, 18vw, 6rem);
+        }
+
+        .hero-mark {
+          min-height: 380px;
+          border-left: 0;
+        }
+
+        .section {
+          padding: 88px 0;
+        }
+
+        .lockup-stage {
+          min-height: 190px;
+          padding: 24px 16px;
+        }
+
+        .mark-board {
+          min-height: 340px;
+        }
+
+        .palette-grid {
+          grid-template-columns: 1fr 1fr;
+        }
+
+        .swatch:first-child {
+          grid-column: 1 / -1;
+          min-height: 190px;
+        }
+
+        .vertical-frame {
+          min-height: 520px;
+          width: min(100%, 300px);
+        }
+
+        .use-panels {
+          grid-template-columns: 1fr;
+        }
+
+        .use-panel:first-child {
+          grid-column: auto;
+        }
+
+        .footer {
+          align-items: flex-start;
+          flex-direction: column;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="header-inner">
+        <a class="header-brand" href="#inicio" aria-label="iStock, inicio">
+          <img src="./mark.svg" alt="" width="28" height="28" />
+          <span>iStock</span>
+        </a>
+        <span class="header-note">Identidad visual inicial</span>
+        <nav class="header-nav" aria-label="Secciones de la guía">
+          <a href="#lockup">Lockup</a>
+          <a href="#mark">Mark</a>
+          <a href="#paleta">Paleta</a>
+          <a href="#tipo">Tipo</a>
+          <a href="#usos">Usos</a>
+        </nav>
+      </div>
+    </header>
+
+    <main id="inicio" class="page">
+      <section class="hero" aria-labelledby="hero-title">
+        <div class="hero-copy" data-reveal>
+          <p class="eyebrow">iStock por MaatWork</p>
+          <h1 id="hero-title">Stock listo para vender.</h1>
+          <p>Producto para resellers que publican, responden y cierran por WhatsApp.</p>
+          <div class="hero-actions">
+            <a class="button" href="#usos">Ver usos</a>
+            <span class="hero-note">iStock es el producto. MaatWork es la empresa.</span>
+          </div>
+        </div>
+        <div class="hero-mark" data-reveal style="--reveal-delay: 120ms">
+          <img src="./mark.svg" alt="Mark modular de iStock" width="320" height="320" />
+        </div>
+      </section>
+
+      <section id="lockup" class="section" aria-labelledby="lockup-title" data-reveal>
+        <div class="section-heading">
+          <h2 id="lockup-title">El lockup</h2>
+          <p>El nombre del producto ocupa el primer plano. MaatWork firma sin competir.</p>
+        </div>
+        <div class="lockup-grid">
+          <div class="lockup-stage">
+            <img src="./logo-horizontal.svg" alt="iStock, producto de MaatWork" width="560" height="112" />
+          </div>
+          <aside class="hierarchy-note" aria-label="Jerarquía de marca">
+            <div>
+              <strong>iStock</strong>
+              <span>Producto visible y recordable.</span>
+            </div>
+            <div>
+              <strong>MaatWork</strong>
+              <span>Firma de empresa en segundo nivel.</span>
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      <section id="mark" class="section" aria-labelledby="mark-title" data-reveal>
+        <div class="section-heading">
+          <h2 id="mark-title">Una forma que ordena</h2>
+          <p>Tramos rectos, cortes precisos y un vacío constante. El mark funciona solo y a tamaño chico.</p>
+        </div>
+        <div class="mark-grid">
+          <div class="mark-board">
+            <img src="./mark.svg" alt="Mark de iStock en verde mineral sobre fondo oscuro" width="260" height="260" />
+          </div>
+          <div class="mini-stack">
+            <div class="mini-board">
+              <img src="./favicon.svg" alt="Favicon de iStock" width="88" height="88" />
+            </div>
+            <div class="mini-board reverse">
+              <img src="./mark.svg" alt="Mark de iStock sobre verde mineral" width="64" height="64" />
+              <span>Versión de una tinta para avatar y sello.</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="paleta" class="section" aria-labelledby="palette-title" data-reveal>
+        <div class="section-heading">
+          <h2 id="palette-title">Paleta con un solo acento</h2>
+          <p>Neutros fríos para dejar que el stock respire. Verde mineral para marcar la acción.</p>
+        </div>
+        <div class="palette-grid" aria-label="Muestras de color">
+          <div class="swatch paper">
+            <strong>Paper</strong>
+            <span>#f1f3ee</span>
+          </div>
+          <div class="swatch ink">
+            <strong>Ink</strong>
+            <span>#111513</span>
+          </div>
+          <div class="swatch surface">
+            <strong>Surface</strong>
+            <span>#dfe7e1</span>
+          </div>
+          <div class="swatch accent">
+            <strong>Mineral</strong>
+            <span>#2f8f68</span>
+          </div>
+        </div>
+      </section>
+
+      <section id="tipo" class="section" aria-labelledby="type-title" data-reveal>
+        <div class="section-heading">
+          <h2 id="type-title">Tipografía que trabaja</h2>
+          <p>Sans fuerte para reconocer el producto. Monospace sólo cuando el dato necesita precisión.</p>
+        </div>
+        <div class="type-grid">
+          <div class="type-specimen">
+            <div class="type-display">iStock</div>
+            <p class="type-body">Stock ordenado, fichas claras y una marca que se reconoce en un vistazo.</p>
+          </div>
+          <div class="type-notes">
+            <div class="type-note">
+              <strong>Display</strong>
+              <span>Helvetica Neue, Arial, 700</span>
+            </div>
+            <div class="type-note">
+              <strong>Texto</strong>
+              <span>La misma sans, 400 o 500</span>
+            </div>
+            <div class="type-note mono">
+              <strong>Dato</strong>
+              <span>SKU 14 PRO 256</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="usos" class="section" aria-labelledby="uses-title" data-reveal>
+        <div class="section-heading">
+          <h2 id="uses-title">Usos previstos</h2>
+          <p>El sistema pasa de una cabecera a un avatar y a una retícula vertical sin cambiar de idioma visual.</p>
+        </div>
+        <div class="uses-grid">
+          <div class="vertical-frame" aria-label="Marco de uso vertical, no anuncio final">
+            <img src="./mark.svg" alt="" width="70" height="70" />
+            <strong>9:16</strong>
+            <small>Marco de uso, no anuncio final.</small>
+          </div>
+          <div class="use-panels">
+            <article class="use-panel">
+              <img src="./logo-horizontal.svg" alt="Lockup iStock por MaatWork en cabecera" width="560" height="112" />
+              <div>
+                <strong>Cabecera de vidriera</strong>
+                <p>El lockup completo conserva producto primero y empresa después.</p>
+              </div>
+            </article>
+            <article class="use-panel">
+              <img src="./favicon.svg" alt="Favicon iStock usado como avatar" width="58" height="58" />
+              <div>
+                <strong>Avatar</strong>
+                <p>El favicon mantiene el reconocimiento en una escala mínima.</p>
+              </div>
+            </article>
+            <article class="use-panel">
+              <img src="./mark.svg" alt="Mark iStock usado como sello" width="58" height="58" />
+              <div>
+                <strong>Sello de stock</strong>
+                <p>Una tinta para destacar disponibilidad sin sumar otro color.</p>
+              </div>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <footer class="footer">
+        <span><strong>iStock</strong> es el producto. MaatWork es la empresa.</span>
+        <span>Arte vectorial editable y local.</span>
+      </footer>
+    </main>
+
+    <script>
+      (() => {
+        const items = document.querySelectorAll("[data-reveal]");
+        const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+        if (reduced || !("IntersectionObserver" in window)) {
+          items.forEach((item) => item.classList.add("is-visible"));
+          return;
+        }
+
+        const observer = new IntersectionObserver(
+          (entries, instance) => {
+            entries.forEach((entry) => {
+              if (!entry.isIntersecting) return;
+              entry.target.classList.add("is-visible");
+              instance.unobserve(entry.target);
+            });
+          },
+          { threshold: 0.14 },
+        );
+
+        items.forEach((item) => observer.observe(item));
+      })();
+    </script>
+  </body>
+</html>

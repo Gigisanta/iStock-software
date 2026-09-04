@@ -125,7 +125,7 @@ export default async function CanjeDetailPage({ params }: { params: Promise<{ id
       </p>
 
       {lead.createdListingId !== null ? (
-        <div className="mt-6 rounded-2xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
+        <div className="panel-card mt-6 rounded-2xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
           <p className="text-base font-semibold">Este canje ya entró al stock</p>
           <p className="mt-1.5 text-sm text-neutral-600 dark:text-neutral-300">
             Quedó como borrador. Sacale las fotos y publicalo.
@@ -146,7 +146,7 @@ export default async function CanjeDetailPage({ params }: { params: Promise<{ id
           <AcceptForm leadId={lead.id} catalogModels={catalogModels} prefill={prefillFrom(lead)} />
         </>
       ) : (
-        <div className="mt-6 rounded-2xl border border-dashed border-neutral-300 bg-white p-4 text-center dark:border-neutral-700 dark:bg-neutral-900">
+        <div className="panel-empty mt-6 rounded-2xl border border-dashed border-neutral-300 bg-white p-4 text-center dark:border-neutral-700 dark:bg-neutral-900">
           <p className="text-sm text-neutral-600 dark:text-neutral-300">
             Contestale por WhatsApp y coordiná que lo traiga. Cargarlo al stock lo hace el dueño de
             la cuenta, porque define el costo del equipo.

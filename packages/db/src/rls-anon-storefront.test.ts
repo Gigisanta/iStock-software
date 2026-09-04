@@ -198,6 +198,7 @@ describe('b · las columnas sensibles no se filtran: revientan con 42501', () =>
     ['fx_settings', 'updated_by'],
     ['tenants', 'plan'],
     ['tenants', 'trial_ends_at'],
+    ['tenants', 'reservation_minutes'],
   ];
 
   it.each(prohibidas)('select %s.%s → 42501', async (table, column) => {
@@ -221,7 +222,7 @@ describe('b · las columnas sensibles no se filtran: revientan con 42501', () =>
   const invisibles = [
     'sales', 'tradein_leads', 'tradein_checklists', 'reservations', 'memberships', 'users',
     'listing_events', 'wa_click_events', 'chatbot_threads', 'chatbot_messages', 'subscriptions',
-    'entitlements', 'catalog_faqs',
+    'entitlements', 'billing_checkout_intents', 'catalog_faqs',
   ];
 
   it.each(invisibles)('la tabla %s no existe para la vidriera: ni una columna otorgada', async (table) => {

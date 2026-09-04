@@ -71,10 +71,10 @@ export default function StorefrontError({
       {/* Una pantalla de error no se indexa jamás, ni siquiera bajo la URL de una vidriera real. */}
       <meta name="robots" content="noindex, nofollow" />
 
-      <p className="text-xs font-medium uppercase tracking-wide text-neutral-500">
+      <p className="storefront-kicker">
         Algo falló de nuestro lado
       </p>
-      <h1 className="mt-2 text-2xl font-semibold leading-tight sm:text-3xl">
+      <h1>
         No pudimos mostrar esta vidriera
       </h1>
       <p className="mt-3 text-sm leading-relaxed text-neutral-600 dark:text-neutral-400">

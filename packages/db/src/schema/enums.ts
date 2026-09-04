@@ -44,6 +44,13 @@ export const subscriptionStatusEnum = pgEnum('subscription_status', [
   'payment_failed',
 ]);
 
+/** Estado del intento local que evita crear dos preapprovals para el mismo tenant. */
+export const billingCheckoutIntentStatusEnum = pgEnum('billing_checkout_intent_status', [
+  'creating',
+  'ready',
+  'failed',
+]);
+
 /**
  * ADR-009. `not_checked` es un estado **normal y mayoritario**, no una deuda: el alta de unidad
  * NO consulta ENACOM (5 consultas/día/IP; el dueño que carga 15 equipos vería el corte en el 6º).

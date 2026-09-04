@@ -1,7 +1,8 @@
 import 'server-only';
 import { z } from 'zod';
+import { applyFx, fxRateFromArsCents, type FxRoundingMode } from '@istock/domain';
 import type { MercadoPagoClient } from './mercadopago/client';
-import { PAID_PLAN_TIERS } from './plans';
+import { PAID_PLAN_TIERS, PLAN_CATALOG, type PaidPlanTier } from './plans';
 
 /** El único input que llega desde la página de contratación. */
 const subscriptionRequestSchema = z.object({ plan: z.enum(PAID_PLAN_TIERS) }).strict();
@@ -11,8 +12,8 @@ const checkoutInputSchema = z
     tenantId: z.uuid(),
     plan: z.enum(PAID_PLAN_TIERS),
     payerEmail: z.email().max(254),
-    preapprovalPlanId: z.string().trim().min(1),
     backUrl: z.string().url(),
+    amountArsCents: z.number().int().positive().safe(),
   })
   .strict();
 
@@ -26,13 +27,28 @@ export type SubscriptionCheckoutInput = {
 
 export type SubscriptionCheckoutDeps = {
   readonly client: Pick<MercadoPagoClient, 'createPreapproval'>;
-  readonly preapprovalPlanId: string;
   readonly backUrl: string;
+  /** Centavos ARS calculados desde `fx_settings` y congelados para este checkout. */
+  readonly amountArsCents: number;
 };
 
 export type SubscriptionCheckoutResult =
-  | { readonly ok: true; readonly initPoint: string }
-  | { readonly ok: false; readonly code: 'invalid_input' | 'provider_error' };
+  | { readonly ok: true; readonly preapprovalId: string; readonly initPoint: string }
+  | { readonly ok: false; readonly code: 'invalid_input' | 'provider_rejected' | 'provider_uncertain' };
+
+/**
+ * Un 4xx definitivo permite liberar el intent: MP confirmó que no aceptó el request. Los demás
+ * errores no permiten saber si el POST llegó a crear un preapproval; conservamos el lease para
+ * que un reintento inmediato no pueda generar dos suscripciones.
+ */
+function isDefinitiveProviderRejection(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) return false;
+
+  const candidate = error as { readonly name?: unknown; readonly status?: unknown };
+  if (candidate.name !== 'MercadoPagoApiError' || typeof candidate.status !== 'number') return false;
+
+  return candidate.status >= 400 && candidate.status < 500 && ![408, 409, 429].includes(candidate.status);
+}
 
 /**
  * Valida el cuerpo completo. `strict()` importa: el endpoint no acepta un tenant, mail o URL
@@ -70,6 +86,29 @@ export function buildBillingBackUrl(appUrl: string): string | null {
 }
 
 /**
+ * Calcula el importe que se manda a Mercado Pago en la primera adhesión.
+ *
+ * Mercado Pago factura en ARS; la lista comercial vive en USD. El tipo de cambio es el último
+ * valor persistido por el job BCRA del tenant, nunca una llamada en el hot path ni un número del
+ * navegador. El importe queda congelado en la suscripción suelta hasta que el dueño la cancele o
+ * se adhiera de nuevo: no fingimos una actualización de precio que todavía no está implementada.
+ */
+export function monthlySubscriptionAmountArsCents(
+  plan: PaidPlanTier,
+  fx: { readonly arsCentsPerUsd: number; readonly rounding: FxRoundingMode },
+): number | null {
+  try {
+    return applyFx(
+      PLAN_CATALOG[plan].monthlyUsdCents,
+      fxRateFromArsCents(fx.arsCentsPerUsd),
+      fx.rounding,
+    );
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Orquestación del alta. El cliente HTTP agrega el `external_reference` existente
  * (`istock:v1:<tenantId>:<plan>`) dentro de `createPreapproval()`; acá no se duplica ese codec.
  */
@@ -79,8 +118,8 @@ export async function createSubscriptionCheckout(
 ): Promise<SubscriptionCheckoutResult> {
   const parsed = checkoutInputSchema.safeParse({
     ...input,
-    preapprovalPlanId: deps.preapprovalPlanId,
     backUrl: deps.backUrl,
+    amountArsCents: deps.amountArsCents,
   });
   if (!parsed.success) return { ok: false, code: 'invalid_input' };
 
@@ -88,18 +127,21 @@ export async function createSubscriptionCheckout(
     const result = await deps.client.createPreapproval({
       tenantId: parsed.data.tenantId,
       plan: parsed.data.plan,
-      preapprovalPlanId: parsed.data.preapprovalPlanId,
       payerEmail: parsed.data.payerEmail,
       backUrl: parsed.data.backUrl,
+      amountArsCents: parsed.data.amountArsCents,
     });
 
     // MP debe devolver un checkout HTTPS. No seguimos un valor vacío, relativo o de otro esquema.
     const initPoint = new URL(result.initPoint);
-    if (initPoint.protocol !== 'https:') return { ok: false, code: 'provider_error' };
+    if (result.preapprovalId.trim().length === 0 || initPoint.protocol !== 'https:') {
+      // El preapproval pudo haberse creado antes de que la respuesta llegara incompleta.
+      return { ok: false, code: 'provider_uncertain' };
+    }
 
-    return { ok: true, initPoint: initPoint.toString() };
-  } catch {
+    return { ok: true, preapprovalId: result.preapprovalId, initPoint: initPoint.toString() };
+  } catch (error) {
     // El error de MP puede contener mail u otros datos del pagador. El caller sólo recibe un código.
-    return { ok: false, code: 'provider_error' };
+    return { ok: false, code: isDefinitiveProviderRejection(error) ? 'provider_rejected' : 'provider_uncertain' };
   }
 }

@@ -10,8 +10,11 @@ import {
 } from '../mercadopago/notification';
 import { verifyWebhookSignature } from '../mercadopago/signature';
 import type { MercadoPagoClient } from '../mercadopago/client';
-import { applySubscriptionEvent, type SubscriptionEvent } from '../subscriptions/apply-event';
-import { mapAuthorizedPaymentStatus, mapPreapprovalStatus, type StatusMapping } from '../subscriptions/status';
+import {
+  applySubscriptionEvent,
+  type SubscriptionEvent,
+} from '../subscriptions/apply-event';
+import { mapAuthorizedPaymentStatus, mapPreapprovalStatus } from '../subscriptions/status';
 import type { BillingEventLedger } from './ledger';
 
 /**
@@ -35,7 +38,8 @@ import type { BillingEventLedger } from './ledger';
  * deduplicación) y el `type`/`topic` (a qué endpoint ir). El estado —autorizada, pausada,
  * cancelada, cuánto, con qué medio de pago— se le pregunta a la API de MP con nuestro access
  * token. Un webhook que aplicara `body.status` sería un endpoint donde cualquiera que capture un
- * header viejo puede autorizarse un plan escribiendo un JSON.
+ * header viejo puede autorizarse un plan escribiendo un JSON. Esto vale también para el tópico
+ * `payment`, que se resuelve con `GET /v1/payments/{id}`.
  *
  * Por lo mismo, el recurso a consultar sale **de la query** (`data.id`), que sí está firmado. Un
  * topic procesable sin ese dato se ignora: el `data.id` del cuerpo nunca autoriza una consulta.
@@ -106,10 +110,7 @@ type BodyReadResult =
   | { readonly ok: false; readonly reason: 'payload_too_large' | 'body_read_failed' };
 
 /** Lo que se resuelve consultándole a MP, antes de tocar la base. */
-interface ResolvedEvent {
-  readonly mapping: StatusMapping;
-  readonly event: SubscriptionEvent;
-}
+type ResolvedEvent = { readonly event: SubscriptionEvent };
 
 export async function handleWebhookNotification(request: Request, deps: WebhookDeps): Promise<WebhookResult> {
   // `Content-Length` no es una prueba suficiente: Vercel puede entregar el request chunked y el
@@ -162,7 +163,14 @@ export async function handleWebhookNotification(request: Request, deps: WebhookD
 
   const notification = parsed.notification;
 
-  if (notification.topic !== TOPIC_PREAPPROVAL && notification.topic !== TOPIC_AUTHORIZED_PAYMENT) {
+  // MP recomienda activar también `payment`, pero el recurso `/v1/payments/{id}` no trae el
+  // `preapproval_id` que sí identifica una cuota. `external_reference` es texto libre y no puede
+  // habilitar un plan por sí solo; la autorización comercial queda exclusivamente en
+  // `subscription_preapproval` y `subscription_authorized_payment`.
+  if (
+    notification.topic !== TOPIC_PREAPPROVAL &&
+    notification.topic !== TOPIC_AUTHORIZED_PAYMENT
+  ) {
     logEvent('billing.webhook.ignored', { topic: notification.topic, eventId: notification.eventId });
     return { status: 200, outcome: 'ignored_topic' };
   }
@@ -193,13 +201,11 @@ export async function handleWebhookNotification(request: Request, deps: WebhookD
     return { status: 200, outcome: resolved.outcome };
   }
 
-  const { event } = resolved;
-
   let claim: 'applied' | 'duplicate';
   try {
     claim = await deps.ledger.claimAndApply(
       {
-        tenantId: event.tenantId,
+        tenantId: resolved.event.tenantId,
         provider: PROVIDER,
         eventId: notification.eventId,
         topic: notification.topic,
@@ -207,12 +213,12 @@ export async function handleWebhookNotification(request: Request, deps: WebhookD
         resourceId,
       },
       async (tx) => {
-        await applySubscriptionEvent(tx, event);
+        await applySubscriptionEvent(tx, resolved.event);
       },
     );
   } catch (error) {
     logError('billing.webhook.apply_failed', errorCode(error), {
-      tenantId: event.tenantId,
+      tenantId: resolved.event.tenantId,
       topic: notification.topic,
     });
     // 500 a propósito: el evento quedó SIN reclamar (la transacción volvió atrás), así que el
@@ -223,9 +229,9 @@ export async function handleWebhookNotification(request: Request, deps: WebhookD
 
   logEvent('billing.webhook.processed', {
     outcome: claim,
-    tenantId: event.tenantId,
+    tenantId: resolved.event.tenantId,
     topic: notification.topic,
-    status: event.status,
+    status: resolved.event.status,
     eventId: notification.eventId,
   });
 
@@ -258,7 +264,6 @@ async function resolveEvent(
     if (reference === null) return { outcome: 'unknown_reference' };
 
     return {
-      mapping,
       event: {
         tenantId: reference.tenantId,
         plan: reference.plan,
@@ -267,7 +272,7 @@ async function resolveEvent(
         providerPreapprovalId: preapproval.id,
         externalReference: preapproval.externalReference,
         paymentMethod: preapproval.paymentMethodId,
-        amountArsCents: null,
+        amountArsCents: preapproval.amountArsCents,
         currentPeriodEnd: parseDate(preapproval.nextPaymentDate),
         eventId: notification.eventId,
         occurredAt: now,
@@ -275,36 +280,49 @@ async function resolveEvent(
     };
   }
 
-  const payment = await client.getAuthorizedPayment(resourceId);
-  if (payment === null) return { outcome: 'unknown_resource' };
+  if (notification.topic === TOPIC_AUTHORIZED_PAYMENT) {
+    const payment = await client.getAuthorizedPayment(resourceId);
+    if (payment === null) return { outcome: 'unknown_resource' };
 
-  const mapping = mapAuthorizedPaymentStatus(payment.status);
-  if (mapping === null) return { outcome: 'unknown_status' };
+    let paymentStatus = payment.paymentStatus;
+    let concretePayment: Awaited<ReturnType<MercadoPagoClient['getPayment']>> = null;
+    if (paymentStatus === null && payment.paymentId !== null && payment.status.trim().toLowerCase() === 'processed') {
+      concretePayment = await client.getPayment(payment.paymentId);
+      paymentStatus = concretePayment?.status ?? null;
+    }
 
-  // La cuota no trae `external_reference`: hay que subir a la suscripción para saber de quién es.
-  // Es la segunda lectura y es inevitable — el puente MP → tenant vive en el `preapproval`.
-  const preapproval = await client.getPreapproval(payment.preapprovalId);
-  if (preapproval === null) return { outcome: 'unknown_resource' };
+    const mapping = mapAuthorizedPaymentStatus(payment.status, paymentStatus);
+    if (mapping === null) return { outcome: 'unknown_status' };
 
-  const reference = decodeExternalReference(preapproval.externalReference);
-  if (reference === null) return { outcome: 'unknown_reference' };
+    // La referencia existe en la factura según la API. Sólo se sube a la suscripción si falta:
+    // así toleramos respuestas viejas sin pagar una lectura extra en el caso normal.
+    let preapproval = null;
+    let reference = decodeExternalReference(payment.externalReference);
+    if (reference === null) {
+      preapproval = await client.getPreapproval(payment.preapprovalId);
+      if (preapproval === null) return { outcome: 'unknown_resource' };
+      reference = decodeExternalReference(preapproval.externalReference);
+    }
+    if (reference === null) return { outcome: 'unknown_reference' };
 
-  return {
-    mapping,
-    event: {
-      tenantId: reference.tenantId,
-      plan: reference.plan,
-      status: mapping.status,
-      planEffect: mapping.planEffect,
-      providerPreapprovalId: preapproval.id,
-      externalReference: preapproval.externalReference,
-      paymentMethod: payment.paymentMethodId ?? preapproval.paymentMethodId,
-      amountArsCents: payment.amountArsCents,
-      currentPeriodEnd: parseDate(payment.nextPaymentDate ?? preapproval.nextPaymentDate),
-      eventId: notification.eventId,
-      occurredAt: now,
-    },
-  };
+    return {
+      event: {
+        tenantId: reference.tenantId,
+        plan: reference.plan,
+        status: mapping.status,
+        planEffect: mapping.planEffect,
+        providerPreapprovalId: preapproval?.id ?? payment.preapprovalId,
+        externalReference: payment.externalReference ?? preapproval?.externalReference ?? null,
+        paymentMethod: payment.paymentMethodId ?? concretePayment?.paymentMethodId ?? preapproval?.paymentMethodId ?? null,
+        amountArsCents: payment.amountArsCents ?? concretePayment?.amountArsCents ?? null,
+        currentPeriodEnd: parseDate(payment.nextPaymentDate ?? preapproval?.nextPaymentDate ?? null),
+        eventId: notification.eventId,
+        occurredAt: now,
+      },
+    };
+  }
+
+  return { outcome: 'ignored_topic' };
 }
 
 /** `null` ante cualquier fecha que no se entienda: una fecha inválida en una columna `timestamp` tira. */

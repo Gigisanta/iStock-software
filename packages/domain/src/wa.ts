@@ -246,7 +246,7 @@ export function describeListing(listing: WaListing): string {
  *
  * Hasta S6 este mensaje terminaba en *«Dice que está reservado, ¿me avisás si se libera?»*, y eso
  * dejó de cerrar el día que la vidriera arregló su mitad: el único botón de la ficha reservada dice
- * **«Lo quiero igual — escribir por WhatsApp»** (`apps/web/app/(storefront)/_lib/status.ts`). El
+ * **«Lo quiero igual por WhatsApp»** (`apps/web/app/(storefront)/_lib/status.ts`). El
  * visitante apretaba con una intención y mandaba otra. Del lado del vendedor no llegaba un
  * comprador: llegaba un favor para más adelante, que se archiva.
  *

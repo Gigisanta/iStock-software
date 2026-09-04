@@ -124,6 +124,9 @@ export async function generateStaticParams(): Promise<Array<{ slug: string; list
   return [{ slug: PRERENDER_SEED_SLUG, listing: PRERENDER_SEED_LISTING }];
 }
 
+/** La ficha también entrega su HTML completo sin JS; no usa navegación instantánea de Next. */
+export const instant = false;
+
 interface ListingPageProps {
   readonly params: Promise<{ readonly slug: string; readonly listing: string }>;
 }
@@ -191,7 +194,7 @@ export async function generateMetadata({ params }: ListingPageProps): Promise<Me
   const cover = listing.photos[0];
 
   return {
-    title: { absolute: `${listing.title} — ${listing.priceUsd.formatted}` },
+    title: { absolute: `${listing.title} - ${listing.priceUsd.formatted}` },
     description: `${listing.title}. Condición ${listing.conditionLabel}. ${listing.priceUsd.formatted}. Retiro en el local y cierre por WhatsApp.`,
     alternates: { canonical: url },
     openGraph: {
@@ -262,11 +265,11 @@ export default async function ListingPage({ params }: ListingPageProps) {
   const [cover, ...rest] = listing.photos;
 
   return (
-    <main className="pb-10">
+    <main className="storefront-main storefront-listing-page pb-10">
       <p className="pt-1">
         <a
           href={STOREFRONT_HOME_PATH}
-          className="text-sm text-neutral-500 underline-offset-4 hover:underline"
+          className="storefront-back-link text-sm underline-offset-4 hover:underline"
         >
           ← Volver a la vidriera
         </a>
@@ -277,51 +280,59 @@ export default async function ListingPage({ params }: ListingPageProps) {
         calle con una mano; lo que decide (qué es, cuánto sale, si está) va antes que lo que
         confirma (las fotos) y que lo que ejecuta (el botón).
       */}
-      <header className="mt-3">
-        <h1 className="text-xl font-semibold leading-tight sm:text-2xl">{listing.title}</h1>
-        <div className="mt-2 flex flex-wrap items-baseline gap-x-3 gap-y-1">
-          <p className="text-2xl font-bold tabular-nums">{listing.priceUsd.formatted}</p>
-          <p className="text-base text-neutral-500 tabular-nums">≈ {listing.priceArs.formatted}</p>
+      <div className="storefront-listing-layout">
+        <header className="storefront-listing-info">
+          <h1>{listing.title}</h1>
+          <div className="storefront-listing-prices">
+            <p><strong>{listing.priceUsd.formatted}</strong></p>
+            <p><span>≈ {listing.priceArs.formatted}</span></p>
+          </div>
+          <p className="storefront-price-note text-xs leading-relaxed text-neutral-500 dark:text-neutral-400">
+            El precio en pesos es <strong className="font-semibold">informativo</strong> y sale de
+            convertir {listing.priceUsd.formatted} con la cotización oficial diaria (TC{' '}
+            {listing.fxRateUsed}). Es una referencia: la operación se cierra por WhatsApp.
+          </p>
+          <p className="storefront-status-line">
+            <StatusBadge status={listing.status} />
+          </p>
+          {badge.detail === '' ? null : (
+            <p className="storefront-status-detail text-sm leading-relaxed text-neutral-600 dark:text-neutral-400">
+              {badge.detail}
+            </p>
+          )}
+        </header>
+
+        <div className="storefront-listing-media">
+          <ListingPhotos cover={cover} rest={rest} />
         </div>
-        <p className="mt-1 text-xs leading-relaxed text-neutral-500 dark:text-neutral-400">
-          El precio en pesos es <strong className="font-semibold">informativo</strong> y sale de
-          convertir {listing.priceUsd.formatted} con la cotización oficial diaria (TC{' '}
-          {listing.fxRateUsed}). Es una referencia: la operación se cierra por WhatsApp.
-        </p>
-        <p className="mt-3">
-          <StatusBadge status={listing.status} />
-        </p>
-        {badge.detail === '' ? null : (
-          <p className="mt-2 text-sm leading-relaxed text-neutral-600 dark:text-neutral-400">
-            {badge.detail}
-          </p>
+
+        {/* UN solo botón de WhatsApp en toda la ficha. `CLAUDE.md` §1. */}
+        <div className="storefront-listing-action">
+          <WaButton listing={listing} />
+        </div>
+      </div>
+
+      <div className="storefront-detail-sections">
+        <SpecSheet listing={listing} />
+
+        {listing.description === null ? null : (
+          <section aria-labelledby="descripcion" className="storefront-section">
+            <h2 id="descripcion" className="text-base font-semibold">
+              Lo que dice el local
+            </h2>
+            {/*
+              Ya viene sanitizada por `publicListingDTO` (`sanitizeDescription` de `@istock/domain`).
+              Se imprime como TEXTO, nunca inyectando HTML crudo: el dueño escribe esto en un
+              textarea del panel y es input no confiable aunque sea el dueño.
+            */}
+            <p className="mt-2 whitespace-pre-line text-sm leading-relaxed text-neutral-700 dark:text-neutral-300">
+              {listing.description}
+            </p>
+          </section>
         )}
-      </header>
 
-      <ListingPhotos cover={cover} rest={rest} />
-
-      {/* UN solo botón de WhatsApp en toda la ficha. `CLAUDE.md` §1. */}
-      <WaButton listing={listing} />
-
-      <SpecSheet listing={listing} />
-
-      {listing.description === null ? null : (
-        <section aria-labelledby="descripcion" className="mt-8">
-          <h2 id="descripcion" className="text-base font-semibold">
-            Lo que dice el local
-          </h2>
-          {/*
-            Ya viene sanitizada por `publicListingDTO` (`sanitizeDescription` de `@istock/domain`).
-            Se imprime como TEXTO, nunca inyectando HTML crudo: el dueño escribe esto en un
-            textarea del panel y es input no confiable aunque sea el dueño.
-          */}
-          <p className="mt-2 whitespace-pre-line text-sm leading-relaxed text-neutral-700 dark:text-neutral-300">
-            {listing.description}
-          </p>
-        </section>
-      )}
-
-      <PickupAndPayment listing={listing} />
+        <PickupAndPayment listing={listing} />
+      </div>
     </main>
   );
 }
@@ -417,7 +428,7 @@ function ListingPhotos({
 }) {
   if (cover === undefined) {
     return (
-      <section aria-label="Fotos del equipo" className="mt-5">
+      <section aria-label="Fotos del equipo" className="storefront-photo-gallery">
         <p className="rounded-xl border border-dashed border-neutral-300 p-3 text-sm leading-relaxed text-neutral-600 dark:border-neutral-700 dark:text-neutral-400">
           Este equipo todavía no tiene fotos publicadas. Pedilas por WhatsApp, con el botón de acá
           abajo, antes de ir hasta el local.
@@ -427,18 +438,22 @@ function ListingPhotos({
   }
 
   return (
-    <section aria-label="Fotos del equipo" className="mt-5">
-      <div className="aspect-[4/3] w-full overflow-hidden rounded-xl bg-neutral-100 dark:bg-neutral-800">
+    <section aria-label="Fotos del equipo" className="storefront-photo-gallery">
+      <div className="storefront-hero-frame aspect-[4/3] w-full overflow-hidden rounded-xl bg-neutral-100 dark:bg-neutral-800">
         <StorefrontHeroPhoto photo={cover} />
       </div>
       {rest.length === 0 ? null : (
-        <ul className="mt-2 grid grid-cols-3 gap-2">
+        <ul className="storefront-photo-thumbs mt-2 grid grid-cols-3 gap-2">
           {rest.map((photo) => (
             <li
               key={photo.card}
               className="aspect-[4/3] overflow-hidden rounded-lg bg-neutral-100 dark:bg-neutral-800"
             >
-              <StorefrontPhoto photo={photo} sizes={SECONDARY_PHOTO_SIZES} />
+              <StorefrontPhoto
+                photo={photo}
+                sizes={SECONDARY_PHOTO_SIZES}
+                className="h-full w-full object-cover"
+              />
             </li>
           ))}
         </ul>
@@ -478,15 +493,15 @@ function SpecSheet({ listing }: { readonly listing: PublicListingDTO }) {
   ];
 
   return (
-    <section aria-labelledby="ficha-tecnica" className="mt-8">
+    <section aria-labelledby="ficha-tecnica" className="storefront-section">
       <h2 id="ficha-tecnica" className="text-base font-semibold">
         Ficha técnica
       </h2>
-      <dl className="mt-2 divide-y divide-neutral-200 text-sm dark:divide-neutral-800">
+      <dl className="storefront-spec-grid text-sm">
         {rows.map((row) => (
-          <div key={row.label} className="flex items-start justify-between gap-4 py-2.5">
-            <dt className="shrink-0 text-neutral-500">{row.label}</dt>
-            <dd className="text-right font-medium">{row.value}</dd>
+          <div key={row.label} className="storefront-spec">
+            <dt>{row.label}</dt>
+            <dd>{row.value}</dd>
           </div>
         ))}
       </dl>
@@ -502,7 +517,7 @@ function SpecSheet({ listing }: { readonly listing: PublicListingDTO }) {
  */
 function PickupAndPayment({ listing }: { readonly listing: PublicListingDTO }) {
   return (
-    <section aria-labelledby="retiro-y-pago" className="mt-8">
+    <section aria-labelledby="retiro-y-pago" className="storefront-section">
       <h2 id="retiro-y-pago" className="text-base font-semibold">
         Dónde retirarlo y cómo pagarlo
       </h2>
@@ -512,7 +527,7 @@ function PickupAndPayment({ listing }: { readonly listing: PublicListingDTO }) {
           El punto de retiro se coordina por WhatsApp.
         </p>
       ) : (
-        <ul className="mt-2 space-y-2">
+        <ul className="storefront-pickup-grid mt-2">
           {listing.pickup.map((point) => (
             <li
               key={point.name}
@@ -528,18 +543,18 @@ function PickupAndPayment({ listing }: { readonly listing: PublicListingDTO }) {
         </ul>
       )}
 
-      <dl className="mt-3 space-y-3 text-sm">
-        <div className="rounded-xl border border-neutral-200 p-3 dark:border-neutral-800">
-          <dt className="text-neutral-500">Medios de pago</dt>
-          <dd className="mt-1 font-medium">
+      <dl className="storefront-payment-grid text-sm">
+        <div>
+          <dt>Medios de pago</dt>
+          <dd>
             {listing.paymentMethods.length === 0
               ? 'A coordinar por WhatsApp'
               : listing.paymentMethods.join(' · ')}
           </dd>
         </div>
-        <div className="rounded-xl border border-neutral-200 p-3 dark:border-neutral-800">
-          <dt className="text-neutral-500">Canje</dt>
-          <dd className="mt-1 font-medium">
+        <div>
+          <dt>Canje</dt>
+          <dd>
             {listing.acceptsTradeIn
               ? 'Sí, toman tu equipo usado como parte de pago'
               : 'No toman canje por este equipo'}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mapAuthorizedPaymentStatus, mapPreapprovalStatus, planAfterEffect } from './status';
+import { mapAuthorizedPaymentStatus, mapPaymentStatus, mapPreapprovalStatus, planAfterEffect } from './status';
 
 /**
  * La tabla de traducción. Lo que se mide es lo que MP **realmente** escribe, incluidas sus dos
@@ -41,8 +41,16 @@ describe('preapproval', () => {
 });
 
 describe('authorized_payment', () => {
-  it('processed cobra y da el plan', () => {
-    expect(mapAuthorizedPaymentStatus('processed')).toEqual({ status: 'authorized', planEffect: 'grant' });
+  it('processed cobra y da el plan cuando el pago anidado fue aprobado', () => {
+    expect(mapAuthorizedPaymentStatus('processed', 'approved')).toEqual({ status: 'authorized', planEffect: 'grant' });
+  });
+
+  it('processed con pago rechazado queda payment_failed', () => {
+    expect(mapAuthorizedPaymentStatus('processed', 'rejected')).toEqual({ status: 'payment_failed', planEffect: 'keep' });
+  });
+
+  it('processed sin pago concreto no habilita nada', () => {
+    expect(mapAuthorizedPaymentStatus('processed')).toBeNull();
   });
 
   it('recycling queda como pago fallido pero NO baja el plan', () => {
@@ -56,6 +64,25 @@ describe('authorized_payment', () => {
   it('una cuota cancelada no cancela la suscripción por sí sola', () => {
     expect(mapAuthorizedPaymentStatus('cancelled')?.planEffect).toBe('keep');
     expect(mapAuthorizedPaymentStatus('canceled')?.planEffect).toBe('keep');
+  });
+});
+
+describe('payment', () => {
+  it('approved y authorized dan acceso', () => {
+    expect(mapPaymentStatus('approved')).toEqual({ status: 'authorized', planEffect: 'grant' });
+    expect(mapPaymentStatus('authorized')).toEqual({ status: 'authorized', planEffect: 'grant' });
+  });
+
+  it('rejected, cancelled, refunded y charged_back son fallidos sin revocar', () => {
+    for (const status of ['rejected', 'cancelled', 'refunded', 'charged_back']) {
+      expect(mapPaymentStatus(status)).toEqual({ status: 'payment_failed', planEffect: 'keep' });
+    }
+  });
+
+  it('pending e in_process todavía no producen un estado comercial', () => {
+    expect(mapPaymentStatus('pending')).toBeNull();
+    expect(mapPaymentStatus('in_process')).toBeNull();
+    expect(mapPaymentStatus('in_mediation')).toBeNull();
   });
 });
 

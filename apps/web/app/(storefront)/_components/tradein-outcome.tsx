@@ -28,8 +28,8 @@ export function TradeinOutcome({
     <main data-storefront="tradein-outcome" className="flex min-h-[70dvh] flex-col justify-center">
       <meta name="robots" content="noindex, follow" />
 
-      <p className="text-xs font-medium uppercase tracking-wide text-neutral-500">{kicker}</p>
-      <h1 className="mt-2 text-2xl font-semibold leading-tight sm:text-3xl">{title}</h1>
+      <p className="storefront-kicker">{kicker}</p>
+      <h1>{title}</h1>
       {children}
     </main>
   );

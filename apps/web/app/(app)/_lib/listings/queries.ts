@@ -1,6 +1,6 @@
 import 'server-only';
 import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
-import type { Condition, ListingKind, ListingStatus } from '@istock/domain';
+import { PUBLIC_STATUSES, type Condition, type ListingKind, type ListingStatus } from '@istock/domain';
 import { decimalToCents, listingPhotos, listings } from '@istock/db';
 import { withTenantDb, type TenantContext } from '../db/session';
 
@@ -69,9 +69,34 @@ export interface OwnerUnitRow extends UnitRowBase {
 
 export type UnitRow = SellerUnitRow | OwnerUnitRow;
 
+export interface StockCounts {
+  readonly total: number;
+  readonly published: number;
+}
+
 /** Devuelve el costo sólo cuando la fila tiene la forma owner; la forma seller no lo declara. */
 export function ownerCostForRow(row: UnitRow): number | null {
   return 'costUsdCents' in row ? row.costUsdCents : null;
+}
+
+/**
+ * Cuenta lo mínimo que necesita el inicio del panel para explicar el estado de la vidriera.
+ * No trae filas, fotos, costo ni IMEI: el texto de ayuda no debería pagar la lectura completa de
+ * stock ni dejar datos sensibles en el RSC payload.
+ */
+export async function countUnits(ctx: TenantContext): Promise<StockCounts> {
+  return withTenantDb(ctx, async (tx) => {
+    const rows = await tx
+      .select({
+        total: sql<number>`count(*)::int`,
+        published: sql<number>`count(*) filter (where ${inArray(listings.status, [...PUBLIC_STATUSES])})::int`,
+      })
+      .from(listings)
+      .where(eq(listings.tenantId, ctx.tenantId));
+
+    const row = rows[0];
+    return row ?? { total: 0, published: 0 };
+  });
 }
 
 export async function listUnits(

@@ -85,7 +85,7 @@ export function statusBadge(status: PublicStatus): StatusBadge {
         label: 'Disponible',
         detail: '',
         tone: 'available',
-        ctaLabel: 'Lo quiero — escribir por WhatsApp',
+        ctaLabel: 'Lo quiero por WhatsApp',
       };
     case 'reserved':
       // Dos frases y ninguna promesa. Ver el bloque «El copy sólo puede afirmar lo que la vidriera
@@ -101,7 +101,7 @@ export function statusBadge(status: PublicStatus): StatusBadge {
         // El CTA no se disculpa: es el mismo verbo que `available` con un «igual» adelante. El
         // estado ya lo dijo el badge dos veces (color y texto) — repetirlo acá sólo serviría para
         // que el visitante que igual lo quiere se sienta un colado.
-        ctaLabel: 'Lo quiero igual — escribir por WhatsApp',
+        ctaLabel: 'Lo quiero igual por WhatsApp',
       };
     case 'sold':
       return {
@@ -119,7 +119,7 @@ export function statusBadge(status: PublicStatus): StatusBadge {
  * disponible", y en una vidriera mirada de reojo en la calle el color se lee **antes** que el texto.
  */
 export const STATUS_TONE_CLASS: Record<StatusTone, string> = {
-  available: 'bg-emerald-100 text-emerald-900 ring-emerald-600/20',
-  reserved: 'bg-amber-100 text-amber-900 ring-amber-600/30',
-  sold: 'bg-zinc-200 text-zinc-700 ring-zinc-500/20',
+  available: 'bg-neutral-900 text-white ring-neutral-900/20 dark:bg-white dark:text-neutral-900',
+  reserved: 'bg-neutral-200 text-neutral-800 ring-neutral-500/20 dark:bg-neutral-800 dark:text-neutral-100',
+  sold: 'bg-white text-neutral-700 ring-neutral-500/20 dark:bg-neutral-950 dark:text-neutral-300',
 };

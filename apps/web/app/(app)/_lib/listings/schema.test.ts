@@ -38,8 +38,14 @@ describe('newUnitSchema', () => {
     expect(result.success && result.data.title).toBe('iPhone 14 Pro');
   });
 
-  it('rechaza un título corto y uno larguísimo', () => {
-    expect(parse({ title: 'ab' }).success).toBe(false);
+  it('no exige un título escrito: el server lo deriva del catálogo', () => {
+    expect(parse({ title: '' }).success).toBe(true);
+    const withoutTitle: Record<string, string> = { ...base };
+    delete withoutTitle.title;
+    expect(newUnitSchema.safeParse(withoutTitle).success).toBe(true);
+  });
+
+  it('sigue limitando un título visible malformado aunque no sea la fuente de verdad', () => {
     expect(parse({ title: 'a'.repeat(121) }).success).toBe(false);
   });
 

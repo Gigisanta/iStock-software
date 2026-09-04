@@ -148,6 +148,27 @@
       "when": 1788229100000,
       "tag": "0020_listing_effect_integrity",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1788432000000,
+      "tag": "0021_apple_catalog_seed",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1788513562152,
+      "tag": "0022_thankful_boomer",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1788530710796,
+      "tag": "0023_unknown_loners",
+      "breakpoints": true
     }
   ]
 }

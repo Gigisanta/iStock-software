@@ -19,6 +19,8 @@
  * 4 MB del Routing Middleware de Vercel, que corre sobre el POST del alta porque `proxy.ts` lo
  * matchea. Ver `MAX_PHOTO_BYTES` acá abajo y el bloque de `next.config.ts`.
  *
+ * `title` está en el schema sólo para conservar el valor visible del formulario: la unidad se
+ * nombra desde el catálogo en el server y el texto del browser no es una fuente de verdad.
  * `costUsd` está en el schema pero **no lo parsea cualquiera**: la Server Action sólo lo mira si
  * el rol es `owner` (`CLAUDE.md` §0.9). Ver `actions.ts`.
  */
@@ -164,14 +166,15 @@ const optionalImei = z
 
 export const newUnitSchema = z.object({
   title: z
-    .string({ error: 'Poné cómo se llama el equipo.' })
+    .string()
     .transform((raw) => raw.trim().replace(/\s+/gu, ' '))
     .pipe(
       z
         .string()
-        .min(TITLE_MIN_LENGTH, `El nombre necesita al menos ${String(TITLE_MIN_LENGTH)} caracteres.`)
         .max(TITLE_MAX_LENGTH, `El nombre no puede pasar de ${String(TITLE_MAX_LENGTH)} caracteres.`),
-    ),
+    )
+    .optional()
+    .default(''),
 
   condition: z
     .string({ error: 'Elegí en qué estado está el equipo.' })

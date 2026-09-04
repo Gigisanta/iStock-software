@@ -90,6 +90,7 @@ import {
   seedLocation,
   seedPublicUnit,
   seedTenant,
+  seedUnitInState,
   tenantIdBySlug,
   waClickEventRows,
 } from './_lib/db';
@@ -112,8 +113,11 @@ const vidrieraSlug = uniqueSlug('waclick');
 const atacanteSlug = uniqueSlug('atacante');
 const listingSlug = uniqueSlug('iphone-14-pro-256-grafito');
 const listingAtacanteSlug = uniqueSlug('iphone-13-128-azul');
+const reservedListingSlug = uniqueSlug('iphone-14-pro-reservado');
 const TITULO = 'iPhone 14 Pro 256 Grafito';
 const PRECIO_USD = 620;
+const RESERVED_TITULO = 'iPhone 14 Pro';
+const RESERVED_PRECIO_USD = 620;
 
 /** El copy de negocio que tiene que llegar completo a la conversación, no sólo por fragmentos. */
 const MENSAJE_WA_EXACTO =
@@ -156,6 +160,15 @@ test.beforeAll(async () => {
     costUsd: 500,
   });
   await seedListingPhoto(vidrieraTenantId, listingId, 0);
+  await seedUnitInState({
+    tenantId: vidrieraTenantId,
+    slug: reservedListingSlug,
+    title: RESERVED_TITULO,
+    status: 'reserved',
+    storageGb: 256,
+    color: 'Grafito',
+    priceUsd: RESERVED_PRECIO_USD,
+  });
 
   await seedTenant({ slug: atacanteSlug, name: 'Vidriera QA atacante' });
   const atacante = await tenantIdBySlug(atacanteSlug);
@@ -324,6 +337,36 @@ test('con JavaScript apagado la ficha servida trae el único enlace a WhatsApp d
     // `window.opener` sobre la vidriera del reseller.
     expect(primero?.target, 'el enlace a WhatsApp dejó de abrirse en otra pestaña').toBe('_blank');
     expect(primero?.rel ?? '', 'target="_blank" sin rel="noopener"').toContain('noopener');
+  } finally {
+    await context.close();
+  }
+});
+
+test('la ficha reservada muestra su estado y abre WhatsApp con el copy exacto de segunda intención', async ({
+  browser,
+}) => {
+  const context = await browser.newContext({ javaScriptEnabled: false });
+  try {
+    const page = await context.newPage();
+    const url = storefrontUrl(vidrieraSlug, `/p/${reservedListingSlug}`);
+    const response = await page.goto(url, { waitUntil: 'load' });
+
+    expect(response?.status(), `la ficha reservada ${url} no se sirvió`).toBe(200);
+    await expect(page.getByText('Reservado', { exact: true })).toBeVisible();
+    await expect(page.getByText('Disponible', { exact: true })).toHaveCount(0);
+
+    const button = page.locator(SELECTOR_WA);
+    await expect(button, 'la ficha reservada perdió su único botón de WhatsApp').toHaveCount(1);
+    const href = await button.getAttribute('href');
+    const mensaje =
+      `Hola, quiero el ${RESERVED_TITULO} 256 Grafito (usado A) a USD ${String(RESERVED_PRECIO_USD)} ` +
+      `que vi en ${vidrieraSlug}.maat.work. Sé que está reservado: si se cae, lo compro yo.`;
+
+    expect(href, 'el copy de segunda intención no llegó completo al href servido').toBe(
+      `https://wa.me/${WA_PHONE}?text=${encodeURIComponent(mensaje)}`,
+    );
+    await expect(button).toHaveAttribute('target', '_blank');
+    await expect(button).toHaveAttribute('rel', /noopener/u);
   } finally {
     await context.close();
   }

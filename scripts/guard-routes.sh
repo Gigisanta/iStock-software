@@ -134,11 +134,10 @@ const ESPERADO = {
   "/app/stock/[id]/fotos":  "blocking/empty",
 
   // Billing autenticado. La pantalla puede usar el shell PPR; el POST que crea la suscripcion
-  // y el callback OAuth son dinamicos porque dependen de la sesion y de la respuesta externa.
+  // es dinamico porque depende de la sesion y de la respuesta externa de Mercado Pago.
   "/billing":                  "resuming/initial",
   "/billing/suscribirse":      "resuming/initial",
   "/billing/subscribe":        "dynamic",
-  "/api/auth/callback":         "dynamic",
   "/api/auth/[...path]":         "dynamic",
 
   // Beacon del click de WhatsApp (S4). `dynamic` es el unico valor aceptable y no por performance:

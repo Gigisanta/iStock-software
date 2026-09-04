@@ -22,13 +22,11 @@ import { MAX_SWEEP_ATTEMPTS } from './expire-reservations';
  * Las duraciones que ofrece el `<select>`.
  *
  * Son cuatro presets, no el rango entero: en un teléfono, con una mano, una lista de 91 opciones
- * es peor que ninguna. El rango de verdad lo impone `reserveUnitSchema` (que importa las
- * constantes del dominio) y, abajo de todo, el `CHECK` de Postgres. El test de este módulo
- * verifica que los cuatro presets caigan dentro del rango del dominio y que el default esté entre
- * ellos: si mañana el dominio mueve el mínimo a 45, esta lista falla en vez de ofrecer una opción
- * que el server rechaza.
+ * es peor que ninguna. La lista vive en el dominio para que el panel y Ajustes no puedan ofrecer
+ * opciones distintas. El rango de verdad lo impone `reserveUnitSchema` (que importa las
+ * constantes del dominio) y, abajo de todo, el `CHECK` de Postgres.
  */
-export const RESERVATION_MINUTE_OPTIONS: readonly number[] = [30, 60, 90, 120];
+export { RESERVATION_MINUTE_OPTIONS } from '@istock/domain';
 
 /** El preset que viene elegido. Es el default del dominio, no una preferencia de esta pantalla. */
 export const RESERVATION_DEFAULT_OPTION = RESERVATION_DEFAULT_MINUTES;

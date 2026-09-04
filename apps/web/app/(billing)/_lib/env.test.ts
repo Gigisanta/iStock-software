@@ -12,15 +12,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('server-only', () => ({}));
 
-const { billingDriver, mpAccessToken, mpPreapprovalPlanId, mpWebhookSecret, resetBillingEnvCache } =
+const { billingDriver, billingReady, mpAccessToken, mpWebhookSecret, resetBillingEnvCache } =
   await import('./env');
 
 const CLAVES = [
   'BILLING_DRIVER',
   'MP_ACCESS_TOKEN',
   'MP_WEBHOOK_SECRET',
-  'MP_PREAPPROVAL_PLAN_BASE',
-  'MP_PREAPPROVAL_PLAN_NEGOCIO',
+  'VERCEL_ENV',
 ] as const;
 
 const original: Record<string, string | undefined> = {};
@@ -46,8 +45,7 @@ describe('sin credenciales · B3 abierto', () => {
     expect(billingDriver()).toBe('mock');
     expect(mpWebhookSecret()).toBeNull();
     expect(mpAccessToken()).toBeNull();
-    expect(mpPreapprovalPlanId('base')).toBeNull();
-    expect(mpPreapprovalPlanId('negocio')).toBeNull();
+    expect(billingReady()).toBe(false);
   });
 
   it('la cadena vacía es "no configurado", no "configurado con nada"', () => {
@@ -64,14 +62,12 @@ describe('sin credenciales · B3 abierto', () => {
 });
 
 describe('driver real a medias · falla al arrancar', () => {
-  it.each(['MP_ACCESS_TOKEN', 'MP_WEBHOOK_SECRET', 'MP_PREAPPROVAL_PLAN_BASE', 'MP_PREAPPROVAL_PLAN_NEGOCIO'])(
+  it.each(['MP_ACCESS_TOKEN', 'MP_WEBHOOK_SECRET'])(
     'sin %s no arranca',
     (faltante) => {
       process.env['BILLING_DRIVER'] = 'mercadopago';
       process.env['MP_ACCESS_TOKEN'] = 'token-de-mercadopago-larguito';
       process.env['MP_WEBHOOK_SECRET'] = 'secreto-de-webhook-larguito';
-      process.env['MP_PREAPPROVAL_PLAN_BASE'] = 'plan-base';
-      process.env['MP_PREAPPROVAL_PLAN_NEGOCIO'] = 'plan-negocio';
       delete process.env[faltante];
       resetBillingEnvCache();
 
@@ -81,18 +77,35 @@ describe('driver real a medias · falla al arrancar', () => {
     },
   );
 
-  it('completo: las cinco resuelven', () => {
+  it('completo: las tres resuelven', () => {
     process.env['BILLING_DRIVER'] = 'mercadopago';
     process.env['MP_ACCESS_TOKEN'] = 'token-de-mercadopago-larguito';
     process.env['MP_WEBHOOK_SECRET'] = 'secreto-de-webhook-larguito';
-    process.env['MP_PREAPPROVAL_PLAN_BASE'] = 'plan-base';
-    process.env['MP_PREAPPROVAL_PLAN_NEGOCIO'] = 'plan-negocio';
     resetBillingEnvCache();
 
     expect(billingDriver()).toBe('mercadopago');
     expect(mpWebhookSecret()).toBe('secreto-de-webhook-larguito');
-    expect(mpPreapprovalPlanId('base')).toBe('plan-base');
-    expect(mpPreapprovalPlanId('negocio')).toBe('plan-negocio');
+    expect(billingReady()).toBe(true);
+  });
+
+  it('en Production el mock no puede pasar como si hubiera cobros habilitados', () => {
+    process.env['VERCEL_ENV'] = 'production';
+    process.env['BILLING_DRIVER'] = 'mock';
+    resetBillingEnvCache();
+
+    expect(() => billingDriver()).toThrow(/BILLING_DRIVER.*mercadopago.*producción/iu);
+    expect(billingReady()).toBe(false);
+  });
+
+  it('en Production el driver real completo sí queda disponible', () => {
+    process.env['VERCEL_ENV'] = 'production';
+    process.env['BILLING_DRIVER'] = 'mercadopago';
+    process.env['MP_ACCESS_TOKEN'] = 'token-de-mercadopago-larguito';
+    process.env['MP_WEBHOOK_SECRET'] = 'secreto-de-webhook-larguito';
+    resetBillingEnvCache();
+
+    expect(billingDriver()).toBe('mercadopago');
+    expect(billingReady()).toBe(true);
   });
 
   it('un driver que no existe no cae al mock: rompe', () => {

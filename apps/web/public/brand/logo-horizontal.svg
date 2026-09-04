@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="560" height="112" viewBox="0 0 560 112" role="img" aria-labelledby="logo-title logo-description">
+  <title id="logo-title">iStock, producto de MaatWork</title>
+  <desc id="logo-description">Lockup horizontal de iStock con la marca modular y la firma de MaatWork.</desc>
+  <style>
+    :root {
+      --istock-ink: #111111;
+      --istock-quiet: #737373;
+      --istock-accent: #111111;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --istock-ink: #f5f5f5;
+        --istock-quiet: #a3a3a3;
+        --istock-accent: #f5f5f5;
+      }
+    }
+
+    .wordmark {
+      fill: var(--istock-ink);
+      font-family: "Helvetica Neue", Arial, sans-serif;
+    }
+
+    .signature {
+      fill: var(--istock-quiet);
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+    }
+  </style>
+  <g id="istock-mark" transform="translate(8 8)">
+    <path fill="var(--istock-accent)" fill-rule="evenodd" d="M12 12h72v20H32v8h52v20H32v8h52v20H12V68h20V60H12V40h20V32H12Z"/>
+  </g>
+  <g id="istock-wordmark" class="wordmark">
+    <text x="124" y="69" font-size="56" font-weight="700" letter-spacing="-2.2">iStock</text>
+    <text x="127" y="94" class="signature" font-size="10" font-weight="600" letter-spacing="1.8">PRODUCTO DE MAATWORK</text>
+  </g>
+</svg>

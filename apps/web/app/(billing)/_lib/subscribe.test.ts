@@ -13,8 +13,8 @@ const TENANT_ID = '11111111-2222-4333-8444-555555555555';
 
 function deps(overrides: Partial<SubscriptionCheckoutDeps> = {}): SubscriptionCheckoutDeps {
   return {
-    preapprovalPlanId: 'plan-base',
     backUrl: 'https://maat.work/billing',
+    amountArsCents: 2_900_000,
     client: {
       createPreapproval: vi.fn().mockResolvedValue({
         preapprovalId: 'pre-1',
@@ -49,27 +49,28 @@ describe('createSubscriptionCheckout', () => {
   it('usa tenant/identity/configuración server-side y no recibe tarjeta', async () => {
     const dependencies = deps();
     const result = await createSubscriptionCheckout(
-        { tenantId: TENANT_ID, plan: 'negocio', payerEmail: 'dueno@nortecel.test' },
+      { tenantId: TENANT_ID, plan: 'negocio', payerEmail: 'dueno@nortecel.test' },
       dependencies,
     );
 
     expect(result).toEqual({
       ok: true,
+      preapprovalId: 'pre-1',
       initPoint: 'https://www.mercadopago.com.ar/subscriptions/checkout?preapproval_id=pre-1',
     });
     expect(dependencies.client.createPreapproval).toHaveBeenCalledWith({
       tenantId: TENANT_ID,
       plan: 'negocio',
-      preapprovalPlanId: 'plan-base',
       payerEmail: 'dueno@nortecel.test',
       backUrl: 'https://maat.work/billing',
+      amountArsCents: 2_900_000,
     });
     expect(dependencies.client.createPreapproval).not.toHaveBeenCalledWith(
       expect.objectContaining({ cardTokenId: expect.anything() }),
     );
   });
 
-  it('convierte cualquier error de MP en un código genérico sin filtrar el cuerpo', async () => {
+  it('retiene el intent ante un error incierto de MP sin filtrar el cuerpo', async () => {
     const providerError = new Error('respuesta de juan@nortecel.test con token-secreto');
     const dependencies = deps({ client: { createPreapproval: vi.fn().mockRejectedValue(providerError) } });
 
@@ -78,10 +79,54 @@ describe('createSubscriptionCheckout', () => {
         { tenantId: TENANT_ID, plan: 'base', payerEmail: 'dueno@nortecel.test' },
         dependencies,
       ),
-    ).resolves.toEqual({ ok: false, code: 'provider_error' });
+    ).resolves.toEqual({ ok: false, code: 'provider_uncertain' });
   });
 
-  it('falla cerrado si el proveedor devuelve un init_point que no es HTTPS', async () => {
+  it('clasifica un rechazo HTTP definitivo sin filtrar el cuerpo', async () => {
+    const providerError = Object.assign(new Error('respuesta de juan@nortecel.test con token-secreto'), {
+      name: 'MercadoPagoApiError',
+      status: 422,
+    });
+    const dependencies = deps({ client: { createPreapproval: vi.fn().mockRejectedValue(providerError) } });
+
+    await expect(
+      createSubscriptionCheckout(
+        { tenantId: TENANT_ID, plan: 'base', payerEmail: 'dueno@nortecel.test' },
+        dependencies,
+      ),
+    ).resolves.toEqual({ ok: false, code: 'provider_rejected' });
+  });
+
+  it.each([408, 409, 429, 500])('retiene el intent ante un status %s que puede ser ambiguo', async (status) => {
+    const providerError = Object.assign(new Error('respuesta de juan@nortecel.test con token-secreto'), {
+      name: 'MercadoPagoApiError',
+      status,
+    });
+    const dependencies = deps({ client: { createPreapproval: vi.fn().mockRejectedValue(providerError) } });
+
+    await expect(
+      createSubscriptionCheckout(
+        { tenantId: TENANT_ID, plan: 'base', payerEmail: 'dueno@nortecel.test' },
+        dependencies,
+      ),
+    ).resolves.toEqual({ ok: false, code: 'provider_uncertain' });
+  });
+
+  it('calcula el importe ARS desde el precio USD y el TC persistido', async () => {
+    const { monthlySubscriptionAmountArsCents } = await import('./subscribe');
+
+    expect(
+      monthlySubscriptionAmountArsCents('base', { arsCentsPerUsd: 148_750, rounding: 'ceil_1000' }),
+    ).toBe(2_900_000);
+    expect(
+      monthlySubscriptionAmountArsCents('negocio', { arsCentsPerUsd: 148_750, rounding: 'ceil_1000' }),
+    ).toBe(5_300_000);
+    expect(
+      monthlySubscriptionAmountArsCents('base', { arsCentsPerUsd: 0, rounding: 'ceil_1000' }),
+    ).toBeNull();
+  });
+
+  it('retiene el intent si el proveedor devuelve un init_point que no es HTTPS', async () => {
     const dependencies = deps({
       client: {
         createPreapproval: vi.fn().mockResolvedValue({ preapprovalId: 'pre-1', initPoint: 'javascript:alert(1)' }),
@@ -93,7 +138,7 @@ describe('createSubscriptionCheckout', () => {
         { tenantId: TENANT_ID, plan: 'base', payerEmail: 'dueno@nortecel.test' },
         dependencies,
       ),
-    ).resolves.toEqual({ ok: false, code: 'provider_error' });
+    ).resolves.toEqual({ ok: false, code: 'provider_uncertain' });
   });
 });
 

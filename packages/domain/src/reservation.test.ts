@@ -6,6 +6,7 @@ import {
   RESERVATION_DEFAULT_MINUTES,
   RESERVATION_MAX_MINUTES,
   RESERVATION_MIN_MINUTES,
+  RESERVATION_MINUTE_OPTIONS,
   RESERVATION_STATUSES,
   createReservation,
   expireReservation,
@@ -29,6 +30,15 @@ function reservation(overrides: Partial<Reservation> = {}): Reservation {
 }
 
 describe('createReservation — 30 a 120 minutos, default 60', () => {
+  it('expone cuatro presets válidos para un selector corto', () => {
+    expect(RESERVATION_MINUTE_OPTIONS).toEqual([30, 60, 90, 120]);
+    for (const minutes of RESERVATION_MINUTE_OPTIONS) {
+      expect(Number.isInteger(minutes)).toBe(true);
+      expect(minutes).toBeGreaterThanOrEqual(RESERVATION_MIN_MINUTES);
+      expect(minutes).toBeLessThanOrEqual(RESERVATION_MAX_MINUTES);
+    }
+  });
+
   it('default 60 minutos, contados desde el `now` inyectado', () => {
     const res = createReservation({ id: 'r', tenantId: 't', listingId: 'l' }, NOW);
     expect(RESERVATION_DEFAULT_MINUTES).toBe(60);

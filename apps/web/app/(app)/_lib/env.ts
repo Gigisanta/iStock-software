@@ -1,5 +1,7 @@
 import 'server-only';
+import { headers } from 'next/headers';
 import { z } from 'zod';
+import { isLocalRootDomain } from './local-domain';
 
 /**
  * Borde de entorno del panel. **Zod en todos los bordes** (`CLAUDE.md` §5) incluye `process.env`:
@@ -22,9 +24,8 @@ const serverEnvSchema = z.object({
   /**
    * `local`  → driver de desarrollo: cookie firmada + Postgres local (`scripts/pg-local.sh`).
    * `neon`   → Neon Auth real, administrado por la integración de Vercel.
-   * `supabase` → compatibilidad temporal para instalaciones anteriores.
    */
-  AUTH_DRIVER: z.enum(['local', 'neon', 'supabase']).default('local'),
+  AUTH_DRIVER: z.enum(['local', 'neon']).default('local'),
 
   /** HMAC de la cookie de sesión del driver local. Sólo dev. */
   AUTH_LOCAL_SECRET: z.string().min(16, 'AUTH_LOCAL_SECRET necesita al menos 16 caracteres').optional(),
@@ -36,11 +37,6 @@ const serverEnvSchema = z.object({
 
   NEXT_PUBLIC_ROOT_DOMAIN: z.string().min(1).default('localhost:3000'),
   NEXT_PUBLIC_APP_URL: z.string().min(1).default('http://localhost:3000'),
-
-  // B2. Presentes pero opcionales: el panel arranca sin ellas con el driver local.
-  NEXT_PUBLIC_SUPABASE_URL: z.string().optional(),
-  NEXT_PUBLIC_SUPABASE_ANON_KEY: z.string().optional(),
-  SUPABASE_SERVICE_ROLE_KEY: z.string().optional(),
 
   /**
    * Credencial del cron de Vercel: llega como `Authorization: Bearer <CRON_SECRET>`.
@@ -132,9 +128,26 @@ export function cronSecret(): string | null {
   return value === undefined || value.length === 0 ? null : value;
 }
 
-/** Host raíz sin protocolo: `maat.work` en prod, `localhost:3000` en dev. */
+/** Host raíz sin protocolo: `maat.work` en prod, `localhost:3000` como fallback de dev. */
 export function rootDomain(): string {
   return serverEnv().NEXT_PUBLIC_ROOT_DOMAIN;
+}
+
+/**
+ * Host raíz que debe ver una persona en el panel para esta request.
+ *
+ * En producción la URL canónica sale de `NEXT_PUBLIC_ROOT_DOMAIN` y no del header: no se puede
+ * dejar que un host de preview o un header arbitrario convierta la vidriera en `slug.preview...`.
+ * En desarrollo, en cambio, el puerto es parte de la URL y `next dev -p 3101` no puede ser
+ * conocido por el default `localhost:3000`. Tomamos el host entrante sólo si el entorno está
+ * configurado como local y el host también pertenece a una familia local.
+ */
+export async function requestRootDomain(): Promise<string> {
+  const configured = rootDomain();
+  if (!isLocalRootDomain(configured)) return configured;
+
+  const requestHost = (await headers()).get('host')?.trim();
+  return requestHost !== undefined && isLocalRootDomain(requestHost) ? requestHost : configured;
 }
 
 /**
@@ -146,9 +159,23 @@ export function rootDomain(): string {
  * mostraría un link muerto en el panel.
  */
 export function storefrontUrlForSlug(slug: string): string {
-  const scheme = rootDomain().startsWith('localhost') ? 'http' : 'https';
-  return `${scheme}://${storefrontHostForSlug(slug)}`;
+  const domain = rootDomain();
+  return `${isLocalRootDomain(domain) ? 'http' : 'https'}://${slug}.${domain}`;
 }
+
+/**
+ * URL que el panel muestra y copia. El tenant de QA usa el alias público del apex para que la
+ * interfaz no presente una dirección de fixture como si fuera la marca de un negocio real; al
+ * hacer click, el proxy conserva el redirect canónico a su vidriera aislada.
+ */
+export function storefrontUrlForPanel(
+  tenant: { readonly slug: string; readonly isDemo: boolean },
+  domain = rootDomain(),
+): string {
+  if (!tenant.isDemo) return `${isLocalRootDomain(domain) ? 'http' : 'https'}://${tenant.slug}.${domain}`;
+  return `${isLocalRootDomain(domain) ? 'http' : 'https'}://${domain}/demo`;
+}
+
 
 /**
  * Lo mismo sin protocolo, para **mostrar** en pantalla.
@@ -157,8 +184,8 @@ export function storefrontUrlForSlug(slug: string): string {
  * apunta a `localhost`. Con el link y el texto diciendo cosas distintas, el botón "copiar" copia
  * una tercera. El texto de la pantalla sale de la misma función que el link, siempre.
  */
-export function storefrontHostForSlug(slug: string): string {
-  return `${slug}.${rootDomain()}`;
+export function storefrontHostForSlug(slug: string, domain = rootDomain()): string {
+  return `${slug}.${domain}`;
 }
 
 /**

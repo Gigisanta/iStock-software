@@ -46,7 +46,7 @@ import { userInfo } from 'node:os';
 import postgres from 'postgres';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { UploadedListingPhoto } from '@istock/media';
-import { pgErrorCode, uniqueViolationConstraint } from '../db/pg-error';
+import { uniqueViolationConstraint } from '../db/pg-error';
 import type { TenantContext } from '../db/session';
 import { buildListingSlug } from './listing-slug';
 import type { NewUnitInput } from './schema';
@@ -184,16 +184,6 @@ async function constraintQueChoca(fila: FilaListing): Promise<string | null> {
   throw new Error('la sonda NO chocó: el fixture no reproduce la colisión y el caso no mide nada');
 }
 
-/** Corre `fn` esperando que reviente y devuelve lo que tiró. Si no revienta, el caso falla acá. */
-async function capturar(fn: () => Promise<unknown>): Promise<unknown> {
-  try {
-    await fn();
-  } catch (error) {
-    return error;
-  }
-  throw new Error('se esperaba una excepción y la función devolvió normalmente');
-}
-
 function unica<T>(rows: readonly T[]): T {
   expect(rows).toHaveLength(1);
   const row = rows[0];
@@ -223,8 +213,11 @@ beforeAll(async () => {
       (${TENANT_ID}, ${OWNER_ID}, 'owner'), (${TENANT_ID}, ${SELLER_ID}, 'seller')
   `;
   await admin`
-    insert into catalog_models (id, slug, display_name)
-    values (${MODEL_ID}, ${`fixture-${SUFIJO}`}, 'iPhone 14 Pro (fixture)')
+    insert into catalog_models (id, slug, display_name, release_year, storage_options_gb, colors)
+    values (
+      ${MODEL_ID}, ${`fixture-${SUFIJO}`}, 'iPhone 14 Pro', 2022,
+      ARRAY[128, 256, 512, 1024], ARRAY['Negro espacial', 'Grafito']
+    )
   `;
 
   // El pool de la app se abre acá, con el azar todavía real: si el driver necesitara `crypto`
@@ -451,23 +444,22 @@ describe('23505 · las tres ramas se distinguen por el nombre de la constraint',
 });
 
 /**
- * ── La contracara: lo que NO es un 23505 tiene que subir ──────────────────────────────────────
- * La rama genérica traduce **cualquier** `23505` a "ese equipo ya estaba cargado". Sin este caso,
- * un discriminador que dijera `true` a todo error pasaría los cuatro de arriba: convertiría un
- * modelo de catálogo inexistente en "ya estaba cargado" y el bug quedaría escondido detrás de un
- * mensaje tranquilizador.
+ * ── La variante se valida antes de tocar R2 ───────────────────────────────────────────────────
+ * El catálogo es una frontera de producto, no una sugerencia visual: un POST manual tampoco
+ * puede inventar el modelo ni guardar una capacidad/color que Apple no ofrece para esa línea.
  */
-describe('lo que no es una violación de unicidad no se traga', () => {
-  it('23503 (FK del modelo de catálogo) se propaga y no se mapea a ningún campo', async () => {
+describe('la variante se valida antes del upload', () => {
+  it('modelo inexistente → mensaje por campo, sin R2 ni fila parcial', async () => {
     semillas(BYTES_A);
-    const error = await capturar(() =>
-      createUnit(ctxOwner, nuevaUnidad({ catalogModelId: crypto.randomUUID() }), FOTO),
-    );
+    const res = fallo(await createUnit(ctxOwner, nuevaUnidad({ catalogModelId: crypto.randomUUID() }), FOTO));
 
-    expect(pgErrorCode(error)).toBe('23503');
-    expect(uniqueViolationConstraint(error)).toBeNull();
-    // Un error que no es de unicidad no dispara el reintento del slug.
-    expect(randomFillStub).toHaveBeenCalledTimes(1);
+    expect(res).toEqual({
+      ok: false,
+      field: 'catalogModelId',
+      message: 'Elegí un modelo disponible de la lista.',
+    });
+    expect(randomFillStub).toHaveBeenCalledTimes(0);
+    expect(uploadListingPhoto).toHaveBeenCalledTimes(0);
 
     const filas = await admin<{ id: string }[]>`
       select id from listings where tenant_id = ${TENANT_ID}

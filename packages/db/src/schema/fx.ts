@@ -6,8 +6,8 @@
  * por USD** (`FxRate.arsCentsPerUsd` de `@istock/domain`). Ver `src/money.ts`.
  *
  * Actualizar el TC **revalida toda la vidriera del tenant** (`storefront:{slug}`). Eso es
- * responsabilidad del job diario, no de la DB, pero queda escrito acá porque olvidarlo publica
- * precios viejos.
+ * responsabilidad del job de expiración, que corre cada cinco minutos y sólo persiste/invalida
+ * cuando el valor cambió; olvidarlo publica precios viejos.
  */
 
 import { sql } from 'drizzle-orm';

@@ -62,9 +62,17 @@ describe('ida y vuelta contra Postgres real', () => {
   });
 
   it('el TC automático vuelve como centavos de ARS por USD, listo para `applyFx`', async () => {
-    const r = (await sql.unsafe(`select ars_per_usd from fx_settings limit 1`)) as unknown as {
+    const r = (await sql.unsafe(`
+      select f.ars_per_usd
+      from fx_settings f
+      join tenants t on t.id = f.tenant_id
+      where t.slug = 'demo'
+      limit 1
+    `)) as unknown as {
       ars_per_usd: string;
     }[];
+    // El test apunta al tenant que siembra `seed.ts`: otros tenants locales pueden tener una
+    // cotización distinta porque el job BCRA la actualiza todos los días.
     expect(decimalToCents(r[0]?.ars_per_usd ?? '')).toBe(148_750);
   });
 });

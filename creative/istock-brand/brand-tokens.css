@@ -1,0 +1,83 @@
+/*
+ * iStock by MaatWork
+ * Brand tokens, draft 01
+ * Local and dependency-free. The accent is one hue with two contrast levels.
+ */
+
+:root,
+:host {
+  color-scheme: light;
+
+  /* Core palette */
+  --istock-paper: #f1f3ee;
+  --istock-paper-strong: #e7ece7;
+  --istock-surface: #dfe7e1;
+  --istock-line: #c7d1c9;
+  --istock-ink: #111513;
+  --istock-ink-soft: #3f4942;
+  --istock-muted: #68746b;
+
+  /* One accent family: mineral green */
+  --istock-accent: #2f8f68;
+  --istock-accent-soft: #c8ded3;
+  --istock-accent-action: #1e6047;
+  --istock-accent-contrast: #f1f3ee;
+
+  /* Typography. Keep this local and deterministic for the draft. */
+  --istock-font-sans: "Helvetica Neue", Arial, sans-serif;
+  --istock-font-display: "Helvetica Neue", Arial, sans-serif;
+  --istock-font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+
+  /* Rhythm and shape */
+  --istock-unit: 8px;
+  --istock-radius-surface: 14px;
+  --istock-radius-control: 10px;
+  --istock-radius-pill: 999px;
+  --istock-stroke: 2px;
+  --istock-shadow-soft: 0 18px 48px rgb(17 21 19 / 0.08);
+  --istock-shadow-accent: 0 14px 34px rgb(30 96 71 / 0.16);
+
+  /* Type roles */
+  --istock-type-display: clamp(3rem, 8vw, 7.5rem);
+  --istock-type-heading: clamp(2rem, 4vw, 4rem);
+  --istock-type-body: 1rem;
+  --istock-type-meta: 0.72rem;
+}
+:root[data-theme="light"],
+:host([data-theme="light"]) {
+  color-scheme: light;
+}
+
+:root[data-theme="dark"],
+:host([data-theme="dark"]) {
+  color-scheme: dark;
+  --istock-paper: #111a15;
+  --istock-paper-strong: #18221c;
+  --istock-surface: #202d25;
+  --istock-line: #3d4c42;
+  --istock-ink: #e8efe9;
+  --istock-ink-soft: #c0cdc3;
+  --istock-muted: #9eaca2;
+  --istock-accent-soft: #294f3d;
+  --istock-accent-contrast: #102018;
+  --istock-shadow-soft: 0 18px 48px rgb(0 0 0 / 0.22);
+  --istock-shadow-accent: 0 14px 34px rgb(0 0 0 / 0.24);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]),
+  :host(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --istock-paper: #111a15;
+    --istock-paper-strong: #18221c;
+    --istock-surface: #202d25;
+    --istock-line: #3d4c42;
+    --istock-ink: #e8efe9;
+    --istock-ink-soft: #c0cdc3;
+    --istock-muted: #9eaca2;
+    --istock-accent-soft: #294f3d;
+    --istock-accent-contrast: #102018;
+    --istock-shadow-soft: 0 18px 48px rgb(0 0 0 / 0.22);
+    --istock-shadow-accent: 0 14px 34px rgb(0 0 0 / 0.24);
+  }
+}

@@ -1,9 +1,11 @@
 import { Suspense } from 'react';
 import Link from 'next/link';
-import { storefrontHostForSlug, storefrontUrlForSlug } from '../../_lib/env';
+import { requestRootDomain, storefrontHostForSlug, storefrontUrlForPanel } from '../../_lib/env';
 import { requireTenant } from '../../_lib/session';
 import { trialSubscriptionCta, type TrialSubscriptionCta } from '../../_lib/subscription-cta';
+import { countUnits } from '../../_lib/listings/queries';
 import { trialDaysLeft } from '../../_lib/tenants/queries';
+import { panelStorefrontLabel } from '../../_lib/tenants/panel-identity';
 import { CopyLinkButton } from './_ui/copy-link-button';
 import { Card, PageTitle } from './_ui/section';
 
@@ -32,8 +34,16 @@ async function PanelHome() {
 
   const daysLeft = trialDaysLeft(tenant.trialEndsAt);
   const subscriptionCta = trialSubscriptionCta(daysLeft);
-  const storefront = storefrontUrlForSlug(tenant.slug);
-  const firstName = identity.fullName ?? identity.email.split('@')[0] ?? '';
+  const domain = await requestRootDomain();
+  const storefront = storefrontUrlForPanel(tenant, domain);
+  const storefrontLabel = panelStorefrontLabel(tenant, storefrontHostForSlug(tenant.slug, domain));
+  const firstName = tenant.isDemo ? '' : identity.fullName ?? identity.email.split('@')[0] ?? '';
+  const stock = await countUnits({
+    userId: identity.userId,
+    tenantId: tenant.id,
+    role,
+  });
+  const storefrontHint = storefrontHintForStock(stock);
 
   return (
     <>
@@ -53,12 +63,9 @@ async function PanelHome() {
           rel="noreferrer"
           className="mt-1 block break-all text-lg font-semibold underline-offset-2 hover:underline"
         >
-          {storefrontHostForSlug(tenant.slug)}
+          {storefrontLabel}
         </a>
-        <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-300">
-          Este es el link que pegás en tu estado. Todavía no muestra equipos porque no cargaste
-          ninguno.
-        </p>
+        <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-300">{storefrontHint}</p>
         <div className="mt-3">
           <CopyLinkButton url={storefront} />
         </div>
@@ -70,9 +77,9 @@ async function PanelHome() {
 
       <div className="mt-2 grid grid-cols-2 gap-3">
         <Tile href="/app/stock" title="Stock" note="Cargá tus equipos y sus fotos" />
-        <Tile href="/app/canjes" title="Canjes" note="Todavía no" />
+        <Tile href="/app/canjes" title="Canjes" note="Revisá y aceptá equipos" />
         <Tile href="/app/ajustes" title="Ajustes" note="Ver los datos de tu negocio" />
-        <div className="flex min-h-[92px] flex-col justify-between rounded-2xl border border-dashed border-neutral-300 bg-white p-4 text-neutral-500 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-400">
+        <div className="panel-tile flex min-h-[92px] flex-col justify-between rounded-2xl border border-dashed border-neutral-300 bg-white p-4 text-neutral-500 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-400">
           <span className="text-base font-semibold">Vendedores</span>
           <span className="text-xs">Sumar gente: en camino</span>
         </div>
@@ -85,11 +92,21 @@ async function PanelHome() {
   );
 }
 
+function storefrontHintForStock(stock: { readonly total: number; readonly published: number }): string {
+  if (stock.total === 0) {
+    return 'Este es el link que pegás en tu estado. Cuando cargues y publiques un equipo, va a aparecer acá.';
+  }
+  if (stock.published === 0) {
+    return `Ya cargaste ${String(stock.total)} ${stock.total === 1 ? 'equipo' : 'equipos'}. Publicá uno cuando tenga sus fotos completas y va a aparecer acá.`;
+  }
+  return `Tu vidriera ya tiene ${String(stock.published)} ${stock.published === 1 ? 'equipo publicado' : 'equipos publicados'}. Copiá el link y compartilo en tu estado.`;
+}
+
 function SubscriptionPrompt({ cta }: { cta: TrialSubscriptionCta }) {
   return (
     <aside
       aria-labelledby="subscription-prompt-title"
-      className="mb-4 rounded-2xl border border-amber-300 bg-amber-50 px-4 py-4 dark:border-amber-800/60 dark:bg-amber-950/30"
+      className="panel-subscription mb-4 rounded-2xl border border-amber-300 bg-amber-50 px-4 py-4 dark:border-amber-800/60 dark:bg-amber-950/30"
     >
       <h2 id="subscription-prompt-title" className="text-base font-semibold">
         {cta.title}
@@ -117,7 +134,7 @@ function Tile({ href, title, note }: { href: '/app/stock' | '/app/canjes' | '/ap
   return (
     <Link
       href={href}
-      className="flex min-h-[92px] flex-col justify-between rounded-2xl border border-neutral-200 bg-white p-4 hover:bg-neutral-50 dark:border-neutral-800 dark:bg-neutral-900 dark:hover:bg-neutral-800"
+      className="panel-tile flex min-h-[92px] flex-col justify-between rounded-2xl border border-neutral-200 bg-white p-4 hover:bg-neutral-50 dark:border-neutral-800 dark:bg-neutral-900 dark:hover:bg-neutral-800"
     >
       <span className="text-base font-semibold">{title}</span>
       <span className="text-xs text-neutral-500 dark:text-neutral-400">{note}</span>

@@ -43,7 +43,7 @@ describe('env de media', () => {
    * ────────────────────────────────────────────────────────────────────────────────────────────
    * El defecto original era un `.default()`: deployar con `MEDIA_DRIVER=r2` y olvidarse la
    * variable en el dashboard de Vercel no era un error de arranque, y todas las vidrieras
-   * servían `<img src="http://localhost:3000/_media/…">` sin una sola excepción en Sentry.
+   * servían `<img src="/_media/…">` sin una sola excepción en Sentry.
    *
    * El caso positivo (driver local, sin la variable) está acá a propósito: es el que usan
    * `e2e/playwright.config.ts` y `scripts/accept-s2.sh`. Sin él, el día que alguien haga la
@@ -51,7 +51,7 @@ describe('env de media', () => {
    */
   it('con driver local y sin la variable, parsea y usa el default de dev', () => {
     const env = parseMediaEnv({ MEDIA_DRIVER: 'local' });
-    expect(env.NEXT_PUBLIC_MEDIA_BASE_URL).toBe('http://localhost:3000/_media');
+    expect(env.NEXT_PUBLIC_MEDIA_BASE_URL).toBe('/_media');
   });
 
   it('con driver local respeta la base que le pasen (el gate S2 apunta a su propio puerto)', () => {

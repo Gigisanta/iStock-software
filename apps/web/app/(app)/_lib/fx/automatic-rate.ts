@@ -1,6 +1,6 @@
 import 'server-only';
 
-import { eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, ne } from 'drizzle-orm';
 import { fxSettings, tenants } from '@istock/db';
 import { withServiceDb } from '../db/session';
 import { invalidateStorefront } from '../tenants/storefront-cache';
@@ -9,6 +9,10 @@ import { invalidateStorefront } from '../tenants/storefront-cache';
 export const BCRA_FX_URL = 'https://api.bcra.gob.ar/estadisticascambiarias/v1.0/Cotizaciones';
 
 const REQUEST_TIMEOUT_MS = 5_000;
+
+/** Una cotización por día y una sola petición concurrente por instancia de función. */
+let dailyQuote: { readonly fetchedOn: string; readonly quote: AutomaticFxQuote } | null = null;
+let pendingQuote: Promise<AutomaticFxQuote> | null = null;
 
 export interface AutomaticFxQuote {
   readonly arsCentsPerUsd: number;
@@ -63,17 +67,20 @@ export function parseBcraUsdQuote(payload: unknown): AutomaticFxQuote | null {
   return { arsCentsPerUsd, asOf, source: 'bcra' };
 }
 
-/** Obtiene una cotización validada, con timeout corto y sin exponer el body del proveedor. */
-export async function fetchAutomaticFxQuote(): Promise<AutomaticFxQuote> {
+async function requestAutomaticFxQuote(): Promise<AutomaticFxQuote> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
   try {
-    const response = await fetch(BCRA_FX_URL, {
+    // Keep the init object inferred instead of forcing the DOM-only `RequestInit` type in
+    // independent Node probes. Next's fetch honors `cache: 'no-store'`, while the object itself
+    // remains structurally compatible with Node's fetch declaration.
+    const requestInit = {
       headers: { accept: 'application/json' },
-      cache: 'no-store',
+      cache: 'no-store' as const,
       signal: controller.signal,
-    });
+    };
+    const response = await fetch(BCRA_FX_URL, requestInit);
     if (!response.ok) throw new AutomaticFxError();
 
     const quote = parseBcraUsdQuote(await response.json());
@@ -87,33 +94,69 @@ export async function fetchAutomaticFxQuote(): Promise<AutomaticFxQuote> {
   }
 }
 
+/** Obtiene una cotización validada sin golpear BCRA repetidamente durante el mismo día. */
+export async function fetchAutomaticFxQuote(): Promise<AutomaticFxQuote> {
+  const fetchedOn = new Date().toISOString().slice(0, 10);
+  if (dailyQuote?.fetchedOn === fetchedOn) return dailyQuote.quote;
+  if (pendingQuote !== null) return pendingQuote;
+
+  const request = requestAutomaticFxQuote().then((quote) => {
+    dailyQuote = { fetchedOn, quote };
+    return quote;
+  });
+  pendingQuote = request;
+  try {
+    return await request;
+  } finally {
+    if (pendingQuote === request) pendingQuote = null;
+  }
+}
+
+/** Sólo para tests: el cache real vive un día y no se vacía durante una corrida normal. */
+export function resetAutomaticFxQuoteCache(): void {
+  dailyQuote = null;
+  pendingQuote = null;
+}
+
 /**
- * Actualiza el TC diario en una sola operación y purga las dos entradas de cache de cada tenant.
+ * Actualiza el TC diario en una sola operación y purga las dos entradas de cache sólo para los
+ * tenants cuyo valor cambió. El cron de reservas corre cada cinco minutos: escribir `updated_at`
+ * e invalidar toda la vidriera en cada corrida aunque el BCRA devuelva el mismo valor destruiría
+ * el cache hit rate y convertiría una tarea de reconciliación en una escritura global periódica.
  *
  * web-lint:sin-tenant el scheduler no tiene sesión y debe refrescar todos los tenants activos
  */
 export async function refreshAutomaticFxSettings(): Promise<AutomaticFxRefresh> {
   const quote = await fetchAutomaticFxQuote();
 
-  const slugs = await withServiceDb(async (tx) => {
+  const changedSlugs = await withServiceDb(async (tx) => {
     // Es una lectura deliberadamente global: el job es el único llamador y debe refrescar todos.
     const rows = await tx
       .select({ tenantId: fxSettings.tenantId, slug: tenants.slug })
       .from(fxSettings)
-      .innerJoin(tenants, eq(tenants.id, fxSettings.tenantId));
+      .innerJoin(tenants, eq(tenants.id, fxSettings.tenantId))
+      .where(ne(fxSettings.arsPerUsd, quote.arsCentsPerUsd));
 
     const tenantIds = rows.map((row) => row.tenantId);
-    if (tenantIds.length > 0) {
-      await tx
+    if (tenantIds.length === 0) return [];
+
+    const updated = await tx
         .update(fxSettings)
         .set({ arsPerUsd: quote.arsCentsPerUsd, updatedBy: null, updatedAt: new Date() })
-        .where(inArray(fxSettings.tenantId, tenantIds));
-    }
+        .where(
+          and(
+            inArray(fxSettings.tenantId, tenantIds),
+            ne(fxSettings.arsPerUsd, quote.arsCentsPerUsd),
+          ),
+        )
+        .returning({ tenantId: fxSettings.tenantId });
 
-    return rows.map((row) => row.slug);
+    const updatedIds = new Set(updated.map((row) => row.tenantId));
+
+    return rows.filter((row) => updatedIds.has(row.tenantId)).map((row) => row.slug);
   });
 
-  for (const slug of slugs) invalidateStorefront(slug);
+  for (const slug of changedSlugs) invalidateStorefront(slug);
 
-  return { ...quote, updatedTenants: slugs.length };
+  return { ...quote, updatedTenants: changedSlugs.length };
 }

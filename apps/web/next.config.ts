@@ -31,6 +31,8 @@ const nextConfig: NextConfig = {
    */
   experimental: {
     taint: true,
+    // `forbidden()` renders the role boundary for a valid session with insufficient access.
+    authInterrupts: true,
 
     /**
      * ════════════════════════════════════════════════════════════════════════════════════════

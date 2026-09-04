@@ -127,7 +127,7 @@ async function main(): Promise<void> {
     await db.insert(tenants).values({
       id: SEED_TENANT_ID,
       slug: 'demo',
-      name: 'iStock Demo — Alto Valle',
+      name: 'iStock Demo, Alto Valle',
       waPhone,
       paymentMethods: ['Efectivo USD', 'Transferencia ARS', 'USDT', 'Tarjeta en 3 cuotas'],
       acceptsTradeIn: true,
@@ -252,7 +252,7 @@ async function main(): Promise<void> {
           tenantId: SEED_TENANT_ID,
           listingId: item.id,
           sortOrder: i,
-          alt: `${item.title} — foto ${String(i + 1)}`,
+          alt: `${item.title}, foto ${String(i + 1)}`,
           masterKey: seedMasterKey({
             tenantId: SEED_TENANT_ID,
             listingId: item.id,

@@ -7,18 +7,18 @@ import { clearSessionCookie, readSessionCookie, writeSessionCookie } from './coo
 import type { AuthDriver, AuthIdentity, SignInInput, SignInResult } from './types';
 
 /**
- * Driver de autenticación **de desarrollo**. Existe porque B2 (proyecto Supabase) sigue abierto y
- * la consigna del repo es clara: *"Falta un secret => interface + driver mock/local. NUNCA pares"*.
+ * Driver de autenticación **de desarrollo**. Permite levantar el panel sin Neon Auth ni correo
+ * externo; la producción siempre usa el driver Neon.
  *
- * Qué emula de Supabase, y qué no:
+ * Qué emula del proveedor de identidad, y qué no:
  *
- * | pieza | acá | Supabase |
+ * | pieza | acá | Neon Auth |
  * |---|---|---|
- * | fila en `auth.users` | `insert` directo (la crea `scripts/pg-local.sh`) | GoTrue |
- * | verificación del mail | **ninguna** | magic link / OTP |
- * | sesión | cookie HMAC propia | cookies `sb-*` de `@supabase/ssr` |
- * | `app_metadata.tenant_id` | `raw_app_meta_data` de `auth.users` | Custom Access Token Hook |
- * | claims que ve Postgres | `set_config('request.jwt.claims', ...)` | idem, vía PostgREST |
+ * | fila en `auth.users` | `insert` directo (la crea `scripts/pg-local.sh`) | Neon Auth |
+ * | verificación del mail | **ninguna** | contraseña gestionada por Neon Auth |
+ * | sesión | cookie HMAC propia | cookie gestionada por Neon Auth |
+ * | claims de tenant | `raw_app_meta_data` de `auth.users` | membresía revalidada por el servidor |
+ * | claims que ve Postgres | `set_config('request.jwt.claims', ...)` | idem, vía sesión server-side |
  *
  * La fila "verificación del mail: ninguna" es la razón por la que `assertLocalDriverAllowed()`
  * corta el arranque en producción y por la que `isDevelopmentOnly` es `true`: la pantalla de
@@ -73,7 +73,7 @@ export function localAuthDriver(): AuthDriver {
       const email = parsed.data;
 
       const identity = await withServiceDb(async (tx) => {
-        // 1. `auth.users` — en producción esta fila la crea GoTrue, no nosotros.
+        // 1. `auth.users` — en producción esta fila la crea Neon Auth, no nosotros.
         const authRows = (await tx.execute<{ id: string }>(
           sql`insert into auth.users (email)
               values (${email})
@@ -111,10 +111,10 @@ export function localAuthDriver(): AuthDriver {
     },
 
     async syncTenantClaim(userId: string, tenantId: string): Promise<void> {
-      // `raw_app_meta_data`, que es de dónde Supabase arma `app_metadata`. **Nunca**
-      // `raw_user_meta_data`: eso es `user_metadata` y el usuario lo puede escribir
-      // (lint 0015, ERROR). En este driver el claim se re-arma en cada request desde
-      // `memberships`, así que esto es paridad con Supabase, no la fuente de verdad.
+      // `raw_app_meta_data` queda reservado para claims server-side. **Nunca**
+      // `raw_user_meta_data`: eso es metadata editable por el usuario (lint 0015, ERROR).
+      // En este driver el tenant se revalida desde `memberships` en cada request, así que el
+      // campo es sólo paridad con el esquema de auth local, no la fuente de verdad.
       await withServiceDb(async (tx) => {
         await tx.execute(
           sql`update auth.users

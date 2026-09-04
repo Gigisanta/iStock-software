@@ -112,18 +112,42 @@ export interface SeedModel {
   readonly colors: readonly string[];
 }
 
-/** Sólo las líneas que el reseller del Alto Valle carga de verdad (top de frecuencia en R6). */
+/** Catálogo Apple inicial para que una instalación nueva no deje el selector vacío. */
 export const SEED_MODELS: readonly SeedModel[] = [
-  { id: '00000000-0000-4000-8000-000000000101', slug: 'iphone-11', displayName: 'iPhone 11', releaseYear: 2019, storageOptionsGb: [64, 128, 256], colors: ['Negro', 'Blanco', 'Verde', 'Amarillo', 'Morado'] },
-  { id: '00000000-0000-4000-8000-000000000102', slug: 'iphone-12', displayName: 'iPhone 12', releaseYear: 2020, storageOptionsGb: [64, 128, 256], colors: ['Negro', 'Blanco', 'Verde', 'Azul', 'Morado'] },
-  { id: '00000000-0000-4000-8000-000000000103', slug: 'iphone-13', displayName: 'iPhone 13', releaseYear: 2021, storageOptionsGb: [128, 256, 512], colors: ['Medianoche', 'Blanco estelar', 'Azul', 'Rosa', 'Verde'] },
+  { id: '00000000-0000-4000-8000-000000000101', slug: 'iphone-11', displayName: 'iPhone 11', releaseYear: 2019, storageOptionsGb: [64, 128, 256], colors: ['Negro', 'Blanco', 'Verde', 'Amarillo', 'Morado', '(PRODUCT)RED'] },
+  { id: '00000000-0000-4000-8000-000000000102', slug: 'iphone-12', displayName: 'iPhone 12', releaseYear: 2020, storageOptionsGb: [64, 128, 256], colors: ['Negro', 'Blanco', 'Verde', 'Azul', 'Morado', '(PRODUCT)RED'] },
+  { id: '00000000-0000-4000-8000-000000000103', slug: 'iphone-13', displayName: 'iPhone 13', releaseYear: 2021, storageOptionsGb: [128, 256, 512], colors: ['Medianoche', 'Blanco estelar', 'Azul', 'Rosa', 'Verde', '(PRODUCT)RED'] },
   { id: '00000000-0000-4000-8000-000000000104', slug: 'iphone-13-pro', displayName: 'iPhone 13 Pro', releaseYear: 2021, storageOptionsGb: [128, 256, 512, 1024], colors: ['Grafito', 'Oro', 'Plata', 'Azul Sierra', 'Verde alpino'] },
-  { id: '00000000-0000-4000-8000-000000000105', slug: 'iphone-14', displayName: 'iPhone 14', releaseYear: 2022, storageOptionsGb: [128, 256, 512], colors: ['Medianoche', 'Morado', 'Blanco estelar', 'Azul', 'Amarillo'] },
+  { id: '00000000-0000-4000-8000-000000000105', slug: 'iphone-14', displayName: 'iPhone 14', releaseYear: 2022, storageOptionsGb: [128, 256, 512], colors: ['Medianoche', 'Morado', 'Blanco estelar', 'Azul', 'Amarillo', '(PRODUCT)RED'] },
   // R6: iPhone 14 Pro NUNCA tuvo 64 GB. Arranca en 128.
   { id: '00000000-0000-4000-8000-000000000106', slug: 'iphone-14-pro', displayName: 'iPhone 14 Pro', releaseYear: 2022, storageOptionsGb: [128, 256, 512, 1024], colors: ['Negro espacial', 'Plata', 'Oro', 'Morado oscuro'] },
   { id: '00000000-0000-4000-8000-000000000107', slug: 'iphone-15', displayName: 'iPhone 15', releaseYear: 2023, storageOptionsGb: [128, 256, 512], colors: ['Negro', 'Azul', 'Verde', 'Amarillo', 'Rosa'] },
   // R6: iPhone 15 Pro Max NUNCA tuvo 128 GB. Arranca en 256.
   { id: '00000000-0000-4000-8000-000000000108', slug: 'iphone-15-pro-max', displayName: 'iPhone 15 Pro Max', releaseYear: 2023, storageOptionsGb: [256, 512, 1024], colors: ['Titanio negro', 'Titanio blanco', 'Titanio azul', 'Titanio natural'] },
+  { id: '00000000-0000-4000-8000-000000000109', slug: 'iphone-xr', displayName: 'iPhone XR', releaseYear: 2018, storageOptionsGb: [64, 128, 256], colors: ['Negro', 'Blanco', 'Azul', 'Amarillo', 'Coral', '(PRODUCT)RED'] },
+  { id: '00000000-0000-4000-8000-000000000110', slug: 'iphone-se-2a-gen', displayName: 'iPhone SE 2ª gen', releaseYear: 2020, storageOptionsGb: [64, 128, 256], colors: ['Negro', 'Blanco', '(PRODUCT)RED'] },
+  { id: '00000000-0000-4000-8000-000000000111', slug: 'iphone-11-pro', displayName: 'iPhone 11 Pro', releaseYear: 2019, storageOptionsGb: [64, 256, 512], colors: ['Gris espacial', 'Plata', 'Oro', 'Verde medianoche'] },
+  { id: '00000000-0000-4000-8000-000000000112', slug: 'iphone-11-pro-max', displayName: 'iPhone 11 Pro Max', releaseYear: 2019, storageOptionsGb: [64, 256, 512], colors: ['Gris espacial', 'Plata', 'Oro', 'Verde medianoche'] },
+  { id: '00000000-0000-4000-8000-000000000113', slug: 'iphone-12-mini', displayName: 'iPhone 12 mini', releaseYear: 2020, storageOptionsGb: [64, 128, 256], colors: ['Negro', 'Blanco', 'Verde', 'Azul', 'Morado', '(PRODUCT)RED'] },
+  { id: '00000000-0000-4000-8000-000000000114', slug: 'iphone-12-pro', displayName: 'iPhone 12 Pro', releaseYear: 2020, storageOptionsGb: [128, 256, 512], colors: ['Plata', 'Grafito', 'Oro', 'Azul pacífico'] },
+  { id: '00000000-0000-4000-8000-000000000115', slug: 'iphone-12-pro-max', displayName: 'iPhone 12 Pro Max', releaseYear: 2020, storageOptionsGb: [128, 256, 512], colors: ['Plata', 'Grafito', 'Oro', 'Azul pacífico'] },
+  { id: '00000000-0000-4000-8000-000000000116', slug: 'iphone-13-mini', displayName: 'iPhone 13 mini', releaseYear: 2021, storageOptionsGb: [128, 256, 512], colors: ['Medianoche', 'Blanco estelar', 'Azul', 'Rosa', 'Verde', '(PRODUCT)RED'] },
+  { id: '00000000-0000-4000-8000-000000000117', slug: 'iphone-13-pro-max', displayName: 'iPhone 13 Pro Max', releaseYear: 2021, storageOptionsGb: [128, 256, 512, 1024], colors: ['Grafito', 'Oro', 'Plata', 'Azul Sierra', 'Verde alpino'] },
+  { id: '00000000-0000-4000-8000-000000000118', slug: 'iphone-se-3a-gen', displayName: 'iPhone SE 3ª gen', releaseYear: 2022, storageOptionsGb: [64, 128, 256], colors: ['Medianoche', 'Blanco estelar', '(PRODUCT)RED'] },
+  { id: '00000000-0000-4000-8000-000000000119', slug: 'iphone-14-plus', displayName: 'iPhone 14 Plus', releaseYear: 2022, storageOptionsGb: [128, 256, 512], colors: ['Medianoche', 'Morado', 'Blanco estelar', 'Azul', 'Amarillo', '(PRODUCT)RED'] },
+  { id: '00000000-0000-4000-8000-000000000120', slug: 'iphone-14-pro-max', displayName: 'iPhone 14 Pro Max', releaseYear: 2022, storageOptionsGb: [128, 256, 512, 1024], colors: ['Negro espacial', 'Plata', 'Oro', 'Morado oscuro'] },
+  { id: '00000000-0000-4000-8000-000000000121', slug: 'iphone-15-plus', displayName: 'iPhone 15 Plus', releaseYear: 2023, storageOptionsGb: [128, 256, 512], colors: ['Negro', 'Azul', 'Verde', 'Amarillo', 'Rosa'] },
+  { id: '00000000-0000-4000-8000-000000000122', slug: 'iphone-15-pro', displayName: 'iPhone 15 Pro', releaseYear: 2023, storageOptionsGb: [128, 256, 512, 1024], colors: ['Titanio negro', 'Titanio blanco', 'Titanio azul', 'Titanio natural'] },
+  { id: '00000000-0000-4000-8000-000000000123', slug: 'iphone-16', displayName: 'iPhone 16', releaseYear: 2024, storageOptionsGb: [128, 256, 512], colors: ['Negro', 'Blanco', 'Rosa', 'Verde azulado', 'Ultramarino'] },
+  { id: '00000000-0000-4000-8000-000000000124', slug: 'iphone-16-plus', displayName: 'iPhone 16 Plus', releaseYear: 2024, storageOptionsGb: [128, 256, 512], colors: ['Negro', 'Blanco', 'Rosa', 'Verde azulado', 'Ultramarino'] },
+  { id: '00000000-0000-4000-8000-000000000125', slug: 'iphone-16e', displayName: 'iPhone 16e', releaseYear: 2025, storageOptionsGb: [128, 256, 512], colors: ['Negro', 'Blanco'] },
+  { id: '00000000-0000-4000-8000-000000000126', slug: 'iphone-16-pro', displayName: 'iPhone 16 Pro', releaseYear: 2024, storageOptionsGb: [128, 256, 512, 1024], colors: ['Titanio negro', 'Titanio blanco', 'Titanio natural', 'Titanio del desierto'] },
+  { id: '00000000-0000-4000-8000-000000000127', slug: 'iphone-16-pro-max', displayName: 'iPhone 16 Pro Max', releaseYear: 2024, storageOptionsGb: [256, 512, 1024], colors: ['Titanio negro', 'Titanio blanco', 'Titanio natural', 'Titanio del desierto'] },
+  { id: '00000000-0000-4000-8000-000000000128', slug: 'iphone-17', displayName: 'iPhone 17', releaseYear: 2025, storageOptionsGb: [256, 512], colors: ['Negro', 'Blanco', 'Azul neblina', 'Salvia', 'Lavanda'] },
+  { id: '00000000-0000-4000-8000-000000000129', slug: 'iphone-air', displayName: 'iPhone Air', releaseYear: 2025, storageOptionsGb: [256, 512, 1024], colors: ['Negro espacial', 'Blanco nube', 'Oro claro', 'Azul cielo'] },
+  { id: '00000000-0000-4000-8000-000000000130', slug: 'iphone-17-pro', displayName: 'iPhone 17 Pro', releaseYear: 2025, storageOptionsGb: [256, 512, 1024], colors: ['Plata', 'Naranja cósmico', 'Azul profundo'] },
+  { id: '00000000-0000-4000-8000-000000000131', slug: 'iphone-17-pro-max', displayName: 'iPhone 17 Pro Max', releaseYear: 2025, storageOptionsGb: [256, 512, 1024, 2048], colors: ['Plata', 'Naranja cósmico', 'Azul profundo'] },
+  { id: '00000000-0000-4000-8000-000000000132', slug: 'iphone-17e', displayName: 'iPhone 17e', releaseYear: 2026, storageOptionsGb: [256, 512], colors: ['Negro', 'Blanco', 'Rosa pálido'] },
 ];
 
 export interface SeedListing {

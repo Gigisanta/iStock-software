@@ -11,7 +11,7 @@ import type { Metadata } from 'next';
  */
 
 export const metadata: Metadata = {
-  title: 'iStock — vidriera y stock para revendedores de celulares',
+  title: 'iStock - vidriera y stock para revendedores de celulares',
   description:
     'Cargás tu stock una vez y tenés tu propia vidriera online. El cliente entra informado y te ' +
     'escribe por WhatsApp con el equipo y el precio ya escritos.',
@@ -19,32 +19,38 @@ export const metadata: Metadata = {
 
 export default function MarketingLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex min-h-dvh flex-col">
-      <header className="sticky top-0 z-10 border-b border-neutral-200 bg-white/90 backdrop-blur dark:border-neutral-800 dark:bg-neutral-950/90">
-        <nav className="mx-auto flex w-full max-w-5xl items-center justify-between gap-4 px-4 py-3">
-          <Link href="/" className="text-lg font-semibold tracking-tight">
-            iStock
+    <div className="marketing-shell flex min-h-dvh flex-col">
+      <header className="marketing-header">
+        <nav className="marketing-nav mx-auto flex w-full max-w-5xl items-center justify-between gap-4 px-4 py-3">
+          <Link href="/" className="marketing-brand marketing-logo" aria-label="iStock">
+            <img src="/brand/logo-horizontal.svg" alt="" width="140" height="28" />
           </Link>
-          <div className="flex items-center gap-1 text-sm">
-            <Link
-              href="/precios"
-              className="rounded-lg px-3 py-2 font-medium text-neutral-600 hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-900"
-            >
-              Precios
-            </Link>
-            <Link
-              href="/ingresar"
-              className="rounded-lg bg-neutral-900 px-4 py-2 font-semibold text-white hover:bg-neutral-700 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
-            >
+          <div className="marketing-nav-actions">
+            <div className="marketing-nav-links marketing-nav-links-desktop">
+              <Link href="/precios">Precios</Link>
+            </div>
+            <Link href="/ingresar" className="marketing-sign-in px-4 py-2">
               Ingresar
             </Link>
+            <details className="marketing-menu">
+              <summary aria-label="Abrir menú">
+                <span aria-hidden="true" />
+                <span aria-hidden="true" />
+                <span aria-hidden="true" />
+                <span className="sr-only">Abrir menú</span>
+              </summary>
+              <div className="marketing-menu-panel">
+                <Link href="/precios">Precios</Link>
+                <Link href="/ingresar">Ingresar</Link>
+              </div>
+            </details>
           </div>
         </nav>
       </header>
 
-      <main className="flex-1">{children}</main>
+      <main className="marketing-main flex-1">{children}</main>
 
-      <footer className="border-t border-neutral-200 px-4 py-8 text-sm text-neutral-500 dark:border-neutral-800 dark:text-neutral-400">
+      <footer className="marketing-footer px-4 py-8 text-sm">
         <div className="mx-auto flex w-full max-w-5xl flex-col gap-2">
           <p>
             iStock es un producto de <strong className="font-semibold">MaatWork</strong>, Patagonia

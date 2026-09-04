@@ -1,7 +1,6 @@
 import { z } from 'zod';
 import { CONDITIONS, isCondition } from '@istock/domain';
 import { parseUsdToCents } from '../listings/parse-money';
-import { TITLE_MAX_LENGTH, TITLE_MIN_LENGTH } from '../listings/schema';
 
 /**
  * El **borde** de "aceptar un canje y meterlo al stock". `CLAUDE.md` §5: Zod en todos los bordes,
@@ -14,7 +13,8 @@ import { TITLE_MAX_LENGTH, TITLE_MIN_LENGTH } from '../listings/schema';
  *
  * Cada campo replica el `CHECK` de Postgres que le corresponde
  * (`packages/db/src/schema/listings.ts`): `price_usd > 0`, `cost_usd is null or cost_usd >= 0`,
- * `battery_pct between 0 and 100`, `storage_gb > 0`, título 3–120. No es duplicación decorativa:
+ * `battery_pct between 0 and 100`, `storage_gb > 0`. El título ya no se valida acá: se deriva del
+ * modelo confirmado en el server. No es duplicación decorativa:
  * sin esto un dato malo viaja hasta el `insert` y vuelve como un error de constraint de Postgres,
  * cuyo mensaje **incluye la fila que lo violó**. La fila de un canje tiene el nombre y el WhatsApp
  * del visitante. Se rechaza acá, en castellano y por campo, antes de que Postgres tenga que hablar.
@@ -82,16 +82,6 @@ export const acceptTradeinSchema = z.object({
    */
   leadId: z.string({ error: 'Falta el canje.' }).trim().pipe(z.uuid('Falta el canje.')),
 
-  title: z
-    .string({ error: 'Poné cómo se llama el equipo.' })
-    .transform((raw) => raw.trim().replace(/\s+/gu, ' '))
-    .pipe(
-      z
-        .string()
-        .min(TITLE_MIN_LENGTH, `El nombre necesita al menos ${String(TITLE_MIN_LENGTH)} caracteres.`)
-        .max(TITLE_MAX_LENGTH, `El nombre no puede pasar de ${String(TITLE_MAX_LENGTH)} caracteres.`),
-    ),
-
   /**
    * Obligatorio por el mismo motivo que en el alta: `checkPublishable()` deniega
    * `missing_catalog_model` para todo `kind: 'unit'`, así que sin modelo la unidad nace
@@ -157,7 +147,6 @@ function readString(formData: FormData, key: string): string {
 export function parseAcceptTradeinForm(formData: FormData): AcceptTradeinParse {
   const parsed = acceptTradeinSchema.safeParse({
     leadId: readString(formData, 'leadId'),
-    title: readString(formData, 'title'),
     catalogModelId: readString(formData, 'catalogModelId'),
     condition: readString(formData, 'condition'),
     storageGb: readString(formData, 'storageGb'),

@@ -1,6 +1,6 @@
 import 'server-only';
-import { eq } from 'drizzle-orm';
-import { subscriptions, tenants } from '@istock/db';
+import { and, eq } from 'drizzle-orm';
+import { billingCheckoutIntents, subscriptions, tenants } from '@istock/db';
 import type { Tx } from '../../../(app)/_lib/db/connection';
 import type { PaidPlanTier } from '../plans';
 import { planAfterEffect, type PlanEffect, type SubscriptionStatus } from './status';
@@ -102,6 +102,19 @@ export async function applySubscriptionEvent(tx: Tx, event: SubscriptionEvent): 
         updatedAt: event.occurredAt,
       },
     });
+
+  // Un checkout queda abierto mientras el preapproval está pendiente: borrarlo acá permitiría
+  // que la siguiente pestaña cree otro. Sólo un estado final o autorizado libera el intent.
+  if (event.planEffect !== 'keep' && event.providerPreapprovalId !== null) {
+    await tx
+      .delete(billingCheckoutIntents)
+      .where(
+        and(
+          eq(billingCheckoutIntents.tenantId, event.tenantId),
+          eq(billingCheckoutIntents.providerPreapprovalId, event.providerPreapprovalId),
+        ),
+      );
+  }
 
   const nextPlan = planAfterEffect(event.planEffect, event.plan);
   if (nextPlan === null) return;

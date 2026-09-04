@@ -110,11 +110,6 @@
   ],
   "allowlist": [
     {
-      "route": "/api/auth/callback",
-      "reason": "Es el callback GET de Supabase Auth: solo intercambia un code de un proveedor externo por una sesion y redirige a un destino fijo; no acepta escrituras de negocio ni cuerpos libres. Rate-limitarlo por IP podria cortar callbacks legitimos cuando varios usuarios comparten NAT y no reduce el costo principal, que es la llamada de autenticacion ya validada por Supabase. La ruta valida code/plan y usa destinos internos antes de responder.",
-      "revisit": "Si el callback agrega POST, acepta destinos externos o empieza a mutar datos de negocio, debe salir de la allowlist y recibir una regla especifica."
-    },
-    {
       "route": "/api/auth/[...path]",
       "reason": "Es el adaptador del proveedor Neon Auth: valida y enruta las operaciones de sesion y credenciales al backend de autenticacion, sin ejecutar lecturas ni escrituras del dominio iStock. La proteccion de abuso y los limites de autenticacion viven en Neon Auth; duplicar un bucket por IP en Vercel podria cortar usuarios legitimos detras de NAT sin agregar una barrera equivalente sobre el proveedor.",
       "revisit": "Si esta ruta empieza a ejecutar operaciones de negocio, acepta endpoints fuera del contrato de Neon Auth o el proveedor deja de aplicar sus limites, debe salir de la allowlist y recibir una regla especifica."

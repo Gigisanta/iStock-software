@@ -173,6 +173,26 @@ Es el primer experimento a correr apenas exista deploy — antes de S3.
   Se cambia research por **experimento**. FASE 6 es la última del pipeline, así que esto **no
   bloquea** FASE 2/3/4 — pero el resultado del experimento 1 puede cambiar el pitch comercial.
 
+### Estado de implementación al 2026-09-04
+
+El driver local usa provisoriamente la variante oficial **sin plan asociado + `status: "pending"`**:
+manda la recurrencia mensual en ARS, `reason`, `external_reference`, `payer_email`, `back_url` y
+redirige al `init_point` de la suscripción. La selección del medio queda en el checkout hospedado
+de Mercado Pago y el trial de 14 días sigue siendo el trial inicial de iStock, no un segundo trial
+del proveedor. El checkout también usa `billing_checkout_intents` (migración `0022`): una fila por
+tenant, lock de fila y lease de 10 minutos evitan que dos pestañas creen dos `preapproval`; un
+intent listo reutiliza el mismo `init_point` y el webhook lo libera cuando el estado es autorizado
+o cancelado. Esto resuelve la carrera local, pero **no cierra ADR-008**: la cuenta real, el webhook
+público, los medios disponibles y la eventual caída después de crear el preapproval todavía
+requieren B3.
+
+Decisión de seguridad del handler: aunque Mercado Pago recomienda activar también el tópico
+`payment`, iStock lo acepta y lo ignora para entitlements. El recurso `GET /v1/payments/{id}` expone
+`external_reference` como texto libre pero no `preapproval_id`; por eso una notificación de pago
+aislada no puede habilitar un tenant. La autorización queda en `subscription_preapproval` y
+`subscription_authorized_payment`, cuya factura sí trae el vínculo `preapproval_id`. Se reabre sólo
+si B3 demuestra una relación de proveedor equivalente y verificable.
+
 ### Plan de sandbox — 4 experimentos, se corren el día que llegue B3
 | # | Experimento | Qué decide |
 |---|---|---|
@@ -1877,7 +1897,12 @@ Cerrarlo pide FK compuesta contra `listings(tenant_id, id)`, o sea tocar `listin
 ### Preguntas abiertas que esta ADR **no** cierra
 
 1. **`P4`** — la FK compuesta. Es una decisión de costo sobre `listings` y **es del LEAD**, no de esta ADR.
-2. **`P5`** — ninguna policy de `sales` mira `membership_role`, así que a nivel base un `seller` lee `cost_usd` y `margin_usd` de su tenant. Hoy lo tapa que no exista cliente Supabase de browser (**B2**). Esta ADR explica por qué el **camino de escritura** no expone el costo; **no** dice nada sobre el de lectura, y no hay que leerla como si lo hiciera.
+2. **`P5`** — **estado histórico al ratificar esta ADR (2026-08-28):** ninguna policy de `sales`
+   miraba `membership_role`, así que a nivel base un `seller` podía leer `cost_usd` y `margin_usd` de
+   su tenant. Esta ADR explicaba por qué el **camino de escritura** no exponía el costo; no cerraba el
+   camino de lectura. **Actualización 2026-09-04:** el árbol actual incluye `0012` y `0016`, que
+   revocan el `SELECT` directo sensible, dejan allowlists y reservan la lectura financiera a RPC
+   owner-only; `seller-authorization.test.ts` prueba seller y owner en las dos polaridades.
 
 ---
 
@@ -2017,9 +2042,11 @@ encender nombrando `archivo:línea`, y revirtió byte a byte.
 
 ### Lo que esta ADR NO decide
 
-- **No decide que a nivel base un `seller` no pueda leer `offer_usd`.** Hoy **sí puede**: ninguna
-  policy de `tradein_leads` mira `membership_role`, medido por el LEAD contra Postgres real. Eso es
-  **P5**, sigue abierto, y sobre esta tabla la regla 9 de `CLAUDE.md` la sostiene el **servidor**.
+- **No decidía que a nivel base un `seller` no pudiera leer `offer_usd`.** Durante la medición que
+  dio origen a esta ADR **sí podía**: ninguna policy de `tradein_leads` miraba `membership_role`.
+  **Actualización 2026-09-04:** P5 quedó cerrado en el árbol actual por `0012` y `0016`; el acceso
+  directo sensible está revocado y las lecturas financieras pasan por RPC owner-only, con la
+  polaridad afirmada por `seller-authorization.test.ts`.
 - **No decide que la policy mire `accepts_trade_in`.** _(**Cerrado el 2026-08-28 por `S8.1`**,
   migración `0009`: el flag entró **adentro** del `WITH CHECK`, vía el primer `ALTER POLICY` del
   repo. Cuando esta ADR se escribió lo chequeaba sólo el `where` del handler. El handler **lo sigue
@@ -2386,8 +2413,9 @@ servido cuenta la estructura (`<meta name="robots">`, anchors), nunca el substri
 El formulario de alta deja de pedir **"¿A cuánto tomás el dólar?"**. El sistema obtiene la última
 cotización USD publicada por la API pública de Estadísticas Cambiarias del BCRA, sin API key, y la
 guarda en `fx_settings` como centavos de ARS por USD. El alta usa esa fuente para que el negocio
-nazca con precios completos; el cron diario reutiliza el mismo endpoint, actualiza todos los
-tenants y llama a `invalidateStorefront()` para que grilla y fichas no conserven el valor anterior.
+nazca con precios completos; el cron de expiración corre cada cinco minutos pero reutiliza una
+cotización BCRA cacheada por día, actualiza todos los tenants cuando corresponde y llama a
+`invalidateStorefront()` para que grilla y fichas no conserven el valor anterior.
 
 La vidriera no consulta al BCRA: lee el último valor persistido. Si el proveedor falla, los tenants
 existentes conservan el último valor bueno y el cron responde `500` para que la falla sea visible;

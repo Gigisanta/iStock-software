@@ -43,6 +43,17 @@ vi.mock('../../apps/web/app/(app)/_lib/reservations/expire-reservations', () => 
   expireDueReservations: barrido,
 }));
 
+// Esta probe mide autenticación y orden de escritura, no la disponibilidad del BCRA. La fuente
+// externa queda resuelta para que el caso con credencial válida no convierta una falla de red
+// ajena en un falso rojo del invariante S6.
+vi.mock('../../apps/web/app/(app)/_lib/fx/automatic-rate', () => ({
+  refreshAutomaticFxSettings: vi.fn(async () => ({
+    updatedTenants: 0,
+    asOf: '2026-09-04',
+    source: 'probe',
+  })),
+}));
+
 /** El secreto de la corrida. Largo y de alta entropía a propósito: el handler compara hashes. */
 const SECRETO = 'probe-s6-4f8a1c7e9b2d6053aa71c4e8f0b39d2c';
 

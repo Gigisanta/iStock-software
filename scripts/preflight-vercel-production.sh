@@ -26,6 +26,7 @@ require_command() {
 require_command jq
 require_command vercel
 require_command dig
+require_command curl
 
 if [ "$fail" -ne 0 ]; then
   exit "$fail"
@@ -37,10 +38,10 @@ if [ "$ACCOUNT" = 'gigisanta' ]; then pass 'sesión Vercel: gigisanta'; else fai
 VERCEL_API_ARGS=(api "/v2/teams/$TEAM_ID")
 TEAM_JSON=$(vercel "${VERCEL_API_ARGS[@]}" --scope "$SCOPE" 2>/dev/null || true)
 PLAN=$(printf '%s' "$TEAM_JSON" | jq -r '.billing.plan // empty' 2>/dev/null || true)
-if [ "$PLAN" = 'hobby' ]; then
-  pass 'team Vercel en Hobby (modo free)'
+if [ "$PLAN" = 'pro' ]; then
+  pass 'team Vercel en Pro (uso comercial habilitado)'
 else
-  fail "team Vercel en ${PLAN:-plan desconocido}; este despliegue está fijado al modo free (Hobby)"
+  fail "team Vercel en ${PLAN:-plan desconocido}; iStock requiere Vercel Pro para uso comercial"
 fi
 
 ENV_JSON=$(vercel env ls production --scope "$SCOPE" --project "$PROJECT" --json 2>/dev/null || true)
@@ -56,6 +57,8 @@ else
     AUTH_DRIVER
     MEDIA_DRIVER
     R2_ACCOUNT_ID
+    R2_ACCESS_KEY_ID
+    R2_SECRET_ACCESS_KEY
     R2_BUCKET_ORIGINALS
     R2_BUCKET_MEDIA
     NEXT_PUBLIC_MEDIA_BASE_URL
@@ -66,6 +69,8 @@ else
     NEXT_PUBLIC_APP_URL
     LLM_MAX_INPUT_TOKENS
     LLM_MAX_OUTPUT_TOKENS
+    MP_ACCESS_TOKEN
+    MP_WEBHOOK_SECRET
   )
   MISSING=()
   for key in "${REQUIRED_ENV[@]}"; do
@@ -81,8 +86,7 @@ else
   fi
 
   OPTIONAL_MISSING=()
-  for key in R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY MP_ACCESS_TOKEN MP_WEBHOOK_SECRET \
-    MP_PREAPPROVAL_PLAN_BASE MP_PREAPPROVAL_PLAN_NEGOCIO GOOGLE_GENERATIVE_AI_API_KEY GROQ_API_KEY; do
+  for key in GOOGLE_GENERATIVE_AI_API_KEY GROQ_API_KEY; do
     if ! printf '%s' "$ENV_JSON" | jq -e --arg key "$key" \
       '.envs[] | select(.key == $key and (.target | index("production")) != null)' >/dev/null; then
       OPTIONAL_MISSING+=("$key")
@@ -95,10 +99,10 @@ else
   fi
 fi
 
-if [ -f vercel.json ] && jq -e '.crons | length == 1 and .[0].path == "/api/cron/expire-reservations" and .[0].schedule == "0 3 * * *"' vercel.json >/dev/null; then
-  pass 'cron de expiración: diario a las 03:00 UTC, compatible con Hobby (una sola ruta)'
+if [ -f vercel.json ] && jq -e '.crons | length == 1 and .[0].path == "/api/cron/expire-reservations" and .[0].schedule == "*/5 * * * *"' vercel.json >/dev/null; then
+  pass 'cron de expiración: cada 5 minutos (Vercel Pro), una sola ruta'
 else
-  fail 'vercel.json no declara exactamente el cron diario compatible con Hobby'
+  fail 'vercel.json no declara exactamente el cron cada 5 minutos requerido por las reservas'
 fi
 
 DNS_CNAME=$(dig +short CNAME "$DOMAIN" 2>/dev/null || true)
@@ -110,6 +114,18 @@ else
   fail "DNS $DOMAIN no apunta a Vercel (actual: ${DNS_CNAME:-sin CNAME} ${DNS_A:-sin registro A})"
 fi
 
+# El link que se pega en un estado no es el apex: es `{slug}.maat.work`. `demo` es una sonda
+# estable porque `/demo` redirige ahí y porque un wildcard roto dejaría todos los tenants muertos.
+STOREFRONT_PROBE='demo.maat.work'
+PROBE_CNAME=$(dig +short CNAME "$STOREFRONT_PROBE" 2>/dev/null || true)
+PROBE_A=$(dig +short A "$STOREFRONT_PROBE" 2>/dev/null || true)
+if printf '%s\n' "$PROBE_A" | grep -Fxq "$VERCEL_IP" || \
+   printf '%s\n' "$PROBE_CNAME" | grep -Eq 'vercel-dns-[0-9]+\.com\.?'; then
+  pass "DNS wildcard ($STOREFRONT_PROBE) apunta a Vercel"
+else
+  fail "DNS wildcard ($STOREFRONT_PROBE) no resuelve a Vercel (actual: ${PROBE_CNAME:-sin CNAME} ${PROBE_A:-sin registro A})"
+fi
+
 if DEPLOYMENTS=$(vercel ls "$PROJECT" --scope "$SCOPE" --limit 1 2>&1); then
   if printf '%s' "$DEPLOYMENTS" | grep -q 'No deployments found'; then
     fail 'el proyecto todavía no tiene deployment verificable'
@@ -118,6 +134,24 @@ if DEPLOYMENTS=$(vercel ls "$PROJECT" --scope "$SCOPE" --limit 1 2>&1); then
   fi
 else
   fail 'no se pudo consultar deployments en Vercel'
+fi
+
+# Un deployment existente no alcanza: el alias puede seguir sirviendo una build anterior. Estas
+# dos sondas son públicas y no mutan nada; detectan justo el caso que deja al usuario viendo la UI
+# verde vieja o una ruta de suscripción que perdió el plan elegido.
+LIVE_HOME=$(curl -fsSL --max-time 15 "https://${DOMAIN}/" 2>/dev/null || true)
+if printf '%s' "$LIVE_HOME" | grep -Fq 'Tu stock, listo para vender.' &&
+   ! printf '%s' "$LIVE_HOME" | grep -Eiq 'emerald|green|#087f5b|#2f8f68'; then
+  pass 'deployment público sirve la landing monocromática actual'
+else
+  fail 'deployment público no sirve la landing monocromática actual (build vieja o respuesta incompleta)'
+fi
+
+LIVE_BILLING=$(curl -fsSL --max-time 15 "https://${DOMAIN}/billing/suscribirse?plan=base" 2>/dev/null || true)
+if printf '%s' "$LIVE_BILLING" | grep -Fq '/ingresar?plan=base'; then
+  pass 'deployment público conserva plan=base al pedir suscripción sin sesión'
+else
+  fail 'deployment público no conserva plan=base al pedir suscripción sin sesión'
 fi
 
 if [ "$fail" -eq 0 ]; then

@@ -52,7 +52,6 @@ describe('control positivo', () => {
 
     expect(parsed.data).toEqual({
       leadId: LEAD_ID,
-      title: 'iPhone 13 128 Medianoche',
       catalogModelId: MODEL_ID,
       condition: 'used_excellent',
       storageGb: 128,
@@ -94,7 +93,6 @@ describe('control positivo', () => {
       'offerUsd',
       'priceUsd',
       'storageGb',
-      'title',
     ]);
   });
 });
@@ -122,8 +120,10 @@ describe('los rangos son los CHECK de Postgres', () => {
     expect(errorDe(form({ storageGb: '0' }), 'storageGb')).toContain('mayor a cero');
   });
 
-  it('título de dos letras', () => {
-    expect(errorDe(form({ title: 'ab' }), 'title')).toContain('al menos 3');
+  it('el título escrito por el visitante no es requisito del alta', () => {
+    const parsed = parseAcceptTradeinForm(form({ title: '' }));
+    if (!parsed.ok) throw new Error(`el borde rechazó un form sin título: ${JSON.stringify(parsed.errors)}`);
+    expect(parsed.data).not.toHaveProperty('title');
   });
 });
 
@@ -140,9 +140,11 @@ describe('lo que viene del cliente y podría llegar crudo a Postgres', () => {
     expect(errorDe(form({ condition: 'impecable' }), 'condition')).toContain('de la lista');
   });
 
-  it('un campo ausente del FormData se trata como vacío, no revienta', () => {
+  it('un campo de vista previa ausente del FormData no cambia la validación', () => {
     const fd = form();
     fd.delete('title');
-    expect(errorDe(fd, 'title')).toContain('al menos 3');
+    const parsed = parseAcceptTradeinForm(fd);
+    if (!parsed.ok) throw new Error(`el borde rechazó un form sin vista previa: ${JSON.stringify(parsed.errors)}`);
+    expect(parsed.data.catalogModelId).toBe(MODEL_ID);
   });
 });

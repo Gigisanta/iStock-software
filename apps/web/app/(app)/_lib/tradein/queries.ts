@@ -43,12 +43,14 @@ import type { TradeinStatus } from './status';
  * `withTenantDb` prende RLS (`tradein_leads_tenant_select`) **y** cada `where` lleva su
  * `eq(tradeinLeads.tenantId, ctx.tenantId)` explícito. `CLAUDE.md` §2: las dos, siempre.
  *
- * ── Hoy la única capa de rol es ÉSTA ─────────────────────────────────────────────────────────
- * Las policies de `tradein_leads` son cuatro y ninguna mira `membership_role`: el predicado es
- * `tenant_id = <claim>` y nada más, y `authenticated` tiene `SELECT` sobre las 17 columnas,
- * `offer_usd` incluida. O sea: **a nivel de base, un `seller` autenticado puede leer el costo**.
- * La policy por rol es S11 y es de `db-agent`. Hasta que exista, la regla 9 sobre esta tabla la
- * sostiene este archivo. Está reportado al LEAD como P5; no es un `TODO` escondido.
+ * ── La base también sostiene la separación ──────────────────────────────────────────────────
+ * La migración `0012_owner_sensitive_read_functions` revoca a `authenticated` el `SELECT` de
+ * `offer_usd` e `internal_notes` y deja esas columnas disponibles sólo mediante
+ * `owner_get_tradein_sensitive`, una función `SECURITY DEFINER` que valida tenant y
+ * `membership_role = 'owner'`. Las policies genéricas de la tabla siguen siendo tenant-scoped a
+ * propósito: autorizan la fila no sensible, mientras que la concesión por columna y la función
+ * owner-only protegen los valores sensibles. Esta query mantiene la separación en el DTO RSC y
+ * en el SQL de la aplicación; no es la única barrera.
  */
 
 /** Techo de la primera pantalla. Mismo criterio que `STOCK_PAGE_SIZE`. */

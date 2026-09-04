@@ -12,9 +12,9 @@ const HERE = dirname(fileURLToPath(import.meta.url));
  * ══════════════════════════════════════════════════════════════════════════════════════════════
  *
  * `NEXT_PUBLIC_MEDIA_BASE_URL` **tiene que estar acá y no en el default del paquete**. El default
- * de `packages/media/src/env.ts` es `http://localhost:3000/_media`, o sea otro puerto y otro host
- * que el que levanta este config: el `<img src>` de la miniatura apuntaría a un server que no
- * existe y el gate de bytes fallaría por un motivo que no tiene nada que ver con el pipeline.
+ * de `packages/media/src/env.ts` es `/_media`, pero este config fija una base absoluta para que el
+ * `<img src>` de la miniatura siempre apunte al server bajo prueba y el gate de bytes no dependa
+ * de cómo el navegador resuelva una URL relativa.
  *
  * Es `NEXT_PUBLIC_*`, así que se **inlinea en el build**: por eso va en el `env` del `webServer`,
  * que es el que corre el `next build`, y no en el entorno del test.
@@ -144,8 +144,8 @@ export default defineConfig({
      * sólo que acá venía disfrazada de configuración cómoda.
      *
      * Lo mismo pasa con `NEXT_PUBLIC_MEDIA_BASE_URL`, que se inlinea en el `next build` de este
-     * `command`: con un server prestado las fotos apuntan al default `localhost:3000` y la suite
-     * acusa a `packages/media` por un defecto del arnés. **Un arnés que puede acusar a la columna
+     * `command`: con un server prestado las fotos no apuntan al server que mide esta corrida y la
+     * suite acusa a `packages/media` por un defecto del arnés. **Un arnés que puede acusar a la columna
      * equivocada es peor que uno lento.**
      *
      * Con `false`, un puerto ocupado hace fallar la corrida de entrada y fuerte, que es el

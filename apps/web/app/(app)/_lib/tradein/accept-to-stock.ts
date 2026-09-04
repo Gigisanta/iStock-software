@@ -2,6 +2,8 @@ import 'server-only';
 import { randomFillSync, randomUUID } from 'node:crypto';
 import { and, eq, ne, sql } from 'drizzle-orm';
 import { listingEvents, listings, tradeinLeads } from '@istock/db';
+import { getCatalogModel } from '../catalog/queries';
+import { buildUnitTitle } from '../catalog/unit-title';
 import { pgErrorCode, uniqueViolationConstraint } from '../db/pg-error';
 import { withTenantDb, type TenantContext } from '../db/session';
 import { buildListingSlug } from '../listings/listing-slug';
@@ -86,7 +88,7 @@ import { ACCEPTED } from './status';
  * efectivamente entra o sale de la vidriera. Mismo criterio, escrito, que `createUnit()`.
  *
  * ══════════════════════════════════════════════════════════════════════════════════════════════
- *  5. Sólo `owner`. Y lo que hoy NO sostiene la base.
+ *  5. Sólo `owner`, también respaldado por la base.
  * ══════════════════════════════════════════════════════════════════════════════════════════════
  *
  * Aceptar escribe un costo, así que lo hace un `owner` (`CLAUDE.md` §0.9). El chequeo está acá
@@ -94,10 +96,11 @@ import { ACCEPTED } from './status';
  * acordarse. Se devuelve como fallo y no se tira, para que la pantalla pueda decirlo en castellano
  * en vez de romper con un 500.
  *
- * Lo que la base **no** sostiene hoy: las policies de `tradein_leads` son `tenant_id = <claim>` y
- * nada más — ninguna mira `membership_role`, y `authenticated` tiene `SELECT`/`UPDATE` sobre las 17
- * columnas, `offer_usd` incluida. La policy por rol es S11 y es de `db-agent`. Está reportado como
- * P5; no es un `TODO` disfrazado de comentario.
+ * La migración `0012_owner_sensitive_read_functions` revoca a `authenticated` el acceso directo a
+ * `offer_usd` e `internal_notes` y expone los valores sensibles mediante
+ * `owner_get_tradein_sensitive`, que valida tenant y `membership_role = 'owner'`. Esta función
+ * conserva el chequeo de rol en el borde de la aplicación para dar un error accionable y porque
+ * es una defensa adicional para cualquier caller nuevo.
  *
  * ══════════════════════════════════════════════════════════════════════════════════════════════
  *  6. Lo que el motor ya sostiene (era el §6 de "lo que falta", y 0009 lo cerró)
@@ -118,7 +121,9 @@ import { ACCEPTED } from './status';
  *   —donde el lead ya está `accepted` y todavía no hay unidad— y aceptar un canje sería un 500.
  *   Lo que **no** cubre, y por qué el guard de concurrencia sigue vivo, está en el §2.
  *
- * Lo que sigue faltando: la policy por rol de `tradein_leads` (§5, S11, reportado como P5).
+ * La separación por rol de los valores sensibles ya está cerrada por la migración 0012; los
+ * chequeos de aceptación de esta función y de la Server Action siguen siendo deliberadamente
+ * redundantes.
  *
  * ══════════════════════════════════════════════════════════════════════════════════════════════
  *  7. El canal se escribe, no se deduce.
@@ -163,6 +168,8 @@ const ALREADY_ACCEPTED = 'Ese canje ya lo aceptaron. Buscá la unidad en el stoc
 const NOT_OWNER = 'Sólo el dueño puede aceptar un canje: define el costo del equipo.';
 const SLUG_EXHAUSTED = 'No pudimos generar un link para ese nombre. Cambialo un poco.';
 const NO_CATALOG_MODEL = 'Elegí el modelo del equipo.';
+const INVALID_STORAGE = 'Elegí una capacidad disponible para ese modelo.';
+const INVALID_COLOR = 'Elegí un color disponible para ese modelo.';
 
 /** Violación de FK. En este `insert` la única que depende de lo que escribió una persona es el modelo. */
 const FOREIGN_KEY_VIOLATION = '23503';
@@ -179,6 +186,22 @@ export async function acceptToStock(
     return { ok: false, field: 'form', message: NOT_OWNER };
   }
 
+  // El visitante puede escribir cualquier modelo. El dueño confirma uno del catálogo global y
+  // desde ahí sale el título canónico; las variantes también se validan acá porque el POST puede
+  // venir de un cliente modificado y no sólo del `<select>` que dibujamos.
+  const catalogModel = await getCatalogModel(ctx, input.catalogModelId);
+  if (catalogModel === null) {
+    return { ok: false, field: 'catalogModelId', message: NO_CATALOG_MODEL };
+  }
+  if (input.storageGb !== null && !catalogModel.storageOptionsGb.includes(input.storageGb)) {
+    return { ok: false, field: 'storageGb', message: INVALID_STORAGE };
+  }
+  if (input.color !== null && !catalogModel.colors.includes(input.color)) {
+    return { ok: false, field: 'color', message: INVALID_COLOR };
+  }
+
+  const title = buildUnitTitle(catalogModel.displayName, input.storageGb, input.color);
+
   /**
    * El reintento envuelve a la **transacción entera**, no a una sentencia. Un `23505` de slug
    * aborta la transacción en Postgres: seguir adentro del mismo bloque requeriría un savepoint por
@@ -187,7 +210,7 @@ export async function acceptToStock(
    */
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const listingId = randomUUID();
-    const slug = newSlug(input.title);
+    const slug = newSlug(title);
 
     try {
       await withTenantDb(ctx, async (tx) => {
@@ -230,7 +253,7 @@ export async function acceptToStock(
           tenantId: ctx.tenantId,
           slug,
           kind: 'unit',
-          title: input.title,
+          title,
           catalogModelId: input.catalogModelId,
           storageGb: input.storageGb,
           color: input.color,
@@ -293,5 +316,5 @@ export async function acceptToStock(
     }
   }
 
-  return { ok: false, field: 'title', message: SLUG_EXHAUSTED };
+  return { ok: false, field: 'form', message: SLUG_EXHAUSTED };
 }

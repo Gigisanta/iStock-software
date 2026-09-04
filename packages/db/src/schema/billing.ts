@@ -9,11 +9,12 @@
  * handler que cobra dos veces es un bug de plata. La unicidad la garantiza el motor.
  */
 
-import { boolean, index, integer, pgTable, text, timestamp, uniqueIndex } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
+import { boolean, check, index, integer, pgTable, text, timestamp, uniqueIndex } from 'drizzle-orm/pg-core';
 import { moneyCents } from '../money';
 import { createdAt, pk, updatedAt } from './columns';
 import { tenantId } from './tenants';
-import { planTierEnum, subscriptionStatusEnum } from './enums';
+import { billingCheckoutIntentStatusEnum, planTierEnum, subscriptionStatusEnum } from './enums';
 import { ownerTenantPolicies } from './rls';
 
 export const subscriptions = pgTable(
@@ -26,7 +27,7 @@ export const subscriptions = pgTable(
     providerPreapprovalId: text('provider_preapproval_id'),
     /** Puente MP → tenant. Experimento 4 de ADR-008 verifica que sobreviva el checkout hosteado. */
     externalReference: text('external_reference'),
-    /** Último `id` de notificación procesado. Idempotencia del webhook. */
+    /** Último `id` de notificación aplicado, para auditoría de la suscripción. */
     lastProviderEventId: text('last_provider_event_id'),
     plan: planTierEnum('plan').notNull().default('trial'),
     status: subscriptionStatusEnum('status').notNull().default('trialing'),
@@ -72,6 +73,46 @@ export const entitlements = pgTable(
     // Los flags de acceso son control de billing. Sólo el owner puede consultarlos y ningún
     // usuario autenticado los muta; el webhook y el seed usan service_role.
     ...ownerTenantPolicies('entitlements'),
+  ],
+).enableRLS();
+
+/**
+ * Intento durable del checkout hosteado. Una fila por tenant, no por pestaña: Mercado Pago no
+ * documenta idempotencia para `POST /preapproval`, así que la aplicación necesita cerrar la
+ * carrera antes de salir del proceso.
+ *
+ * La fila `ready` conserva el init point para que una segunda pestaña pueda continuar el mismo
+ * checkout. `creating` tiene un lease corto para que un proceso caído no bloquee el alta para
+ * siempre; `failed` queda disponible para reintentar sin crear otra fila.
+ */
+export const billingCheckoutIntents = pgTable(
+  'billing_checkout_intents',
+  {
+    id: pk(),
+    tenantId: tenantId(),
+    provider: text('provider').notNull().default('mercadopago'),
+    plan: planTierEnum('plan').notNull(),
+    amountArs: moneyCents('amount_ars').notNull(),
+    status: billingCheckoutIntentStatusEnum('status').notNull().default('creating'),
+    providerPreapprovalId: text('provider_preapproval_id'),
+    initPoint: text('init_point'),
+    leaseExpiresAt: timestamp('lease_expires_at', { withTimezone: true }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    index('billing_checkout_intents_tenant_idx').on(t.tenantId),
+    uniqueIndex('billing_checkout_intents_tenant_key').on(t.tenantId),
+    uniqueIndex('billing_checkout_intents_preapproval_key').on(t.providerPreapprovalId),
+    check('billing_checkout_intents_paid_plan_check', sql`${t.plan} <> 'trial'`),
+    check(
+      'billing_checkout_intents_state_check',
+      sql`(
+        (${t.status} = 'ready' and ${t.providerPreapprovalId} is not null and ${t.initPoint} is not null and ${t.leaseExpiresAt} is null)
+        or (${t.status} in ('creating', 'failed') and ${t.providerPreapprovalId} is null and ${t.initPoint} is null and (${t.status} = 'creating') = (${t.leaseExpiresAt} is not null))
+      )`,
+    ),
+    ...ownerTenantPolicies('billing_checkout_intents'),
   ],
 ).enableRLS();
 

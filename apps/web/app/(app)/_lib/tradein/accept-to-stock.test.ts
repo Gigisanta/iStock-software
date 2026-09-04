@@ -97,7 +97,6 @@ const admin = postgres(URL_DB, { max: 1, prepare: false, onnotice: () => {} });
 function entrada(leadId: string, over: Partial<AcceptTradeinInput> = {}): AcceptTradeinInput {
   return {
     leadId,
-    title: TITULO,
     catalogModelId: MODEL_ID,
     condition: 'used_excellent',
     storageGb: 128,
@@ -235,8 +234,10 @@ beforeAll(async () => {
       (${TENANT_ID}, ${OWNER_ID}, 'owner'), (${TENANT_ID}, ${SELLER_ID}, 'seller')
   `;
   await admin`
-    insert into catalog_models (id, slug, display_name)
-    values (${MODEL_ID}, ${`fixture-${SUFIJO}`}, 'iPhone 13 (fixture)')
+    insert into catalog_models
+      (id, slug, display_name, storage_options_gb, colors)
+    values
+      (${MODEL_ID}, ${`fixture-${SUFIJO}`}, 'iPhone 13', ARRAY[128, 256, 512], ARRAY['Medianoche', 'Grafito'])
   `;
 
   // El pool de la app se abre con el azar todavía real: si el driver necesitara `crypto` para el
@@ -471,13 +472,14 @@ describe('aceptar dos veces NO crea dos unidades', () => {
 });
 
 /**
- * ── La transacción es UNA ─────────────────────────────────────────────────────────────────────
- * El `catalog_model_id` tiene forma de uuid y no existe: la FK revienta **después** de que el
- * `update` del lead ya corrió. Si `acceptToStock` abriera dos transacciones, el lead quedaría
- * `accepted` con `offer_usd` escrito y sin ninguna unidad — un canje que se comió el equipo.
+ * ── El catálogo se valida antes de tocar el lead ──────────────────────────────────────────────
+ * Un uuid de modelo que no existe no llega a la transacción: el dueño recibe un error por campo
+ * y el lead queda exactamente como estaba. La FK sigue siendo una última defensa de la base ante
+ * una carrera de mantenimiento del catálogo, pero el camino normal no depende de un mensaje de
+ * Postgres para descubrir una selección inválida.
  */
 describe('si una mitad falla, no queda ninguna', () => {
-  it('la FK del modelo rompe el insert y el lead queda EXACTAMENTE como estaba', async () => {
+  it('un modelo inexistente se rechaza antes del insert y el lead queda EXACTAMENTE como estaba', async () => {
     const leadId = await insertarLead();
     const antes = await leerLead(leadId);
     expect(antes.status).toBe('new');
@@ -492,6 +494,28 @@ describe('si una mitad falla, no queda ninguna', () => {
     expect(despues.offer_usd).toBeNull();
     expect(despues.created_listing_id).toBeNull();
     expect(despues.handled_by).toBeNull();
+    expect(await contarListings()).toBe(0);
+  });
+
+  it('una capacidad que no pertenece al modelo se rechaza antes de aceptar', async () => {
+    const leadId = await insertarLead();
+    const res = fallo(await acceptToStock(ctxOwner, entrada(leadId, { storageGb: 64 })));
+
+    expect(res.field).toBe('storageGb');
+    const lead = await leerLead(leadId);
+    expect(lead.status).toBe('new');
+    expect(lead.created_listing_id).toBeNull();
+    expect(await contarListings()).toBe(0);
+  });
+
+  it('un color que no pertenece al modelo se rechaza antes de aceptar', async () => {
+    const leadId = await insertarLead();
+    const res = fallo(await acceptToStock(ctxOwner, entrada(leadId, { color: 'Azul' })));
+
+    expect(res.field).toBe('color');
+    const lead = await leerLead(leadId);
+    expect(lead.status).toBe('new');
+    expect(lead.created_listing_id).toBeNull();
     expect(await contarListings()).toBe(0);
   });
 });

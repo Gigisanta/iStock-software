@@ -148,16 +148,17 @@ Con cache sano, el costo DB público esperado es cero en hits. El objetivo del c
 
 - `s/[slug]/api/track/route.ts`: un `INSERT ... SELECT` por beacon válido, con máximo una fila `wa_click_events`; el beacon no devuelve payload.
 - `tradein/route.ts`: un `INSERT ... SELECT` por lead válido, una fila `tradein_leads` por envío.
-- `vercel.json`: un único cron diario `0 3 * * *`, equivalente a `30 invocaciones/mes`.
+- `vercel.json`: un único cron cada 5 minutos `*/5 * * * *`, equivalente a `8.640 invocaciones/mes`.
 - `expire-reservations/route.ts` autentica primero con `CRON_SECRET`; no hay worker 24/7.
-- El mismo cron consulta una vez la API pública y gratuita del BCRA, ejecuta una actualización de
-  `fx_settings` para todos los tenants y revalida sus dos tags de vidriera. No agrega otro
-  servicio ni consultas por visitante; el costo incremental es una invocación HTTP saliente diaria,
-  una actualización de Postgres diaria y una revalidación por tenant. CPU/egress de Vercel y el
-  número final de tenants quedan `UNVERIFIED` y dependen del crecimiento.
+- El mismo cron reutiliza la cotización BCRA cacheada por día en cada instancia, compara el valor
+  persistido en una lectura global y sólo actualiza `fx_settings` y revalida los dos tags de un
+  tenant cuando la cotización cambió. No agrega otro servicio ni consultas por visitante; el costo
+  incremental es una invocación HTTP saliente cada cinco minutos, una lectura de Postgres por corrida
+  y, sólo ante un cambio real, una actualización y una revalidación por tenant. CPU/egress de Vercel
+  y el número final de tenants quedan `UNVERIFIED` y dependen del crecimiento.
 - `expireDueReservations`: incluso sin vencimientos hace al menos dos SELECT por ejecución; el batch máximo es 200 y cada fila cambiada puede hacer hasta un UPDATE de listing, un UPDATE de reservation y un INSERT de event.
 
-Mínimo mensual del barrido de reservas: `30 × 2 = 60 SELECT`, antes de las filas realmente vencidas; el refresh de FX agrega una consulta y una actualización por corrida. A la tarifa de referencia de invocación Vercel: `30 × USD 0.0000006 = USD 0.000018 total`; la clasificación vigente y el costo Neon por fila/consulta son `UNVERIFIED`.
+Mínimo mensual del barrido de reservas: `8.640 × 2 = 17.280 SELECT`, antes de las filas realmente vencidas; el comparador de FX agrega `8.640` lecturas globales y sólo escribe cuando detecta una cotización distinta. A la tarifa de referencia de invocación Vercel: `8.640 × USD 0.0000006 = USD 0.005184 total` (USD 0.00005184/tenant con 100 tenants); la clasificación vigente y el costo Neon por fila/consulta son `UNVERIFIED`.
 
 ### Conexiones y Realtime
 

@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>iStock | Exploraciones de mark</title>
+    <link rel="stylesheet" href="./brand-tokens.css" />
+    <style>
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: var(--istock-paper);
+        color: var(--istock-ink);
+        font-family: var(--istock-font-sans);
+      }
+      main { width: min(1160px, calc(100% - 40px)); margin: 0 auto; padding: 64px 0 96px; }
+      .eyebrow {
+        margin: 0 0 12px;
+        color: var(--istock-accent-action);
+        font-family: var(--istock-font-mono);
+        font-size: 0.7rem;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+      h1, h2, p { margin-top: 0; }
+      h1, h2 { font-family: var(--istock-font-display); letter-spacing: -0.06em; }
+      h1 { max-width: 9ch; margin-bottom: 18px; font-size: clamp(3.4rem, 8vw, 6.8rem); line-height: .9; }
+      .intro { max-width: 52ch; margin-bottom: 48px; color: var(--istock-ink-soft); font-size: 1.05rem; }
+      .tests { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+      .test { display: flex; min-height: 420px; flex-direction: column; border: 1px solid var(--istock-line); border-radius: var(--istock-radius-surface); overflow: hidden; background: var(--istock-paper-strong); }
+      .test.selected { border-color: var(--istock-accent-action); box-shadow: var(--istock-shadow-accent); }
+      .stage { display: grid; min-height: 250px; place-items: center; padding: 40px; background: var(--istock-ink); }
+      .stage svg { width: 170px; height: 170px; }
+      .copy { display: flex; flex: 1; flex-direction: column; padding: 24px; }
+      .number { color: var(--istock-muted); font-family: var(--istock-font-mono); font-size: .7rem; letter-spacing: .08em; text-transform: uppercase; }
+      h2 { margin: 10px 0 8px; font-size: 1.6rem; line-height: 1; }
+      .copy p { margin-bottom: 20px; color: var(--istock-ink-soft); font-size: .9rem; line-height: 1.4; }
+      .decision { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: auto; padding-top: 16px; border-top: 1px solid var(--istock-line); color: var(--istock-muted); font-size: .75rem; }
+      .decision strong { color: var(--istock-accent-action); font-size: .7rem; letter-spacing: .06em; text-transform: uppercase; }
+      .note { margin-top: 32px; padding: 20px; border-left: 3px solid var(--istock-accent); background: var(--istock-surface); color: var(--istock-ink-soft); font-size: .9rem; }
+      @media (max-width: 800px) { .tests { grid-template-columns: 1fr; } .test { min-height: 360px; } main { width: min(100% - 28px, 560px); padding-top: 40px; } }
+    </style>
+  </head>
+  <body>
+    <main>
+      <p class="eyebrow">iStock por MaatWork / exploración local</p>
+      <h1>Tres formas de ordenar el stock.</h1>
+      <p class="intro">Probamos tres rutas geométricas antes de fijar el mark. La elegida sostiene lectura en avatar, cabecera y Reel sin sumar un ícono de teléfono, manzana o carrito.</p>
+
+      <section class="tests" aria-label="Pruebas de mark">
+        <article class="test selected">
+          <div class="stage">
+            <svg viewBox="0 0 96 96" aria-label="Prueba uno, barras apiladas">
+              <g fill="var(--istock-accent)">
+                <rect x="12" y="12" width="72" height="20" />
+                <rect x="12" y="32" width="20" height="8" />
+                <rect x="24" y="40" width="60" height="20" />
+                <rect x="64" y="60" width="20" height="8" />
+                <rect x="12" y="68" width="60" height="20" />
+              </g>
+            </svg>
+          </div>
+          <div class="copy">
+            <span class="number">Prueba 01</span>
+            <h2>Barras apiladas</h2>
+            <p>Se lee como inventario ordenado y tiene una silueta propia cuando baja a 24 px.</p>
+            <div class="decision"><strong>Elegida</strong><span>más recordable</span></div>
+          </div>
+        </article>
+
+        <article class="test">
+          <div class="stage">
+            <svg viewBox="0 0 96 96" aria-label="Prueba dos, marco abierto">
+              <g fill="none" stroke="var(--istock-accent)" stroke-width="10" stroke-linecap="square">
+                <path d="M18 42V18h24M54 18h24v24M78 54v24H54M42 78H18V54" />
+                <path d="M30 48h36" stroke-width="8" />
+              </g>
+            </svg>
+          </div>
+          <div class="copy">
+            <span class="number">Prueba 02</span>
+            <h2>Marco abierto</h2>
+            <p>Comunica orden, pero se acerca demasiado a un ícono de dashboard genérico.</p>
+            <div class="decision"><strong>No elegida</strong><span>poco propia</span></div>
+          </div>
+        </article>
+
+        <article class="test">
+          <div class="stage">
+            <svg viewBox="0 0 96 96" aria-label="Prueba tres, ruta modular">
+              <g fill="var(--istock-accent)">
+                <rect x="14" y="14" width="22" height="22" rx="4" />
+                <rect x="40" y="37" width="22" height="22" rx="4" />
+                <rect x="66" y="60" width="16" height="22" rx="4" />
+                <rect x="36" y="20" width="8" height="8" rx="4" />
+                <rect x="62" y="43" width="8" height="8" rx="4" />
+              </g>
+            </svg>
+          </div>
+          <div class="copy">
+            <span class="number">Prueba 03</span>
+            <h2>Ruta modular</h2>
+            <p>Tiene movimiento, aunque pierde peso visual y se confunde con un flujo de onboarding.</p>
+            <div class="decision"><strong>No elegida</strong><span>menos estable</span></div>
+          </div>
+        </article>
+      </section>
+
+      <p class="note">La prueba 01 pasa al logo horizontal, al favicon y al sistema de movimiento del anuncio. El verde mineral queda como única tinta de señal.</p>
+    </main>
+  </body>
+</html>

@@ -2,9 +2,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('server-only', () => ({}));
 
-const { BCRA_FX_URL, fetchAutomaticFxQuote, parseBcraUsdQuote } = await import('./automatic-rate');
+const { BCRA_FX_URL, fetchAutomaticFxQuote, parseBcraUsdQuote, resetAutomaticFxQuoteCache } =
+  await import('./automatic-rate');
 
 afterEach(() => {
+  resetAutomaticFxQuoteCache();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
@@ -75,5 +77,26 @@ describe('fetchAutomaticFxQuote', () => {
 
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('{}', { status: 200 })));
     await expect(fetchAutomaticFxQuote()).rejects.toMatchObject({ code: 'AUTOMATIC_FX_UNAVAILABLE' });
+  });
+
+  it('deduplica altas concurrentes y reutiliza la cotización del día', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          status: 200,
+          results: {
+            fecha: '2026-08-31',
+            detalle: [{ codigoMoneda: 'USD', tipoCotizacion: 1508.5 }],
+          },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const [first, second] = await Promise.all([fetchAutomaticFxQuote(), fetchAutomaticFxQuote()]);
+    expect(first).toEqual(second);
+    await expect(fetchAutomaticFxQuote()).resolves.toEqual(first);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

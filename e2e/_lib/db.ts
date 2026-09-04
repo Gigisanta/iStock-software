@@ -89,6 +89,31 @@ export async function tenantIdBySlug(slug: string): Promise<string | null> {
   return rows[0]?.id ?? null;
 }
 
+/** Identidad de un fixture local, después de que el login la haya creado en `auth.users`. */
+export async function userIdByEmail(email: string): Promise<string | null> {
+  const q = sql();
+  const rows = await q<{ id: string }[]>`select id from auth.users where email = ${email} limit 1`;
+  return rows[0]?.id ?? null;
+}
+
+/**
+ * Membresía del usuario que el test va a usar como actor. La relación es decorado del journey:
+ * lo que se afirma empieza cuando ese usuario entra por el navegador y pide una pantalla.
+ */
+export async function seedMembership(
+  tenantId: string,
+  userId: string,
+  role: 'owner' | 'seller',
+): Promise<void> {
+  const q = sql();
+  await q`
+    insert into public.memberships (tenant_id, user_id, role, accepted_at)
+    values (${tenantId}::uuid, ${userId}::uuid, ${role}::membership_role, now())
+    on conflict (tenant_id, user_id)
+      do update set role = excluded.role, accepted_at = excluded.accepted_at, updated_at = now()
+  `;
+}
+
 /** Borra el tenant y todo lo que le cuelga. Orden: hijos primero, FK no perdona. */
 export async function deleteTenantBySlug(slug: string): Promise<void> {
   if (KEEP_FIXTURES) return;
@@ -481,20 +506,25 @@ export interface SeedUnitInState {
   readonly status: string;
   /** Qué pasa con `published_at`. Default `'trigger'`. Ver el docblock: no es cosmético. */
   readonly stamp?: UnitStamp;
+  /** Atributos públicos opcionales para que una ficha de fixture pueda afirmar su mensaje completo. */
+  readonly storageGb?: number;
+  readonly color?: string;
   readonly priceUsd?: number;
 }
 
 export async function seedUnitInState(unit: SeedUnitInState): Promise<string> {
   const q = sql();
   const price = unit.priceUsd ?? 620;
+  const storageGb = unit.storageGb ?? 256;
+  const color = unit.color ?? 'Grafito';
 
   if (unit.stamp === 'kept') {
     // El trigger no toca la fila porque el estado no es público: el sello entra tal cual.
     const kept = await q<{ id: string }[]>`
       insert into public.listings (tenant_id, slug, kind, title, condition, price_usd, qty,
-                                   status, published_at)
+                                   storage_gb, color, status, published_at)
       values (${unit.tenantId}::uuid, ${unit.slug}, 'unit', ${unit.title},
-              'used_excellent'::listing_condition, ${price}, 1,
+              'used_excellent'::listing_condition, ${price}, 1, ${storageGb}, ${color},
               ${unit.status}::listing_status, now())
       returning id
     `;
@@ -507,10 +537,10 @@ export async function seedUnitInState(unit: SeedUnitInState): Promise<string> {
     const planted = await q.begin(async (tx) => {
       await tx`set local session_replication_role = replica`;
       return tx<{ id: string }[]>`
-        insert into public.listings (tenant_id, slug, kind, title, condition, price_usd, qty,
-                                     status, published_at)
+      insert into public.listings (tenant_id, slug, kind, title, condition, price_usd, qty,
+                                     storage_gb, color, status, published_at)
         values (${unit.tenantId}::uuid, ${unit.slug}, 'unit', ${unit.title},
-                'used_excellent'::listing_condition, ${price}, 1,
+                'used_excellent'::listing_condition, ${price}, 1, ${storageGb}, ${color},
                 ${unit.status}::listing_status, null)
         returning id
       `;
@@ -521,9 +551,11 @@ export async function seedUnitInState(unit: SeedUnitInState): Promise<string> {
   }
 
   const rows = await q<{ id: string }[]>`
-    insert into public.listings (tenant_id, slug, kind, title, condition, price_usd, qty, status)
+    insert into public.listings (tenant_id, slug, kind, title, condition, price_usd, qty,
+                                 storage_gb, color, status)
     values (${unit.tenantId}::uuid, ${unit.slug}, 'unit', ${unit.title},
-            'used_excellent'::listing_condition, ${price}, 1, ${unit.status}::listing_status)
+            'used_excellent'::listing_condition, ${price}, 1, ${storageGb}, ${color},
+            ${unit.status}::listing_status)
     returning id
   `;
   const id = rows[0]?.id;

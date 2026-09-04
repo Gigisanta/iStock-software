@@ -2,7 +2,7 @@ import { Suspense } from 'react';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { buildStockList, type StockList } from '@istock/domain';
-import { storefrontUrlForSlug } from '../../../_lib/env';
+import { requestRootDomain, storefrontUrlForPanel } from '../../../_lib/env';
 import { logError } from '../../../_lib/log';
 import { requireTenant } from '../../../_lib/session';
 import { buildStockListInput, resolveFx } from '../../../_lib/stock-list/build-input';
@@ -11,6 +11,7 @@ import {
   listPublishedUnitsForStockList,
 } from '../../../_lib/stock-list/queries';
 import { loadFxSettings } from '../../../_lib/tenants/queries';
+import { panelTenantName } from '../../../_lib/tenants/panel-identity';
 import { CopyButton } from '../_ui/copy-button';
 import { Card, PageTitle } from '../_ui/section';
 
@@ -62,6 +63,7 @@ export default function StockListPage() {
 
 async function StockListContent() {
   const { ctx, tenant } = await requireTenant();
+  const domain = await requestRootDomain();
 
   // Secuencial y no `Promise.all`: el pool del panel es `max: 1` (`_lib/db/connection.ts`), así
   // que las encolaría igual y la forma concurrente sólo agregaría ruido.
@@ -78,11 +80,13 @@ async function StockListContent() {
         <EmptyState />
       ) : (
         <StockListBlocks
-          businessName={tenant.name}
+          businessName={panelTenantName(tenant)}
           slug={tenant.slug}
+          isDemo={tenant.isDemo}
           published={published}
           fx={fx}
           tenantId={tenant.id}
+          domain={domain}
         />
       )}
     </>
@@ -92,12 +96,14 @@ async function StockListContent() {
 interface StockListBlocksProps {
   readonly businessName: string;
   readonly slug: string;
+  readonly isDemo: boolean;
   readonly published: Awaited<ReturnType<typeof listPublishedUnitsForStockList>>;
   readonly fx: ReturnType<typeof resolveFx>;
   readonly tenantId: string;
+  readonly domain: string;
 }
 
-function StockListBlocks({ businessName, slug, published, fx, tenantId }: StockListBlocksProps) {
+function StockListBlocks({ businessName, slug, isDemo, published, fx, tenantId, domain }: StockListBlocksProps) {
   /**
    * `now` se calcula **una vez** para toda la lista: `@istock/domain` tiene `Date.now()` prohibido
    * y el encabezado se repite en cada bloque. Dos bloques fechados distinto es un bug visible en
@@ -111,7 +117,7 @@ function StockListBlocks({ businessName, slug, published, fx, tenantId }: StockL
       buildStockListInput({
         businessName,
         slug,
-        storefrontBaseUrl: storefrontUrlForSlug(slug),
+        storefrontBaseUrl: storefrontUrlForPanel({ slug, isDemo }, domain),
         rows: published.rows,
         fx,
         now,
@@ -227,7 +233,7 @@ function StockListBlocks({ businessName, slug, published, fx, tenantId }: StockL
 
 function Note({ children }: { children: React.ReactNode }) {
   return (
-    <div className="mt-3 rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm dark:border-amber-800/60 dark:bg-amber-950/30">
+        <div className="panel-note mt-3 rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm dark:border-amber-800/60 dark:bg-amber-950/30">
       {children}
     </div>
   );
@@ -235,7 +241,7 @@ function Note({ children }: { children: React.ReactNode }) {
 
 function EmptyState() {
   return (
-    <div className="rounded-2xl border border-dashed border-neutral-300 bg-white p-6 text-center dark:border-neutral-700 dark:bg-neutral-900">
+    <div className="panel-empty rounded-2xl border border-dashed border-neutral-300 bg-white p-6 text-center dark:border-neutral-700 dark:bg-neutral-900">
       <p className="text-base font-semibold">Todavía no publicaste ningún equipo</p>
       <p className="mt-1.5 text-sm text-neutral-600 dark:text-neutral-300">
         Cargá uno con sus fotos y publicalo: acá te armamos el texto para pegar en tu estado.
@@ -243,7 +249,7 @@ function EmptyState() {
       <div className="mt-4">
         <Link
           href="/app/stock"
-          className="flex min-h-[52px] w-full items-center justify-center rounded-xl bg-neutral-900 px-6 text-base font-semibold text-white dark:bg-white dark:text-neutral-900"
+          className="panel-action flex min-h-[52px] w-full items-center justify-center rounded-xl bg-neutral-900 px-6 text-base font-semibold text-white dark:bg-white dark:text-neutral-900"
         >
           Ir a mi stock
         </Link>

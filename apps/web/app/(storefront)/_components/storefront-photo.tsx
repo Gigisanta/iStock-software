@@ -53,7 +53,7 @@ export function StorefrontPhoto({ photo, sizes, priority = false, className }: S
  */
 export function StorefrontPhotoPlaceholder() {
   return (
-    <div className="flex h-full w-full items-center justify-center bg-neutral-100 text-xs text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400">
+    <div className="storefront-photo-placeholder flex h-full w-full items-center justify-center bg-neutral-100 text-xs text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400">
       Sin foto
     </div>
   );
@@ -79,7 +79,7 @@ export function StorefrontHeroPhoto({ photo }: { readonly photo: PublicPhotoDTO 
         loading="eager"
         decoding="sync"
         fetchPriority="high"
-        className="h-full w-full object-cover"
+        className="storefront-hero-photo h-full w-full object-cover"
       />
     </picture>
   );

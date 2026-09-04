@@ -31,11 +31,12 @@
 #  1. Que la regla del WAF de `/api/tradein` este PUBLICADA en Vercel. No lo puede saber: el apply
 #     es manual (`$apply` de `config/firewall-rules.json`) y el gate de nivel 2
 #     (`vercel firewall diff --json`) no existe. Riesgo residual conocido de T1.
-#  2. Que ninguna policy de `tradein_leads` mire `membership_role`. Hoy NINGUNA lo hace: el corte
-#     entre lo que ve un `seller` y lo que ve un `owner` lo sostiene el SERVIDOR
-#     (`_lib/tradein/queries.ts`, dos queries), no la base. Eso es P5, sigue abierto, y por eso
-#     `costo_en_el_payload_del_seller` se mide sobre el OBJETO que devuelve la lectura y no sobre
-#     su tipo: el tipo lo cumple el compilador, el objeto lo cumple el codigo que corre.
+#  2. Que las columnas sensibles de `tradein_leads` no queden expuestas por lectura directa. La
+#     migracion `0012_owner_sensitive_read_functions` revoca el SELECT directo de `authenticated`
+#     sobre `offer_usd`/`internal_notes` y el RPC de owner valida pertenencia al tenant y rol owner.
+#     La policy generica sigue siendo tenant-scoped a proposito; el servidor conserva el DTO
+#     allowlist como defensa en profundidad. `costo_en_el_payload_del_seller` sigue midiendo esa
+#     barrera de aplicacion, mientras el test de privilegios de DB vive en `packages/db`.
 #  3. e2e. Requiere `next build`. `TEST_MATRIX.md` E5 sigue en rojo y esta declarado alla.
 #  4. Que la PII del visitante no llegue a `packages/ai` ni a un log. Ya NO es un hueco: lo cubre
 #     `tests/la-pii-del-visitante-no-sale-de-la-fila-del-canje.test.ts` (`qa-agent`, T43), que
@@ -162,7 +163,7 @@ else
       'checks_del_motor:1:alguno de los siete CHECK no midio en el borde: el valor justo adentro no entro, o el justo afuera no dio 23514. Sin ellos, un anonimo escribe texto libre sin techo en una tabla que el dueño lee' \
       'accept_crea_unidad_en_draft:1:aceptar no produjo una unidad `draft` de `kind=unit` con `cost_usd` copiado de la oferta y el lead atado a ella. Es el gate del board, literal' \
       'accept_dos_veces_una_unidad:1:aceptar dos veces creo dos unidades (o ninguna). El guard es el `ne(status, ACCEPTED)` del update que abre la transaccion; si se cae, un doble click duplica stock' \
-      'costo_en_el_payload_del_seller:0:el objeto que recibe un `seller` trae el costo. La regla 9 sobre esta tabla la sostiene HOY el servidor y no la base (P5), asi que este numero es la unica cosa que la sostiene. Se mide sobre el OBJETO y se exige AUSENCIA de la clave, no `null`: un `null` serializado sigue diciendo que el campo existe' \
+      'costo_en_el_payload_del_seller:0:el objeto que recibe un `seller` trae el costo. La regla 9 queda cubierta por el SELECT directo revocado en `0012` y el RPC owner; este numero verifica ademas el DTO allowlist del servidor. Se mide sobre el OBJETO y se exige AUSENCIA de la clave, no `null`: un `null` serializado sigue diciendo que el campo existe' \
     ; do
       N=${par%%:*}; R=${par#*:}; E=${R%%:*}; POR=${R#*:}
       V=$(campo "$N")

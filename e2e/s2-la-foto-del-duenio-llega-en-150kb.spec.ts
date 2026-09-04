@@ -347,6 +347,18 @@ test('la variante card que se sirve por HTTP pesa 150 KB o menos, contados en el
   ).toBeLessThan(0.4);
 });
 
+test('la ruta de imágenes permite medir recursos cross-origin para el LCP', async ({ request }) => {
+  const it = seen();
+  const response = await request.get(url(it.photo.cardKey), { maxRedirects: 0 });
+  await response.body();
+
+  expect(
+    response.headers()['timing-allow-origin'],
+    'la vidriera y el CDN viven en subdominios distintos: sin Timing-Allow-Origin la Performance API ' +
+      'oculta transferSize y cualquier presupuesto de LCP queda midiendo cero',
+  ).toBe('*');
+});
+
 test('las tres variantes existen como objetos distintos y alcanzables, no dos', async ({
   request,
 }) => {

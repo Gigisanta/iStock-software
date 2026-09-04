@@ -71,7 +71,8 @@ export function mapPreapprovalStatus(raw: string): StatusMapping | null {
 /**
  * `authorized_payment.status` → nuestro estado. Es la cuota, no la suscripción.
  *
- * - `processed`: se cobró. Es el único que extiende el período.
+ * - `processed`: la cuota terminó, pero puede haber terminado con el pago rechazado después de
+ *   agotar los reintentos. Sólo se mapea a autorizado si el pago anidado está aprobado.
  * - `recycling`: MP está reintentando el cobro. Se registra como `payment_failed` **sin bajar el
  *   plan**: el reintento puede salir bien mañana, y cortarle el panel a alguien porque una tarjeta
  *   rebotó un martes es perder un cliente que iba a pagar.
@@ -79,16 +80,36 @@ export function mapPreapprovalStatus(raw: string): StatusMapping | null {
  * - `cancelled`/`canceled`: la cuota se dio de baja. No cancela la suscripción por sí sola — eso
  *   llega por el topic de `preapproval`, que es la fuente de esa verdad.
  */
-export function mapAuthorizedPaymentStatus(raw: string): StatusMapping | null {
+export function mapAuthorizedPaymentStatus(raw: string, paymentStatus: string | null = null): StatusMapping | null {
   switch (normalize(raw)) {
     case 'processed':
-      return { status: 'authorized', planEffect: 'grant' };
+      // `processed` también puede significar que MP agotó los reintentos con un pago rechazado.
+      // El pago anidado es la fuente que distingue cobrado de rechazado; sin él no se habilita
+      // nada por error.
+      return paymentStatus === null ? null : mapPaymentStatus(paymentStatus);
     case 'recycling':
       return { status: 'payment_failed', planEffect: 'keep' };
     case 'canceled':
     case 'cancelled':
       return { status: 'payment_failed', planEffect: 'keep' };
     default:
+      return null;
+  }
+}
+
+/** `payment.status` → nuestro estado. Es el pago concreto, distinto de la cuota y la suscripción. */
+export function mapPaymentStatus(raw: string): StatusMapping | null {
+  switch (normalize(raw)) {
+    case 'approved':
+    case 'authorized':
+      return { status: 'authorized', planEffect: 'grant' };
+    case 'rejected':
+    case 'cancelled':
+    case 'refunded':
+    case 'charged_back':
+      return { status: 'payment_failed', planEffect: 'keep' };
+    default:
+      // `pending`, `in_process` e `in_mediation` todavía no son un resultado comercial.
       return null;
   }
 }

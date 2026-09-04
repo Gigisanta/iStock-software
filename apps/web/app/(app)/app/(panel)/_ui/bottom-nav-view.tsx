@@ -1,7 +1,9 @@
 import Link from 'next/link';
+import { PanelBrand } from './panel-brand';
 
 /**
- * La barra de abajo, **dibujada**. Sin hooks, sin `"use client"`, sin leer la URL.
+ * La navegación del panel, **dibujada**. En móvil se ve como barra de abajo y en escritorio como
+ * sidebar. Sin hooks, sin `"use client"`, sin leer la URL.
  *
  * Está separada de `bottom-nav.tsx` por una razón de build, no de estética: bajo
  * `cacheComponents: true`, `usePathname()` **suspende** en toda ruta con un param dinámico que no
@@ -14,9 +16,9 @@ import Link from 'next/link';
  * archivo **es** ese "resto": el markup entero, que no depende de la URL, entra al shell estático
  * como fallback; lo único que se difiere es cuál de los items va marcado.
  *
- * Consecuencia buscada: en el shell de una ruta dinámica la barra **ya está ahí, completa y con
- * los links usables**, sólo que sin resaltado. No hay salto de layout ni un hueco de 60px en la
- * zona del pulgar, que es lo que pasaría con un fallback vacío o con un esqueleto gris.
+ * Consecuencia buscada: en el shell de una ruta dinámica la navegación **ya está ahí, completa y
+ * con los links usables**, sólo que sin resaltado. No hay salto de layout ni un hueco de 60px en
+ * la zona del pulgar, que es lo que pasaría con un fallback vacío o con un esqueleto gris.
  */
 
 /**
@@ -27,7 +29,7 @@ import Link from 'next/link';
  * 320/5 = **64px** de ancho por 60px de alto — arriba de los 44×44 que pide Apple y de los 48dp de
  * Material. El techo real de esta barra está en seis o siete, no en cinco.
  *
- * `/app/lista` entra acá porque el nav **es** la única navegación del panel: una pantalla que el
+ * `/app/lista` entra acá porque esta navegación **es** la entrada común del panel: una pantalla que el
  * dueño no encuentra es una pantalla que no existe, y ésta es la que le ahorra escribir la lista a
  * mano todas las noches. El rótulo es "Lista" y no "Stock 2" ni "Difusión" porque es la palabra
  * que usa él —"paso la lista"— y porque es la que dice la URL.
@@ -49,8 +51,11 @@ export function BottomNavView({ pathname }: BottomNavViewProps) {
   return (
     <nav
       aria-label="Secciones del panel"
-      className="fixed inset-x-0 bottom-0 z-20 border-t border-neutral-200 bg-white pb-[env(safe-area-inset-bottom)] dark:border-neutral-800 dark:bg-neutral-950"
+      className="panel-nav fixed inset-x-0 bottom-0 z-20 border-t border-neutral-200 bg-white pb-[env(safe-area-inset-bottom)] dark:border-neutral-800 dark:bg-neutral-950"
     >
+      <div className="panel-nav-brand">
+        <PanelBrand variant="full" />
+      </div>
       <ul className="mx-auto flex w-full max-w-2xl">
         {ITEMS.map((item) => {
           const active =

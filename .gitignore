@@ -12,6 +12,9 @@ playwright-report/
 test-results/
 .vercel/
 
+# Capturas temporales de inspección visual de la identidad; no son assets de runtime.
+creative/istock-brand/.preview-check*.png
+
 # artefactos de build de TS
 *.tsbuildinfo
 

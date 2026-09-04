@@ -23,6 +23,21 @@ export async function signIn(page: Page, email: string): Promise<void> {
   await page.waitForURL(/\/app(\/|$)/u, { timeout: 20_000 });
 }
 
+/**
+ * Igual que `signIn`, pero aprieta la acción explícita de alta de cuenta.
+ *
+ * El local driver resuelve ambas acciones contra la misma identidad porque no verifica mail;
+ * este helper existe para que S12 no confunda ese atajo de desarrollo con el contrato de
+ * producción, donde Neon Auth sí distingue `sign_up` de `sign_in`.
+ */
+export async function signUp(page: Page, email: string): Promise<void> {
+  await page.goto(`${APEX_URL}/ingresar`);
+  await page.locator('input[name="email"]').fill(email);
+  await page.locator('input[name="password"]').fill('qa-e2e-password');
+  await page.getByRole('button', { name: /crear cuenta/iu }).click();
+  await page.waitForURL(/\/app(\/|$)/u, { timeout: 20_000 });
+}
+
 export interface NewBusiness {
   readonly name: string;
   readonly slug: string;
@@ -244,6 +259,7 @@ export async function setField(page: Page, name: string, value: string): Promise
     await field.selectOption(value);
     return;
   }
+  if ((await field.getAttribute('readonly')) !== null) return;
   const type = ((await field.getAttribute('type')) ?? 'text').toLowerCase();
   if (type === 'radio' || type === 'checkbox') {
     await page.locator(`[name="${name}"][value="${value}"]`).first().check();
@@ -298,7 +314,11 @@ export async function catalogOptions(page: Page): Promise<readonly CatalogOption
  * `catalog_models` no lleva `tenant_id` y no la crea el alta, la siembra `pnpm db:seed`. Sin ese
  * seed la pantalla se ve bien, el `<select>` existe y no hay nada para elegir.
  */
-export async function chooseCatalogModel(page: Page, hint?: string): Promise<CatalogOption> {
+export async function chooseCatalogModel(
+  page: Page,
+  hint: string | undefined,
+  variant?: { readonly storageGb: number; readonly color: string },
+): Promise<CatalogOption> {
   const options = await catalogOptions(page);
   if (options.length === 0) {
     throw new Error(
@@ -308,15 +328,38 @@ export async function chooseCatalogModel(page: Page, hint?: string): Promise<Cat
     );
   }
 
-  const wanted =
+  const ordered =
     hint === undefined
-      ? undefined
-      : options.find((option) => option.label.toLowerCase().includes(hint.toLowerCase()));
-  const chosen = wanted ?? options[0];
-  if (chosen === undefined) throw new Error('catálogo vacío después de filtrar: imposible');
+      ? options
+      : [
+          ...options.filter((option) => option.label.toLowerCase().includes(hint.toLowerCase())),
+          ...options.filter((option) => !option.label.toLowerCase().includes(hint.toLowerCase())),
+        ];
+  const modelSelect = page.getByTestId('select-catalog-model');
 
-  await page.getByTestId('select-catalog-model').selectOption(chosen.value);
-  return chosen;
+  if (variant === undefined) {
+    const chosen = ordered[0];
+    if (chosen === undefined) throw new Error('catálogo vacío después de filtrar: imposible');
+    await modelSelect.selectOption(chosen.value);
+    return chosen;
+  }
+
+  for (const candidate of ordered) {
+    await modelSelect.selectOption(candidate.value);
+
+    const storage = page.locator('select[name="storageGb"]');
+    const color = page.locator('select[name="color"]');
+    await expect(storage).toBeEnabled({ timeout: 5_000 });
+    const storageExists =
+      (await storage.getByRole('option', { name: String(variant.storageGb) + ' GB', exact: true }).count()) > 0;
+    const colorExists = (await color.getByRole('option', { name: variant.color, exact: true }).count()) > 0;
+    if (storageExists && colorExists) return candidate;
+  }
+
+  throw new Error(
+    `ningún modelo del catálogo admite ${String(variant.storageGb)} GB y color "${variant.color}"` +
+      (hint === undefined ? '' : ` cerca de "${hint}"`),
+  );
 }
 
 /** El `<input type="file">` del alta, ya verificado como presente. */
@@ -348,7 +391,12 @@ export async function createUnitDraft(page: Page, unit: NewUnit): Promise<Create
     `${NEW_UNIT_PATH} no expone data-testid="form-nueva-unidad" (contrato de S2)`,
   ).toBeVisible({ timeout: 20_000 });
 
+  // El título ya no se redacta: lo construye el formulario a partir de las tres elecciones.
   await setField(page, 'title', unit.title);
+  const catalogModel = await chooseCatalogModel(page, unit.catalogModelHint, {
+    storageGb: unit.storageGb,
+    color: unit.color,
+  });
   await setField(page, 'condition', unit.condition);
   await setField(page, 'storageGb', String(unit.storageGb));
   await setField(page, 'color', unit.color);
@@ -356,8 +404,6 @@ export async function createUnitDraft(page: Page, unit: NewUnit): Promise<Create
   await setField(page, 'batteryPct', String(unit.batteryPct));
   await setField(page, 'imei', unit.imei);
   await setField(page, 'costUsd', String(unit.costUsd));
-
-  const catalogModel = await chooseCatalogModel(page, unit.catalogModelHint);
 
   const photo = altaPhotoInput(page);
   await expect(

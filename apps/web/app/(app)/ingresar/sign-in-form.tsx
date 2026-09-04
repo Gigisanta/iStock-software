@@ -27,7 +27,7 @@ export function SignInForm({
   );
 
   return (
-    <form action={formAction} className="mt-8 space-y-4" noValidate>
+    <form action={formAction} className="account-form mt-8 space-y-4" noValidate>
       <div>
         <label htmlFor="email" className="block text-sm font-medium">
           Tu mail
@@ -102,7 +102,7 @@ export function SignInForm({
       {state.status === 'link_sent' ? (
         <p
           role="status"
-          className="rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-3 text-sm dark:border-emerald-800/60 dark:bg-emerald-950/30"
+          className="rounded-xl border border-neutral-300 bg-neutral-100 px-4 py-3 text-sm dark:border-neutral-700 dark:bg-neutral-900"
         >
           Cuenta lista. Ya podés entrar al panel
           {state.selectedPlan === null ? '.' : ' y seguir con el plan que elegiste.'}

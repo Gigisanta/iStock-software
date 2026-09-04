@@ -73,7 +73,7 @@ async function ImportarContent() {
 
       <ImportarForm accept={CSV_ACCEPT_ATTR} maxRows={MAX_CSV_ROWS} />
 
-      <section className="mt-8 rounded-2xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
+      <section className="panel-card mt-8 rounded-2xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
         <h2 className="text-base font-semibold">Cómo tiene que ser el archivo</h2>
         <ul className="mt-2 space-y-1.5 text-sm text-neutral-600 dark:text-neutral-300">
           <li>
@@ -97,7 +97,7 @@ async function ImportarContent() {
         </div>
       </section>
 
-      <div className="mt-6 rounded-2xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
+      <div className="panel-card mt-6 rounded-2xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
         <p className="text-sm font-semibold">Entran todos o no entra ninguno</p>
         <p className="mt-1.5 text-sm text-neutral-600 dark:text-neutral-300">
           Si alguna fila tiene un error, no cargamos nada y te decimos qué fila y por qué. Corregís

@@ -27,7 +27,7 @@ import { readCatalogForImport, readTakenImeis } from './queries';
  *  Un solo `insert` multi-fila, no 200 sueltos
  * ══════════════════════════════════════════════════════════════════════════════════════════════
  * 200 `insert` de a uno son 200 round-trips contra Postgres desde una función serverless: segundos
- * de latencia que el dueño mira parado en el mostrador, y presupuesto de conexión de Supabase
+ * de latencia que el dueño mira parado en el mostrador, y presupuesto de conexión de Neon Postgres
  * gastado al pedo. `MAX_CSV_ROWS` (500) × ~15 columnas son ~7.500 parámetros, muy por debajo del
  * techo de 65.535 del protocolo de Postgres, así que una sola sentencia alcanza y sobra.
  *

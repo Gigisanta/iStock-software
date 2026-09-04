@@ -47,7 +47,7 @@ async function TradeInContent() {
       </PageTitle>
 
       {leads.length === 0 ? (
-        <div className="rounded-2xl border border-dashed border-neutral-300 bg-white p-6 text-center dark:border-neutral-700 dark:bg-neutral-900">
+        <div className="panel-empty rounded-2xl border border-dashed border-neutral-300 bg-white p-6 text-center dark:border-neutral-700 dark:bg-neutral-900">
           <p className="text-base font-semibold">Todavía no te entró ningún canje</p>
           <p className="mt-1.5 text-sm text-neutral-600 dark:text-neutral-300">
             Cuando alguien cargue su equipo desde tu vidriera, te aparece acá con los datos y el

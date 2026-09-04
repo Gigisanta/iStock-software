@@ -3,6 +3,7 @@
 import { useActionState, useId, useState } from 'react';
 import { CONDITIONS, checkImei, conditionLabel } from '@istock/domain';
 import type { CatalogModelOption } from '../../../../_lib/catalog/queries';
+import { buildUnitTitle } from '../../../../_lib/catalog/unit-title';
 import { PhotoInput } from '../_ui/photo-input';
 import { createUnitAction } from './actions';
 import { initialNewUnitState, type NewUnitFormState } from './form-state';
@@ -78,8 +79,8 @@ function FieldError({ message }: { message: string | undefined }) {
 /** El orden en que se muestran los errores arriba: el primero que aparezca es el que se cita. */
 const ERROR_ORDER = [
   'form',
-  'title',
   'catalogModelId',
+  'title',
   'condition',
   'priceUsd',
   'storageGb',
@@ -99,7 +100,7 @@ function firstError(state: NewUnitFormState): string | null {
   return null;
 }
 
-/** Agrupa el catálogo por familia. Cuarenta modelos planos en un `<select>` de teléfono no se leen. */
+/** Agrupa el catálogo por familia. Treinta y dos modelos planos en un `<select>` no se leen. */
 function byFamily(models: readonly CatalogModelOption[]): readonly (readonly [string, readonly CatalogModelOption[]])[] {
   const groups = new Map<string, CatalogModelOption[]>();
   for (const model of models) {
@@ -121,6 +122,9 @@ export function NuevaUnidadForm({
   const [state, formAction, isPending] = useActionState(createUnitAction, initialNewUnitState);
 
   const [imei, setImei] = useState(state.values.imei);
+  const [selectedModelId, setSelectedModelId] = useState(state.values.catalogModelId);
+  const [storageGb, setStorageGb] = useState(state.values.storageGb);
+  const [color, setColor] = useState(state.values.color);
   const [photoBusy, setPhotoBusy] = useState(false);
   /**
    * Compuerta aparte de `photoBusy`: la foto que no se pudo achicar no está "ocupada", está
@@ -139,6 +143,11 @@ export function NuevaUnidadForm({
   const costId = useId();
   const descriptionId = useId();
 
+  const selectedModel = catalogModels.find((model) => model.id === selectedModelId);
+  const generatedTitle =
+    selectedModel === undefined || storageGb === '' || color === ''
+      ? ''
+      : buildUnitTitle(selectedModel.displayName, Number(storageGb), color);
   const imeiWarning = imei.trim() === '' ? null : checkImei(imei).warning;
   const topError = firstError(state);
 
@@ -160,25 +169,6 @@ export function NuevaUnidadForm({
       )}
 
       <div>
-        <label htmlFor={titleId} className="block text-sm font-medium">
-          Qué equipo es
-        </label>
-        <input
-          id={titleId}
-          name="title"
-          type="text"
-          required
-          maxLength={120}
-          autoComplete="off"
-          defaultValue={state.values.title}
-          placeholder="iPhone 14 Pro 256 Grafito"
-          aria-invalid={state.errors.title !== undefined}
-          className={INPUT_CLASS}
-        />
-        <FieldError message={state.errors.title} />
-      </div>
-
-      <div>
         <label htmlFor={modelId} className="block text-sm font-medium">
           Modelo
         </label>
@@ -187,7 +177,13 @@ export function NuevaUnidadForm({
           name="catalogModelId"
           data-testid="select-catalog-model"
           required
-          defaultValue={state.values.catalogModelId}
+          value={selectedModelId}
+          onChange={(event) => {
+            setSelectedModelId(event.target.value);
+            setStorageGb('');
+            setColor('');
+          }}
+          disabled={catalogModels.length === 0}
           aria-invalid={state.errors.catalogModelId !== undefined}
           className={INPUT_CLASS}
         >
@@ -203,8 +199,89 @@ export function NuevaUnidadForm({
           ))}
         </select>
         <FieldError message={state.errors.catalogModelId} />
+        {catalogModels.length === 0 ? (
+          <p role="alert" className="mt-2 text-sm font-medium text-red-600">
+            Todavía no hay modelos cargados. Actualizá la pantalla en unos segundos.
+          </p>
+        ) : (
+          <p className="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
+            Elegí un modelo y te mostramos sólo sus capacidades y colores reales.
+          </p>
+        )}
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label htmlFor={storageId} className="block text-sm font-medium">
+            GB
+          </label>
+          <select
+            id={storageId}
+            name="storageGb"
+            required
+            value={storageGb}
+            onChange={(event) => setStorageGb(event.target.value)}
+            disabled={selectedModel === undefined}
+            aria-invalid={state.errors.storageGb !== undefined}
+            className={INPUT_CLASS}
+          >
+            <option value="">
+              {selectedModel === undefined ? 'Elegí un modelo primero' : 'Elegí la capacidad'}
+            </option>
+            {selectedModel?.storageOptionsGb.map((option) => (
+              <option key={option} value={String(option)}>
+                {String(option)} GB
+              </option>
+            ))}
+          </select>
+          <FieldError message={state.errors.storageGb} />
+        </div>
+        <div>
+          <label htmlFor={colorId} className="block text-sm font-medium">
+            Color
+          </label>
+          <select
+            id={colorId}
+            name="color"
+            required
+            value={color}
+            onChange={(event) => setColor(event.target.value)}
+            disabled={selectedModel === undefined}
+            aria-invalid={state.errors.color !== undefined}
+            className={INPUT_CLASS}
+          >
+            <option value="">
+              {selectedModel === undefined ? 'Elegí un modelo primero' : 'Elegí el color'}
+            </option>
+            {selectedModel?.colors.map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </select>
+          <FieldError message={state.errors.color} />
+        </div>
+      </div>
+
+      <div>
+        <label htmlFor={titleId} className="block text-sm font-medium">
+          Así va a figurar
+        </label>
+        <input
+          id={titleId}
+          name="title"
+          type="text"
+          readOnly
+          maxLength={120}
+          value={generatedTitle}
+          placeholder="Elegí modelo, GB y color"
+          aria-invalid={state.errors.title !== undefined}
+          aria-live="polite"
+          className={`${INPUT_CLASS} bg-neutral-50 dark:bg-neutral-950`}
+        />
+        <FieldError message={state.errors.title} />
         <p className="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
-          Sin modelo no lo vas a poder publicar: es lo que deja filtrar tu vidriera.
+          Lo armamos por vos. No tenés que escribir el nombre del equipo.
         </p>
       </div>
 
@@ -228,43 +305,6 @@ export function NuevaUnidadForm({
           ))}
         </select>
         <FieldError message={state.errors.condition} />
-      </div>
-
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <label htmlFor={storageId} className="block text-sm font-medium">
-            GB
-          </label>
-          <input
-            id={storageId}
-            name="storageGb"
-            type="text"
-            inputMode="numeric"
-            autoComplete="off"
-            defaultValue={state.values.storageGb}
-            placeholder="256"
-            aria-invalid={state.errors.storageGb !== undefined}
-            className={INPUT_CLASS}
-          />
-          <FieldError message={state.errors.storageGb} />
-        </div>
-        <div>
-          <label htmlFor={colorId} className="block text-sm font-medium">
-            Color
-          </label>
-          <input
-            id={colorId}
-            name="color"
-            type="text"
-            maxLength={40}
-            autoComplete="off"
-            defaultValue={state.values.color}
-            placeholder="Grafito"
-            aria-invalid={state.errors.color !== undefined}
-            className={INPUT_CLASS}
-          />
-          <FieldError message={state.errors.color} />
-        </div>
       </div>
 
       <div className="grid grid-cols-2 gap-3">

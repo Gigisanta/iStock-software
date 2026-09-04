@@ -2,8 +2,9 @@
 
 import { useActionState, useEffect, useId, useState } from 'react';
 import { isUsableSlug, normalizeSlug, suggestSlug } from '../../_lib/slug-format';
+import type { SelectedPlan } from '../../_lib/auth/selected-plan';
 import { createTenantAction } from './actions';
-import { initialCreateTenantState } from './form-state';
+import { initialCreateTenantStateForPlan } from './form-state';
 
 /**
  * Alta del negocio. `"use client"` justificado: hay tres interacciones reales (sugerir el link a
@@ -60,8 +61,17 @@ function readAvailability(body: unknown): Availability {
   };
 }
 
-export function CreateTenantForm({ rootDomain }: { rootDomain: string }) {
-  const [state, formAction, isPending] = useActionState(createTenantAction, initialCreateTenantState);
+export function CreateTenantForm({
+  rootDomain,
+  selectedPlan,
+}: {
+  readonly rootDomain: string;
+  readonly selectedPlan: SelectedPlan | null;
+}) {
+  const [state, formAction, isPending] = useActionState(
+    createTenantAction,
+    initialCreateTenantStateForPlan(selectedPlan),
+  );
 
   const [name, setName] = useState(state.values.name);
   const [slug, setSlug] = useState(state.values.slug);
@@ -107,7 +117,8 @@ export function CreateTenantForm({ rootDomain }: { rootDomain: string }) {
   }, [effectiveSlug]);
 
   return (
-    <form action={formAction} className="mt-8 space-y-5" noValidate>
+    <form action={formAction} className="account-form mt-8 space-y-5" noValidate>
+      <input type="hidden" name="plan" value={state.selectedPlan ?? ''} />
       <div>
         <label htmlFor={nameId} className="block text-sm font-medium">
           Nombre de tu negocio
@@ -167,7 +178,7 @@ export function CreateTenantForm({ rootDomain }: { rootDomain: string }) {
           ) : availability.state === 'checking' ? (
             <span className="text-neutral-500 dark:text-neutral-400">Fijándonos…</span>
           ) : availability.state === 'free' ? (
-            <span className="font-medium text-emerald-600">Está libre.</span>
+            <span className="font-medium text-neutral-900 dark:text-white">Está libre.</span>
           ) : availability.state === 'taken' ? (
             <span className="font-medium text-red-600">{availability.reason}</span>
           ) : (
@@ -200,7 +211,7 @@ export function CreateTenantForm({ rootDomain }: { rootDomain: string }) {
         </p>
       </div>
 
-      <p className="rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm leading-relaxed text-blue-950 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-100">
+      <p className="rounded-xl border border-neutral-300 bg-neutral-100 p-4 text-sm leading-relaxed text-neutral-800 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200">
         La cotización en pesos se actualiza automáticamente una vez por día con la última referencia
         oficial disponible del Banco Central. No tenés que cargarla a mano.
       </p>

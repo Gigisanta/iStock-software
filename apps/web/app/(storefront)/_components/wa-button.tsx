@@ -52,14 +52,14 @@ export function WaButton({ listing }: { readonly listing: PublicListingDTO }) {
   const badge = statusBadge(listing.status);
 
   return (
-    <div className="mt-6">
+    <div className="storefront-wa mt-6">
       <a
         href={listing.waUrl}
         target="_blank"
         rel="noopener"
         data-wa="listing"
         data-wa-listing={listing.id}
-        className="flex min-h-[3.25rem] w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 text-center text-base font-semibold text-white shadow-sm active:bg-emerald-700"
+        className="storefront-wa-link flex min-h-[3.25rem] w-full items-center justify-center gap-2 rounded-xl bg-neutral-900 px-4 text-center text-base font-semibold text-white shadow-sm active:bg-neutral-950 dark:bg-white dark:text-neutral-900 dark:active:bg-neutral-200"
       >
         {badge.ctaLabel}
       </a>

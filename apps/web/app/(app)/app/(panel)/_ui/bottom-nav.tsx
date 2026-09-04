@@ -4,7 +4,7 @@ import { usePathname } from 'next/navigation';
 import { BottomNavView } from './bottom-nav-view';
 
 /**
- * Navegación principal del panel: **abajo, fija, y es la única que hay.**
+ * Navegación principal del panel: **fija, abajo en móvil y lateral en escritorio.**
  *
  * No es una elección estética. `CLAUDE.md` §0.11 dice mobile-first y el contrato de `app-agent`
  * es más específico: *"El panel se usa parado en un local con una mano"*. Con el teléfono en una

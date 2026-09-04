@@ -21,8 +21,8 @@ const GLOBAL_TABLES = ['catalog_faqs', 'catalog_models'] as const;
 /** Sin `tenant_id` pero CON RLS: identidad. Ver `src/schema/users.ts` y `tenants.ts`. */
 const IDENTITY_TABLES = ['tenants', 'users'] as const;
 
-const EXPECTED_TABLES = 20;
-const EXPECTED_RLS_TABLES = 18;
+const EXPECTED_TABLES = 21;
+const EXPECTED_RLS_TABLES = 19;
 
 afterAll(async () => { await sql.end({ timeout: 5 }); });
 
@@ -150,7 +150,7 @@ describe('forma de las policies (ADR-005 · los seis lints ERROR de Supabase)', 
 });
 
 describe('columnas obligatorias', () => {
-  it('`tenant_id` es NOT NULL, uuid, y con FK a tenants ON DELETE CASCADE en las 16 tablas', async () => {
+  it('`tenant_id` es NOT NULL, uuid, y con FK a tenants ON DELETE CASCADE en las 17 tablas', async () => {
     const r = await rows<{ relname: string; notnull: boolean; typ: string; ondelete: string | null }>(`
       select c.relname,
              a.attnotnull as notnull,
@@ -162,7 +162,7 @@ describe('columnas obligatorias', () => {
       join pg_namespace n on n.oid = c.relnamespace
       join pg_attribute a on a.attrelid = c.oid and a.attname = 'tenant_id'
       where n.nspname = 'public' and c.relkind = 'r' order by 1`);
-    expect(r).toHaveLength(16);
+    expect(r).toHaveLength(17);
     for (const row of r) {
       expect(row.notnull, `${row.relname}.tenant_id debe ser NOT NULL`).toBe(true);
       expect(row.typ).toBe('uuid');

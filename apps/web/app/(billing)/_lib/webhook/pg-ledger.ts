@@ -7,12 +7,8 @@ import type { BillingEventLedger, ClaimOutcome, EventClaim } from './ledger';
  * El ledger de verdad: una fila por evento, con **índice único**, y el efecto en la misma
  * transacción.
  *
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- *  ⚠ LA TABLA `billing_webhook_events` TODAVÍA NO EXISTE
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- *
- * `packages/db/**` es de `db-agent` (`CLAUDE.md` §4) y este agente no la escribe. La tabla está
- * **pedida al LEAD** con esta forma exacta:
+ * La tabla vive en `packages/db/src/schema/billing.ts` y en la migración
+ * `packages/db/drizzle/0010_breezy_norrin_radd.sql`. Su forma es:
  *
  *   billing_webhook_events
  *     id                 uuid pk
@@ -32,33 +28,32 @@ import type { BillingEventLedger, ClaimOutcome, EventClaim } from './ledger';
  * de MP son globales; agregar el tenant a la clave permitiría aplicar el mismo evento una vez por
  * tenant, que es el cobro doble con otro disfraz.
  *
- * Mientras la tabla no exista, este driver falla con `BillingLedgerMissingError` y el handler
- * responde 500. Es a propósito: MP reintenta, así que nada se pierde, y el error tiene nombre
- * propio en el log en vez de ser un `42P01` anónimo. **Lo que no hace es degradar a "procesar sin
- * deduplicar"** — un ledger que se saltea cuando falta la tabla es peor que no tenerlo, porque
- * parece que anda.
+ * Si el deploy objetivo todavía no aplicó la migración, este driver falla con
+ * `BillingLedgerMissingError` y el handler responde 500. Es a propósito: MP reintenta, así que
+ * nada se pierde, y el error tiene nombre propio en el log en vez de ser un `42P01` anónimo. Lo
+ * que no hace es degradar a "procesar sin deduplicar": un ledger que se saltea cuando falta la
+ * tabla es peor que no tenerlo, porque parece que anda.
  *
  * ══════════════════════════════════════════════════════════════════════════════════════════════
- *  Por qué `withServiceDb` (y por qué está reportado)
+ *  Por qué `withServiceDb`
  * ══════════════════════════════════════════════════════════════════════════════════════════════
  *
- * Es el mismo argumento del cron de reservas, uso 4 de `(app)/_lib/db/session.ts`: **lo dispara
- * Mercado Pago, no una persona; no hay sesión, no hay claim y por lo tanto no hay tenant**. Bajo
+ * Es el mismo argumento del cron de reservas: **lo dispara Mercado Pago, no una persona; no hay
+ * sesión, no hay claim y por lo tanto no hay tenant**. Bajo
  * `withTenantDb` las policies se evaluarían contra un claim inexistente y no escribirían nada
  * **sin fallar**: el webhook devolvería 200 y no habría activado ningún plan. Menos permiso acá no
  * da menos datos, da la respuesta equivocada.
  *
- * Ese docblock dice "cualquier quinto uso es un bug de seguridad" y hoy este es el quinto. **Está
- * reportado al LEAD**: el archivo es de `app-agent` y no lo edito. Lo que acota el permiso es lo
- * que se escribe: `tenant_id` sale del `external_reference` validado con forma de UUID, y los dos
- * `where`/`values` lo llevan explícito (`CLAUDE.md` §2, defensa en profundidad).
+ * Lo que acota el permiso es lo que se escribe: `tenant_id` sale del `external_reference`
+ * validado con forma de UUID, y el `values` lo lleva explícito (`CLAUDE.md` §2, defensa en
+ * profundidad).
  */
 
 export class BillingLedgerMissingError extends Error {
   constructor() {
     super(
-      'falta la tabla billing_webhook_events: el webhook de Mercado Pago no puede deduplicar. ' +
-        'Pedirle la migración a db-agent (ver pg-ledger.ts).',
+      'falta la tabla billing_webhook_events: aplicá la migración de billing antes de habilitar ' +
+        'el webhook de Mercado Pago.',
     );
     this.name = 'BillingLedgerMissingError';
   }

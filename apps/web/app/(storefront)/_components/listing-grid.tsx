@@ -34,7 +34,7 @@ export function ListingGrid({ listings }: { readonly listings: readonly PublicLi
   return (
     <ul
       data-storefront="grid"
-      className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4"
+      className="storefront-grid mt-5 grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4"
     >
       {listings.map((listing, index) => (
         <ListingCard key={listing.id} listing={listing} index={index} />
@@ -58,26 +58,26 @@ function ListingCard({ listing, index }: { readonly listing: PublicListingDTO; r
     <li data-listing={listing.slug} className="min-w-0">
       <a
         href={listingPath(listing.slug)}
-        className="flex h-full flex-col overflow-hidden rounded-xl border border-neutral-200 bg-white active:border-neutral-400 dark:border-neutral-800 dark:bg-neutral-900"
+        className="listing-card flex h-full flex-col overflow-hidden rounded-xl border border-neutral-200 bg-white active:border-neutral-400 dark:border-neutral-800 dark:bg-neutral-900"
       >
-        <div className="relative aspect-[4/3] w-full overflow-hidden bg-neutral-100 dark:bg-neutral-800">
+        <div className="listing-card-image relative aspect-[4/3] w-full overflow-hidden bg-neutral-100 dark:bg-neutral-800">
           {photo === undefined ? (
             <StorefrontPhotoPlaceholder />
           ) : (
             <StorefrontPhoto photo={photo} sizes={GRID_PHOTO_SIZES} priority={index < 4} />
           )}
-          <span className="absolute left-1.5 top-1.5">
-            <StatusBadge status={listing.status} />
-          </span>
         </div>
 
-        <div className="flex flex-1 flex-col gap-1 p-2.5">
+        <div className="listing-card-body flex flex-1 flex-col gap-1 p-2.5">
+          <div className="listing-card-status">
+            <StatusBadge status={listing.status} />
+          </div>
           <h3 className="text-sm font-semibold leading-snug">{listing.title}</h3>
-          <p className="text-xs text-neutral-500 dark:text-neutral-400">
+          <p className="listing-card-meta text-xs text-neutral-500 dark:text-neutral-400">
             {listing.conditionLabel}
             {listing.batteryPct === null ? '' : ` · batería ${String(listing.batteryPct)}%`}
           </p>
-          <p className="mt-auto pt-1 text-base font-semibold tabular-nums">
+          <p className="listing-card-price mt-auto pt-1 text-base font-semibold tabular-nums">
             {listing.priceUsd.formatted}
           </p>
         </div>

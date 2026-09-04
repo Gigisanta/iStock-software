@@ -19,5 +19,5 @@ export const metadata: Metadata = {
 };
 
 export default function AppRootLayout({ children }: { children: React.ReactNode }) {
-  return <div className="min-h-dvh bg-neutral-50 dark:bg-neutral-950">{children}</div>;
+  return <div className="app-root-shell min-h-dvh">{children}</div>;
 }

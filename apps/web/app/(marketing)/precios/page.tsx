@@ -44,7 +44,7 @@ const PLANS: readonly Plan[] = [
     pitch: 'Para el que quiere vidriera y stock ordenado.',
     features: [
       'Stock por unidad y por lote',
-      'Vidriera en tunegocio.maat.work',
+      'Vidriera en tu-negocio.maat.work',
       'Botón de WhatsApp con el mensaje armado',
       'Precio en dólares y en pesos con cotización oficial diaria',
       '1 punto de retiro',
@@ -74,52 +74,44 @@ const PLANS: readonly Plan[] = [
 
 export default function PricingPage() {
   return (
-    <section className="mx-auto w-full max-w-5xl px-4 py-12 sm:py-16">
-      <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">Precios</h1>
-      <p className="mt-3 max-w-2xl text-neutral-600 dark:text-neutral-300">
-        Un solo negocio por cuenta. El precio es por negocio, no por vendedor: sumás a los chicos
-        que atienden sin pagar de más.
-      </p>
+    <section className="pricing-page">
+      <div className="pricing-header">
+        <h1>Precios</h1>
+        <p>
+          Un solo negocio por cuenta. El precio es por negocio, no por vendedor: sumás a los chicos
+          que atienden sin pagar de más.
+        </p>
 
-      <div className="mt-6 rounded-2xl border border-emerald-300 bg-emerald-50 p-4 text-sm dark:border-emerald-800/60 dark:bg-emerald-950/30">
-        <strong className="font-semibold">Probá 14 días sin tarjeta.</strong> Después elegís Base o
-        Negocio y completás la suscripción en Mercado Pago. El monto final se muestra antes de
-        confirmar.
+        <p className="pricing-note">
+          <strong>Probá 14 días sin tarjeta.</strong> Después elegís Base o Negocio y completás la
+          suscripción en Mercado Pago. El monto final se muestra antes de confirmar.
+        </p>
       </div>
 
-      <div className="mt-10 grid gap-5 md:grid-cols-3">
+      <div className="pricing-grid">
         {PLANS.map((plan) => (
           <article
             key={plan.id}
+            data-plan={plan.id}
             className={`flex flex-col rounded-2xl border p-6 ${
               plan.highlighted
                 ? 'border-neutral-900 dark:border-white'
                 : 'border-neutral-200 dark:border-neutral-800'
             }`}
           >
-            <h2 className="text-lg font-bold">{plan.name}</h2>
-            <p className="mt-3">
-              <span className="text-3xl font-bold tracking-tight">{plan.price}</span>{' '}
-              <span className="text-sm text-neutral-500 dark:text-neutral-400">{plan.period}</span>
+            <h2>{plan.name}</h2>
+            <p className="pricing-price">
+              {plan.price}{' '}
+              <span>{plan.period}</span>
             </p>
-            <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-300">{plan.pitch}</p>
+            <p>{plan.pitch}</p>
 
-            <ul className="mt-5 flex-1 space-y-2 text-sm">
+            <ul className="pricing-features">
               {plan.features.map((feature) => (
-                <li key={feature} className="flex gap-2">
-                  <span aria-hidden="true" className="select-none font-bold text-emerald-600">
-                    ✓
-                  </span>
-                  <span>{feature}</span>
-                </li>
+                <li key={feature}>{feature}</li>
               ))}
               {plan.missing.map((item) => (
-                <li key={item} className="flex gap-2 text-neutral-500 dark:text-neutral-400">
-                  <span aria-hidden="true" className="select-none font-bold">
-                    ✕
-                  </span>
-                  <span>{item}</span>
-                </li>
+                <li key={item} className="pricing-features--muted">{item}</li>
               ))}
             </ul>
 

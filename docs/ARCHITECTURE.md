@@ -191,12 +191,14 @@ lo que cada página registró. Esta tabla es ese cruce, y **es contraintuitiva e
    funciona, pero sale de un interno de Next sin contrato público (`use-cache-wrapper.js`), y §3 nos
    obliga a subir Next. Un `pnpm up` que cambie el orden **no rompería ningún test nuestro**.
 
-> **Trampa con dueño, que hay que leer antes de escribir la pantalla de ajustes (T12).**
+> **Trampa con dueño, que hay que leer antes de tocar configuración visible.**
 > Desde S6.2, `tenant-config:{slug}` es el **único** tag de alcance tenant que le queda a la ficha en
-> su camino de HIT, y `invalidateStorefront()` tiene **un solo caller en todo el repo**
-> (`create-tenant.ts` · `createTenant`). El día que exista el editor de TC, **emitir `storefront:{slug}` a mano en
-> vez de llamar `invalidateStorefront()` actualiza la grilla y deja cada ficha del tenant con el TC
-> viejo hasta un año** (`cacheLife('max')`), sin error y sin log.
+> su camino de HIT. `invalidateStorefront()` tiene callers en `create-tenant.ts` y
+> `update-settings.ts`; el editor de configuración ya existe en `/app/ajustes`. Toda mutación futura
+> que cambie nombre, teléfono, retiro, medios de pago, canje o FX debe llamar la función completa:
+> emitir `storefront:{slug}` a mano actualiza la grilla y deja cada ficha del tenant con el dato viejo
+> hasta un año (`cacheLife('max')`), sin error y sin log. El recorrido actual queda cubierto por la
+> E2E de S12, que guarda y vuelve a leer el nombre desde el host público.
 
 **`cacheLife` es una decisión de costo, no de UX:** `'max'` + invalidación por evento ≈
 USD 0.012/tenant/mes en ISR Writes; `revalidate: 60` ≈ USD 2.59/tenant/mes — 13% del plan Base,
@@ -305,11 +307,12 @@ tabla) y la mide la probe con `returning_desde_anon=0`: un `insert … returning
 que esa PII volvería **por la misma puerta por la que entró**, sin necesidad de un `select`.
 El razonamiento completo, con las alternativas descartadas, es **ADR-026**.
 
-**Lo que la base todavía NO sostiene sobre esa tabla, dicho acá porque es donde se busca:** ninguna
-policy de `tradein_leads` mira `membership_role`, así que a nivel Postgres un `seller` autenticado
-**sí puede** leer `offer_usd` —el costo— e `internal_notes`. Lo separa el **servidor**: una unión
-discriminada por `canSeeOffer` donde la rama del `seller` ni siquiera nombra esas columnas en el SQL.
-Es **P5** del board, medido y abierto.
+**Lo que las migraciones actuales sostienen sobre esa tabla, dicho acá porque es donde se busca:** las
+migraciones `0012_owner_sensitive_read_functions.sql` y `0016_furry_champions.sql` revocan el
+`SELECT` directo sensible de `authenticated`, dejan allowlists explícitas y exponen las lecturas
+financieras sólo por RPC `SECURITY DEFINER` owner-only. `seller-authorization.test.ts` prueba las dos
+polaridades: seller y owner fallan en `SELECT` directo; el owner obtiene sus filas por RPC y el seller
+no obtiene ninguna. Es **P5** del board, cerrada el 2026-09-04.
 
 **El flag `accepts_trade_in` sí bajó al motor** (migración `0009`, fila **S8.1** cerrada el
 2026-08-28): entró **adentro** del `WITH CHECK` de la policy de `INSERT` de `anon`, vía el primer
@@ -391,7 +394,7 @@ sobre el status code.
 | Modelo de integración con MP | **B3** · ADR-008 | 4 experimentos de sandbox |
 | Región de funciones (`iad1` vs `gru1`) | ADR-010 | medir latencia real contra el Alto Valle |
 | ¿`revalidateTag` scopeado por dominio? | primer deploy con wildcard | test de 20 min, **antes de S3** |
-| Precio de Supabase Pro | **B2** | mirarlo al crear el proyecto |
+| Costo de Neon Postgres/Auth + Vercel Pro | **producción** | medir con el primer tenant real |
 | Supuestos de tráfico de `COST.md` | primera vidriera real | medir, no estimar |
 
 Research cerrado: `[R1]` `[R2]` `[R3]` `[R5]` `[R6]` `[R7]` PASS · **`[R4]` PARCIAL** (regla 3).

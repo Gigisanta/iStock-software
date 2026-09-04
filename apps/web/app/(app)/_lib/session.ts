@@ -1,6 +1,6 @@
 import 'server-only';
 import { cache } from 'react';
-import { redirect } from 'next/navigation';
+import { forbidden, redirect } from 'next/navigation';
 import { connection } from 'next/server';
 import { sql } from 'drizzle-orm';
 import { authDriver } from './auth/driver';
@@ -26,6 +26,8 @@ export interface TenantSummary {
   readonly id: string;
   readonly slug: string;
   readonly name: string;
+  readonly isDemo: boolean;
+  readonly reservationMinutes: number;
   readonly plan: 'trial' | 'base' | 'negocio';
   readonly status: 'active' | 'suspended' | 'cancelled';
   readonly trialEndsAt: Date | null;
@@ -49,6 +51,8 @@ type MembershipRow = {
   readonly tenant_id: string;
   readonly slug: string;
   readonly name: string;
+  readonly is_demo: boolean;
+  readonly reservation_minutes: number;
   readonly plan: TenantSummary['plan'];
   readonly status: TenantSummary['status'];
   readonly trial_ends_at: string | Date | null;
@@ -100,6 +104,8 @@ const resolveMembership = cache(async (userId: string): Promise<{ tenant: Tenant
                  m.tenant_id,
                  t.slug,
                  t.name,
+                 t.is_demo,
+                 t.reservation_minutes,
                  t.plan,
                  t.status,
                  t.trial_ends_at
@@ -121,6 +127,8 @@ const resolveMembership = cache(async (userId: string): Promise<{ tenant: Tenant
       id: row.tenant_id,
       slug: row.slug,
       name: row.name,
+      isDemo: row.is_demo,
+      reservationMinutes: row.reservation_minutes,
       plan: row.plan,
       status: row.status,
       trialEndsAt: row.trial_ends_at === null ? null : new Date(row.trial_ends_at),
@@ -180,23 +188,6 @@ export async function requireTenant(): Promise<ActiveSession> {
 }
 
 /**
- * Se lanza cuando hay sesión válida pero el rol no alcanza. La separación importa: 401 y 403 no
- * son lo mismo, y mandar a `/ingresar` a alguien que ya está logueado es un loop.
- *
- * TODO del LEAD, no de esta slice: con `experimental.authInterrupts: true` en `next.config.ts`
- * (archivo del LEAD) esto se reemplaza por `forbidden()` de `next/navigation`, que devuelve un
- * **403 real** y renderiza `forbidden.tsx`. Hoy el flag está en `false` por default, así que
- * llamarlo tiraría en runtime. Está pedido en BLOCKERS.
- */
-export class PanelForbiddenError extends Error {
-  readonly status = 403;
-  constructor(message = 'No tenés permiso para entrar acá.') {
-    super(message);
-    this.name = 'PanelForbiddenError';
-  }
-}
-
-/**
  * Sólo `owner`. Es el guard que va a proteger costo, margen, facturación e invitaciones.
  *
  * Que exista desde el esqueleto no es adelantar S11: es que agregarlo después obliga a repasar
@@ -205,6 +196,6 @@ export class PanelForbiddenError extends Error {
  */
 export async function requireOwner(): Promise<ActiveSession> {
   const session = await requireTenant();
-  if (session.role !== 'owner') throw new PanelForbiddenError();
+  if (session.role !== 'owner') forbidden();
   return session;
 }

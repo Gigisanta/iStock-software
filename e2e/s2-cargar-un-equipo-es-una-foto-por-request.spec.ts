@@ -49,7 +49,7 @@ import {
   purgeE2eFixtures,
   tenantIdBySlug,
 } from './_lib/db';
-import { APEX_URL, FIXTURE_PREFIX, uniqueEmail, uniqueSlug } from './_lib/env';
+import { APEX_URL, E2E_APEX_HOST, E2E_PORT, FIXTURE_PREFIX, uniqueEmail, uniqueSlug } from './_lib/env';
 import { ownersPhotoUpload } from './_lib/photo';
 import {
   addPhoto,
@@ -104,6 +104,19 @@ test.afterAll(async () => {
   await page.close();
   await deleteTenantBySlug(slug);
   await deleteUserByEmail(email);
+});
+
+test('el link de la vidriera usa el host y puerto de la request local', async () => {
+  await page.goto(`${APEX_URL}/app`);
+
+  const storefront = page.getByRole('link', {
+    name: `${slug}.${E2E_APEX_HOST}:${String(E2E_PORT)}`,
+    exact: true,
+  });
+  await expect(storefront).toHaveAttribute(
+    'href',
+    `http://${slug}.${E2E_APEX_HOST}:${String(E2E_PORT)}`,
+  );
 });
 
 test('el alta pide una sola foto y no deja adjuntar varias en el mismo envío', async () => {
@@ -173,12 +186,9 @@ test('el selector de modelos ofrece el catálogo global real y no una lista escr
 test('un equipo sin modelo de catálogo no se llega a crear, porque nunca se podría publicar', async () => {
   await page.goto(`${APEX_URL}${NEW_UNIT_PATH}`);
 
-  // Todos los campos menos el catálogo, para que el único motivo posible de rechazo sea ése. Si
-  // faltara además la condición, este test daría verde sin haber probado nada del catálogo.
-  await setField(page, 'title', 'iPhone 13 128 sin modelo');
+  // Todos los campos que no dependen del catálogo, para que el motivo verificable sea ése. El
+  // nombre, los GB y el color ahora se generan desde el modelo y no se pueden completar sin él.
   await setField(page, 'condition', 'used_excellent');
-  await setField(page, 'storageGb', '128');
-  await setField(page, 'color', 'Medianoche');
   await setField(page, 'priceUsd', '430');
   await setField(page, 'batteryPct', '91');
   await page.getByTestId('input-foto').setInputFiles(await ownersPhotoUpload());

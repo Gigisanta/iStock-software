@@ -8,7 +8,7 @@ import type { Metadata } from 'next';
  *   saca a la respuesta de los criterios de cacheabilidad del CDN de Vercel y manda el **100%** de
  *   los pageviews a la función y a Postgres. Es el modo más barato de reventar el costo por tenant.
  *   Corolario para analytics: PostHog y compañía, **client-side y nada más**.
- * - **Cero Supabase Realtime, cero websocket, cero `useEffect` + `fetch` de listado.** El visitante
+ * - **Cero realtime, cero websocket, cero `useEffect` + `fetch` de listado.** El visitante
  *   es anónimo y el HTML ya viene con los datos.
  * - **Cero `"use client"`** salvo interacción real. Hoy: ninguna.
  *
@@ -45,6 +45,8 @@ export const metadata: Metadata = {
 
 export default function StorefrontLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div className="mx-auto min-h-dvh w-full max-w-screen-sm px-4 pb-16 pt-6 sm:px-6">{children}</div>
+    <div className="storefront-shell mx-auto min-h-dvh w-full pb-16 pt-6">
+      {children}
+    </div>
   );
 }

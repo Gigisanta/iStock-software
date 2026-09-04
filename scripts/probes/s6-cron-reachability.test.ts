@@ -117,17 +117,17 @@ describe('S6 · el cron llega al handler', () => {
     }
   });
 
-  it('el schedule respeta los límites reales del plan Hobby/free', () => {
+  it('el schedule respeta el contrato de reservas y el plan Pro', () => {
     const lista = crons();
     expect(lista.length, 'el schema oficial tipa `crons` con maxItems 100').toBeLessThanOrEqual(100);
 
     for (const { schedule, path } of lista) {
-      // Hobby sólo acepta una ejecución diaria y puede dispararla con hasta ±59 minutos de
-      // precisión. El proyecto se mantiene en modo free: cualquier frecuencia mayor rompe el
-      // despliegue antes de publicar.
+      // Las reservas duran 30–120 minutos: el barrido debe correr cada cinco minutos. Vercel
+      // Hobby no es un destino válido para iStock comercial y rechaza esta frecuencia; el
+      // preflight falla cerrado hasta que el equipo esté en Pro.
       expect(schedule.length, `${path}: schedule más corto que el mínimo del schema`).toBeGreaterThanOrEqual(9);
       expect(schedule.split(/\s+/), `${path}: un cron de Vercel tiene 5 campos`).toHaveLength(5);
-      expect(schedule).toBe('0 3 * * *');
+      expect(schedule).toBe('*/5 * * * *');
     }
   });
 

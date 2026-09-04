@@ -31,11 +31,13 @@
  * que a veces se pone rojo por otro archivo enseña a ignorar los gates. Queda pedido para
  * `qa-agent`, que sí puede aislar la base.
  *
- * ── Y lo que hoy NO sostiene la base ──────────────────────────────────────────────────────────
- * Las cuatro policies de `tradein_leads` son `tenant_id = <claim>` y nada más: ninguna mira
- * `membership_role`, y `authenticated` tiene `SELECT` sobre las 17 columnas. O sea que este archivo
- * mide la única capa que hoy separa a un `seller` del costo. Está reportado como P5; la policy por
- * rol es S11 y es de `db-agent`.
+ * ── La separación a nivel de base ─────────────────────────────────────────────────────────────
+ * La migración `0012_owner_sensitive_read_functions` revoca a `authenticated` el acceso directo a
+ * `offer_usd` e `internal_notes` y expone esos valores mediante
+ * `owner_get_tradein_sensitive`, una función `SECURITY DEFINER` que valida tenant y
+ * `membership_role = 'owner'`. La prueba aislada de esos privilegios vive en
+ * `packages/db/src/seller-authorization.test.ts`; este archivo conserva el gate de la aplicación
+ * sobre el DTO y el SQL que construye el inbox.
  */
 import { userInfo } from 'node:os';
 import postgres from 'postgres';

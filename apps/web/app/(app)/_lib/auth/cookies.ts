@@ -5,8 +5,7 @@ import { z } from 'zod';
 import { serverEnv } from '../env';
 
 /**
- * Cookie de sesión del **driver local**. No la usa el driver de Supabase (ahí la maneja
- * `@supabase/ssr` con sus propias cookies `sb-*`).
+ * Cookie de sesión del **driver local**. Neon Auth maneja su propia sesión y no pasa por acá.
  *
  * Recordatorio que vale para todo el repo, no sólo para este archivo: `apps/web/app/layout.tsx`
  * dice que un solo `set-cookie` server-side en `(storefront)` apaga el cache del CDN entero y

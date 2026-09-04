@@ -29,15 +29,16 @@ type SignInPageProps = {
 
 export default function SignInPage({ searchParams }: SignInPageProps) {
   return (
-    <main className="mx-auto flex min-h-dvh w-full max-w-md flex-col justify-center px-4 py-12">
-      <Link href="/" className="text-lg font-semibold tracking-tight">
-        iStock
-      </Link>
+    <main className="account-shell">
+      <div className="account-panel">
+        <Link href="/" className="marketing-brand marketing-logo" aria-label="iStock">
+          <img src="/brand/logo-horizontal.svg" alt="" width="140" height="28" />
+        </Link>
 
-      <h1 className="mt-8 text-2xl font-bold tracking-tight">Entrá a tu panel</h1>
-      <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-300">
-        Si es la primera vez, con esto mismo te creamos la cuenta.
-      </p>
+        <h1 className="mt-8">Entrá a tu panel</h1>
+        <p className="mt-2">
+          Si es la primera vez, con esto mismo te creamos la cuenta.
+        </p>
 
       {/*
         `cacheComponents` está prendido en `next.config.ts`: todo lo que lea cookies tiene que ir
@@ -47,6 +48,7 @@ export default function SignInPage({ searchParams }: SignInPageProps) {
       <Suspense fallback={<FormSkeleton />}>
         <SignInGate searchParams={searchParams} />
       </Suspense>
+      </div>
     </main>
   );
 }

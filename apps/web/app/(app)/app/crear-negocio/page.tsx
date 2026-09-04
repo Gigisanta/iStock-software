@@ -1,7 +1,9 @@
 import { Suspense } from 'react';
+import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import type { Metadata } from 'next';
-import { rootDomain } from '../../_lib/env';
+import { requestRootDomain } from '../../_lib/env';
+import { selectedPlanFromSearchParams, SUBSCRIPTION_REDIRECTS } from '../../_lib/auth/selected-plan';
 import { getPanelSession } from '../../_lib/session';
 import { CreateTenantForm } from './create-tenant-form';
 
@@ -21,29 +23,46 @@ export const metadata: Metadata = {
   robots: { index: false, follow: false },
 };
 
-export default function CreateTenantPage() {
+type CreateTenantPageProps = {
+  readonly searchParams: Promise<{ readonly plan?: string | string[] }>;
+};
+
+export default function CreateTenantPage({ searchParams }: CreateTenantPageProps) {
   return (
-    <div className="mx-auto w-full max-w-md px-4 py-10">
-      <h1 className="text-2xl font-bold tracking-tight">Creá tu negocio</h1>
-      <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-300">
-        Con esto queda armada tu vidriera. Son tres datos y después entrás al panel.
-      </p>
+    <div className="account-shell">
+      <div className="account-panel">
+        <Link href="/" className="marketing-brand marketing-logo" aria-label="iStock">
+          <img src="/brand/logo-horizontal.svg" alt="" width="140" height="28" />
+        </Link>
+        <h1 className="mt-8">Creá tu negocio</h1>
+        <p className="mt-2">
+          Con esto queda armada tu vidriera. Son tres datos y después entrás al panel.
+        </p>
 
       <Suspense fallback={<FormSkeleton />}>
-        <CreateTenantGate />
+        <CreateTenantGate searchParams={searchParams} />
       </Suspense>
+      </div>
     </div>
   );
 }
 
-async function CreateTenantGate() {
+async function CreateTenantGate({ searchParams }: CreateTenantPageProps) {
+  const params = await searchParams;
+  const rawPlan = Array.isArray(params.plan) ? null : params.plan;
+  const selectedPlan = selectedPlanFromSearchParams({ plan: rawPlan });
+
   // Autorización adentro de la página (ADR-007). La Server Action que crea el tenant repite el
   // chequeo por su cuenta: son dos superficies distintas y cada una se defiende sola.
   const session = await getPanelSession();
-  if (session === null) redirect('/ingresar');
-  if (session.tenant !== null) redirect('/app');
+  if (session === null) {
+    redirect(selectedPlan === null ? '/ingresar' : `/ingresar?plan=${selectedPlan}`);
+  }
+  if (session.tenant !== null) {
+    redirect(selectedPlan === null ? '/app' : SUBSCRIPTION_REDIRECTS[selectedPlan]);
+  }
 
-  return <CreateTenantForm rootDomain={rootDomain()} />;
+  return <CreateTenantForm rootDomain={await requestRootDomain()} selectedPlan={selectedPlan} />;
 }
 
 function FormSkeleton() {

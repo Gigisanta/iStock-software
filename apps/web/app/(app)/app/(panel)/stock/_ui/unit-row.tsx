@@ -15,7 +15,6 @@ import {
 import { ownerCostForRow, type UnitRow } from '../../../../_lib/listings/queries';
 import type { ActiveReservationRow } from '../../../../_lib/reservations/queries';
 import {
-  RESERVATION_DEFAULT_OPTION,
   RESERVATION_MINUTE_OPTIONS,
   RESERVATION_RANGE_LABEL,
   durationLabel,
@@ -26,6 +25,7 @@ import {
   priceInputValue,
 } from '../../../../_lib/sales/presentation';
 import { CancelReservationButton } from './cancel-reservation-button';
+import { PriceForm } from './price-form';
 import { ReserveForm, type ReserveFormOption } from './reserve-form';
 import { SellForm } from './sell-form';
 import { StatusButton } from './status-button';
@@ -79,12 +79,12 @@ const STATUS_LABEL: Readonly<Record<ListingStatus, string>> = {
 
 const STATUS_CLASS: Readonly<Record<ListingStatus, string>> = {
   draft: 'bg-neutral-100 text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300',
-  available: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300',
-  reserved: 'bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-300',
+  available: 'bg-neutral-900 text-white dark:bg-white dark:text-neutral-900',
+  reserved: 'bg-neutral-200 text-neutral-900 dark:bg-neutral-700 dark:text-neutral-100',
   sold: 'bg-neutral-900 text-white dark:bg-white dark:text-neutral-900',
-  in_transit: 'bg-sky-100 text-sky-900 dark:bg-sky-950 dark:text-sky-300',
-  in_tradein: 'bg-violet-100 text-violet-900 dark:bg-violet-950 dark:text-violet-300',
-  in_service: 'bg-orange-100 text-orange-900 dark:bg-orange-950 dark:text-orange-300',
+  in_transit: 'bg-neutral-200 text-neutral-900 dark:bg-neutral-700 dark:text-neutral-100',
+  in_tradein: 'bg-neutral-200 text-neutral-900 dark:bg-neutral-700 dark:text-neutral-100',
+  in_service: 'bg-neutral-200 text-neutral-900 dark:bg-neutral-700 dark:text-neutral-100',
   unavailable: 'bg-neutral-100 text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400',
 };
 
@@ -135,6 +135,8 @@ export interface UnitRowCardProps {
    * formulario se dibuja.
    */
   readonly reservationsEnabled: boolean;
+  /** Preferencia guardada en Ajustes; sólo decide la opción inicial, no reemplaza el select. */
+  readonly reservationDefaultMinutes: number;
   /** La reserva viva de esta unidad, si la hay. Sale del `Map` de `loadActiveReservations()`. */
   readonly reservation: ActiveReservationRow | null;
 }
@@ -144,6 +146,7 @@ export function UnitRowCard({
   ctx,
   now,
   reservationsEnabled,
+  reservationDefaultMinutes,
   reservation,
 }: UnitRowCardProps) {
   const photo = unit.photos[0];
@@ -178,7 +181,7 @@ export function UnitRowCard({
     <li
       data-testid="fila-unidad"
       data-listing-id={unit.id}
-      className="rounded-2xl border border-neutral-200 bg-white p-3 dark:border-neutral-800 dark:bg-neutral-900"
+      className="panel-unit-row rounded-2xl border border-neutral-200 bg-white p-3 dark:border-neutral-800 dark:bg-neutral-900"
     >
       <div className="flex gap-3">
         {photo === undefined ? (
@@ -249,6 +252,10 @@ export function UnitRowCard({
       </div>
 
       <div className="mt-3 flex flex-wrap items-start gap-2">
+        {unit.status === 'sold' ? null : (
+          <PriceForm listingId={unit.id} defaultPrice={priceInputValue(unit.priceUsdCents)} />
+        )}
+
         {canPublish ? (
           <StatusButton
             listingId={unit.id}
@@ -279,7 +286,7 @@ export function UnitRowCard({
           <ReserveForm
             listingId={unit.id}
             options={RESERVE_OPTIONS}
-            defaultMinutes={RESERVATION_DEFAULT_OPTION}
+            defaultMinutes={reservationDefaultMinutes}
             rangeHint={`Entre ${RESERVATION_RANGE_LABEL}.`}
           />
         ) : null}

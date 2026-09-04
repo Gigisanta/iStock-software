@@ -146,8 +146,9 @@ cambiarla.
 ```
 priceArs = round(priceUsd * tenant.fxRate)
 ```
-- El TC vive en `fx_settings` por tenant, con `updated_at`; el alta y el cron diario lo obtienen de
-  la API pública del BCRA y `updated_by` queda `null` cuando lo actualiza el sistema.
+- El TC vive en `fx_settings` por tenant, con `updated_at`; el alta y el cron de expiración lo
+  obtienen de la API pública del BCRA con cache diaria, y `updated_by` queda `null` cuando lo
+  actualiza el sistema.
 - La fuente se consulta fuera del hot path: la vidriera sólo lee la última cotización persistida.
 - **Regla de redondeo: `ceil_1000` — techo al millar de ARS — es el default del tenant.** No es
   propuesta: lo ratificó el LEAD en FASE 2 (`CLAUDE.md` §1) y está implementado en
@@ -294,8 +295,8 @@ del producto en una consulta tibia.
 
 | estado | badge | CTA | mensaje de WhatsApp |
 |---|---|---|---|
-| `available` | `Disponible` | *Lo quiero — escribir por WhatsApp* | el string canónico de `CLAUDE.md` §1, **fijado byte a byte** |
-| `reserved` | `Reservado` | *Lo quiero igual — escribir por WhatsApp* | primer renglón afirmativo (`quiero el …`), el estado se **reconoce** y el aviso queda como consecuencia (*"si se cae, lo compro yo"*) — el favor se lo pide el visitante al vendedor, que **sí** puede cumplirlo |
+| `available` | `Disponible` | *Lo quiero por WhatsApp* | el string canónico de `CLAUDE.md` §1, **fijado byte a byte** |
+| `reserved` | `Reservado` | *Lo quiero igual por WhatsApp* | primer renglón afirmativo (`quiero el …`), el estado se **reconoce** y el aviso queda como consecuencia (*"si se cae, lo compro yo"*) — el favor se lo pide el visitante al vendedor, que **sí** puede cumplirlo |
 | `sold` | `Vendido` | *Preguntar por WhatsApp si entra otro igual* | pregunta por un equipo parecido; la ficha vieja sigue teniendo URL y el vendido es prueba social |
 
 **Los tres estados abren la conversación y eso lo decide el dominio, no la pantalla:**
