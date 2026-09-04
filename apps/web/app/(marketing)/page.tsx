@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { WhatsAppFlowPreview } from './_components/whatsapp-flow-preview';
 import { FeatureShowcase } from './_ui/feature-showcase';
 
 /**
@@ -125,6 +126,8 @@ export default function MarketingHomePage() {
       </section>
 
       <FeatureShowcase />
+
+      <WhatsAppFlowPreview />
 
       <section className="marketing-band">
         <div className="marketing-band-inner">
