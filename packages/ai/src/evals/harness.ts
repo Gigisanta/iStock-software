@@ -106,7 +106,7 @@ const LISTINGS = {
   available: listingFixture,
   reserved: reservedListingFixture,
   injected: injectedListingFixture,
-  /** La ficha del plan Negocio: 3 puntos de retiro, 6 medios de pago, descripción al tope. */
+  /** La ficha del plan Pro: 3 puntos de retiro, 6 medios de pago, descripción al tope. */
   negocio: businessPlanListingFixture,
 } as const;
 
@@ -382,7 +382,7 @@ export interface EvalReport {
  * El parte de degradación. Un corpus verde con recortes **no** es lo mismo que un corpus verde sin
  * recortes: el segundo tiene margen, el primero ya está gastando el margen para no romper. La
  * diferencia no se ve en `passed/total` —los dos dan verde— y hasta que esto existió no se veía en
- * ningún lado; el turno de la ficha del plan Negocio perdía historial y chunks **en silencio**.
+ * ningún lado; el turno de la ficha del plan Pro perdía historial y chunks **en silencio**.
  */
 export interface DegradationReport {
   /** Turnos que armaron prompt sin tirar absolutamente nada. */

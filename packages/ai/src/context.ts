@@ -31,7 +31,7 @@
  * La escalera empezaba en el historial, así que la primera degradación de una ficha grande era
  * **perder la conversación**. Medido: una ficha con los topes de `listing-view.ts` saturados con
  * contenido creíble —3 puntos de retiro y 6 medios de pago, que es exactamente lo que el plan
- * Negocio de USD 35 vende— más la descripción en su tope, en un turno con tool y con historial,
+ * Pro de USD 70 vende— más la descripción en su tope, en un turno con tool y con historial,
  * llegaba a **1192 de 1200 tirando los 4 turnos de historial y un chunk**. No es una punta de la
  * distribución: es el cliente objetivo.
  *

@@ -267,7 +267,7 @@ describe('reserveUnit · las puertas', () => {
 
     const result = await reserveUnit(actor, INPUT, NOW);
 
-    expect(result).toEqual({ ok: false, message: 'Eso viene con el plan Negocio.' });
+    expect(result).toEqual({ ok: false, message: 'Eso viene con el plan Pro.' });
     expect(db.writes).toHaveLength(0);
     expect(invalidateStorefrontUnit).not.toHaveBeenCalled();
   });
@@ -276,7 +276,7 @@ describe('reserveUnit · las puertas', () => {
    * D2. **La acción rebota**, no sólo el botón: `/app/stock` deja de dibujar el formulario cuando el
    * trial venció, pero una tab abierta desde antes lo sigue teniendo, y un `POST` a mano no mira
    * ningún CSS. Y el texto no es el del plan: a alguien que estaba en el plan que **sí** incluye
-   * reservas, "eso viene con el plan Negocio" le explica cualquier cosa menos lo que pasó.
+   * reservas, "eso viene con el plan Pro" le explica cualquier cosa menos lo que pasó.
    */
   it('con el trial vencido rebota en la acción y explica que se terminó la prueba', async () => {
     featureAccess.mockResolvedValue({ ok: false, reason: 'trial_expired' });
@@ -296,7 +296,7 @@ describe('reserveUnit · las puertas', () => {
    * `denyReasonText()`, así que esto no repite el mapeo: fija que **este** camino le pasa el
    * `access` y no se queda con el default del plan. Si alguien sacara el segundo argumento del
    * `denyReasonText(check.reason, access)` de arriba, el caso volvería a decir "Eso viene con el
-   * plan Negocio" a alguien que lo tiene, y sólo un test de este archivo lo ve.
+   * plan Pro" a alguien que lo tiene, y sólo un test de este archivo lo ve.
    */
   it('con la feature apagada a mano rebota y el mensaje no habla del plan', async () => {
     featureAccess.mockResolvedValue({ ok: false, reason: 'flag_off' });

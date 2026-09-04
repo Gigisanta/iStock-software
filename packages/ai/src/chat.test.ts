@@ -970,9 +970,9 @@ describe('el recorte de la dieta sale del paquete', () => {
     });
   });
 
-  it('la ficha del plan Negocio, en la ronda de tool, reporta lo que tuvo que tirar', async () => {
+  it('la ficha del plan Pro, en la ronda de tool, reporta lo que tuvo que tirar', async () => {
     // El camino real y el más caro: historial cargado + el digest de `get_open_listing` adentro del
-    // segundo prompt. Es donde esta ficha —la que el plan de USD 35 vende— llega al techo.
+    // segundo prompt. Es donde esta ficha —la que el plan de USD 70 vende— llega al techo.
     const primary = createStubProvider({
       id: 'primary',
       script: [{ text: '', toolCalls: [{ name: 'get_open_listing', args: {} }] }, 'Es un 14 Pro de 256 en USD 620.'],

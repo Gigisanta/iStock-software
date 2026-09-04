@@ -279,7 +279,7 @@ export function UnitRowCard({
         {/*
           Reservar sólo tiene sentido sobre algo que está en la vidriera, y sólo si el tenant
           tiene la función. Cuando no la tiene no se dibuja nada: cien filas con un cartel de
-          "pasate al plan Negocio" no es un upsell, es ruido en la pantalla de trabajo. Ese
+          "pasate al plan Pro" no es un upsell, es ruido en la pantalla de trabajo. Ese
           mensaje es de la pantalla de plan, no de acá.
         */}
         {unit.status === 'available' && reservationsEnabled ? (

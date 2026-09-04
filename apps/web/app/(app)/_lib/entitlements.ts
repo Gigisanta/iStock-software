@@ -41,7 +41,7 @@ import { withTenantDb, type TenantContext } from './db/session';
  *
  * Podría arreglarse sembrando filas en el alta. No se hace, por dos motivos: sembrar una fila por
  * feature convierte cada feature nueva en una migración de datos sobre los tenants existentes, y
- * deja la respuesta a "¿qué incluye el plan Negocio?" repartida entre el código y N filas viejas.
+ * deja la respuesta a "¿qué incluye el plan Pro?" repartida entre el código y N filas viejas.
  * Acá el plan se define en un lugar y las filas quedan para las excepciones, que es lo que la
  * columna `enabled` significa.
  *
@@ -49,7 +49,7 @@ import { withTenantDb, type TenantContext } from './db/session';
  *  El trial da features MIENTRAS ESTÁ VIVO. Vencido, no da ninguna.
  * ══════════════════════════════════════════════════════════════════════════════════════════════
  *
- * Ratificado por el LEAD (S6). Es un trial **del plan Negocio** —`packages/db/src/seed.ts` crea la
+ * Ratificado por el LEAD (S6). Es un trial **del plan Pro** —`packages/db/src/seed.ts` crea la
  * suscripción como `plan: 'negocio', status: 'trialing'` y `PRODUCT.md` vende los 14 días como la
  * prueba del producto completo—, así que mientras corre incluye reservas: un trial que no deja
  * probar lo que se paga no vende nada.
@@ -132,13 +132,13 @@ export interface PlanSnapshot {
  *
  * | motivo | qué pasó | qué copy sería mentira |
  * |---|---|---|
- * | `plan` | su plan no la incluye | ninguno: es el **único** caso donde "viene con el plan Negocio" es cierto |
- * | `trial_expired` | la tuvo mientras corría el trial y el trial venció | "viene con el plan Negocio": el plan que tenía la incluía |
- * | `flag_off` | hay una fila en `entitlements` en `false` — alguien se la apagó a mano | "viene con el plan Negocio": puede tenerlo contratado y tenerla apagada igual |
+ * | `plan` | su plan no la incluye | ninguno: es el **único** caso donde "viene con el plan Pro" es cierto |
+ * | `trial_expired` | la tuvo mientras corría el trial y el trial venció | "viene con el plan Pro": el plan que tenía la incluía |
+ * | `flag_off` | hay una fila en `entitlements` en `false` — alguien se la apagó a mano | "viene con el plan Pro": puede tenerlo contratado y tenerla apagada igual |
  *
  * ── `flag_off` se agregó el 2026-08-28, y no es cosmético ────────────────────────────────────
  * Hasta entonces la fila apagada devolvía `plan`, y `denyReasonText()` la renderizaba como *"Eso
- * viene con el plan Negocio."* a un tenant que **tiene** el plan Negocio y al que un operador le
+ * viene con el plan Pro."* a un tenant que **tiene** el plan Pro y al que un operador le
  * apagó la feature: lo mandaba a comprar lo que ya pagó. Es exactamente el defecto que este mismo
  * docblock denunciaba para `trial_expired`, con el otro motivo — el argumento estaba escrito y le
  * faltaba una fila. Lo levantó `billing-agent`: su `hasEntitlement()` ya contestaba `flag_off`

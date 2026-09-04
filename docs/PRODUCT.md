@@ -45,8 +45,14 @@ recorrido que factura no cambia: el canje **alimenta** el paso 1.
 | plan | precio | incluye | no incluye |
 |---|---|---|---|
 | `trial` | 0, 14 días | todo, **mientras está vigente** | nada, **una vez vencido** — **ADR-018** |
-| `base` | ~USD 19/mes | stock, vidriera, WhatsApp, FX, 1 punto de retiro | chatbot, reservas, margen |
-| `negocio` | ~USD 35/mes | + chatbot, reservas, margen, 3 puntos de retiro | — |
+| `base` | USD 35/mes | stock, vidriera, WhatsApp, FX, 1 punto de retiro | chatbot, reservas, margen |
+| `negocio` (Pro) | USD 70/mes | + chatbot, reservas, margen, 3 puntos de retiro | — |
+
+La lista comercial está expresada en USD para mantener una referencia estable. Mercado Pago cobra
+en ARS: al iniciar la contratación, el servidor toma el último TC BCRA sincronizado, calcula el
+equivalente y redondea hacia arriba al millar. Ese importe exacto se muestra antes de salir a MP;
+no se agrega un spread oculto. MP gestiona el débito recurrente en pesos del importe que la persona
+autoriza. La autorización queda en ARS: MP no convierte USD→ARS en cada ciclo.
 
 **Landing custom = upsell humano**, se cotiza aparte. En el signup **siempre** se crea la genérica.
 

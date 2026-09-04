@@ -122,14 +122,14 @@ export function softCapReached(count: number, cap: number = SOFT_CAP_MESSAGES_PE
  * **forma** de la cuenta, que no cambia cuando cambia la tarifa:
  *
  * - Con contador: `costo por mensaje × 40 × 30` = el gasto máximo de un tenant al tope del cap.
- *   Son centavos al mes contra un plan Negocio de USD 35. El cap hace su trabajo.
+ *   Son centavos al mes contra un plan Pro de USD 70. El cap hace su trabajo.
  * - Sin contador: **no hay techo por tenant**. El único límite que queda es el del WAF, que es
  *   `chatbot-rl` en `config/firewall-rules.json`: **20 requests / 600 s, y el eje es la IP**.
  *   Eso es 2 req/min = 86.400 mensajes/mes **por IP**, todos llegando al modelo (un abusador no
  *   pregunta cosas que derivan gratis, así que no le aplica la tasa mezclada sino la facturada).
  *
  * Con la tarifa medida el 2026-08-28 —USD 0,1257 por mil mensajes facturados, bloque generado del
- * README— eso da **~USD 11/mes por IP**, contra los ~USD 34 netos que deja un plan Negocio después
+ * README— eso da **~USD 11/mes por IP**, contra los ~USD 68 netos que deja un plan Pro después
  * de Mercado Pago. Tres IPs y el tenant es deficitario **sin que nadie viole ninguna regla**, y el
  * multiplicador real es peor: `ARCHITECTURE.md` §Seguridad dice que los contadores del WAF son por
  * región, así que el límite global efectivo es N×20/600s.

@@ -43,7 +43,7 @@ async function SubscribeContent({ searchParams }: SubscribePageProps) {
       <main className="billing-shell">
         <h1 className="text-2xl font-semibold">Elegí un plan válido</h1>
         <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-300">
-          Volvé a la pantalla de suscripción y elegí Base o Negocio.
+          Volvé a la pantalla de suscripción y elegí Base o Pro.
         </p>
         <a
           href="/billing"
@@ -103,16 +103,16 @@ async function SubscribeContent({ searchParams }: SubscribePageProps) {
       <section className="billing-plan mt-6 rounded-2xl border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-900">
         <h2 className="text-xl font-semibold">{spec.label}</h2>
         <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-300">
-          {formatMonthlyUsd(requested.plan)} por mes
+          {formatMonthlyUsd(requested.plan)} por mes de referencia
         </p>
         <p className="mt-1 text-xs font-medium text-neutral-500 dark:text-neutral-400">
           {amountArsCents === null
             ? 'El importe en pesos se confirma al continuar'
-            : `${formatArs(amountArsCents)} por mes hoy`}
+            : `${formatArs(amountArsCents)} por mes al adherirte`}
         </p>
         <p className="mt-4 text-sm text-neutral-600 dark:text-neutral-300">
           {paymentsEnabled
-            ? 'Vas a completar el alta en Mercado Pago. Elegís el medio disponible allí y nosotros no recibimos datos de tarjeta.'
+            ? 'Vas a completar el alta en Mercado Pago. Elegís el medio disponible allí; después MP gestiona el débito mensual en pesos. Nosotros no recibimos datos de tarjeta.'
             : fx === null || amountArsCents === null
               ? 'No pudimos actualizar el importe en pesos. Volvé a intentar en unos minutos.'
               : 'Los pagos están pausados por ahora porque esta instalación está usando únicamente servicios gratuitos.'}

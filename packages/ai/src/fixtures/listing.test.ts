@@ -2,7 +2,7 @@
  * **El fixture del peor caso, afirmando sobre sí mismo.**
  *
  * `businessPlanListingFixture()` es la ficha de la que sale el número publicado del p95 y de la
- * degradación. No es una ficha patológica: es exactamente la que el plan Negocio vende — 3 puntos
+ * degradación. No es una ficha patológica: es exactamente la que el plan Pro vende — 3 puntos
  * de retiro, 6 medios de pago, descripción en su presupuesto entero (`CLAUDE.md` §1).
  *
  * El riesgo que este archivo cubre no es que el fixture esté mal hoy. Es que **se ablande mañana**
@@ -23,10 +23,10 @@ import {
 import { DESCRIPTION_TOKEN_BUDGET, MAX_PAYMENT_METHODS, MAX_PICKUP_POINTS, listingPromptView } from '../listing-view';
 import { countTokens } from '../tokens';
 
-describe('la ficha del plan Negocio satura los topes que el plan vende', () => {
+describe('la ficha del plan Pro satura los topes que el plan vende', () => {
   const listing = businessPlanListingFixture();
 
-  it('trae los 3 puntos de retiro que el plan Negocio ofrece, ni uno menos', () => {
+  it('trae los 3 puntos de retiro que el plan Pro ofrece, ni uno menos', () => {
     expect(listing.pickup).toHaveLength(MAX_PICKUP_POINTS);
     expect(NEGOCIO_FIXTURE_CLAIMS.pickupPoints).toBe(MAX_PICKUP_POINTS);
   });

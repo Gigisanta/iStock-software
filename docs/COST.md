@@ -10,7 +10,7 @@
 ```text
 COST_VERDICT: FAIL
 DELTA_POR_TENANT_MES: USD 0.02960/tenant/mes = (R2 storage USD 0.00435 + R2 Class B en stress sin cache USD 0.02520 + R2 Class A USD 0.00000 + R2 egress USD 0.00000 + cron Vercel USD 0.00005184), con redondeo conservador y amortización en 100 tenants; + USD 0.00180/tenant/mes de invocaciones Vercel sólo si la tarifa por unidad aplica [UNVERIFIED] = USD 0.03140 condicional. CPU real, Postgres, HTML/WAF, Cloudflare y uso real de LLM siguen UNVERIFIED; no hay total certificable.
-SUPUESTOS: 100 tenants activos; 3.000 pageviews públicos/tenant/mes; 60 listings visibles por tenant; máximo 8 fotos/listing; 4 fotos/listing como planificación esperada; 90% de vistas de home y 10% de detalle; 40 mensajes/día/tenant sólo para Negocio; mes de 30 días.
+SUPUESTOS: 100 tenants activos; 3.000 pageviews públicos/tenant/mes; 60 listings visibles por tenant; máximo 8 fotos/listing; 4 fotos/listing como planificación esperada; 90% de vistas de home y 10% de detalle; 40 mensajes/día/tenant sólo para Pro; mes de 30 días.
 VECTOR_MAS_RIESGOSO: Postgres/cache y crecimiento de objetos R2. Una regresión del cache vuelve cada hit público una lectura de DB; los objetos R2 de listings borrados no se eliminan y hacen que el almacenamiento crezca sin cota temporal.
 METRICA_A_VIGILAR: storefront_db_hit_rate = hits públicos de vidriera que ejecutan SQL / hits públicos totales; alarma >5% y gate objetivo ≤5% (95% de hits sin DB).
 ```
@@ -21,10 +21,10 @@ El `FAIL` no significa que el escenario numérico conocido supere USD 0.50. Sign
 
 | Plan | Precio de venta | Techo marginal | Atribución obligatoria |
 |---|---:|---:|---|
-| Base | ~USD 19 | **USD 0.50/tenant/mes** | Todo lo que no es chat |
-| Negocio | ~USD 35 | **USD 1.50/tenant/mes** | Los mismos USD 0.50 no-chat + hasta USD 1.00 de `packages/ai` |
+| Base | USD 35 | **USD 0.50/tenant/mes** | Todo lo que no es chat |
+| Pro (`negocio`) | USD 70 | **USD 1.50/tenant/mes** | Los mismos USD 0.50 no-chat + hasta USD 1.00 de `packages/ai` |
 
-El USD 1.50 de Negocio no habilita gastar USD 1.50 en la vidriera. Cada slice no-chat se compara contra USD 0.50 incluso para un tenant Negocio. El chat tiene su propio renglón y dueño: `packages/ai`.
+El USD 1.50 de Pro no habilita gastar USD 1.50 en la vidriera. Cada slice no-chat se compara contra USD 0.50 incluso para un tenant Pro. El chat tiene su propio renglón y dueño: `packages/ai`.
 
 ## Resumen ejecutivo
 
@@ -36,7 +36,7 @@ La decisión de usar pocos servicios es correcta para este volumen:
 | Neon | Postgres, Neon Auth y RLS | Un proyecto conectado desde Vercel; catálogo global para no duplicar filas/embeddings |
 | Cloudflare R2 + CDN | Fotos públicas y master privado | Un bucket público y uno privado; egress de R2 a USD 0; no storage público alternativo ni Vercel Image Optimization |
 | Mercado Pago | Suscripciones | Separa facturación de infraestructura; comisión transaccional no es costo marginal de infra |
-| Gemini + Groq | Chat de Negocio | Dos proveedores por resiliencia, ambos sólo en el hot path del chat |
+| Gemini + Groq | Chat de Pro | Dos proveedores por resiliencia, ambos sólo en el hot path del chat |
 
 No encontré un servicio siempre encendido, una conexión Realtime anónima ni una cola/Redis necesarios en el checkout. Agregar cualquiera de ellos antes de medir sería costo tonto: suma piso fijo o conexiones sin resolver un cuello de botella probado.
 
@@ -53,7 +53,7 @@ Son escenarios de cálculo, no observaciones de producción:
 | Listings visibles | 60/tenant | `STOREFRONT_PAGE_SIZE` |
 | Fotos/listing | 8 máximo; 4 esperado | máximo de app / supuesto de planificación |
 | Vistas home/detalle | 90% / 10% | supuesto de stress |
-| Mensajes Negocio | 40/día = 1.200/mes | `SOFT_CAP_MESSAGES_PER_TENANT_PER_DAY` |
+| Mensajes Pro | 40/día = 1.200/mes | `SOFT_CAP_MESSAGES_PER_TENANT_PER_DAY` |
 | Días del mes | 30 | normalización de cálculo |
 
 Faltan datos reales de pageviews, distribución de planes, bytes efectivamente entregados, cache hits/misses, consultas por request, CPU-ms, conexiones y tokens. Todos quedan `UNVERIFIED` hasta que existan logs o métricas del despliegue.
@@ -67,7 +67,7 @@ Tarifas consultadas el 2026-09-01 en documentación oficial:
 | Cloudflare R2 | USD 0.015/GB-mes; Class A USD 4.50/M; Class B USD 0.36/M; egress USD 0; free tier mensual 10 GB, 1 M Class A y 10 M Class B por cuenta | variable marginal; el free tier es de cuenta, no de tenant |
 | Neon Free | Recurso `istock-neon` conectado desde Vercel; límites y consumo efectivos del plan `free_v3` quedan `UNVERIFIED` | plan actual; no se asume capacidad comercial sin observarla |
 | Vercel Pro | USD 20/mes y USD 20 de crédito mensual; función por unidad publicada a USD 0.0000006/invocación para Pro; CPU y memoria dependen de región | piso fijo; la aplicación del crédito y la clasificación actual del proyecto son `UNVERIFIED` |
-| Gemini 2.5 Flash-Lite | USD 0.10/M tokens de entrada y USD 0.40/M de salida | sólo chat Negocio |
+| Gemini 2.5 Flash-Lite | USD 0.10/M tokens de entrada y USD 0.40/M de salida | sólo chat Pro |
 | Groq `openai/gpt-oss-20b` | USD 0.075/M de entrada y USD 0.30/M de salida | fallback de chat; uso real `UNVERIFIED` |
 
 Fuentes oficiales y fecha de consulta: [Cloudflare R2 Pricing](https://developers.cloudflare.com/r2/pricing/) (actualizada 2026-08-07, consultada 2026-09-01), [Supabase Pricing](https://supabase.com/pricing/) (consultada 2026-09-01), [Vercel Pro Plan](https://vercel.com/docs/plans/pro-plan) y [Vercel Functions usage and pricing](https://vercel.com/docs/functions/usage-and-pricing) (consultadas 2026-09-01), [Vercel function invocations per-unit](https://vercel.com/changelog/function-invocations-now-billed-per-unit) (2026-05-29, consultada 2026-09-01), [Gemini API Pricing](https://ai.google.dev/gemini-api/docs/pricing) (consultada 2026-09-01), [Groq gpt-oss-20b pricing](https://console.groq.com/docs/model/openai/gpt-oss-20b) (consultada 2026-09-01).
@@ -185,7 +185,7 @@ Como referencia separada, si las 300.000 invocaciones de proxy se facturaran a U
 
 No hay evidencia de fetch por render ni N+1 en la consulta de catálogo: la carga usa una consulta acotada y una consulta de fotos por los IDs, no una consulta por foto. La prueba de cache hit/miss y CPU requiere deploy; este auditor no ejecuta `next build` ni un servidor silencioso por el límite del harness.
 
-## LLM: sólo Negocio y con atribución propia
+## LLM: sólo Pro y con atribución propia
 
 ### Estado actual
 
@@ -197,7 +197,7 @@ No hay evidencia de fetch por render ni N+1 en la consulta de catálogo: la carg
 
 La fuente de Groq consultada marca `llama-3.1-8b-instant` como retirado el 2026-08-16 y documenta `openai/gpt-oss-20b`. El contrato del repo menciona Groq 8B como fallback, mientras el código prevé la familia nueva. La identidad final del modelo de producción y su variable de entorno son `UNVERIFIED` y necesitan una decisión explícita del LEAD; no se acepta un modelo frontier.
 
-### Costo condicional de Negocio
+### Costo condicional de Pro
 
 Una llamada al máximo de la dieta, 1.200 in + 180 out:
 
@@ -218,7 +218,7 @@ El peor camino permitido por el código si consume dos llamadas Gemini y un fall
 100 tenants = USD 63.36/mes de chat
 ```
 
-USD 0.63360 queda debajo del techo de chat Negocio de USD 1.00, pero **3.600 in/540 out agregados** si cada una de las tres llamadas consume su máximo viola la dieta por turno de 1.200/180. No hay usage logging ni contador diario conectado; por eso el chat no puede pasar hasta medir tokens agregados, aplicar el cap y confirmar que no hay llamada por pageview. El costo de filas de `chatbot_threads/messages` también es futuro y `UNVERIFIED` porque la ruta no existe.
+USD 0.63360 queda debajo del techo de chat Pro de USD 1.00, pero **3.600 in/540 out agregados** si cada una de las tres llamadas consume su máximo viola la dieta por turno de 1.200/180. No hay usage logging ni contador diario conectado; por eso el chat no puede pasar hasta medir tokens agregados, aplicar el cap y confirmar que no hay llamada por pageview. El costo de filas de `chatbot_threads/messages` también es futuro y `UNVERIFIED` porque la ruta no existe.
 
 ## Qué no agrega costo tonto
 
@@ -230,7 +230,7 @@ Estas decisiones actuales reducen superficie y costo:
 - Catálogo, FAQ y embeddings son globales: no se duplican por tenant.
 - Un cron cada cinco minutos reemplaza un worker permanente.
 - Realtime queda fuera de la vidriera y no se agregan conexiones anónimas.
-- El chat está aislado como costo de Negocio; no se llama LLM por pageview.
+- El chat está aislado como costo de Pro; no se llama LLM por pageview.
 
 La decisión de “menor cantidad posible de servicios” pasa arquitectónicamente. El FAIL actual es de evidencia operativa, límites de almacenamiento/atribución y feature incompleta, no una recomendación de agregar servicios.
 
@@ -239,14 +239,14 @@ La decisión de “menor cantidad posible de servicios” pasa arquitectónicame
 El LEAD debe adjuntar evidencia fechada de todos estos puntos:
 
 1. **R2/media:** `MEDIA_DRIVER=r2`; credenciales y dos buckets configurados; dominio CDN custom activo; ningún `.r2.dev`, storage alternativo público, Vercel Image Optimization u original >500 KiB en browser. Medir bytes, Class A/B, cache miss y crecimiento de objetos; resolver retención/GC de objetos huérfanos.
-2. **Cache/DB:** en producción, `storefront_db_hit_rate ≤5%`; mostrar consultas por hit, filas, p95 de query, conexiones activas y pool waits. Un hit de vidriera que toca Postgres es una regresión de costo aunque el tenant sea Negocio.
+2. **Cache/DB:** en producción, `storefront_db_hit_rate ≤5%`; mostrar consultas por hit, filas, p95 de query, conexiones activas y pool waits. Un hit de vidriera que toca Postgres es una regresión de costo aunque el tenant sea Pro.
 3. **Vercel:** confirmar Pro, región/clase de ejecución, invocaciones, CPU-ms/pageview, memoria, egress HTML y consumo del crédito de USD 20. Confirmar que el cron publicado ejecuta 8.640/mes esperado, tiene `CRON_SECRET` y no hay worker 24/7.
 4. **Neon:** proyecto real conectado desde Vercel, migraciones aplicadas, Auth con origen confiable,
    conexiones y consumo verificables. La migración no aplicada mantiene el gate en FAIL.
 5. **Seguridad de tráfico:** publicar y comprobar las cuatro reglas de `config/firewall-rules.json` para track, trade-in, chat y billing; no agregar rate limit por cada pageview HTML sin una justificación de costo. La publicación viva está declarada como pendiente en el archivo.
 6. **Realtime:** evidencia de cero conexiones anónimas.
-7. **LLM/Negocio:** ruta real sólo en Negocio; Gemini Flash-Lite primario y fallback aprobado; ningún frontier; p95 y máximo agregado ≤1.200 in/180 out por turno; cap ≤40 mensajes/día/tenant; costo por proveedor y tokens in/out por tenant.
-8. **Atribución:** reporte mensual separando no-chat y `packages/ai`. Base debe ser ≤USD 0.50. Negocio debe ser no-chat ≤USD 0.50 + chat ≤USD 1.00; un total único no sirve.
+7. **LLM/Pro:** ruta real sólo en Pro; Gemini Flash-Lite primario y fallback aprobado; ningún frontier; p95 y máximo agregado ≤1.200 in/180 out por turno; cap ≤40 mensajes/día/tenant; costo por proveedor y tokens in/out por tenant.
+8. **Atribución:** reporte mensual separando no-chat y `packages/ai`. Base debe ser ≤USD 0.50. Pro debe ser no-chat ≤USD 0.50 + chat ≤USD 1.00; un total único no sirve.
 
 Cualquier punto sin evidencia permanece `UNVERIFIED` y conserva `COST_VERDICT: FAIL`.
 

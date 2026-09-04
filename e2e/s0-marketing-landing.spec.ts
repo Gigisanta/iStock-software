@@ -65,11 +65,14 @@ test('los planes llevan a iniciar sesión con el plan elegido', async ({ page })
 
   expect(response?.status()).toBe(200);
   await expect(page.getByRole('heading', { level: 1, name: 'Precios' })).toBeVisible();
+  await expect(page.locator('[data-plan="base"] .pricing-price')).toContainText('USD 35');
+  await expect(page.locator('[data-plan="negocio"] .pricing-price')).toContainText('USD 70');
+  await expect(page.locator('[data-plan="negocio"] h2')).toHaveText('Pro');
   await expect(page.getByRole('link', { name: 'Elegir Base' })).toHaveAttribute(
     'href',
     '/ingresar?plan=base',
   );
-  await expect(page.getByRole('link', { name: 'Elegir Negocio' })).toHaveAttribute(
+  await expect(page.getByRole('link', { name: 'Elegir Pro' })).toHaveAttribute(
     'href',
     '/ingresar?plan=negocio',
   );

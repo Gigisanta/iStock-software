@@ -115,7 +115,7 @@ export async function reserveUnit(
     'reserved',
     transitionContextFor(ctx, unit, now, { reservationsEnabled: access.ok, activeReservation }),
   );
-  // `access` viaja al mensaje: un trial vencido no se explica con "eso viene con el plan Negocio".
+  // `access` viaja al mensaje: un trial vencido no se explica con "eso viene con el plan Pro".
   if (!check.ok) return { ok: false, message: denyReasonText(check.reason, access) };
 
   /**
@@ -219,7 +219,7 @@ export async function reserveUnit(
  * `reserved → available` a mano: se cayó la venta, el cliente no vino, el dueño se arrepintió.
  *
  * ── No pide el entitlement, y es a propósito ────────────────────────────────────────────────
- * Reservar necesita plan Negocio; **soltar no**. Un tenant al que se le venció el trial tiene que
+ * Reservar necesita plan Pro; **soltar no**. Un tenant al que se le venció el trial tiene que
  * poder desbloquear su propio equipo: si el downgrade dejara las reservas trabadas, el plan Base
  * sería una trampa con stock adentro. `checkTransition` tampoco lo mira para esta arista.
  *

@@ -96,7 +96,7 @@ export const LOST_RACE = 'Alguien cambió este equipo mientras lo mirabas. Recar
 
 /**
  * El trial se venció (D2 del LEAD). Dice **qué pasó**, no "no autorizado": el dueño no hizo nada
- * mal, se le terminó la prueba, y "Eso viene con el plan Negocio" sería mentirle — el plan que
+ * mal, se le terminó la prueba, y "Eso viene con el plan Pro" sería mentirle — el plan que
  * tiene es justamente el que incluía la función.
  */
 const TRIAL_OVER =
@@ -105,8 +105,8 @@ const TRIAL_OVER =
 /**
  * La palanca fina: hay una fila en `entitlements` en `false`, o sea que **alguien se la apagó a mano
  * a este negocio**. No es lo mismo que no tenerla contratada, y el copy no puede mentir sobre eso:
- * quien recibe este mensaje puede estar pagando el plan Negocio, así que *"Eso viene con el plan
- * Negocio"* lo manda a comprar lo que ya tiene. Mismo error que `TRIAL_OVER` corrige para el otro
+ * quien recibe este mensaje puede estar pagando el plan Pro, así que *"Eso viene con el plan
+ * Pro"* lo manda a comprar lo que ya tiene. Mismo error que `TRIAL_OVER` corrige para el otro
  * motivo.
  *
  * Por eso el texto no habla de planes: dice **dónde** está apagado (su cuenta), niega la lectura
@@ -176,7 +176,7 @@ export function denyReasonText(
     case 'edge_not_allowed':
       return 'Ese cambio no se puede hacer desde el estado actual.';
     case 'entitlement_required':
-      return 'Eso viene con el plan Negocio.';
+      return 'Eso viene con el plan Pro.';
     case 'reservation_already_active':
       return 'Ya tiene una reserva activa.';
     /**

@@ -117,10 +117,10 @@ describe('createSubscriptionCheckout', () => {
 
     expect(
       monthlySubscriptionAmountArsCents('base', { arsCentsPerUsd: 148_750, rounding: 'ceil_1000' }),
-    ).toBe(2_900_000);
+    ).toBe(5_300_000);
     expect(
       monthlySubscriptionAmountArsCents('negocio', { arsCentsPerUsd: 148_750, rounding: 'ceil_1000' }),
-    ).toBe(5_300_000);
+    ).toBe(10_500_000);
     expect(
       monthlySubscriptionAmountArsCents('base', { arsCentsPerUsd: 0, rounding: 'ceil_1000' }),
     ).toBeNull();

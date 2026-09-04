@@ -4,6 +4,7 @@ import { requestRootDomain, storefrontHostForSlug, storefrontUrlForPanel } from 
 import { requireTenant } from '../../../_lib/session';
 import { panelStorefrontLabel, panelTenantName } from '../../../_lib/tenants/panel-identity';
 import { loadTenantSettings } from '../../../_lib/tenants/queries';
+import { PLAN_CATALOG } from '../../../../(billing)/_lib/plans';
 import { SettingsForm } from './settings-form';
 import { Card, DataRow, NotReadyYet, PageTitle } from '../_ui/section';
 
@@ -28,12 +29,6 @@ import { Card, DataRow, NotReadyYet, PageTitle } from '../_ui/section';
  */
 
 export const metadata: Metadata = { title: 'Ajustes' };
-
-const PLAN_LABEL: Record<'trial' | 'base' | 'negocio', string> = {
-  trial: 'Prueba',
-  base: 'Base',
-  negocio: 'Negocio',
-};
 
 export default function SettingsPage() {
   return (
@@ -88,7 +83,7 @@ async function SettingsContent() {
                 : settings.paymentMethods.join(' · ')
             }
           />
-          <DataRow label="Plan" value={PLAN_LABEL[settings.plan]} />
+          <DataRow label="Plan" value={PLAN_CATALOG[settings.plan].label} />
           <DataRow label="Tu rol" value={role === 'owner' ? 'Dueño' : 'Vendedor'} />
           <DataRow label="Tu cuenta" value={settings.isDemo ? 'Cuenta del panel' : identity.email} />
         </dl>

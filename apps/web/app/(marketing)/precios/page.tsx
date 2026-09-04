@@ -1,17 +1,18 @@
 import Link from 'next/link';
 import type { Metadata } from 'next';
+import { formatMonthlyUsd } from '../../(billing)/_lib/plans';
 
 /**
- * Precios. `PRODUCT.md` §Planes es la fuente: Trial 14 días · Base ~USD 19 · Negocio ~USD 35.
+ * Precios. `PLAN_CATALOG` es la fuente: Trial 14 días · Base USD 35 · Pro USD 70.
  *
- * El "~" no es cosmético y por eso está también en la pantalla. El precio final en pesos depende
- * del plan de suscripción configurado en Mercado Pago; se confirma antes de pagar y no se inventa
- * un tipo de cambio desde esta página.
+ * La referencia se muestra en USD para que el precio no se deforme con la inflación. El checkout
+ * calcula y muestra el equivalente ARS con el TC BCRA persistido antes de mandar al dueño a
+ * Mercado Pago, que es quien gestiona el débito recurrente.
  */
 
 export const metadata: Metadata = {
   title: 'Precios',
-  description: 'Prueba de 14 días. Plan Base desde USD 19 por mes. Plan Negocio desde USD 35.',
+  description: 'Prueba de 14 días. Plan Base USD 35 por mes. Plan Pro USD 70 por mes, cobrado en pesos.',
 };
 
 interface Plan {
@@ -31,7 +32,7 @@ const PLANS: readonly Plan[] = [
     name: 'Prueba',
     price: 'Gratis',
     period: '14 días',
-    pitch: 'Todo lo del plan Negocio, sin tarjeta.',
+    pitch: 'Todo lo del plan Pro, sin tarjeta.',
     features: ['Todas las funciones', 'Sin tarjeta', 'Sin compromiso'],
     missing: [],
     highlighted: false,
@@ -39,7 +40,7 @@ const PLANS: readonly Plan[] = [
   {
     id: 'base',
     name: 'Base',
-    price: '~USD 19',
+    price: formatMonthlyUsd('base'),
     period: 'por mes',
     pitch: 'Para el que quiere vidriera y stock ordenado.',
     features: [
@@ -56,8 +57,8 @@ const PLANS: readonly Plan[] = [
   },
   {
     id: 'negocio',
-    name: 'Negocio',
-    price: '~USD 35',
+    name: 'Pro',
+    price: formatMonthlyUsd('negocio'),
     period: 'por mes',
     pitch: 'Para el que ya vende volumen y necesita control.',
     features: [
@@ -83,8 +84,9 @@ export default function PricingPage() {
         </p>
 
         <p className="pricing-note">
-          <strong>Probá 14 días sin tarjeta.</strong> Después elegís Base o Negocio y completás la
-          suscripción en Mercado Pago. El monto final se muestra antes de confirmar.
+          <strong>Probá 14 días sin tarjeta.</strong> Después elegís Base o Pro y completás la
+          suscripción en Mercado Pago. El checkout muestra el importe exacto en pesos antes de
+          confirmar y MP gestiona los débitos mensuales.
         </p>
       </div>
 
@@ -132,11 +134,12 @@ export default function PricingPage() {
       <div className="mt-10 space-y-4 text-sm text-neutral-600 dark:text-neutral-300">
         <p>
           <strong className="font-semibold text-neutral-900 dark:text-neutral-100">
-            ¿Por qué los precios están en dólares con un “~” adelante?
+            ¿Por qué mostramos el precio en dólares si cobrás en pesos?
           </strong>{' '}
-            Porque mostramos una referencia simple en USD y dejamos que Mercado Pago confirme el
-            monto local del plan antes de cobrar. Así el precio que ves al contratar no depende de
-            un número inventado en la vidriera.
+            Porque la lista comercial es USD 35 para Base y USD 70 para Pro, pero Mercado Pago
+            cobra en ARS. Al contratar, el servidor usa la última cotización oficial BCRA guardada,
+            redondea al millar y muestra el importe en pesos antes de enviarte a MP. La autorización
+            queda expresada en pesos: no recibimos ni procesamos datos de tarjeta.
         </p>
         <p>
           <strong className="font-semibold text-neutral-900 dark:text-neutral-100">

@@ -19,8 +19,8 @@ import { STOREFRONT_MISS_LIFE } from './cache-life';
  * evento vía `revalidateTag('storefront:{slug}')` / `updateTag` desde el panel.
  *
  * **`revalidate: 60` está prohibido y es una decisión de plata, no de UX**: 43.200 regeneraciones
- * por tenant por mes ≈ USD 2.59/tenant/mes contra USD 0.012 con `'max'`. 216x, el 13% del plan Base
- * de USD 19, y por sí solo revienta el objetivo de < USD 0.50/tenant.
+ * por tenant por mes ≈ USD 2.59/tenant/mes contra USD 0.012 con `'max'`. 216x, el 7,4% del plan Base
+ * de USD 35, y por sí solo revienta el objetivo de < USD 0.50/tenant.
  *
  * ## El camino negativo NO usa el mismo perfil (decisión del LEAD, MEDIUM-C)
  * Ver `_lib/cache-life.ts`. Un `null` cacheado 30 días es (a) envenenamiento sin límite con slugs

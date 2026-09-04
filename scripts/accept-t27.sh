@@ -9,8 +9,8 @@
 #  T27 no rompe nada. Los dos resolvers compilaban, los dos devolvian un motivo del tipo correcto,
 #  y la suite estaba verde con el bug adentro. Lo unico que estaba mal era el SIGNIFICADO: con la
 #  misma fila de `entitlements` en `enabled = false`, `(app)` decia `plan` y `(billing)` decia
-#  `flag_off`, y el copy del panel manda `plan` a *"Eso viene con el plan Negocio."* — o sea que a
-#  un tenant que PAGA Negocio se le ofrecia comprar lo que ya tiene. Un defecto que sale por
+#  `flag_off`, y el copy del panel manda `plan` a *"Eso viene con el plan Pro."* — o sea que a
+#  un tenant que PAGA Pro se le ofrecia comprar lo que ya tiene. Un defecto que sale por
 #  pantalla en castellano y no mueve ningun numero es exactamente el que no se cierra solo.
 #
 #  ── De donde sale el certificado ─────────────────────────────────────────────────────────────
@@ -94,11 +94,11 @@ fi
 # `denyReasonText()` puede estar impecable y el bug seguir vivo si otro archivo escribe el mismo
 # texto a mano. El censo es sobre `apps/web` ENTERO menos los tests: los tests SI lo nombran, y
 # tienen que nombrarlo — es el ancla literal de sus aserciones.
-sec 'V4 · "Eso viene con el plan Negocio." se escribe en un solo lugar'
+sec 'V4 · "Eso viene con el plan Pro." se escribe en un solo lugar'
 HITS=$(grep -rn --include='*.ts' --include='*.tsx' \
         --exclude='*.test.ts' --exclude='*.test.tsx' \
         --exclude-dir=node_modules --exclude-dir=.next \
-        'Eso viene con el plan Negocio' apps/web scripts 2>/dev/null || true)
+        'Eso viene con el plan Pro' apps/web scripts 2>/dev/null || true)
 # El hallazgo de un comentario NO es una puerta de copy: el docblock de `TRIAL_OVER` cita este
 # mismo texto para explicar por que NO es el suyo, y eso es exactamente lo que hay que escribir.
 # Se filtra con la regla de `none()` de `_lib.sh`, que existe por esta misma razon.

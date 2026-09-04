@@ -158,7 +158,7 @@ export interface ChatAnswer {
    * Está en la firma pública porque la degradación **no aparece en la factura**: el prompt sigue
    * entrando en 1200, no se mueve ningún número, y lo que baja es la calidad de la respuesta. Sin
    * esto, el único modo de falla que el producto no puede ver es el que más le importa al tenant
-   * que paga el plan Negocio — el chatbot se olvida de lo que el comprador dijo dos mensajes atrás
+   * que paga el plan Pro — el chatbot se olvida de lo que el comprador dijo dos mensajes atrás
    * y nadie se entera. Lo miran la eval y, cuando exista, la telemetría de `apps/web`.
    */
   readonly trimmed: ContextTrimReport | null;

@@ -27,8 +27,8 @@ de datos. Claude y GPT frontier estan prohibidos en el hot path (`CLAUDE.md` §3
   (minimo `thinking_level: "minimal"`). Para un chat de vidriera eso es inaceptable.
 - **Retencion:** usar **tier PAGO** de Gemini (el free tier entrena con nuestros prompts -> prohibido
   con datos de clientes). Groq: sin retencion por default, logs <=30 dias, ZDR self-serve.
-- Presupuesto realista del chatbot a 60k msgs/mes: **USD 9-12/mes**. Contra plan Negocio de USD 35,
-  el LLM es **0,8-1,1% del ingreso** si un tenant hace ~2.000 msgs/mes (USD 0,29-0,38/tenant/mes).
+- Presupuesto realista del chatbot a 60k msgs/mes: **USD 9-12/mes**. Contra plan Pro de USD 70,
+  el LLM es **0,4-0,5% del ingreso** si un tenant hace ~2.000 msgs/mes (USD 0,29-0,38/tenant/mes).
 
 ## Detalle
 
@@ -226,7 +226,7 @@ Ajustes que hay que tener en la cabeza (son **estimaciones**, marcadas UNVERIFIE
   sube a 18,0M -> USD 27.00, total **~USD 45/mes**. Es decir: migrar a 3.1 no cuesta 3x, cuesta ~4x.
 - El Batch API (50% off en ambos proveedores) **no aplica** a un chat en vivo.
 
-Escala por tenant: si un tenant del plan Negocio (USD 35/mes) genera 2.000 mensajes/mes, el costo de
+Escala por tenant: si un tenant del plan Pro (USD 70/mes) genera 2.000 mensajes/mes, el costo de
 LLM es **USD 0.29 (gpt-oss-20b)** o **USD 0.38 (2.5 Flash-Lite)**. Margen sano. El riesgo no es el
 precio unitario: es un tenant con vidriera viral o un bot scrapeando el chat. **Rate limit por IP y
 por tenant es requisito, no opcional.**
@@ -370,7 +370,7 @@ La mejor politica de retencion es no mandar el dato.
 | Gemini Tier 1 (billing linkeado) cap | 250 | USD | ai.google.dev rate-limits, 2026-08-27 |
 | Gemini Free tier: billing tier cap | N/A (no aplica) | - | ai.google.dev rate-limits, 2026-08-27 |
 | Gemini spend rate limit Tier 1 | 10 | USD / 10 min | ai.google.dev rate-limits, 2026-08-27 |
-| LLM como % del plan Negocio (USD 35, 2.000 msgs/mes) | 0,8-1,1 | % del ingreso | calculo propio (0,288/35 y 0,384/35) |
+| LLM como % del plan Pro (USD 70, 2.000 msgs/mes) | 0,4-0,5 | % del ingreso | calculo propio (0,288/70 y 0,384/70) |
 | Consumo mensual del caso | 72.0 / 10.8 | M tokens in / out | calculo propio |
 | **Costo `openai/gpt-oss-20b`** | **8.64** | USD/mes | calculo sobre precio oficial |
 | **Costo `gemini-2.5-flash-lite`** | **11.52** | USD/mes | calculo sobre precio oficial |
@@ -458,8 +458,8 @@ La mejor politica de retencion es no mandar el dato.
 **COST:**
 - Linea nueva para `docs/COST.md` (la escribe `cost-auditor`, no yo): **chatbot de vidriera
   USD 8.64-11.52/mes a 60.000 mensajes/mes**, es decir **USD 0.000144-0.000192 por mensaje**.
-- Por tenant del plan Negocio (USD 35): a 2.000 msgs/mes son **USD 0,29-0,38/mes**, o sea
-  **0,8-1,1% del ingreso** (0,288/35 = 0,82% · 0,384/35 = 1,10%). Usar este rango, no "1-2%".
+- Por tenant del plan Pro (USD 70): a 2.000 msgs/mes son **USD 0,29-0,38/mes**, o sea
+  **0,4-0,5% del ingreso** (0,288/70 = 0,41% · 0,384/70 = 0,55%). Usar este rango, no "1-2%".
 - El riesgo de costo **no** es el precio unitario: es (a) que la dieta de 1200/180 se desborde con
   reasoning tokens no medidos, y (b) abuso sin rate limit. Ambos se cubren con instrumentacion de
   tokens reales por turno y cap por tenant.

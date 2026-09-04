@@ -152,8 +152,8 @@ export function renderDietSection(report: EvalReport, env: AiEnv): string {
       : `Peor turno medido: **\`${worst.id}\`** (${worst.shape}), ${worst.promptTokens} tokens tras tirar ` +
         `${worst.paymentMethodsDropped} medios de pago, ${worst.turnsDropped} turnos de historial y ` +
         `${worst.chunksDropped} chunks; la descripción ${worst.descriptionDropped ? 'no entró' : 'entró entera'}. ` +
-        'Es la ficha del **plan Negocio** (3 puntos de retiro, 6 medios de pago, descripción al tope): ' +
-        'no es una ficha patológica, es la que el plan de USD 35 vende. Los 3 puntos de retiro ' +
+        'Es la ficha del **plan Pro** (3 puntos de retiro, 6 medios de pago, descripción al tope): ' +
+        'no es una ficha patológica, es la que el plan de USD 70 vende. Los 3 puntos de retiro ' +
         'sobreviven a la degradación por diseño — son el dato por el que ese tenant paga.',
     '',
     DIET_BLOCK_END,

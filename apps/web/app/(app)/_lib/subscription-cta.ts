@@ -1,6 +1,6 @@
 export const SUBSCRIPTION_PLANS = [
   { tier: 'base', label: 'Suscribite al plan Base', href: '/billing/suscribirse?plan=base' },
-  { tier: 'negocio', label: 'Suscribite al plan Negocio', href: '/billing/suscribirse?plan=negocio' },
+  { tier: 'negocio', label: 'Suscribite al plan Pro', href: '/billing/suscribirse?plan=negocio' },
 ] as const;
 
 export type TrialSubscriptionCta = {

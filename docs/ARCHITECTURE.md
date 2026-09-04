@@ -201,13 +201,13 @@ lo que cada página registró. Esta tabla es ese cruce, y **es contraintuitiva e
 > E2E de S12, que guarda y vuelve a leer el nombre desde el host público.
 
 **`cacheLife` es una decisión de costo, no de UX:** `'max'` + invalidación por evento ≈
-USD 0.012/tenant/mes en ISR Writes; `revalidate: 60` ≈ USD 2.59/tenant/mes — 13% del plan Base,
+USD 0.012/tenant/mes en ISR Writes; `revalidate: 60` ≈ USD 2.59/tenant/mes — 7,4% del plan Base,
 solo eso ya revienta el objetivo de costo marginal.
 
 > **El objetivo es por plan y no es un número único** (LEAD, `ea26a02`, `.claude/agents/cost-auditor.md`):
-> **Base ≤ USD 0,50 · Negocio ≤ USD 1,50**, donde el 1,50 es *0,50 + hasta 1,00 atribuible al chat*.
-> Una slice de **vidriera, panel o media se mide contra 0,50 aunque el tenant esté en Negocio** — si
-> no, "Negocio ≤ 1,50" licencia en silencio una vidriera de 1,40 y el chat se queda sin lugar el día
+> **Base ≤ USD 0,50 · Pro ≤ USD 1,50**, donde el 1,50 es *0,50 + hasta 1,00 atribuible al chat*.
+> Una slice de **vidriera, panel o media se mide contra 0,50 aunque el tenant esté en Pro** — si
+> no, "Pro ≤ 1,50" licencia en silencio una vidriera de 1,40 y el chat se queda sin lugar el día
 > que exista. Corolario operativo: **un número por tenant que no dice qué parte es chat no se puede
 > comparar contra ninguno de los dos techos.** Los números vivos los mantiene `cost-auditor` en
 > `docs/COST.md`; este doc no los duplica.

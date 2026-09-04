@@ -154,11 +154,11 @@ describe('un caso que explota es un caso rojo, no un runner muerto', () => {
 /**
  * `promptMustContain` es la única aserción del corpus que mira **la entrada** y no la salida. Hace
  * falta porque con el proveedor stubbeado la respuesta está guionada: la dieta podría tirar los 3
- * puntos de retiro del plan Negocio y los 206 casos seguirían verdes. Un eval que sólo mira la
+ * puntos de retiro del plan Pro y los 206 casos seguirían verdes. Un eval que sólo mira la
  * salida no puede auditar lo que la degradación se llevó.
  */
 describe('lo que la dieta tiene PROHIBIDO recortar', () => {
-  it('los casos del plan Negocio exigen el tercer punto de retiro en el prompt', () => {
+  it('los casos del plan Pro exigen el tercer punto de retiro en el prompt', () => {
     const negocio = EVAL_CASES.filter((kase) => kase.listing === 'negocio');
     expect(negocio.length).toBeGreaterThanOrEqual(4);
     for (const kase of negocio) expect(kase.promptMustContain).toContain('General Roca');
@@ -179,7 +179,7 @@ describe('lo que la dieta tiene PROHIBIDO recortar', () => {
  * mantiene la escalera en `>= 0` sola, así que no informa nada.
  */
 describe('la degradación se mide y se publica', () => {
-  it('el peor turno del corpus es la ficha del plan Negocio, y gasta el escalón de medios de pago', async () => {
+  it('el peor turno del corpus es la ficha del plan Pro, y gasta el escalón de medios de pago', async () => {
     const report = await runEval(env);
     const worst = report.degradation.worst;
     expect(worst).not.toBeNull();
@@ -388,7 +388,7 @@ describe('la tabla de la dieta del README se genera igual que el bloque de costo
     const env = evalEnv();
     const report = await runEval(env);
     const worst = report.degradation.worst;
-    // Si esto es `null`, el corpus dejo de contener la ficha del plan Negocio y el peor caso
+    // Si esto es `null`, el corpus dejo de contener la ficha del plan Pro y el peor caso
     // realista volvio a quedar afuera del numero publicado — que es exactamente lo que se arreglo.
     expect(worst).not.toBeNull();
     const diet = renderDietSection(report, env);

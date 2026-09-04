@@ -30,8 +30,8 @@ import { truncateToTokens } from './tokens';
 /** Cuánto del texto libre del dueño entra al prompt, en tokens de nuestro contador. */
 export const DESCRIPTION_TOKEN_BUDGET = 140;
 /**
- * Techo de puntos de retiro. **Es exactamente lo que el plan Negocio vende** (`CLAUDE.md` §1: "3
- * puntos de retiro"), así que no es una punta de la distribución: es el tenant que paga USD 35.
+ * Techo de puntos de retiro. **Es exactamente lo que el plan Pro vende** (`CLAUDE.md` §1: "3
+ * puntos de retiro"), así que no es una punta de la distribución: es el tenant que paga USD 70.
  */
 export const MAX_PICKUP_POINTS = 3;
 /** Techo de medios de pago. Un local del Alto Valle llega a seis sin esforzarse. */
@@ -228,7 +228,7 @@ export function listingPromptView(listing: PublicListingDTO): ListingPromptView 
  *
  * ## Por qué los medios de pago y no otra cosa. Está medido, no elegido
  *
- * El caso que aprieta la dieta **no es una ficha patológica**: es la que el plan Negocio vende.
+ * El caso que aprieta la dieta **no es una ficha patológica**: es la que el plan Pro vende.
  * Medido el 2026-08-28 sobre una ficha realista con los dos topes de arriba saturados con contenido
  * creíble (3 puntos con horario humano, 6 medios con nombre humano) y la descripción en su tope de
  * {@link DESCRIPTION_TOKEN_BUDGET}:
@@ -252,7 +252,7 @@ export function listingPromptView(listing: PublicListingDTO): ListingPromptView 
  * *"¿dónde lo puedo retirar?"* y *"¿tienen local en Roca?"* **sí llegan al modelo** (medido: ningún
  * trigger de handoff las agarra). Y el bloque de ficha abre con *"si algo no está acá, no lo
  * sabés"*: recortar el tercer punto no ahorra 18 tokens, le hace **negar una sucursal que existe**
- * a un vecino de General Roca — sobre la feature que el plan Negocio le cobra al dueño. Un turno de
+ * a un vecino de General Roca — sobre la feature que el plan Pro le cobra al dueño. Un turno de
  * historial perdido degrada la conversación; una sucursal negada es información falsa.
  *
  * La vidriera sigue mostrando los seis medios de pago: lo que se recorta es el **prompt**, no la

@@ -252,7 +252,7 @@ describe('las dos capas de tenant', () => {
  * ── Lo que sigue difiriendo, y por eso sigue fijado: el techo ────────────────────────────────
  * El veredicto positivo de allá es `{ ok: true }`; el de acá trae `limit`. Es la última razón por
  * la que este módulo existe (ver el punto 1 de su encabezado) y no es un descuido de nadie: los 3
- * puntos de retiro de Negocio contra 1 de Base no se prenden ni se apagan, **se cuentan**. Se
+ * puntos de retiro de Pro contra 1 de Base no se prenden ni se apagan, **se cuentan**. Se
  * afirma por igualdad de los dos lados —y no como "distintos entre sí"— para que no pueda quedar
  * verde si alguno se mueve a un tercer valor. Si algún día `featureAccess()` devuelve el techo,
  * este test se pone rojo y lo borra quien haga el cambio, sabiendo qué borra. **Es una condición,

@@ -46,7 +46,7 @@ Turnos con tool en el corpus: **15 casos** × 2 formas de conversación, 24 de e
 
 **El margen contra el techo no es la métrica de salud: la escalera de degradación lo mantiene en ≥ 0 sola.** La métrica es cuánto hubo que tirar para llegar ahí: **153 de 162** prompts armados entraron sin recortar nada. Los que sí recortaron: 9 perdieron medios de pago, 8 historial, 2 chunks, 0 la descripción.
 
-Peor turno medido: **`n02`** (conversación cargada), 1198 tokens tras tirar 6 medios de pago, 4 turnos de historial y 2 chunks; la descripción entró entera. Es la ficha del **plan Negocio** (3 puntos de retiro, 6 medios de pago, descripción al tope): no es una ficha patológica, es la que el plan de USD 35 vende. Los 3 puntos de retiro sobreviven a la degradación por diseño — son el dato por el que ese tenant paga.
+Peor turno medido: **`n02`** (conversación cargada), 1198 tokens tras tirar 6 medios de pago, 4 turnos de historial y 2 chunks; la descripción entró entera. Es la ficha del **plan Pro** (3 puntos de retiro, 6 medios de pago, descripción al tope): no es una ficha patológica, es la que el plan de USD 70 vende. Los 3 puntos de retiro sobreviven a la degradación por diseño — son el dato por el que ese tenant paga.
 
 <!-- eval:dieta:fin -->
 
@@ -60,13 +60,13 @@ el piso entra, rompe fuerte y visible. `src/context.test.ts` lo prueba con diez 
 incluido un ataque de inflado de 20 turnos y las dos formas de la ronda de tool.
 
 **El primer escalón son los medios de pago, y el criterio no es el tamaño.** Los seis medios de una
-ficha del plan Negocio son 43 tokens, o sea **dos turnos de historial**; y las ocho formulaciones de
+ficha del plan Pro son 43 tokens, o sea **dos turnos de historial**; y las ocho formulaciones de
 *"¿cómo puedo pagar?"* del corpus **derivan a WhatsApp antes de llamar al proveedor** (pagar es
 handoff obligatorio), así que esos tokens no pueden contestar la única pregunta para la que existen.
 Los **puntos de retiro no se recortan nunca**, aunque el tercero cueste 18: esas preguntas sí llegan
 al modelo, y el bloque le dice *"si algo no está acá, no lo sabés"* — un punto recortado no se vuelve
 silencio, se vuelve una **negación falsa** al comprador que vive en esa ciudad, sobre exactamente el
-feature que el plan de USD 35 cobra.
+feature que el plan de USD 70 cobra.
 
 **Y cuando ni el piso entra, el error nombra la causa.** Decía *"1173 tokens contra un techo de
 1200"* —un número **adentro** del presupuesto mientras abortaba por pasarse—, porque re-armaba un

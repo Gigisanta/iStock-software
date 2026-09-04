@@ -202,7 +202,7 @@ describe('featureAccess · la vigencia del trial (D2)', () => {
  * Hasta S-B2 este módulo tenía su propia tabla `PLAN_FEATURES` con una sola feature. Convivía con
  * el catálogo comercial de `(billing)/_lib/plans.ts` y **divergían**: contra la tabla vieja,
  * `featureAccess(negocio, 'chatbot')` daba `false`, o sea que el resolver le negaba al plan
- * Negocio justo lo que ese plan se vende por incluir. No se notaba porque `chatbot` todavía no
+ * Pro justo lo que ese plan se vende por incluir. No se notaba porque `chatbot` todavía no
  * tiene consumidor; se hubiera notado el día que lo tuviera, como "el chatbot no anda en el plan
  * que lo trae".
  *

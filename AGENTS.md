@@ -29,7 +29,7 @@ no pasó. Commits `[research] [feat] [test] [fix] [docs] [cost] [chore]`, uno po
 ## 1. Producto (NO REABRIR)
 - **ICP:** reseller del Alto Valle, 20–200 equipos, oficina + WhatsApp + canje.
 - **Tres caras, un tenant:** marketing (`maat.work`) / panel (`/app/*`) / vidriera, sin DB propia.
-- **Planes:** Trial 14d · Base ~USD 19 (sin chatbot) · Negocio ~USD 35. **Landing custom = upsell
+- **Planes:** Trial 14d · Base USD 35 (sin chatbot) · Pro USD 70 (clave interna `negocio`). **Landing custom = upsell
   humano**; en signup se crea la genérica.
 - **Competencia:** CocosCRM · SistemaStock · Oragon (no clonar) · **Excel + estados de IG.**
 - **Done cobrable:** 15 equipos en una tarde → link en un estado → WhatsApps esa noche.

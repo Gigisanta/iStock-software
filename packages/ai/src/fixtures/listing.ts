@@ -130,9 +130,9 @@ export function bloatedListingFixture(): PublicListingDTO {
 }
 
 /**
- * ## La ficha del **plan Negocio**: el peor caso REALISTA, y por eso está en el corpus
+ * ## La ficha del **plan Pro**: el peor caso REALISTA, y por eso está en el corpus
  *
- * No tiene ni un campo inflado. Tiene lo que `CLAUDE.md` §1 le vende al tenant de USD 35 —**3
+ * No tiene ni un campo inflado. Tiene lo que `CLAUDE.md` §1 le vende al tenant de USD 70 —**3
  * puntos de retiro**— con horarios escritos como los escribe una persona, seis medios de pago con
  * nombre humano, y una descripción del largo que da `DESCRIPTION_TOKEN_BUDGET`. O sea: los topes de
  * `listing-view.ts` saturados con contenido creíble.
@@ -153,7 +153,7 @@ export const DESCRIPCION_AL_TOPE =
   'local antes de cerrar, sin apuro, y se prueban cámaras, altavoces y Face ID delante tuyo. ' +
   'También tomamos tu equipo usado como parte de pago si te sirve.';
 
-/** Los 3 puntos de retiro del plan Negocio, con horario de largo humano. */
+/** Los 3 puntos de retiro del plan Pro, con horario de largo humano. */
 export const NEGOCIO_PICKUP_POINTS: readonly PickupPointSource[] = [
   { name: 'Cipolletti centro', address: 'Yrigoyen 500', hours: 'Lunes a viernes de 10 a 18, sábados de 10 a 13' },
   { name: 'Neuquén capital', address: 'Alcorta 1200', hours: 'Lunes a viernes de 9 a 17, sábados de 10 a 13' },
@@ -170,7 +170,7 @@ export const NEGOCIO_PAYMENT_METHODS: readonly string[] = [
   'Dólares billete',
 ];
 
-/** La ficha del plan Negocio, con los dos topes saturados y la descripción en su presupuesto. */
+/** La ficha del plan Pro, con los dos topes saturados y la descripción en su presupuesto. */
 export function businessPlanListingFixture(overrides: ListingFixtureOverrides = {}): PublicListingDTO {
   return listingFixture({
     description: DESCRIPCION_AL_TOPE,

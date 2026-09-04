@@ -90,11 +90,11 @@ describe('POST /billing/subscribe', () => {
       plan: 'negocio',
       payerEmail: 'dueno@nortecel.test',
       backUrl: 'https://maat.work/billing',
-      amountArsCents: 5_300_000,
+      amountArsCents: 10_500_000,
     });
     expect(mocks.claimSubscriptionCheckout).toHaveBeenCalledWith(
       { userId: USER_ID, tenantId: TENANT_ID, role: 'owner' },
-      { plan: 'negocio', amountArsCents: 5_300_000 },
+      { plan: 'negocio', amountArsCents: 10_500_000 },
     );
     expect(mocks.completeSubscriptionCheckout).toHaveBeenCalledWith(
       { userId: USER_ID, tenantId: TENANT_ID, role: 'owner' },

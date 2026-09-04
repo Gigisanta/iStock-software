@@ -194,7 +194,7 @@ for (const r of rutas.sort()) inf(`  · ${r}`);
 // juntaba TODAS las reglas en `cubiertas` y por lo tanto le habria dado verde a `/api/chat` el dia
 // que aterrizara, porque `chatbot-rl` "ya existe" — en un archivo, sin publicar. Lo levanto
 // `cost-auditor` midiendo la otra punta: con el techo de `chatbot-rl` (12/min/IP = 17.280/dia) una
-// sola IP puede gastar USD 41–99/mes en Gemini contra un plan de USD 35, o sea que ni siquiera
+// sola IP puede gastar USD 41–99/mes en Gemini contra un plan Pro de USD 70, o sea que ni siquiera
 // publicada la regla es el techo de la factura. Sin publicar no es nada.
 //
 // Es la misma clase de defecto que este archivo ya persigue en F3/F4: un gate que da verde a algo

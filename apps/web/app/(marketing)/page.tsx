@@ -191,7 +191,7 @@ export default function MarketingHomePage() {
               ve la información completa y te escribe por WhatsApp con el mensaje ya armado.
             </p>
             <p>
-              La prueba dura 14 días sin tarjeta. Cuando termina, elegís Base o Negocio y completás el
+              La prueba dura 14 días sin tarjeta. Cuando termina, elegís Base o Pro y completás el
               pago de forma segura en Mercado Pago; nunca recibimos datos de tu tarjeta.
             </p>
           </div>

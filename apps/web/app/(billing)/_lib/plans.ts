@@ -3,7 +3,7 @@
  *
  * Módulo **puro** — no importa `server-only`, no toca Postgres, no lee `process.env`. Es la
  * traducción ejecutable de `PRODUCT.md` §Planes y de `CLAUDE.md` §1, y existe para que "¿qué
- * incluye Negocio?" tenga **una** respuesta y no tres.
+ * incluye Pro?" tenga **una** respuesta y no tres.
  *
  * ══════════════════════════════════════════════════════════════════════════════════════════════
  *  Este archivo NO resuelve entitlements. Sólo dice qué vende cada plan.
@@ -17,7 +17,7 @@
  * **La colisión cerró el 2026-08-28.** `app/(app)/_lib/entitlements.ts` traía su propio mapa
  * `PLAN_FEATURES` con una sola feature y era un **subconjunto** de esto; hoy importa
  * `planFeatures()` de acá y no declara ningún plan. Este archivo es el catálogo de `apps/web`: ya
- * no hay una segunda respuesta a "¿qué incluye Negocio?".
+ * no hay una segunda respuesta a "¿qué incluye Pro?".
  *
  * Que siga habiendo una sola **está medido desde los dos lados, y la duplicación es deliberada**:
  * `plans.test.ts` (acá) y `(app)/_lib/entitlements.test.ts` (allá) corren la misma matriz de los
@@ -59,7 +59,7 @@ export interface PlanSpec {
   /** Como se escribe en pantalla, en rioplatense. */
   readonly label: string;
   /**
-   * Precio de lista en **centavos de USD**. Enteros a propósito: `19.00` en punto flotante es la
+   * Precio de lista en **centavos de USD**. Enteros a propósito: `35.00` en punto flotante es la
    * clase de número que termina facturando `18,999999`.
    *
    * **No es lo que se le cobra a MP.** El checkout hospedado crea una suscripción pendiente sin
@@ -74,7 +74,7 @@ export interface PlanSpec {
 }
 
 /**
- * `trial` incluye **todo lo de `negocio`**, y eso es producto, no una comodidad: `PRODUCT.md`
+ * `trial` incluye **todo lo de `negocio` (Pro)**, y eso es producto, no una comodidad: `PRODUCT.md`
  * vende los 14 días como la prueba del producto completo y un trial que no deja probar lo que se
  * paga no vende nada (ADR-018 §1). Lo que el trial **no** hace es sobrevivirse: vencido no da
  * ninguna feature, y eso lo aplica `featureAccess()`, no este mapa.
@@ -93,14 +93,16 @@ export const PLAN_CATALOG: Readonly<Record<PlanTier, PlanSpec>> = {
   base: {
     tier: 'base',
     label: 'Base',
-    monthlyUsdCents: 1900,
+    monthlyUsdCents: 3500,
     features: [],
     limits: { [FEATURE_PICKUP_POINTS]: 1 },
   },
   negocio: {
     tier: 'negocio',
-    label: 'Negocio',
-    monthlyUsdCents: 3500,
+    // `negocio` es la clave histórica de Postgres y de los links existentes; "Pro" es el nombre
+    // comercial visible. No se cambia el enum de la base por un cambio de marca.
+    label: 'Pro',
+    monthlyUsdCents: 7000,
     features: [FEATURE_CHATBOT, FEATURE_RESERVATIONS, FEATURE_MARGIN, FEATURE_PICKUP_POINTS],
     limits: { [FEATURE_PICKUP_POINTS]: 3 },
   },
@@ -122,8 +124,8 @@ export function planLimit(tier: PlanTier, feature: string): number | null {
 }
 
 /**
- * `1900` → `"USD 19"`. Sin decimales cuando son cero: el precio se lee en un teléfono y
- * `USD 19,00` no agrega nada. Con decimales, coma — se lee en Cipolletti.
+ * `3500` → `"USD 35"`. Sin decimales cuando son cero: el precio se lee en un teléfono y
+ * `USD 35,00` no agrega nada. Con decimales, coma — se lee en Cipolletti.
  */
 export function formatMonthlyUsd(tier: PlanTier): string {
   const cents = PLAN_CATALOG[tier].monthlyUsdCents;

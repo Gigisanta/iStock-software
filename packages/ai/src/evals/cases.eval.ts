@@ -65,7 +65,7 @@ export interface EvalCase {
    * respuesta está guionada y no puede detectar nada del prompt. Esto mira lo único observable sin
    * red — lo que se **mandó**— y existe para un dato puntual: los **puntos de retiro** no entran a
    * la escalera de degradación de `context.ts`. Si alguien los agrega, el prompt de la ficha del
-   * plan Negocio pierde "General Roca" y estos casos se ponen en rojo, en vez de que el chatbot le
+   * plan Pro pierde "General Roca" y estos casos se ponen en rojo, en vez de que el chatbot le
    * niegue una sucursal a un vecino de General Roca en producción.
    */
   readonly promptMustContain?: readonly string[];
@@ -236,9 +236,9 @@ const TOOL_CASES: readonly EvalCase[] = [
 
 
 /**
- * ## El peor caso **realista**: la ficha del plan Negocio
+ * ## El peor caso **realista**: la ficha del plan Pro
  *
- * No es una ficha patológica: es la que `CLAUDE.md` §1 le vende al tenant de USD 35 —3 puntos de
+ * No es una ficha patológica: es la que `CLAUDE.md` §1 le vende al tenant de USD 70 —3 puntos de
  * retiro— con seis medios de pago y la descripción en el tope de `DESCRIPTION_TOKEN_BUDGET`. O sea,
  * los topes de `listing-view.ts` saturados con contenido creíble.
  *
@@ -247,7 +247,7 @@ const TOOL_CASES: readonly EvalCase[] = [
  * publica el producto. Con estos casos, el número publicado en el README es el del cliente que más
  * paga, en la forma de conversación cargada y por el camino con tool — que es el camino caro.
  *
- * `promptMustContain: ['General Roca']` es el tercer punto de retiro, o sea el que el plan Negocio
+ * `promptMustContain: ['General Roca']` es el tercer punto de retiro, o sea el que el plan Pro
  * cobra: afirma que la degradación **no** se lo come.
  */
 const NEGOCIO_CASES: readonly EvalCase[] = [
@@ -275,7 +275,7 @@ export const EVAL_CASES: readonly EvalCase[] = [
  * Cuántos casos del corpus pasan por una tool. La eval lo usa para no publicar un p95 vacío.
  *
  * Se **cuenta sobre `EVAL_CASES`**, no sobre `TOOL_CASES.length`: los casos con tool ya no viven en
- * un solo grupo (los del plan Negocio son casos de dieta y de tool a la vez), y un contador atado a
+ * un solo grupo (los del plan Pro son casos de dieta y de tool a la vez), y un contador atado a
  * un grupo se queda corto en silencio apenas alguien agrega un caso con tool en otro lado.
  */
 export const TOOL_CASE_COUNT = EVAL_CASES.filter((kase) => kase.toolCall !== undefined).length;

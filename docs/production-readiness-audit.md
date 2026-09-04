@@ -149,7 +149,7 @@ desplegar el HEAD y cerrar esos bloqueos.
   selección del CTA.
 - Las pantallas de contratación son `noindex`: requieren sesión y no deben competir con la landing
   ni quedar expuestas como resultados de búsqueda.
-- El checkout bloquea en el servidor a un tenant que ya tiene Base o Negocio, y el panel deja de
+- El checkout bloquea en el servidor a un tenant que ya tiene Base o Pro, y el panel deja de
   mostrar botones para abrir otra suscripción después de la activación.
 - El botón de contratación muestra estado de conexión y bloquea dobles toques en la misma pestaña.
   La migración `0022_thankful_boomer.sql` agrega un intent durable por tenant: un lock de fila y un
@@ -160,6 +160,10 @@ desplegar el HEAD y cerrar esos bloqueos.
   timeout de 10 segundos para que una API lenta no consuma indefinidamente una función serverless.
 - El precio ARS se calcula server-side desde el TC persistido del tenant y se redondea al millar
   superior. El navegador sólo puede elegir el plan, nunca tenant, mail, importe ni credenciales.
+- La lista comercial vigente es Base USD 35 y Pro USD 70 (la clave de almacenamiento sigue siendo
+  `negocio`). Mercado Pago recibe un importe fijo en ARS calculado con el TC BCRA persistido al
+  momento de la adhesión y luego gestiona el débito recurrente de ese importe; MP no hace una
+  conversión USD→ARS automática en cada ciclo.
 - Si el `POST /preapproval` falla de forma incierta después de salir del proceso (timeout, red,
   5xx o respuesta malformada), el checkout conserva el intent `creating` durante su lease de 10
   minutos y muestra `verificar`; sólo un 4xx definitivo libera el intent. Así un reintento inmediato

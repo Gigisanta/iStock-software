@@ -90,8 +90,10 @@ export function buildBillingBackUrl(appUrl: string): string | null {
  *
  * Mercado Pago factura en ARS; la lista comercial vive en USD. El tipo de cambio es el último
  * valor persistido por el job BCRA del tenant, nunca una llamada en el hot path ni un número del
- * navegador. El importe queda congelado en la suscripción suelta hasta que el dueño la cancele o
- * se adhiera de nuevo: no fingimos una actualización de precio que todavía no está implementada.
+ * navegador. El importe ARS queda fijado en la autorización que el dueño acepta en Mercado Pago:
+ * MP debita automáticamente ese importe en cada ciclo. Si el precio de referencia cambia, se debe
+ * comunicar y actualizar la autorización de forma explícita; no simulamos una conversión automática
+ * que MP no hace.
  */
 export function monthlySubscriptionAmountArsCents(
   plan: PaidPlanTier,

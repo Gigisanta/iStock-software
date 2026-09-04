@@ -42,7 +42,7 @@ import { BILLABLE_FEATURES, planIncludes, planLimit } from './plans';
  *
  * 1. **El techo (`limit`).** El veredicto positivo de allá es `{ ok: true }`; el de acá trae el
  *    número. `planLimit()` no tiene otro lector en el repo (medido con `grep`: este archivo y su
- *    test). Los **3** puntos de retiro de Negocio contra **1** de Base son producto (`CLAUDE.md`
+ *    test). Los **3** puntos de retiro de Pro contra **1** de Base son producto (`CLAUDE.md`
  *    §1), y hoy este es el único código capaz de contestar cuántos le tocan a un tenant. Un
  *    booleano no puede: `pickup_points` no se prende ni se apaga, se cuenta.
  * 2. **`setFeatureFlag()`.** `featureAccess()` sólo lee. Este es el único escritor de la tabla
@@ -52,7 +52,7 @@ import { BILLABLE_FEATURES, planIncludes, planLimit } from './plans';
  * ── Hubo una tercera —`flag_off`— y se cerró el 2026-08-28. Vale contar cómo ─────────────────
  * Hasta esa fecha, con la **misma** fila apagada `featureAccess()` contestaba `plan` y esto
  * contestaba `flag_off`. No era un empate de gustos: `plan` renderiza *"eso viene con el plan
- * Negocio"* a un tenant que **tiene** el plan Negocio y al que un operador le apagó el chatbot a
+ * Pro"* a un tenant que **tiene** el plan Pro y al que un operador le apagó el chatbot a
  * mano. La diferencia estaba **fijada en `entitlements.test.ts`**, no comentada, y el arreglo vivía
  * en el archivo de `app-agent`, así que se reportó y no se tocó. El LEAD dictaminó que el defecto
  * era de allá; hoy `featureAccess()` devuelve `flag_off` sobre esa fila y el copy de `(app)` ya no
@@ -127,7 +127,7 @@ export async function hasEntitlement(
 
   const row = rows[0];
   if (row !== undefined) {
-    // La fila manda en las dos direcciones. `enabled = false` con plan Negocio es el kill switch.
+    // La fila manda en las dos direcciones. `enabled = false` con plan Pro es el kill switch.
     if (!row.enabled) return { ok: false, reason: 'flag_off' };
     return { ok: true, limit: row.limitValue ?? planLimit(snapshot.plan, feature) };
   }

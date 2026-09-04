@@ -81,7 +81,7 @@ Lo que hay que saber sin leer nada más:
   estilo: sin él, dos tenants comparten entrada de cache.** (ADR-007)
 - **`cacheLife` es una decisión de costo**: `'max'` = USD 0.012/tenant/mes, `revalidate: 60` = USD
   2.59. La segunda revienta el objetivo sola. (`COST.md` §2)
-- El chatbot se come **~75% del presupuesto de infra del plan Negocio**. Está dentro, pero ya no es
+- El chatbot se come **~75% del presupuesto de infra del plan Pro**. Está dentro, pero ya no es
   ruido. (`COST.md` §0)
 - **ENACOM corta a 5 consultas/día por IP** → nada de consultar en el alta masiva. (ADR-009)
 - **R4 (Mercado Pago) está PARCIAL y frenado por la regla 3.** Se cierra con sandbox, no con
@@ -324,9 +324,9 @@ Lo que hay que saber sin leer nada más:
   autotitula `S9`, y `S9` es otra slice · `db-agent`, **no lo toca `docs-keeper`: es su columna**) y
   **T49** (el soft cap del chat, 40 msgs/tenant/día, es una **cuota compartida**: una sola IP la agota
   en veinte minutos y deja el chatbot mudo · `ai-agent` la forma, **LEAD** la política).
-- **El objetivo de costo es por plan desde `ea26a02`: Base ≤ USD 0,50 · Negocio ≤ USD 1,50**, con el
+- **El objetivo de costo es por plan desde `ea26a02`: Base ≤ USD 0,50 · Pro ≤ USD 1,50**, con el
   1,50 = *0,50 + hasta 1,00 atribuible al chat*. **Una slice de vidriera, panel o media se mide
-  contra 0,50 aunque el tenant esté en Negocio.** La fuente del número es **`COST.md`**
+  contra 0,50 aunque el tenant esté en Pro.** La fuente del número es **`COST.md`**
   (`cost-auditor`); ningún otro doc lo re-deriva.
 - **Abiertas al cerrar esta pasada (2026-08-28):** **S2.5** — el guard de IMEI de `packages/media`
   rechaza keys legítimas: una key content-addressed es hexadecimal y cae sola en `/\d{15}/`, o sea
@@ -532,8 +532,8 @@ Lo que hay que saber sin leer nada más:
   **T27**, `app-agent`, `doing`, 2026-08-28). Con la misma fila de `entitlements` en `false`,
   `hasEntitlement()` de `(billing)` contesta `flag_off` y `featureAccess()` de `(app)` contesta
   `plan` — en `main` (`b9a8e05`) el tipo `FeatureAccess` **ni siquiera tiene** el caso `flag_off`.
-  No es cosmética: `publish-listing.ts` traduce `plan` a *«Eso viene con el plan Negocio.»*, o sea
-  que un tenant que **paga** Negocio y al que un operador le apagó la feature a mano recibe una
+  No es cosmética: `publish-listing.ts` traduce `plan` a *«Eso viene con el plan Pro.»*, o sea
+  que un tenant que **paga** Pro y al que un operador le apagó la feature a mano recibe una
   invitación a comprar lo que ya tiene, y no hay nada que pueda hacer. Lo levantó `billing-agent`
   desde su columna y lo dejó **fijado en un test**, no comentado. **Corregido el 2026-08-28 y este índice
   decía lo contrario** (*"`app-agent` lo está arreglando y el arreglo está sin commitear"*): **T27 está `done`**

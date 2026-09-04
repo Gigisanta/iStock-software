@@ -68,7 +68,7 @@ async function BillingContent({ searchParams }: BillingPageProps) {
       <h1 className="mt-1 text-3xl font-semibold tracking-tight">Elegí tu plan</h1>
       <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-300">
         {paymentsEnabled
-          ? 'Te llevamos a Mercado Pago para completar la suscripción. Elegís el medio disponible allí y nosotros no recibimos datos de tarjeta.'
+          ? 'Te llevamos a Mercado Pago para completar la suscripción. Elegís el medio disponible allí y, una vez autorizada, MP debita el importe en pesos cada mes. Nosotros no recibimos datos de tarjeta.'
           : fx === null
             ? 'No pudimos actualizar el importe en pesos. Volvé a intentar en unos minutos.'
             : 'La prueba gratuita está activa. Los pagos están pausados por ahora y se habilitarán cuando configuremos Mercado Pago.'}
@@ -94,7 +94,7 @@ async function BillingContent({ searchParams }: BillingPageProps) {
                   <p className="mt-1 text-xs font-medium text-neutral-500 dark:text-neutral-400">
                     {amountArsCents === null
                       ? 'El importe en pesos se confirma al continuar'
-                      : `${formatArs(amountArsCents)} por mes hoy`}
+                      : `${formatArs(amountArsCents)} por mes al adherirte`}
                   </p>
                 </div>
                 <input type="hidden" name="plan" value={plan} />
@@ -126,10 +126,10 @@ async function BillingContent({ searchParams }: BillingPageProps) {
 
       <p className="mt-6 text-xs text-neutral-500 dark:text-neutral-400">
         {paymentsEnabled
-          ? 'Tu prueba de 14 días no se cobra automáticamente desde esta pantalla. El estado se confirma cuando Mercado Pago notifica la suscripción.'
+          ? 'Tu prueba de 14 días no se cobra desde esta pantalla. Después de autorizarla, Mercado Pago gestiona los débitos mensuales y nosotros actualizamos tu acceso con sus notificaciones.'
           : fx === null
             ? 'No iniciamos ningún cobro porque todavía no tenemos un tipo de cambio válido.'
-            : 'Tu prueba de 14 días no requiere tarjeta ni configura ningún cobro automático.'}
+            : 'Tu prueba de 14 días no requiere tarjeta ni configura ningún débito automático.'}
       </p>
     </main>
   );

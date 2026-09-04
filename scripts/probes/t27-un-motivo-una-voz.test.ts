@@ -5,8 +5,8 @@
  * T27 no es un bug de tipos: los dos resolvers compilaban y los dos devolvían un motivo válido.
  * Era un bug de **significado**. Con la misma fila de `entitlements` en `enabled = false`,
  * `hasEntitlement()` de `(billing)` contestaba `flag_off` y `featureAccess()` de `(app)` contestaba
- * `plan`; el copy del panel mapea `plan` a *«Eso viene con el plan Negocio.»*, así que un tenant
- * que **paga** Negocio y al que un operador le apagó la feature a mano recibía una invitación a
+ * `plan`; el copy del panel mapea `plan` a *«Eso viene con el plan Pro.»*, así que un tenant
+ * que **paga** Pro y al que un operador le apagó la feature a mano recibía una invitación a
  * comprar lo que ya tiene. El síntoma no aparece en ningún test de tipos y no rompe nada: sale por
  * pantalla, en castellano, y le miente al dueño.
  *
@@ -49,7 +49,7 @@ import { hasEntitlement } from '../../apps/web/app/(billing)/_lib/entitlements';
 import { denyReasonText } from '../../apps/web/app/(app)/_lib/listings/publish-listing';
 
 const CTX = { tenantId: '11111111-1111-4111-8111-111111111111', userId: 'u1' } as never;
-/** Negocio, o sea el plan que SÍ incluye la feature. Es la mitad que hacía al bug mentir. */
+/** Pro, o sea el plan que SÍ incluye la feature. Es la mitad que hacía al bug mentir. */
 const NEGOCIO = { plan: 'negocio', trialEndsAt: null } as never;
 const AHORA = new Date('2026-08-28T12:00:00.000Z');
 const FEATURE = 'reservations';
@@ -86,7 +86,7 @@ describe('T27 · el motivo llega al mostrador con su propio texto', () => {
   /** La aserción del bug, escrita como el bug: `flag_off` NO puede renderizar el texto del plan. */
   it('`flag_off` no manda a comprar lo que el negocio ya tiene', () => {
     const texto = denyReasonText('entitlement_required', { ok: false, reason: 'flag_off' });
-    expect(texto).not.toContain('plan Negocio');
+    expect(texto).not.toContain('plan Pro');
     // Y dice lo que sí pasó: alguien la apagó. El criterio del board, no una paráfrasis.
     expect(texto).toMatch(/apagad/i);
   });
@@ -97,7 +97,7 @@ describe('T27 · el motivo llega al mostrador con su propio texto', () => {
    */
   it('`plan` sigue siendo, textualmente, la invitación a contratar', () => {
     expect(denyReasonText('entitlement_required', { ok: false, reason: 'plan' })).toBe(
-      'Eso viene con el plan Negocio.',
+      'Eso viene con el plan Pro.',
     );
   });
 

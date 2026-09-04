@@ -72,12 +72,12 @@ máquina de estados, comisiones en AR y requisitos de cuenta.
   suscripciones vivas. Con inflación ARS eso es la diferencia entre un `PUT` y N `PUT`s.
   Además `billing_day` (1–28) **sólo existe con plan asociado** → todos cobran el mismo día del mes.
 - **Medios de pago reales en AR:** tarjeta de crédito, tarjeta de débito y **dinero disponible en
-  Mercado Pago**. El pagador **no necesita cuenta MP**. **NO hay débito automático por CBU ni DEBIN
-  ni transferencia recurrente** en esta API. Traducción para el ICP: lo más cercano a "no tarjeta"
-  es **dinero en cuenta de MP**, y hay que **habilitarlo explícitamente** vía `payment_methods_allowed`
-  (o no restringir nada). **Abierto (corregido tras review):** Rapipago / Pago Fácil / línea de crédito
-  aparecen en la doc oficial de Suscripciones (locale AR, disponibilidad AR+6 países) y **no verifiqué**
-  que no sirvan ciclo a ciclo — no los damos por descartados. Fallback humano si nada de esto sirve:
+  Mercado Pago**. El pagador **no necesita cuenta MP**. La página argentina enumera tarjeta de crédito,
+  débito y dinero disponible en Mercado Pago. La respuesta de la API también expone `Debin_transfer` y
+  `CVU`, pero eso no prueba que se puedan adherir durante el alta: el comportamiento recurrente de esos
+  medios, Rapipago, Pago Fácil y línea de crédito queda **UNVERIFIED** hasta probarlo con una cuenta de
+  vendedor argentina. Traducción para el ICP: el camino conocido sin tarjeta es dinero en cuenta de MP;
+  no restringimos medios de memoria y no prometemos CBU/DEBIN sin esa prueba.
   cobro manual fuera de MP.
 - **Trial 14 días: soporte nativo.** `auto_recurring.free_trial = { frequency: 14, frequency_type: "days" }`
   **en el plan** (`POST /preapproval_plan`). No hace falta simularlo con `start_date`
@@ -90,7 +90,7 @@ máquina de estados, comisiones en AR y requisitos de cuenta.
   Responder **200/201 en ≤22 s** o MP reintenta **cada 15 min** (intervalo se extiende tras el 3er intento).
 - **Comisión AR de suscripciones (oficial, MP AR):** **6,99% + IVA al instante**, 4,49% + IVA a 10 días,
   3,39% + IVA a 18 días, 1,49% + IVA a 35 días. Con IVA 21% ⇒ **~8,46% efectivo** al instante.
-  Sobre USD 19 son ~**USD 1,61/mes**; sobre USD 35, ~**USD 2,96/mes**.
+  Sobre USD 35 son ~**USD 2,96/mes**; sobre USD 70, ~**USD 5,92/mes**.
 - **Puente MP→tenant + campos corregidos tras el review:** `external_reference` es **request param de
   `POST /preapproval`** (no del plan) → alta siempre server-side y redirect al `init_point` **de la
   suscripción** (`?preapproval_id=`), **nunca** al del plan (`?preapproval_plan_id=`), que es idéntico
@@ -162,7 +162,7 @@ no-code emite o no notificaciones propias queda en `UNVERIFIED`.)*
   pagador elige medio de pago en el `init_point` de MP. Este es el camino **sin tokenizar tarjeta en
   nuestro front** — el más barato de construir y el que expone dinero en cuenta de MP.
 
-**Recomendación para iStock (2 planes fijos):** **plan asociado**, uno por plan (`base`, `negocio`),
+**Recomendación futura para iStock (2 planes fijos):** **plan asociado**, uno por plan (`base`, `negocio`/Pro),
 `frequency: 1`, `frequency_type: "months"`, `currency_id: "ARS"`, sin `repetitions`.
 Motivos: (a) editar el plan sincroniza el monto en todas las suscripciones vivas — crítico porque
 nuestro precio es USD pero **MP cobra un `transaction_amount` fijo en ARS**, o sea que el precio ARS hay
@@ -177,8 +177,12 @@ dinero en cuenta), el camino es **redirigir al `init_point`** en vez de tokeniza
 > parece el camino de auto-suscripción del pagador. **Verificar con una prueba real antes de decidir el
 > flujo de signup.**
 
-**MP no convierte USD→ARS.** `currency_id: "ARS"` y monto fijo. La conversión USD 19 / USD 35 → ARS es
-responsabilidad nuestra, igual que el TC del tenant.
+**MP no convierte USD→ARS.** `currency_id: "ARS"` y monto fijo. La conversión USD 35 / USD 70 → ARS es
+responsabilidad nuestra, igual que el TC del tenant. En la implementación actual, el servidor toma la
+última cotización BCRA persistida, redondea hacia arriba al millar y manda ese ARS al `preapproval`.
+MP debita automáticamente el ARS autorizado en los ciclos siguientes; no recalcula el dólar por su
+cuenta. Reajustar el importe requiere una actualización explícita y una prueba de cuenta antes de
+activarlo para suscripciones vivas.
 
 ### 3. Medios de pago reales
 
@@ -408,8 +412,8 @@ Si somos Responsable Inscripto, el IVA de la comisión es crédito fiscal y el c
 ~6,99% / ~4,49%; para monotributo es costo puro.
 
 **Decisión de plata:** pasar de "al instante" a "en 10 días" ahorra **~3,03 puntos** de comisión
-(≈ USD 0,58/mes por cliente base, USD 1,06/mes por cliente negocio). Con 50 clientes mixtos son del
-orden de **USD 40/mes** — plata real para un SaaS de USD 19. Un SaaS mensual no necesita el dinero
+(≈ USD 1,06/mes por cliente Base, USD 2,12/mes por cliente Pro). Con 50 clientes mixtos son del
+orden de **USD 79/mes** — plata real para un SaaS con planes de USD 35 y USD 70. Un SaaS mensual no necesita el dinero
 al instante: **default recomendado = 10 días**.
 **Dónde se configura: `UNVERIFIED`.** Existe la FAQ oficial *"¿Cómo elijo o modifico los costos por
 cobro?"* (`mercadopago.com.ar/ayuda/como-elegir-modificar-costos-cobro_16181`, URL real, título
@@ -594,19 +598,19 @@ corregido arriba.
   at-least-once, reintenta cada 15 min sin tope publicado y no deduplica.
 - ADR: **Dunning propio.** MP cancela recién a las 3 cuotas rechazadas (~3 meses). Nosotros degradamos a
   read-only al 1er ciclo `processed` con pago rechazado, con aviso al reseller.
-- ADR: **Precio ARS = derivado, no hardcodeado.** Rutina de reajuste que hace `PUT /preapproval_plan/{id}`
+- ADR: **Precio ARS = derivado, no hardcodeado.** Rutina futura de reajuste que hace `PUT /preapproval_plan/{id}`
   cuando el USD se despega. Guardar en `docs/DECISIONS.md` la cadencia (mensual/trimestral) y quién la aprueba.
 
 **COST**
 - Comisión MP: **6,99% + IVA al instante** vs **4,49% + IVA a 10 días**. Recomendación firme:
   **configurar acreditación a 10 días** en el panel de MP antes de cobrar el primer peso.
-  Sobre USD 19 la comisión baja de ~USD 1,61 a ~USD 1,03 por cliente/mes (**-36%**).
+  Sobre USD 35 la comisión baja de ~USD 2,96 a ~USD 1,90 por cliente/mes (**-36%**).
 - Costo de infra adicional: 1 ruta serverless de webhook + N filas en `billing_events`. Con reintentos
   cada 15 min sobre un endpoint caído, el peor caso son ~96 invocaciones/día por evento colgado →
   el `cost-auditor` debería exigir que el webhook responda 200 **siempre que la firma valide**, incluso
   si el procesamiento posterior falla, para no invitar a MP a martillarnos.
-- **Piso de costo variable** por cliente pagador: ~USD 1,03/mes (base, 10 días) a ~USD 2,96/mes
-  (negocio, al instante) de comisión. Cálculo: 5,43% y 8,46% efectivos sobre USD 19 / USD 35.
+- **Piso de costo variable** por cliente pagador: ~USD 1,90/mes (Base, 10 días) a ~USD 5,92/mes
+  (Pro, al instante) de comisión. Cálculo: 5,43% y 8,46% efectivos sobre USD 35 / USD 70.
 - ⚠️ **Corregido tras review:** ya **no** afirmamos "cero costo fijo de MP" — la cita en la que se
   apoyaba no existe en la página (ver `## UNVERIFIED`). El `cost-auditor` debe **verificar con la cuenta
   logueada** si hay abono fijo antes de firmar el COST de billing.

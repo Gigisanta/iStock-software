@@ -472,7 +472,7 @@ describe('transitionUnit · una unidad RESERVADA (el bug de S6)', () => {
 describe('transitionUnit · el entitlement se lee de verdad', () => {
   /**
    * El default `false` mentía en los dos sentidos. Este es el sentido caro: `available → reserved`
-   * con el tenant habilitado se rechazaba con "Eso viene con el plan Negocio" para alguien que lo
+   * con el tenant habilitado se rechazaba con "Eso viene con el plan Pro" para alguien que lo
    * tiene contratado.
    */
   it('con el entitlement prendido, available → reserved no rebota por entitlement', async () => {
@@ -526,7 +526,7 @@ describe('transitionUnit · el entitlement se lee de verdad', () => {
  * `denyReasonText()` es puro, así que se prueba directo y no a través de una transición. Lo que se
  * fija acá es el **texto**, no el enum: el defecto que cerró esta slice (2026-08-28, lo reportó
  * `billing-agent`) era que la fila apagada llegaba como `plan` y salía como *"Eso viene con el plan
- * Negocio."* a un tenant que tiene el plan Negocio. Un test sobre el `reason` no lo hubiera visto —
+ * Pro."* a un tenant que tiene el plan Pro. Un test sobre el `reason` no lo hubiera visto —
  * el `reason` era coherente con su propio mapeo; el que mentía era el string.
  *
  * Por eso cada caso afirma el string exacto **y** que no es el del plan. El día que alguien vuelva a
@@ -534,7 +534,7 @@ describe('transitionUnit · el entitlement se lee de verdad', () => {
  * donde se ve el bug.
  */
 describe('denyReasonText · el copy del entitlement', () => {
-  const PLAN_TEXT = 'Eso viene con el plan Negocio.';
+  const PLAN_TEXT = 'Eso viene con el plan Pro.';
 
   it('sin el plan contratado: el texto del plan, el único caso donde es cierto', () => {
     expect(denyReasonText('entitlement_required', { ok: false, reason: 'plan' })).toBe(PLAN_TEXT);
@@ -546,7 +546,7 @@ describe('denyReasonText · el copy del entitlement', () => {
     expect(text).toBe(
       'Se te terminó la prueba, así que las reservas quedaron apagadas. Escribinos y lo vemos.',
     );
-    expect(text).not.toContain('plan Negocio');
+    expect(text).not.toContain('plan Pro');
   });
 
   it('apagada a mano: dice que está apagada en su cuenta y a quién escribirle', () => {
@@ -566,7 +566,7 @@ describe('denyReasonText · el copy del entitlement', () => {
     const text = denyReasonText('entitlement_required', { ok: false, reason: 'flag_off' });
 
     expect(text).not.toBe(PLAN_TEXT);
-    expect(text).not.toContain('plan Negocio');
+    expect(text).not.toContain('plan Pro');
   });
 
   /** Los tres motivos dan tres textos distintos: ninguno se aplasta contra otro. */

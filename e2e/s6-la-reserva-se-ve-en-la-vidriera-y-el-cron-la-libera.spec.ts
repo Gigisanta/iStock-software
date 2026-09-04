@@ -552,7 +552,7 @@ test('cuando la reserva vence el equipo vuelve a estar disponible en Postgres y 
   ).toBe(BADGE_DISPONIBLE);
 
   // La reserva no se borra: queda como historia, cerrada. Un `delete` haría imposible responder
-  // "¿cuántas reservas se caen?", que es la pregunta que justifica el plan Negocio.
+  // "¿cuántas reservas se caen?", que es la pregunta que justifica el plan Pro.
   const filas = await reservationsByListing(listingId);
   expect(filas.length, 'la reserva desapareció de la base en vez de quedar cerrada').toBe(1);
   expect(filas[0]?.status, 'la reserva vencida no quedó marcada como vencida').toBe('expired');

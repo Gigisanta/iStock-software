@@ -239,8 +239,8 @@ describe('degradación en el orden documentado', () => {
 /**
  * ## El primer escalón de la escalera son los medios de pago, y está medido
  *
- * La ficha del plan Negocio —3 puntos de retiro, 6 medios de pago, descripción al tope— es la que
- * el plan de USD 35 **vende**, no una punta rara de la distribución. Con historial cargado y una
+ * La ficha del plan Pro —3 puntos de retiro, 6 medios de pago, descripción al tope— es la que
+ * el plan de USD 70 **vende**, no una punta rara de la distribución. Con historial cargado y una
  * ronda de tool, apretaba tanto contra los 1200 que la escalera se comía el historial entero y un
  * chunk, **en silencio**: el prompt seguía entrando, el costo no se movía, y lo único que bajaba
  * era la calidad de la respuesta.
@@ -262,7 +262,7 @@ describe('la escalera empieza por los medios de pago, no por el historial', () =
   /**
    * Un solo chunk a propósito: con los tres, esta ficha **ya llega al techo gastando los 6 medios
    * de pago y un turno de historial**, así que no habría "primer escalón" que observar. Que ese sea
-   * el estado normal de la ficha que el plan Negocio vende es justamente el hallazgo.
+   * el estado normal de la ficha que el plan Pro vende es justamente el hallazgo.
    */
   const negocio = (): ChatContextInput =>
     input({ listing: businessPlanListingFixture(), turns: turns(4, 80), chunks: CHUNKS.slice(0, 1) });

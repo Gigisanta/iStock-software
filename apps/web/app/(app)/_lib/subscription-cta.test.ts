@@ -40,7 +40,7 @@ describe('trialSubscriptionCta', () => {
       },
       {
         tier: 'negocio',
-        label: 'Suscribite al plan Negocio',
+        label: 'Suscribite al plan Pro',
         href: '/billing/suscribirse?plan=negocio',
       },
     ]);

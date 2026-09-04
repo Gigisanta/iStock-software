@@ -400,7 +400,7 @@ describe('el nombre del equipo es texto no confiable (hallazgo de adversary-revi
  * `context.ts` degradaba con la vista **ya armada**, así que lo único que podía tirar era lo que
  * estaba afuera de la ficha: historial, chunks, descripción. Los medios de pago viajaban adentro
  * del bloque y eran intocables por construcción, no por decisión — y son 43 tokens en la ficha del
- * plan Negocio, o sea **dos turnos de historial**.
+ * plan Pro, o sea **dos turnos de historial**.
  *
  * Esta función es la primitiva que le permite a la escalera elegir. Vive acá y no en `context.ts`
  * porque la proyección de la ficha al prompt es de este archivo: el mensaje de `AI_BUDGET_EXCEEDED`
@@ -436,7 +436,7 @@ describe('recortar medios de pago sin tocar el resto de la ficha', () => {
     expect(recortada.description).toBe(view.description);
   });
 
-  it('y el recorte se PAGA: en la ficha del plan Negocio, los 6 medios valen tokens de verdad', () => {
+  it('y el recorte se PAGA: en la ficha del plan Pro, los 6 medios valen tokens de verdad', () => {
     const view = listingPromptView(businessPlanListingFixture());
     const conTodos = countTokens(renderListingBlock(view));
     const sinNinguno = countTokens(renderListingBlock(withPaymentMethodsKept(view, 0)));

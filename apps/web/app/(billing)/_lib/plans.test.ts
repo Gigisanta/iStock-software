@@ -80,12 +80,14 @@ describe('catálogo de planes', () => {
     expect(planLimit('negocio', FEATURE_CHATBOT)).toBeNull();
   });
 
-  it('precios de lista en centavos enteros: USD 19 y USD 35, trial en cero', () => {
+  it('precios de lista en centavos enteros: USD 35 y USD 70, trial en cero', () => {
     expect(PLAN_CATALOG.trial.monthlyUsdCents).toBe(0);
-    expect(PLAN_CATALOG.base.monthlyUsdCents).toBe(1900);
-    expect(PLAN_CATALOG.negocio.monthlyUsdCents).toBe(3500);
-    expect(formatMonthlyUsd('base')).toBe('USD 19');
-    expect(formatMonthlyUsd('negocio')).toBe('USD 35');
+    expect(PLAN_CATALOG.base.monthlyUsdCents).toBe(3500);
+    expect(PLAN_CATALOG.negocio.monthlyUsdCents).toBe(7000);
+    expect(PLAN_CATALOG.base.label).toBe('Base');
+    expect(PLAN_CATALOG.negocio.label).toBe('Pro');
+    expect(formatMonthlyUsd('base')).toBe('USD 35');
+    expect(formatMonthlyUsd('negocio')).toBe('USD 70');
     expect(formatMonthlyUsd('trial')).toBe('USD 0');
   });
 
@@ -117,7 +119,7 @@ describe('catálogo de planes', () => {
  *
  * ── Qué mide exactamente, y qué NO ───────────────────────────────────────────────────────────
  * Ahora que el resolver deriva de este catálogo, los dos lados de la comparación salen del mismo
- * `PLAN_CATALOG` y **el contenido se cancela**: esto NO afirma que Negocio traiga chatbot. Está
+ * `PLAN_CATALOG` y **el contenido se cancela**: esto NO afirma que Pro traiga chatbot. Está
  * medido — sacarle `chatbot` a `negocio` en `plans.ts` pone rojos los cuatro tests de contenido
  * (arriba, y `lo que se vende` en `entitlements.test.ts`) y deja este **verde**. Lo que este
  * test afirma es lo otro: que la derivación siga existiendo, que el resolver no vuelva a tener

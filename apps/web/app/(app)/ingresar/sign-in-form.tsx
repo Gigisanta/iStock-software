@@ -73,7 +73,7 @@ export function SignInForm({
       <input type="hidden" name="plan" value={state.selectedPlan ?? ''} />
       {state.selectedPlan === null ? null : (
         <p className="rounded-xl border border-neutral-200 bg-neutral-50 px-4 py-3 text-sm dark:border-neutral-800 dark:bg-neutral-900">
-          Elegiste el plan {state.selectedPlan === 'base' ? 'Base' : 'Negocio'}. Después de entrar vas
+          Elegiste el plan {state.selectedPlan === 'base' ? 'Base' : 'Pro'}. Después de entrar vas
           a poder suscribirte.
         </p>
       )}
