@@ -42,6 +42,7 @@ const CLEAN_CSS = `
 // The seeded tenant is called "iStock Demo"; the ad shows a believable reseller instead.
 const BRAND = [
   ['iStock Demo — Alto Valle', 'Alto Valle Celulares'],
+  ['iStock Demo, Alto Valle', 'Alto Valle Celulares'],
   ['iStock Demo', 'Alto Valle Celulares'],
   ['demo.maat.work', 'istock.maat.work'],
 ];
