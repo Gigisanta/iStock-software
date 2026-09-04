@@ -328,15 +328,38 @@ La misma migración trajo `listings.acquisition_channel` y el
 compara `created_at` y no el hash (`CLAUDE.md` §3).
 
 ## Jobs
-**Vercel Cron** para expirar reservas — la disyuntiva *"o Inngest free"* la cerró S6 y está en
-**ADR-017**. **Sin worker 24/7.** Idempotente: correr el cron dos veces no rompe nada, y eso **es**
-la política de reintento, porque Vercel **no reintenta** una corrida fallida.
+**Inngest Free** es el scheduler decidido para expirar reservas (**ADR-017**). No hay worker 24/7.
+El trigger conserva `*/5 * * * *`: la frecuencia es parte del contrato de reservas de 30–120 minutos,
+no una configuración de Vercel. El barrido sigue siendo idempotente; Inngest puede reintentar, pero
+un reintento no reemplaza los locks, el límite por lote ni las garantías del motor.
 
-Uno solo hoy: `GET /api/cron/expire-reservations`, `*/5 * * * *`, declarado en `vercel.json` —el
-único contenido de ese archivo, ver ADR-016 y ADR-017—. Dos cosas que no son obvias y tienen gate
-propio (`accept-s6.sh` V1/V2): **un 3xx apaga el job en silencio** (la corrida figura completa) y
-**sin `CRON_SECRET` válido el handler no toca Postgres**, que es una afirmación sobre el orden y no
-sobre el status code.
+El contrato de integración es un endpoint global `/api/inngest` servido por `serve` y una función de
+mantenimiento con el trigger `cron('*/5 * * * *')`. La implementación local presente incluye
+`apps/web/app/api/inngest/route.ts`, que exporta `GET`/`POST`/`PUT` con `serve` y
+`maxDuration = 300`, y `apps/web/inngest/functions.ts`, que declara la función
+`expire-reservations` y conecta el mantenimiento compartido. La probe del LEAD es
+`scripts/probes/s6-inngest-reachability.test.ts` y verifica route, exports, trigger, ausencia de
+`crons` en `vercel.json` y passthrough de `proxy.ts`; esto es evidencia del código local, no de la
+cuenta, la sincronización ni el deployment.
+
+Production requiere `INNGEST_SIGNING_KEY` para validar las llamadas entrantes y
+`INNGEST_EVENT_KEY` para la comunicación de la aplicación; son server-only. Si la integración usa
+un origen propio, `INNGEST_SERVE_ORIGIN` también debe quedar configurado según el despliegue. La
+cuenta/app de Inngest, la sincronización de funciones y esas variables de Production son
+**UNVERIFIED** hasta comprobarlas fuera del repo.
+
+`GET /api/cron/expire-reservations` permanece como puerta HTTP manual y sigue exigiendo
+`CRON_SECRET` antes de tocar Postgres. No es el transporte programado de Inngest. La sonda de
+fail-closed (`scripts/probes/s6-cron-fail-closed.test.ts`) continúa siendo parte de V2.
+
+`vercel.json` ya no declara `crons`; en el árbol de trabajo inspeccionado conserva sólo `$schema`.
+Eso elimina la incompatibilidad de frecuencia con Hobby, pero no prueba un deployment ni la
+sincronización externa. Inngest Hobby publica 50.000 ejecuciones mensuales, 500.000 eventos y cinco
+steps concurrentes; superar la cuota pausa la ejecución. `*/5` implica 8.640 ocurrencias en 30 días,
+y cada `step.run()` cuenta aparte: son proyecciones, no una medición del dashboard. Ver
+[`docs/research/inngest-free-scheduled-functions.md`](research/inngest-free-scheduled-functions.md),
+[`cron()`](https://www.inngest.com/docs/reference/typescript/functions/triggers) y
+[`Pricing`](https://www.inngest.com/pricing).
 
 ## Límites de confianza
 | desde | hacia | qué puede cruzar |
@@ -394,7 +417,7 @@ sobre el status code.
 | Modelo de integración con MP | **B3** · ADR-008 | 4 experimentos de sandbox |
 | Región de funciones (`iad1` vs `gru1`) | ADR-010 | medir latencia real contra el Alto Valle |
 | ¿`revalidateTag` scopeado por dominio? | primer deploy con wildcard | test de 20 min, **antes de S3** |
-| Costo de Neon Postgres/Auth + Vercel Pro | **producción** | medir con el primer tenant real |
+| Costo de Neon Postgres/Auth + Inngest + plan Vercel | **producción** | medir con el primer tenant real y verificar cuota; la elegibilidad comercial de Hobby sigue **UNVERIFIED** |
 | Supuestos de tráfico de `COST.md` | primera vidriera real | medir, no estimar |
 
 Research cerrado: `[R1]` `[R2]` `[R3]` `[R5]` `[R6]` `[R7]` PASS · **`[R4]` PARCIAL** (regla 3).

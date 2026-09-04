@@ -45,7 +45,7 @@ cierra entre comprador y reseller por WhatsApp.
 | Fotos | `packages/media/src/` | Pipeline con `sharp`; driver local para desarrollo y adapter R2 para producción, con variantes públicas y master privado. |
 | Chatbot | `packages/ai/src/` | Paquete server-only con prompts, tools, handoff, límites de contexto y evals. La ruta web `/api/chat` todavía no está presente en este checkout. |
 | Suscripciones | `apps/web/app/(billing)/` | Código de planes, entitlements, Mercado Pago Subscriptions y webhook idempotente; la conexión productiva requiere credenciales externas. |
-| Expiración de reservas | `vercel.json` + `apps/web/app/api/cron/expire-reservations/` | Declaración de Vercel Cron cada 5 minutos y handler protegido por `CRON_SECRET`. La publicación efectiva en Vercel no fue verificada. |
+| Expiración de reservas | `apps/web/inngest/` + `apps/web/app/api/inngest/` + puerta manual `apps/web/app/api/cron/expire-reservations/` | Inngest Free agenda el mantenimiento cada 5 minutos; el endpoint manual conserva `CRON_SECRET`. Cuenta, claves, sincronización y deployment siguen pendientes de verificación operativa. |
 
 ## Arquitectura
 
@@ -91,7 +91,7 @@ Vercel desplegada todavía no está verificado.
 | Media | `sharp`, Cloudflare R2 + CDN; filesystem local para desarrollo |
 | IA | Vercel AI SDK en el diseño, providers configurados por environment y fallback; implementación aislada en `packages/ai` |
 | Billing | Mercado Pago Subscriptions, con driver mock local |
-| Jobs | Vercel Cron; no hay worker 24/7 |
+| Jobs | Inngest Free para la agenda cada 5 minutos; no hay worker 24/7 |
 | Calidad | Vitest, Playwright, typecheck de TypeScript y gates estáticos propios |
 | Tooling | Node.js ≥22, pnpm 10.34.5 |
 

@@ -1,7 +1,10 @@
 # Auditoría de preparación para producción
 
+**Qué es:** auditoría de evidencia local y bloqueos externos para cobrar en producción.
+**Para quién:** LEAD y quienes destraban credenciales, cuentas y despliegue.
+**Cuándo se actualiza:** después de cada preflight, gate de aceptación o cambio de proveedor.
 **Fecha:** 2026-09-04
-**Estado:** localmente verificable; dominio wildcard operativo; producción pendiente de R2, despliegue y plan Vercel
+**Estado:** implementación local de Inngest presente y aceptada; cuenta, claves, sincronización, despliegue del HEAD y ejecución real pendientes de verificación
 **Workflow:** diagnóstico profundo → correcciones de catálogo, vidriera, UX y billing → gates → preflight
 
 ## Resultado ejecutivo
@@ -22,12 +25,15 @@ los contratos S11 de roles y S12 de onboarding cobrable (cuenta nueva → negoci
 publicado → link público), además del acceso directo a suscripción sin sesión y la propagación del
 nombre y precio publicado del panel a la vidriera pública. La duración configurable de reserva se
 validó también en una corrida enfocada de S12. El preflight real todavía termina en **FAIL**: el
-equipo de Vercel sigue en Hobby, faltan las dos credenciales de R2 y el alias de producción todavía
-sirve un build anterior. Mercado Pago ya está presente en Production, pero el checkout corregido no
-está live y el cobro real B3 todavía no fue verificado. El wildcard `*.maat.work` ahora tiene DNS,
-delegación ACME y certificado administrado activos; por lo tanto el bloqueo restante es de despliegue
-y credenciales, no de resolución del link. No corresponde afirmar que hoy se puede cobrar hasta
-desplegar el HEAD y cerrar esos bloqueos.
+equipo de Vercel sigue en Hobby, faltan `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`,
+`INNGEST_SIGNING_KEY` e `INNGEST_EVENT_KEY`, y el alias de producción todavía sirve un build
+anterior. `vercel.json` ya no declara Vercel Cron: la agenda local está en Inngest y el wiring
+estático pasa S6 V1–V10. Eso prueba el código local, no la cuenta, la sincronización, las claves,
+el despliegue del HEAD ni una ejecución firmada real. Mercado Pago ya está presente en Production,
+pero el checkout corregido no está live y el cobro real B3 todavía no fue verificado. El wildcard
+`*.maat.work` tiene DNS, delegación ACME y certificado administrado activos; el bloqueo es de plan,
+credenciales, sincronización y despliegue, no de resolución del link. No corresponde afirmar que hoy
+se puede cobrar.
 
 ## Última evidencia ejecutada
 
@@ -59,10 +65,14 @@ desplegar el HEAD y cerrar esos bloqueos.
 - `E2E_PORT=3144 E2E_ALLOW_PARTIAL=1 pnpm e2e e2e/s12-onboarding-primer-equipo-publicado.spec.ts`: PASS;
   5/5 tests. Además del recorrido de onboarding, edita la duración inicial de reserva, vuelve a Stock
   y comprueba que la preferencia queda seleccionada.
-- `E2E_PORT=3124 bash scripts/accept-s6.sh`: PASS; V1–V10, incluido el barrido autenticado, la
+- `E2E_PORT=3160 bash scripts/accept-s6.sh`: PASS; V1–V10, incluido el barrido autenticado, la
   liberación de una reserva vencida y la medición de que la invalidación sólo regenera las páginas
   afectadas. La primera corrida había detectado un falso rojo de la probe por BCRA no aislado; la
   probe quedó corregida y la aceptación se reejecutó completa.
+- `vercel.json` + `apps/web/inngest/functions.ts` + `apps/web/app/api/inngest/route.ts`: PASS local;
+  no hay `crons` en Vercel, Inngest declara `expire-reservations` cada 5 minutos y el endpoint
+  estático usa `serve` con `GET`/`POST`/`PUT` y `maxDuration = 300`. Esto no verifica cuenta,
+  sincronización, claves, deployment ni ejecución real.
 - La aceptación puntual posterior al ajuste visual suma 7/7 tests de marketing, incluido el límite
   de dos líneas del H1 en desktop, y se ejecutó sobre un build fresco.
 - `bash scripts/accept-s9.sh`: PASS; la lista para estados filtra por tenant y `published_at`, no
@@ -75,8 +85,9 @@ desplegar el HEAD y cerrar esos bloqueos.
 - `bash scripts/guard-artifacts.sh --harness`: PASS; 14 agents, 10 skills, 4 commands y 12 docs.
 - `git diff --check`: PASS.
 - `pnpm audit --audit-level=high`: PASS; `No known vulnerabilities found`.
-- `bash scripts/preflight-vercel-production.sh`: **FAIL** por los controles externos detallados
-  abajo.
+- `bash scripts/preflight-vercel-production.sh`: **FAIL** por Hobby, cuatro claves ausentes, la
+  build pública vieja y el endpoint público de Inngest viejo; el detalle está abajo. Los PASS de
+  DNS y de historial de deployment son históricos y no prueban que el HEAD esté desplegado.
 
 ## Hallazgos y correcciones
 
@@ -204,8 +215,20 @@ desplegar el HEAD y cerrar esos bloqueos.
   y [obtener pago](https://www.mercadopago.com.ar/developers/es/reference/online-payments/subscriptions/get-payment/get).
 - `MP_ACCESS_TOKEN` y `MP_WEBHOOK_SECRET` ya existen en las variables Production de Vercel sin
   exponer sus valores. La corrección que agrega `notification_url` al alta de la suscripción fue
-  introducida en `c16b087`, incluido en el HEAD actual;
-  sigue pendiente de un despliegue porque el plan Hobby rechaza el cron.
+  introducida en `c16b087`, incluido en el HEAD actual; sigue pendiente de que el HEAD llegue al
+  deployment público. El fallo observado en el billing anónimo pertenece a la build pública vieja.
+
+### Scheduler de reservas
+
+- El código local agenda `expire-reservations` en Inngest cada 5 minutos. `vercel.json` sólo contiene
+  `$schema`, sin `crons`: Vercel no es el scheduler de reservas.
+- La ruta local `/api/inngest` está cableada con `serve`, expone `GET`/`POST`/`PUT` y fija
+  `maxDuration = 300`. La aceptación S6 V1–V10 pasó con `E2E_PORT=3160`, incluida la probe de
+  reachability a través de `proxy.ts`; es PASS de código local.
+- El preflight encontró el endpoint público de Inngest en `404` y faltan las claves de Production.
+  Eso indica que la build pública vigente es vieja; no prueba que el wiring del HEAD esté sincronizado
+  con la cuenta Inngest. La sincronización, el endpoint del HEAD, las claves y una ejecución programada
+  firmada son `UNVERIFIED`.
 
 ### Configuración operativa
 
@@ -235,38 +258,42 @@ desplegar el HEAD y cerrar esos bloqueos.
 |---|---|---|
 | Sesión Vercel | PASS | usuario esperado disponible |
 | Plan del equipo | **FAIL: Hobby** | iStock comercial requiere Pro |
-| Variables Production | **FAIL: faltan `R2_ACCESS_KEY_ID` y `R2_SECRET_ACCESS_KEY`; MP presente** | las fotos reales siguen cerradas; el checkout MP corregido aún no está live |
-| Cron de reservas | PASS | hay una ruta cada 5 minutos declarada; el plan Hobby bloquea el deploy y requiere Vercel Pro |
+| Variables Production | **FAIL: faltan `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `INNGEST_SIGNING_KEY` e `INNGEST_EVENT_KEY`; MP presente** | fotos reales y callback firmado de Inngest siguen cerrados; el checkout MP corregido aún no está live |
+| `vercel.json` sin crons | PASS | Vercel no agenda reservas; el schedule vive en Inngest |
+| Integración Inngest estática | PASS | el código local declara route, `serve`, timeout y `*/5`; no verifica cuenta ni sincronización |
 | `istock.maat.work` | PASS | el apex llega a Vercel |
 | `demo.maat.work` / wildcard | **PASS: CNAME, delegación ACME, certificado y HTTPS 200** | los links wildcard ya llegan a Vercel; falta comprobar un tenant real luego del deploy |
-| Deployment existente | PASS | existe historial, pero no implica que sea este HEAD |
+| Deployment histórico | PASS | existe historial, pero no implica que el HEAD esté desplegado ni sincronizado |
 | Landing pública actual | **FAIL: sirve H1 y utilidades verdes de una versión anterior** | hay que desplegar el HEAD monocromático |
 | Suscripción anónima Base | **FAIL: el deployment no conserva `plan=base` al derivar a login** | validar el flujo en el deployment actualizado |
+| Endpoint público de Inngest | **FAIL: respondió 404 en el deployment vigente** | sincronización, deploy del HEAD y ejecución firmada real quedan sin verificar |
 
 El comando es sólo lectura y no imprime secretos: `bash scripts/preflight-vercel-production.sh`.
 
 ## Bloqueos externos antes de cobrar
 
-1. Mantener el cron `*/5`: el plan Hobby bloquea el deploy por esa frecuencia. Elegir cómo salir de
-   Hobby: pasar el equipo Vercel a Pro cuando haya un cliente, o reabrir formalmente la ADR de jobs
-   con research antes de cambiar de proveedor. No se puede desplegar con un cron diario: rompería la
-   expiración de reservas.
+1. Salir de Hobby para el uso comercial: pasar el equipo Vercel a Pro. La frecuencia de reservas ya
+   no es un cron de Vercel; no se reabre la decisión de jobs.
 2. Crear las credenciales S3 de alcance exclusivo para `istock-media` y `istock-originals` y cargarlas
    en Production. R2 ya tiene `img.maat.work` activo con SSL y `r2.dev` deshabilitado en ambos buckets.
-3. Configurar en Production el proveedor de autenticación/Neon, R2 privado para originales y R2/CDN
+3. Cargar `INNGEST_SIGNING_KEY` e `INNGEST_EVENT_KEY` en Production y sincronizar la función con la
+   cuenta Inngest. Luego verificar el endpoint público del HEAD (401 sin firma) y una ejecución
+   programada firmada; hasta entonces son `UNVERIFIED`.
+4. Configurar en Production el proveedor de autenticación/Neon, R2 privado para originales y R2/CDN
    para variantes públicas, junto con `MEDIA_DRIVER`, las credenciales S3 server-only y
    `NEXT_PUBLIC_MEDIA_BASE_URL`. El preflight confirma la presencia de variables, no la validez de
    sus credenciales.
-4. Confirmar que la aplicación y el vendedor de Mercado Pago correspondan a Production, mantener
+5. Confirmar que la aplicación y el vendedor de Mercado Pago correspondan a Production, mantener
    `BILLING_DRIVER=mercadopago`, y registrar el webhook público
    `/billing/webhooks/mercadopago`.
-5. Ejecutar B3 con una cuenta compradora de prueba para ambos planes: abrir checkout, confirmar el
+6. Ejecutar B3 con una cuenta compradora de prueba para ambos planes: abrir checkout, confirmar el
    importe ARS, terminar la adhesión, recibir `subscription_preapproval`/pago autorizado, repetir
    el mismo webhook, simular rechazo/reintentos y confirmar que el tenant queda habilitado o
    degradado según el estado real. La prueba debe verificar también el medio elegido; la presencia
    de un valor en el enum de la API no prueba que pueda adherirse en esta cuenta.
-6. Desplegar el HEAD por el pipeline normal, repetir el preflight, los smoke tests HTTPS y la E2E
-   con dominio real. No activar cobros en Production antes de ese paso.
+7. Desplegar el HEAD por el pipeline normal, repetir el preflight, comprobar landing, billing anónimo
+   y endpoint Inngest sobre el deployment nuevo, y ejecutar la E2E con dominio real. No activar
+   cobros en Production antes de ese paso.
 
 ## Riesgos que permanecen declarados
 
@@ -291,18 +318,23 @@ pnpm build
 pnpm --filter @istock/e2e typecheck
 E2E_PORT=3145 pnpm e2e
 E2E_PORT=3144 E2E_ALLOW_PARTIAL=1 pnpm e2e e2e/s12-onboarding-primer-equipo-publicado.spec.ts
+E2E_PORT=3160 bash scripts/accept-s6.sh
 bash scripts/guard-artifacts.sh --harness
 pnpm audit --audit-level=high
 bash scripts/preflight-vercel-production.sh
 ```
 
+Los comandos locales certifican el código y sus probes; no certifican cuenta, sincronización,
+claves, deployment ni ejecución real. El preflight debe repetirse después de destrabar esos puntos.
+
 ## Costo y datos
 
 - Migraciones: 32 filas globales de catálogo, la tabla tenant-scoped de intents de checkout y la
   preferencia tenant-scoped de reservas, con RLS, FORCE RLS, policies de owner y grants explícitos.
-- FX: una lectura del valor persistido por contratación; el cron de expiración corre cada 5 minutos,
+- FX: una lectura del valor persistido por contratación; la función de Inngest corre cada 5 minutos,
   pero la cotización BCRA se cachea por día y sólo escribe/invalida tenants cuyo valor cambió. Las
-  solicitudes concurrentes reutilizan la misma promesa por instancia.
+  solicitudes concurrentes reutilizan la misma promesa por instancia. El costo real de la cuenta
+  Inngest, sus reintentos y la ejecución en Production es `UNVERIFIED`.
 - Checkout: una lectura de FX, un intent transaccional con lock y una llamada a Mercado Pago por
   intento explícito del dueño; una pestaña bloqueada no llama al proveedor y un checkout listo
   reutiliza su URL. No se almacenan datos de tarjeta. La aceptación de un canje agrega una lectura
@@ -313,10 +345,12 @@ bash scripts/preflight-vercel-production.sh
   hasta 120 escrituras de objetos (master privado + thumb/card/detail por foto), con deduplicación
   por contenido del driver. No se ejecuta en el hot path de visitantes.
 
-**UNVERIFIED:** cuenta real de Mercado Pago, medios de pago y trial en checkout, webhook público y
-reintentos reales, credenciales R2/Neon/Auth/observabilidad en Production, asociación del wildcard a
-un tenant real después del deploy.
+**UNVERIFIED:** plan comercial Vercel y uso de Production, sincronización de la cuenta Inngest,
+claves `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `INNGEST_SIGNING_KEY` e `INNGEST_EVENT_KEY`,
+deployment del HEAD, endpoint del HEAD y ejecución programada firmada, cuenta real de Mercado Pago,
+medios de pago y trial en checkout, webhook público y reintentos reales, validez de credenciales
+R2/Neon/Auth/observabilidad en Production, asociación del wildcard a un tenant real después del deploy.
 
-**BLOCKERS:** Vercel Hobby bloquea el deploy con el cron `*/5`; faltan las credenciales R2; el
-deployment público sirve una build vieja y no el HEAD actual;
-prueba B3 humana pendiente.
+**BLOCKERS:** Vercel Hobby no cumple el requisito comercial; faltan las credenciales R2 y las dos
+claves de Inngest; el deployment público sirve una build vieja, incluido un endpoint Inngest 404;
+sincronización/deploy del HEAD y prueba B3 humana pendientes. No se declara producción cobrable.

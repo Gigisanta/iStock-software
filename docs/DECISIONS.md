@@ -838,83 +838,97 @@ equivocado. Las dos **están declaradas** en CI (`.github/workflows/ci.yml:118` 
 corrió nunca. Ver `SLICE_BOARD.md` §"Seis gates rojos o dormidos". La verificación que sí se hizo
 es a mano, en macOS, por el LEAD.
 
+> **Addendum 2026-09-04:** ADR-017 fue reabierta y ratificada con Inngest Free. `vercel.json`
+> conserva su rol de configuración de Vercel, pero ya no contiene `crons`; esta ADR sigue fijando
+> únicamente que el rate limit vive en `config/firewall-rules.json` y se aplica por CLI.
+
 ---
 
-## ADR-017 — Los jobs son **Vercel Cron**, no Inngest, y el `vercel.json` declara sólo el `crons`
-- **Estado:** aceptada · **Fecha:** 2026-08-28 · **Autor:** LEAD (S6) · redactada por `docs-keeper`
-- **Implementó:** el **LEAD** (`vercel.json` y `scripts/**` son suyos por §4) y `app-agent` (el
-  handler). Commits `cbbfa2f` (slice + `vercel.json`), `7a96033` (schedule + las dos probes),
-  `10d31b6` (el gate entra a CI).
-- **Insumo:** `docs/research/vercel-cron-limits.md` (2026-08-28). Costo: `docs/COST.md` §2.4.
+## ADR-017 — Inngest Free reemplaza Vercel Cron para los jobs de Capa 1
+- **Estado:** aceptada · **Fecha:** 2026-09-04 · **Autor:** LEAD · **redactada por:** `docs-keeper`
+- **Reapertura:** reemplaza la versión aceptada el 2026-08-28, sin borrar su evidencia histórica.
+- **Implementación:** presente en el árbol local: el **LEAD** retiró `crons` de `vercel.json` y
+  agregó la probe de alcance; `app-agent` dejó implementados el endpoint de Inngest, la función
+  programada y el mantenimiento compartido. Esto no atribuye commits ni despliegues no verificados.
+- **Insumos:** [`docs/research/inngest-free-scheduled-functions.md`](research/inngest-free-scheduled-functions.md),
+  consultado 2026-09-04; el límite anterior de Vercel está en
+  [`docs/research/vercel-cron-limits.md`](research/vercel-cron-limits.md).
 
-### Contexto — la disyuntiva estaba escrita y nadie la había cerrado
-`CLAUDE.md` §3 dice *"Jobs: Vercel Cron o Inngest free tier. **No** worker 24/7"* y
-`ARCHITECTURE.md` §Jobs repetía el *"(o Inngest free)"*. **S6 la cerró de hecho** —eligió Vercel Cron
-y escribió el `vercel.json`— sin que existiera esta ADR. Se escribe ahora para que la próxima slice
-con un job no vuelva a abrirla.
+### Contexto — la frecuencia de reservas y el plan de despliegue
+La reserva dura 30–120 minutos; un scheduler diario no cumple ese contrato. El trigger `*/5 * * * *`
+no puede quedar en `vercel.json` para un despliegue Hobby: el research de Vercel documenta que Hobby
+acepta como máximo una ejecución diaria y rechaza una frecuencia mayor durante el deploy. La decisión
+del LEAD es poder desplegar antes del primer cliente de pago usando Inngest Free como scheduler.
+
+Esta decisión **no declara que Vercel Hobby sea apto para uso comercial**. El research de Vercel y sus
+[Terms](https://vercel.com/legal/terms) describen el límite de uso personal/no comercial; la
+elegibilidad concreta de este despliegue previo al primer cliente de pago sigue **UNVERIFIED** y es
+un blocker antes de cobrar. Si no queda permitida, hay que pasar a Pro.
 
 ### Decisión
-1. **Los jobs de Capa 1 son Vercel Cron.** Hoy hay exactamente uno:
-   `GET /api/cron/expire-reservations`, `*/5 * * * *`.
-2. **`vercel.json` declara el `crons` y nada más.** No puede declarar más aunque se quiera: el schema
-   oficial tiene `additionalProperties: false` en la raíz, así que una clave de más **no se ignora,
-   rompe el deploy**. El rate limit del WAF sigue donde lo puso **ADR-016**, y la regla **F5** de
-   `guard-firewall.sh` sigue vigilando que nadie lo mueva acá.
-3. **`crons[]` tiene dos campos y los dos son requeridos: `path` y `schedule`.** Sin query string
-   (no está documentado); la credencial viaja por `Authorization`, no por URL.
-4. **La autenticación es `CRON_SECRET` con ese nombre exacto**, que Vercel manda solo con prefijo
-   `Bearer `. El handler compara **hashes** con `timingSafeEqual` y **falla cerrado ante env ausente
-   o vacía** (`cronSecret()` devuelve `null` para las dos).
+1. **Inngest Free es el scheduler de Capa 1**, sin worker 24/7. La función de mantenimiento usa el
+   trigger `cron('*/5 * * * *')`, forma documentada por [Inngest `cron()`](https://www.inngest.com/docs/reference/typescript/functions/triggers).
+2. **La integración usa un endpoint global `/api/inngest`**, servido con `serve` para Next.js/Vercel,
+   y una función de expiración en `apps/web/inngest/functions.ts`. La guía oficial de [deploy en
+   Vercel](https://www.inngest.com/docs/deploy/vercel) recomienda configurar `maxDuration`; la
+   aceptación exige `maxDuration = 300`, `GET`/`POST`/`PUT` y el trigger exacto. La implementación
+   local presente está en `apps/web/app/api/inngest/route.ts` y `apps/web/inngest/functions.ts`.
+3. **El mantenimiento de reservas sigue idempotente** y conserva los locks, el límite por lote y el
+   fail-closed. Inngest puede reintentar una función, pero un reintento del scheduler no autoriza a
+   debilitar esas garantías.
+4. **La puerta manual permanece:** `GET /api/cron/expire-reservations` sigue protegida por
+   `CRON_SECRET` antes de tocar Postgres. La ruta manual no se elimina ni se convierte en el callback
+   de Inngest; su probe de fail-closed sigue siendo V2 de `accept-s6.sh`.
+5. **Production requiere dos secretos server-only:** `INNGEST_SIGNING_KEY` valida las llamadas
+   entrantes, como documenta [Signing keys](https://www.inngest.com/docs/platform/signing-keys), y
+   `INNGEST_EVENT_KEY` habilita la comunicación de la aplicación, como documenta [Creating an event
+   key](https://www.inngest.com/docs/events/creating-an-event-key). `INNGEST_SERVE_ORIGIN` sólo se
+   configura si el despliegue usa un origen propio; ninguna de estas variables se expone al browser.
+6. **La cuenta y la sincronización son parte del contrato operativo.** Hay que crear/asociar la app
+   Production de Inngest y sincronizar sus funciones con el endpoint desplegado, usando la integración
+   oficial de Vercel o el mecanismo manual documentado. Cuenta, sync, claves cargadas en Production y
+   un callback real exitoso están **UNVERIFIED**.
+7. **La cuota Hobby se acepta como riesgo explícito:** el plan publica 50.000 ejecuciones mensuales,
+   500.000 eventos y cinco steps concurrentes; al superar la cuota, Hobby pausa la ejecución. El
+   trigger representa 8.640 ocurrencias en 30 días; un diseño con un `step.run()` suma aproximadamente
+   17.280 ejecuciones. Son cálculos/proyecciones del research, no una medición del dashboard. Ver
+   [Inngest Pricing](https://www.inngest.com/pricing).
+8. **`vercel.json` no declara `crons`.** El archivo queda con su schema y el rate limit sigue bajo
+   ADR-016. El probe transversal del LEAD es
+   `scripts/probes/s6-inngest-reachability.test.ts`.
 
-### Por qué Vercel Cron, y qué NO se está afirmando de Inngest
-**Vercel Pro ya es obligatorio por licencia** (`CLAUDE.md` §3: Hobby prohíbe el uso comercial, y la
-vidriera es exactamente eso), así que el cron **no agrega proveedor, ni credencial, ni blocker
-humano** — y hoy hay **seis** blockers humanos abiertos en el board, todos de credenciales. Con Pro
-el intervalo mínimo es **1/min** con precisión per-minute, así que `*/5` es legal y la deriva máxima
-de una reserva vencida es ~5 min + el barrido, sobre un reloj de 30–120 min. En Hobby el mínimo es
-**una vez por día** y una expresión más frecuente **rompe el deploy**: con Hobby esta feature no
-existiría, lo que es una razón para Pro independiente de la licencia.
+### Alternativas descartadas
+| alternativa | motivo |
+|---|---|
+| Vercel Cron `*/5` + Pro | fuerza el upgrade antes del primer cliente de pago y no habilita el despliegue Hobby decidido para esta etapa |
+| Vercel Cron diario en Hobby | deja reservas vencidas hasta un día; no cumple 30–120 minutos |
+| worker 24/7 | fuera del stack cerrado de `CLAUDE.md` §3 |
 
-**Lo que esta ADR no afirma: que Inngest sea peor.** Al redactarla no se había investigado — el
-descarte original fue por **superficie**, no por números: un proveedor más, una credencial más, un
-webhook más que firmar, para un job que hoy es un `GET` cada cinco minutos. El research posterior
-`docs/research/inngest-free-scheduled-functions.md` confirma que Inngest puede cubrir un cron de
-cinco minutos en una función serverless, pero también confirma la superficie adicional de endpoint
-firmado, claves y sincronización. Ese research no cambia esta ADR por sí solo. Si el requisito es
-posponer Vercel Pro, esta ADR se reabre con ese research y con una prueba de cuota, firma,
-reintento e idempotencia antes de cambiar el proveedor.
+### Consecuencias
+- Se retira la dependencia de `crons` de Vercel para la frecuencia de expiración; eso **no** prueba que
+  el deployment de Production esté actualizado.
+- Aparecen un endpoint público firmado, dos secretos, una cuenta externa y una sincronización que hay
+  que operar. El endpoint debe ser alcanzable para Inngest, pero debe rechazar callbacks sin firma válida.
+- El costo real y el consumo de cuota dependen de los runs y steps observados. No se reemplaza la
+  medición de `cost-auditor` por la proyección de 8.640/17.280.
+- Si se consume la cuota gratuita, la ejecución puede pausarse y las reservas dejar de liberarse. Hace
+  falta una alarma antes de cobrar; no hay evidencia de esa alarma ni de un run real.
+- R2, Neon/Auth, Mercado Pago y el deployment público conservan sus propios blockers; esta ADR no los
+  resuelve.
 
-### Consecuencias — lo que se pierde, sin redondear
-| se pierde | cuánto duele hoy | mitigación |
-|---|---|---|
-| **Sin reintentos.** *"Vercel will not retry an invocation if a cron job fails."* | poco: el barrido es **idempotente** (`expireReservation()` es puro, con `now` inyectado) y la corrida siguiente es 5 min después | el diseño idempotente + la frecuencia **son** la política de reintento |
-| **Sin backoff ni cola** | poco: una sola tarea, sin dependencias entre corridas | — |
-| **Granularidad atada al plan** | nada mientras haya Pro; todo si alguien degrada a Hobby | el `*/5` rompería el deploy en Hobby, así que falla ruidoso |
-| **Un 3xx completa la corrida sin más requests** | **mucho**: apaga el job **en silencio** — sin log, sin error, sin alerta. El síntoma aparece semanas después: *"mi equipo sigue reservado"* | `scripts/probes/s6-cron-reachability.test.ts` |
-| **Un `path` inexistente da 404, se ejecuta igual y se factura igual** | medio: un typo en `vercel.json` es un 404 recurrente que no rompe nada visible | la misma probe: V1 exige que el `path` agendado apunte a un handler que existe |
+### Verificación y criterio de aceptación
+En el árbol de trabajo inspeccionado el 2026-09-04, `vercel.json` conserva sólo `$schema`,
+`apps/web/package.json` declara el SDK `inngest`, existe
+`scripts/probes/s6-inngest-reachability.test.ts` y están presentes
+`apps/web/app/api/inngest/route.ts` y `apps/web/inngest/functions.ts`, junto con el mantenimiento
+compartido. Esto prueba implementación local. La cuenta/app de Inngest, la sincronización, las claves
+de Production, el deployment y el run real siguen **UNVERIFIED**.
 
-**Las dos probes son del LEAD y eso no es protocolo, es la única forma de que midan algo.** La de
-alcanzabilidad cruza **tres columnas** —`vercel.json` (LEAD), `proxy.ts` (`storefront-agent`) y el
-route handler (`app-agent`)— y **ninguna de las tres ve el camino entero**; hoy no hay redirect
-porque `resolveHost` manda `*.vercel.app`, el apex y todo host desconocido a `marketing`, y eso se
-decidió por otro motivo, así que **nada lo ataba**. La de fail-closed afirma algo que un status code
-no puede afirmar: **el orden**. *"Sin credencial válida no toca Postgres"* es una propiedad sobre qué
-pasa antes de qué; un handler que barre primero y decide el status después devuelve los mismos 401 y
-es una escritura abierta. Por eso espía el barrido en vez de comparar respuestas, y por eso **no
-delega en `route.test.ts`**, que es del mismo writer que el handler (`CLAUDE.md` §4).
-
-### Costo
-No lo fija esta ADR. `cost-auditor` lo auditó en **`docs/COST.md` §2.4**, y el titular es incómodo y
-conviene leerlo: **las 8.640 invocaciones/mes (USD 0,0052 · 0,086% del allotment de Edge Requests de
-Pro) son sólo el 4–19% de lo que cuesta el cron**; el resto es Active CPU y memoria, y **el renglón
-caro de S6 no es el cron sino la invalidación**. Citar el 0,0052 como "el costo del cron" es citar
-una línea de tres.
-
-### Verificación
-`bash scripts/accept-s6.sh` — **V1** (el `path` de `vercel.json` apunta a un handler que existe **y**
-el cron llega hasta él, corriendo `s6-cron-reachability.test.ts`) y **V2** (fail-closed medido por
-invocación, `s6-cron-fail-closed.test.ts`). Step en CI desde `10d31b6` (`ci.yml:236`) — **declarado,
-no ejecutado**: ver §Notas operativas, *"un gate tiene dos niveles"*.
+El **LEAD** debe re-ejecutar `bash scripts/accept-s6.sh` sobre el árbol integrado. El gate no puede
+marcar S6 `done` hasta que V1 pase `s6-inngest-reachability.test.ts`, V2 vuelva a medir que la puerta
+manual sin `CRON_SECRET` no toca Postgres, y el resto de V3–V10 siga verde. Después, una aceptación de
+producción debe sincronizar la app en Inngest, cargar `INNGEST_SIGNING_KEY`/`INNGEST_EVENT_KEY`,
+observar un run real de `*/5` y comprobar la liberación de una reserva; nada de eso está ejecutado.
 
 ## ADR-018 — El trial da el producto completo **mientras está vivo**; vencido no conserva ninguna feature
 - **Estado:** aceptada · **Fecha:** 2026-08-28 · **Autor:** LEAD (S6, D2 del despacho) · redactada por `docs-keeper`

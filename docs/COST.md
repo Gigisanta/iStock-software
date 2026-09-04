@@ -1,6 +1,6 @@
 # Auditoría de costo de producción
 
-**Corte:** 2026-09-01
+**Corte:** 2026-09-04
 **Checkout auditado:** `8acb28930119b334390d91980940747f3e666e24` (base de comparación; los cambios de este corte están en el commit posterior)
 **Alcance:** costo marginal de infraestructura por tenant activo, hasta 100 tenants. El piso fijo de plataforma se informa aparte.
 **Regla:** la pregunta de esta auditoría es «¿esto agrega costo tonto?». Un dato de producción que no pudo observarse es `UNVERIFIED`; no se trata como cero.
@@ -9,7 +9,7 @@
 
 ```text
 COST_VERDICT: FAIL
-DELTA_POR_TENANT_MES: USD 0.02960/tenant/mes = (R2 storage USD 0.00435 + R2 Class B en stress sin cache USD 0.02520 + R2 Class A USD 0.00000 + R2 egress USD 0.00000 + cron Vercel USD 0.00005184), con redondeo conservador y amortización en 100 tenants; + USD 0.00180/tenant/mes de invocaciones Vercel sólo si la tarifa por unidad aplica [UNVERIFIED] = USD 0.03140 condicional. CPU real, Postgres, HTML/WAF, Cloudflare y uso real de LLM siguen UNVERIFIED; no hay total certificable.
+DELTA_POR_TENANT_MES: USD 0.02955/tenant/mes conocido = (R2 storage USD 0.00435 + R2 Class B en stress sin cache USD 0.02520 + R2 Class A USD 0.00000 + R2 egress USD 0.00000); + Inngest mantenimiento USD UNVERIFIED + Vercel Functions/CPU/egress USD UNVERIFIED. Proyección del scheduler: 12 disparos/hora × 24 × 30 = 8.640 disparos/mes; no se inventa tarifa ni se trata la cuota publicada como costo real. El delta total certificable sigue UNVERIFIED. El chat de `packages/ai` se atribuye aparte al plan Negocio.
 SUPUESTOS: 100 tenants activos; 3.000 pageviews públicos/tenant/mes; 60 listings visibles por tenant; máximo 8 fotos/listing; 4 fotos/listing como planificación esperada; 90% de vistas de home y 10% de detalle; 40 mensajes/día/tenant sólo para Pro; mes de 30 días.
 VECTOR_MAS_RIESGOSO: Postgres/cache y crecimiento de objetos R2. Una regresión del cache vuelve cada hit público una lectura de DB; los objetos R2 de listings borrados no se eliminan y hacen que el almacenamiento crezca sin cota temporal.
 METRICA_A_VIGILAR: storefront_db_hit_rate = hits públicos de vidriera que ejecutan SQL / hits públicos totales; alarma >5% y gate objetivo ≤5% (95% de hits sin DB).
@@ -32,7 +32,8 @@ La decisión de usar pocos servicios es correcta para este volumen:
 
 | Servicio | Responsabilidad | Decisión de costo |
 |---|---|---|
-| Vercel | Next.js, proxy de host, Functions, ISR y un cron | Un proyecto; no agregar worker, Redis ni cola permanente |
+| Vercel | Next.js, proxy de host, Functions e ISR | Un proyecto; no agregar worker, Redis ni cola permanente |
+| Inngest Free | Mantenimiento programado de reservas y FX cada 5 minutos | Función programada; cuota, retries/steps y costo real de la cuenta `UNVERIFIED` |
 | Neon | Postgres, Neon Auth y RLS | Un proyecto conectado desde Vercel; catálogo global para no duplicar filas/embeddings |
 | Cloudflare R2 + CDN | Fotos públicas y master privado | Un bucket público y uno privado; egress de R2 a USD 0; no storage público alternativo ni Vercel Image Optimization |
 | Mercado Pago | Suscripciones | Separa facturación de infraestructura; comisión transaccional no es costo marginal de infra |
@@ -66,13 +67,14 @@ Tarifas consultadas el 2026-09-01 en documentación oficial:
 |---|---|---|
 | Cloudflare R2 | USD 0.015/GB-mes; Class A USD 4.50/M; Class B USD 0.36/M; egress USD 0; free tier mensual 10 GB, 1 M Class A y 10 M Class B por cuenta | variable marginal; el free tier es de cuenta, no de tenant |
 | Neon Free | Recurso `istock-neon` conectado desde Vercel; límites y consumo efectivos del plan `free_v3` quedan `UNVERIFIED` | plan actual; no se asume capacidad comercial sin observarla |
-| Vercel Pro | USD 20/mes y USD 20 de crédito mensual; función por unidad publicada a USD 0.0000006/invocación para Pro; CPU y memoria dependen de región | piso fijo; la aplicación del crédito y la clasificación actual del proyecto son `UNVERIFIED` |
+| Vercel Pro | USD 20/mes y USD 20 de crédito mensual; función por unidad publicada a USD 0.0000006/invocación para Pro; CPU y memoria dependen de región | piso fijo; la aplicación del crédito y la clasificación actual del proyecto son `UNVERIFIED`; no hay Vercel Cron vigente |
+| Inngest Free | La documentación consultada publica 50.000 ejecuciones/mes en Hobby | no se proyecta precio: cuota efectiva, conteo de ejecuciones/steps, pausa/overage y costo real de esta cuenta son `UNVERIFIED` |
 | Gemini 2.5 Flash-Lite | USD 0.10/M tokens de entrada y USD 0.40/M de salida | sólo chat Pro |
 | Groq `openai/gpt-oss-20b` | USD 0.075/M de entrada y USD 0.30/M de salida | fallback de chat; uso real `UNVERIFIED` |
 
-Fuentes oficiales y fecha de consulta: [Cloudflare R2 Pricing](https://developers.cloudflare.com/r2/pricing/) (actualizada 2026-08-07, consultada 2026-09-01), [Supabase Pricing](https://supabase.com/pricing/) (consultada 2026-09-01), [Vercel Pro Plan](https://vercel.com/docs/plans/pro-plan) y [Vercel Functions usage and pricing](https://vercel.com/docs/functions/usage-and-pricing) (consultadas 2026-09-01), [Vercel function invocations per-unit](https://vercel.com/changelog/function-invocations-now-billed-per-unit) (2026-05-29, consultada 2026-09-01), [Gemini API Pricing](https://ai.google.dev/gemini-api/docs/pricing) (consultada 2026-09-01), [Groq gpt-oss-20b pricing](https://console.groq.com/docs/model/openai/gpt-oss-20b) (consultada 2026-09-01).
+Fuentes oficiales y fecha de consulta: [Cloudflare R2 Pricing](https://developers.cloudflare.com/r2/pricing/) (actualizada 2026-08-07, consultada 2026-09-01), [Supabase Pricing](https://supabase.com/pricing/) (consultada 2026-09-01), [Vercel Pro Plan](https://vercel.com/docs/plans/pro-plan) y [Vercel Functions usage and pricing](https://vercel.com/docs/functions/usage-and-pricing) (consultadas 2026-09-01), [Vercel function invocations per-unit](https://vercel.com/changelog/function-invocations-now-billed-per-unit) (2026-05-29, consultada 2026-09-01), [Inngest Pricing](https://www.inngest.com/pricing) y [Deploy Inngest to Vercel](https://www.inngest.com/docs/deploy/vercel) (consultadas 2026-09-04), [Gemini API Pricing](https://ai.google.dev/gemini-api/docs/pricing) (consultada 2026-09-01), [Groq gpt-oss-20b pricing](https://console.groq.com/docs/model/openai/gpt-oss-20b) (consultada 2026-09-01).
 
-Piso mensual separado del marginal: **Neon Free + Vercel Hobby hoy; Vercel Pro es necesario para el uso comercial y el cron de 5 minutos + precio del plan Cloudflare `UNVERIFIED`**. El piso no se reparte dentro de USD 0.50/tenant. Las comisiones de Mercado Pago y cualquier add-on pago tampoco se inventan ni se mezclan con infraestructura.
+Piso mensual separado del marginal: **Neon Free + Vercel Hobby durante la beta por decisión del usuario; Vercel Hobby sigue siendo blocker de uso comercial aunque Pro se posponga sólo para beta**. Antes de cobrar o vender comercialmente hay que pasar a Vercel Pro; no se atribuye ese piso al marginal. Inngest Free es la alternativa actual para el scheduler, pero cuota efectiva y costo real `UNVERIFIED`. Precio del plan Cloudflare `UNVERIFIED`. Las comisiones de Mercado Pago y cualquier add-on pago tampoco se inventan ni se mezclan con infraestructura.
 
 ## Egreso y operaciones de imágenes
 
@@ -144,21 +146,31 @@ Filas devueltas en un cold home, bajo los supuestos máximos: `1 tenant + 60 lis
 
 Con cache sano, el costo DB público esperado es cero en hits. El objetivo del contrato exige al menos 95% de hits sin DB, equivalente a `storefront_db_hit_rate ≤5%`. El checkout no tiene una métrica de Vercel/DB que pruebe ese porcentaje.
 
-### Escrituras públicas y cron
+### Escrituras públicas y mantenimiento programado
 
 - `s/[slug]/api/track/route.ts`: un `INSERT ... SELECT` por beacon válido, con máximo una fila `wa_click_events`; el beacon no devuelve payload.
 - `tradein/route.ts`: un `INSERT ... SELECT` por lead válido, una fila `tradein_leads` por envío.
-- `vercel.json`: un único cron cada 5 minutos `*/5 * * * *`, equivalente a `8.640 invocaciones/mes`.
-- `expire-reservations/route.ts` autentica primero con `CRON_SECRET`; no hay worker 24/7.
-- El mismo cron reutiliza la cotización BCRA cacheada por día en cada instancia, compara el valor
+- `vercel.json`: sólo contiene `$schema`; **no declara Vercel Cron**.
+- `apps/web/inngest/functions.ts`: Inngest agenda `expire-reservations` con `cron('*/5 * * * *')`; `apps/web/app/api/inngest/route.ts` expone el endpoint firmado y fija `maxDuration = 300`.
+- `expire-reservations/route.ts` conserva una puerta manual autenticada con `CRON_SECRET`; el scheduler automático usa las claves de Inngest. No hay worker 24/7.
+- Inngest produce `12 × 24 × 30 = 8.640` disparos por mes de 30 días. La función actual no declara `step.run`; retries, ejecuciones facturables efectivas y cualquier step adicional quedan `UNVERIFIED`.
+- El mantenimiento reutiliza la cotización BCRA cacheada por día en cada instancia, compara el valor
   persistido en una lectura global y sólo actualiza `fx_settings` y revalida los dos tags de un
   tenant cuando la cotización cambió. No agrega otro servicio ni consultas por visitante; el costo
-  incremental es una invocación HTTP saliente cada cinco minutos, una lectura de Postgres por corrida
-  y, sólo ante un cambio real, una actualización y una revalidación por tenant. CPU/egress de Vercel
-  y el número final de tenants quedan `UNVERIFIED` y dependen del crecimiento.
+  incremental es una ejecución programada cada cinco minutos, una lectura de Postgres por corrida y,
+  sólo ante un cambio real, una actualización y una revalidación por tenant. CPU/egress de Vercel,
+  costo de Inngest y el número final de tenants quedan `UNVERIFIED` y dependen del crecimiento.
 - `expireDueReservations`: incluso sin vencimientos hace al menos dos SELECT por ejecución; el batch máximo es 200 y cada fila cambiada puede hacer hasta un UPDATE de listing, un UPDATE de reservation y un INSERT de event.
 
-Mínimo mensual del barrido de reservas: `8.640 × 2 = 17.280 SELECT`, antes de las filas realmente vencidas; el comparador de FX agrega `8.640` lecturas globales y sólo escribe cuando detecta una cotización distinta. A la tarifa de referencia de invocación Vercel: `8.640 × USD 0.0000006 = USD 0.005184 total` (USD 0.00005184/tenant con 100 tenants); la clasificación vigente y el costo Neon por fila/consulta son `UNVERIFIED`.
+Mínimo mensual del barrido de reservas: `8.640 × 2 = 17.280 SELECT`, antes de las filas realmente vencidas; el comparador de FX agrega `8.640` lecturas globales y sólo escribe cuando detecta una cotización distinta. La página de precios de Inngest consultada el 2026-09-04 publica 50.000 ejecuciones mensuales para Hobby, pero la cuota efectiva de esta cuenta, la unidad exacta de cómputo, retries/steps, pausa por excedente y costo real son `UNVERIFIED`; por eso el costo del scheduler es `USD UNVERIFIED`, no `USD 0.00`.
+
+#### Histórico: Vercel Cron (corte 2026-09-01; ya no vigente)
+
+El checkout auditado en el corte anterior declaraba en `vercel.json` `*/5 * * * *`. Se conserva esta
+evidencia sólo para no perder el razonamiento histórico: `12 × 24 × 30 = 8.640 invocaciones/mes` y,
+con la tarifa de referencia de invocación Vercel usada entonces, `8.640 × USD 0.0000006 = USD 0.005184`
+total (`USD 0.00005184/tenant` con 100 tenants). Este cálculo específico de Vercel Cron queda
+**HISTÓRICO**, no integra el delta actual y no demuestra una tarifa vigente para Inngest.
 
 ### Conexiones y Realtime
 
@@ -228,7 +240,7 @@ Estas decisiones actuales reducen superficie y costo:
 - Tres variantes públicas y un master privado acotan bytes y evitan servir originales.
 - ISR/tag por tenant evita que cada hit público haga cinco lecturas; el proxy no hace I/O.
 - Catálogo, FAQ y embeddings son globales: no se duplican por tenant.
-- Un cron cada cinco minutos reemplaza un worker permanente.
+- El mantenimiento programado cada cinco minutos reemplaza un worker permanente.
 - Realtime queda fuera de la vidriera y no se agregan conexiones anónimas.
 - El chat está aislado como costo de Pro; no se llama LLM por pageview.
 
@@ -240,7 +252,7 @@ El LEAD debe adjuntar evidencia fechada de todos estos puntos:
 
 1. **R2/media:** `MEDIA_DRIVER=r2`; credenciales y dos buckets configurados; dominio CDN custom activo; ningún `.r2.dev`, storage alternativo público, Vercel Image Optimization u original >500 KiB en browser. Medir bytes, Class A/B, cache miss y crecimiento de objetos; resolver retención/GC de objetos huérfanos.
 2. **Cache/DB:** en producción, `storefront_db_hit_rate ≤5%`; mostrar consultas por hit, filas, p95 de query, conexiones activas y pool waits. Un hit de vidriera que toca Postgres es una regresión de costo aunque el tenant sea Pro.
-3. **Vercel:** confirmar Pro, región/clase de ejecución, invocaciones, CPU-ms/pageview, memoria, egress HTML y consumo del crédito de USD 20. Confirmar que el cron publicado ejecuta 8.640/mes esperado, tiene `CRON_SECRET` y no hay worker 24/7.
+3. **Vercel + Inngest:** confirmar que Vercel Hobby sigue limitado a beta y pasar a Pro antes del uso comercial; medir Functions, CPU-ms/pageview, memoria, invocaciones, egress HTML y crédito. En Inngest, confirmar sincronización, firma, cuota efectiva, ejecuciones/retries/steps, pausas y costo real; verificar el schedule `*/5` y que no haya worker 24/7.
 4. **Neon:** proyecto real conectado desde Vercel, migraciones aplicadas, Auth con origen confiable,
    conexiones y consumo verificables. La migración no aplicada mantiene el gate en FAIL.
 5. **Seguridad de tráfico:** publicar y comprobar las cuatro reglas de `config/firewall-rules.json` para track, trade-in, chat y billing; no agregar rate limit por cada pageview HTML sin una justificación de costo. La publicación viva está declarada como pendiente en el archivo.
@@ -253,7 +265,8 @@ Cualquier punto sin evidencia permanece `UNVERIFIED` y conserva `COST_VERDICT: F
 ## Registro de datos `UNVERIFIED`
 
 - Deploy, hostname wildcard, DNS/nameservers y dominio CDN activos.
-- Configuración efectiva y consumo de Vercel Pro, créditos, región, clase de runtime, CPU-ms, memoria, invocaciones y egress HTML.
+- Configuración efectiva y consumo de Vercel, plan Hobby/Pro, créditos, región, clase de runtime, CPU-ms, memoria, invocaciones y egress HTML.
+- Cuenta Inngest, sincronización, cuota efectiva, ejecuciones/steps/retries, pausas, overage y costo real.
 - Proyecto Neon real, plan efectivo, compute, almacenamiento, bloat, filas acumuladas, conexiones y costo de exceso.
 - Cuenta R2 real, bucket lifecycle, objetos huérfanos, bytes medios, Class A/B y hit ratio del CDN.
 - Pageviews, scroll efectivo, distribución home/detalle, uploads/reuploads y tenants por plan.

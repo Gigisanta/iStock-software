@@ -12,6 +12,7 @@
 | `packages/media/**` | `media-agent` | ✅ |
 | `packages/ai/**` | `ai-agent` | ✅ |
 | `apps/web/app/(app)/**`, `apps/web/app/api/**` | `app-agent` | ✅ |
+| `apps/web/inngest/**` | `app-agent` | ✅ |
 | `apps/web/app/(storefront)/**`, `proxy.ts` | `storefront-agent` | ✅ |
 | `apps/web/app/(billing)/**`, webhooks MP | `billing-agent` | ✅ |
 | `tests/**`, `e2e/**` | `qa-agent` | ✅ |
@@ -103,8 +104,10 @@ queda afuera del censo a propósito: es librería, y exigirla en CI sería pedir
 archivo que aborta cuando se lo ejecuta. Cero gates censados o `ci.yml` ausente es **FAIL**, no
 PASS. Ocho fixtures en `guard-gates.test.sh`, cuatro de ellos viéndolo encender. Fila **`T30`**.
 
-**El rate limit no entra en `vercel.json`.** El archivo **sí existe desde S6** (2026-08-28) y
-declara **una sola cosa: el `crons` que dispara `GET /api/cron/expire-reservations` cada 5 min**.
+**El rate limit no entra en `vercel.json`.** El archivo **sí existe desde S6** (2026-08-28) y hoy
+conserva **una sola cosa: `$schema`**; la agenda de expiración vive en Inngest Free y ya no hay
+`crons` declarados en Vercel. La evidencia histórica de que antes declaró el `crons` que disparaba
+`GET /api/cron/expire-reservations` cada 5 min queda en ADR-017/research, no describe el árbol vivo.
 No puede declarar nada más: el schema oficial tiene `additionalProperties: false` en la raíz, así
 que sólo admite `$schema` y las claves que él tipa — una clave de más no se ignora, rompe el deploy.
 Y el rate limit no es una de ellas: el schema oficial tipa
