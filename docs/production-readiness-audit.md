@@ -39,9 +39,8 @@ desplegar el HEAD y cerrar esos bloqueos.
 - `pnpm test`: PASS; **2.975 tests aprobados y 4 skips intencionales** de Mercado Pago porque
   requieren credenciales de una cuenta de prueba.
 - `pnpm build`: PASS con Next.js 16.3.3; las rutas de marketing, billing y vidriera compilan.
-- `git status --short --branch`: `main` sincronizada con `origin/main` en `6c14b40`, que incluye
-  `8e2be5e`, `f1ca023e` y `c16b087`; sólo queda el directorio local no versionado `.serena/`, que
-  se conserva intacto.
+- `git status --short --branch`: `main` sincronizada con `origin/main`; sólo queda el directorio
+  local no versionado `.serena/`, que se conserva intacto.
 - `vercel env run -e production --scope giolivos-projects --project istock -- pnpm db:migrate`:
   PASS; devolvió `migrate OK` y dejó aplicadas en Production las migraciones
   `0022_thankful_boomer.sql` y `0023_unknown_loners.sql`. `DATABASE_URL_UNPOOLED` se mantuvo oculta.
@@ -205,7 +204,7 @@ desplegar el HEAD y cerrar esos bloqueos.
   y [obtener pago](https://www.mercadopago.com.ar/developers/es/reference/online-payments/subscriptions/get-payment/get).
 - `MP_ACCESS_TOKEN` y `MP_WEBHOOK_SECRET` ya existen en las variables Production de Vercel sin
   exponer sus valores. La corrección que agrega `notification_url` al alta de la suscripción fue
-  introducida en `c16b087`, incluido en el HEAD actual `6c14b40`;
+  introducida en `c16b087`, incluido en el HEAD actual;
   sigue pendiente de un despliegue porque el plan Hobby rechaza el cron.
 
 ### Configuración operativa
@@ -319,5 +318,5 @@ reintentos reales, credenciales R2/Neon/Auth/observabilidad en Production, asoci
 un tenant real después del deploy.
 
 **BLOCKERS:** Vercel Hobby bloquea el deploy con el cron `*/5`; faltan las credenciales R2; el
-deployment público sirve una build vieja y no el HEAD `6c14b40`;
+deployment público sirve una build vieja y no el HEAD actual;
 prueba B3 humana pendiente.
