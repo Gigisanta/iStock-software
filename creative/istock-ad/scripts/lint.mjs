@@ -11,6 +11,7 @@ const forbiddenTokens = [
   ['console.log', 'console logging'],
   ['demo.maat.work', 'seed tenant host leaked into the ad'],
   ['iStock Demo', 'seed tenant name leaked into the ad'],
+  ['altovalle.maat.work', 'invented tenant host: the ad only ever shows istock.maat.work'],
   ['imei', 'owner-only field named in the ad'],
   ['cost', 'owner-only field named in the ad'],
 ];
@@ -26,7 +27,8 @@ async function filesIn(directory) {
   return files;
 }
 
-const sourceFiles = await filesIn(join(root, 'src'));
+// validate.ts is the file that names the forbidden words in order to reject them; it is the rule, not a leak.
+const sourceFiles = (await filesIn(join(root, 'src'))).filter((file) => !file.endsWith('/src/ads/validate.ts'));
 const failures = [];
 for (const file of sourceFiles) {
   const content = (await readFile(file, 'utf8')).toLowerCase();

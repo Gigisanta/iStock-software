@@ -10,9 +10,11 @@
     "studio": "remotion studio src/index.ts",
     "typecheck": "tsc --noEmit",
     "lint": "node scripts/lint.mjs",
-    "test": "node scripts/smoke-test.mjs",
+    "test": "node scripts/smoke-test.mjs && node --experimental-strip-types --no-warnings scripts/check-specs.mjs",
     "build": "node scripts/build-ads.mjs",
-    "compositions": "remotion compositions src/index.ts"
+    "compositions": "remotion compositions src/index.ts",
+    "specs": "node --experimental-strip-types --no-warnings scripts/check-specs.mjs",
+    "qa": "node --experimental-strip-types --no-warnings scripts/qa-stills.mjs"
   },
   "dependencies": {
     "@remotion/cli": "4.0.520",

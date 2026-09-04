@@ -51,7 +51,7 @@ for (const token of ['width: 1080', 'height: 1920']) {
 
 // The WhatsApp message is the product contract: exact text, USD price, host, no IMEI.
 const whatsapp = await readFile('src/theme.ts', 'utf8');
-if (!whatsapp.includes('Hola, vi el iPhone 14 Pro 256 Negro espacial (usado A) a USD 620 en altovalle.maat.work y lo quiero.')) {
+if (!whatsapp.includes('Hola, vi el iPhone 14 Pro 256 Negro espacial (usado A) a USD 620 en istock.maat.work y lo quiero.')) {
   throw new Error('El mensaje de WhatsApp no coincide con el contrato del producto');
 }
 
@@ -71,6 +71,7 @@ for (const slug of SLUGS) {
   if (publishFiles.join('\n') !== expected.join('\n')) throw new Error(`publish/${slug} debe contener sólo ${expected.join(', ')}`);
   const caption = await readFile(`publish/${slug}/03-caption.txt`, 'utf8');
   if (!caption.includes('istock.maat.work')) throw new Error(`El caption de ${slug} no lleva la URL`);
+  if (/[a-z0-9-]+\.maat\.work/.test(caption.replace(/istock\.maat\.work/g, ''))) throw new Error(`El caption de ${slug} nombra otro host que istock.maat.work`);
 }
 
 const sfx = (await readdir('public/sfx')).filter((file) => file.endsWith('.wav'));

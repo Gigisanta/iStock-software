@@ -52,7 +52,7 @@ export const PHONE = {
 
 export const PRODUCT = {
   storeName: 'Alto Valle Celulares',
-  storeHost: 'altovalle.maat.work',
+  storeHost: 'istock.maat.work',
   appHost: 'istock.maat.work',
-  waText: 'Hola, vi el iPhone 14 Pro 256 Negro espacial (usado A) a USD 620 en altovalle.maat.work y lo quiero.',
+  waText: 'Hola, vi el iPhone 14 Pro 256 Negro espacial (usado A) a USD 620 en istock.maat.work y lo quiero.',
 } as const;

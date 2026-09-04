@@ -8,16 +8,16 @@ Seis beats, un teléfono, la app real:
 
 1. `0.0–2.8 s` Gancho sobre fondo oscuro: se apilan seis preguntas de chat y el titular **Todas las noches, lo mismo.**
 2. `2.8–4.9 s` **Cargá el equipo una vez.** Formulario real `/app/stock/nuevo` completándose (modelo, GB, color, estado, precio, batería).
-3. `4.9–8.2 s` **Queda en tu vidriera, con tu link.** Vidriera real scrolleando, chip `altovalle.maat.work`.
-4. `8.2–11.6 s` **Dólares, pesos, batería, garantía. Todo dicho.** Ficha real: `USD 620 ≈ $ 923.000`, batería, iCloud, garantía.
+3. `4.9–8.2 s` **Te da tu propia landing, con tu link.** Vidriera real scrolleando, chip `istock.maat.work`.
+4. `8.2–11.6 s` **Dólares, pesos, batería, garantía. Todo dicho.** Ficha real: `USD 620 ≈ $ <ARS al TC del día>`, batería, iCloud, garantía.
 5. `11.6–15.2 s` **Te escriben con el equipo ya escrito.** Chat estilo WhatsApp con el mensaje exacto del producto, enviado.
 6. `15.2–18.0 s` Cierre: marca iStock, **Probalo 14 días gratis.**, `istock.maat.work`, Producto de MaatWork.
 
 ## Reglas que respeta
 
-- Pantallas capturadas del producto real (`scripts/capture-v10.mjs`), no mockups. El tenant demo se muestra como `Alto Valle Celulares` / `altovalle.maat.work`.
+- Pantallas capturadas del producto real (`scripts/capture-v10.mjs`), no mockups. El tenant demo se muestra como `Alto Valle Celulares`; el único host que aparece en cualquier anuncio es `istock.maat.work` (la promesa es «tu propia landing»), lo vigilan `scripts/lint.mjs`, `src/ads/validate.ts` y el guard de `scripts/capture-v10.mjs`.
 - IMEI, costo y margen nunca aparecen: la captura oculta esos campos y `form-geom.json` lo verifica en el smoke test.
-- Mensaje de WhatsApp exacto: `Hola, vi el iPhone 14 Pro 256 Negro espacial (usado A) a USD 620 en altovalle.maat.work y lo quiero.`
+- Mensaje de WhatsApp exacto: `Hola, vi el iPhone 14 Pro 256 Negro espacial (usado A) a USD 620 en istock.maat.work y lo quiero.`
 - Texto, logo y CTA dentro de la safe zone de Reels (`pnpm safe-zone`).
 - Sin voz en off: el mensaje se entiende sin sonido.
 
@@ -33,7 +33,9 @@ Seis beats, un teléfono, la app real:
 
 ```
 pnpm capture      # requiere apps/web en :3101 con el tenant demo seedeado
-pnpm typecheck && pnpm lint && pnpm test
+pnpm typecheck && pnpm lint && pnpm test   # test = smoke + validación de specs
+pnpm specs                                 # sólo la validación de specs
+pnpm qa [IstockPesos ...]                  # un still por escena + tira en out/qa/<slug>-scenes.png
 pnpm safe-zone
 pnpm compositions            # lista los ids y duraciones
 pnpm build [IstockPesos ...] # render + master + portada + copia a publish/<slug>/

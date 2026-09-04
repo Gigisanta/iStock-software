@@ -44,6 +44,18 @@
   en pesos, botón de copiar link), la escena va sin scroll.
 - El lint prohíbe `cost` en `src/`, y con eso la palabra "costo" en cualquier título.
 
+## Host único (2026-09-04, pedido de Gio: "no me gusta que diga altovalle.maat.work")
+- Inventar un host de tenant (`altovalle.maat.work`) para que el demo pareciera real fue un
+  error: el anuncio vende iStock, y el link que se ve tiene que ser `istock.maat.work`, con la
+  promesa «te da tu propia landing». Regla en tres capas: `validate.ts` (copy), `lint.mjs`
+  (`src/`) y el guard de `capture-v10.mjs` (`innerText` de cada captura).
+- El guard encontró que la vidriera real imprime `iStock Demo` suelto (no sólo `iStock Demo —
+  Alto Valle`) y que `/app/lista` imprime URLs `localhost`: se recapturó todo y sólo se captura
+  `panel-home` del panel.
+- Node 22 corre TS con `--experimental-strip-types` pero no resuelve imports sin extensión:
+  dentro de `src/ads/` los imports llevan `.ts` (`allowImportingTsExtensions` en tsconfig) para
+  que `pnpm specs` y `pnpm qa` lean los specs sin bundler.
+
 ## Pendientes conocidos
 - Escucha humana de la música y de los tres anuncios nuevos (UNVERIFIED al cierre de 2026-09-04).
 - Fotos generadas: sirven para el demo, reemplazar por stock real de un cliente cuando exista.

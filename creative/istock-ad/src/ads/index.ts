@@ -1,8 +1,8 @@
-import type { AdSpec } from './spec';
+import type { AdSpec } from './spec.ts';
+import { CTA_LINE } from './validate.ts';
 
 // Every ad iStock publishes, as data. Add a spec here and `pnpm build` renders and masters it.
-
-const CTA_LINE = 'Probalo 14 días gratis.';
+// The promise in every ad: you get your own landing page, and its link is istock.maat.work.
 
 export const NIGHT: AdSpec = {
   id: 'IstockReelV10',
@@ -24,10 +24,10 @@ export const NIGHT: AdSpec = {
       headlineAt: 42,
     },
     { kind: 'upload', frames: 63, title: 'Cargá el equipo una vez.' },
-    { kind: 'screen', frames: 99, title: 'Queda en tu vidriera, con tu link.', file: 'storefront.png', scrollTo: 1180, host: true },
+    { kind: 'screen', frames: 99, title: 'Te da tu propia landing, con tu link.', file: 'storefront.png', scrollTo: 1180, host: true },
     { kind: 'screen', frames: 102, title: 'Dólares, pesos, batería, garantía. Todo dicho.', file: 'detail.png', scrollTo: 760 },
     { kind: 'whatsapp', frames: 108, title: 'Te escriben con el equipo ya escrito.' },
-    { kind: 'close', frames: 84, lines: ['Tu stock en un link.', CTA_LINE] },
+    { kind: 'close', frames: 84, lines: ['Tu propia landing, en un link.', CTA_LINE] },
   ],
 };
 
@@ -46,7 +46,7 @@ export const PESOS: AdSpec = {
       scrollTo: 0,
       highlight: { field: { x: 16, y: 165, w: 250, h: 48 }, at: 30 },
     },
-    { kind: 'screen', frames: 90, title: 'Cada equipo con su precio, en tu link.', file: 'storefront.png', scrollFrom: 300, scrollTo: 900, host: true },
+    { kind: 'screen', frames: 90, title: 'Cada precio al día, en tu propia landing.', file: 'storefront.png', scrollFrom: 300, scrollTo: 900, host: true },
     { kind: 'close', frames: 84, lines: ['Precios al día, sin calculadora.', CTA_LINE] },
   ],
 };
@@ -59,7 +59,7 @@ export const QUINCE: AdSpec = {
   scenes: [
     { kind: 'headline-hook', frames: 66, lines: ['15 equipos.', 'Una tarde.'], sub: 'Y esa noche ya te escriben.' },
     { kind: 'upload', frames: 66, title: 'Modelo, GB, color, estado, precio. Listo.' },
-    { kind: 'screen', frames: 108, title: 'Tu stock entero, en un link.', file: 'storefront.png', scrollTo: 1180, host: true },
+    { kind: 'screen', frames: 108, title: 'Tu stock entero, en tu propia landing.', file: 'storefront.png', scrollTo: 1180, host: true },
     { kind: 'close', frames: 90, lines: ['Cargalo una vez, vendelo siempre.', CTA_LINE] },
   ],
 };
@@ -70,18 +70,18 @@ export const ESTADOS: AdSpec = {
   slug: 'estados',
   music: 'bright',
   scenes: [
-    { kind: 'headline-hook', frames: 66, lines: ['Dejá de armar', 'el estado a mano.'], sub: 'Un link con todo tu stock.' },
+    { kind: 'headline-hook', frames: 66, lines: ['Dejá de armar', 'el estado a mano.'], sub: 'Tu propia landing, con todo tu stock.' },
     {
       kind: 'screen',
       frames: 84,
-      title: 'Copiá el link de tu vidriera.',
+      title: 'Copiá el link de tu landing.',
       file: 'panel-home.png',
       scrollTo: 0,
       highlight: { field: { x: 35, y: 307, w: 322, h: 40 }, at: 30 },
     },
     { kind: 'screen', frames: 108, title: 'Compartilo en tu estado. Siempre al día.', file: 'storefront.png', scrollTo: 1180, host: true },
     { kind: 'whatsapp', frames: 96, title: 'Te escriben con el equipo ya escrito.' },
-    { kind: 'close', frames: 84, lines: ['Un link en tu estado.', CTA_LINE] },
+    { kind: 'close', frames: 84, lines: ['Tu landing, en tu estado.', CTA_LINE] },
   ],
 };
 

@@ -23,8 +23,9 @@ sips -Z 1000 -s format jpeg -s formatOptions 82 X.png --out X.jpg
 ## 2. Capturas (`scripts/capture-v10.mjs`, `pnpm capture`)
 - Viewport 390x844, `deviceScaleFactor: 3`, `fullPage: true`.
 - `PHOTO_MAP` alt → jpg: se inyecta como base64 en cada `<img>` cuyo `alt` matchea.
-- `clean(page)`: reescribe text nodes (`iStock Demo — Alto Valle` → `Alto Valle Celulares`,
-  `demo.maat.work` → `altovalle.maat.work`), oculta `nextjs-portal`, toasts, `nav.panel-nav`,
+- `clean(page)`: reescribe text nodes (`iStock Demo…` → `Alto Valle Celulares`,
+  `demo.maat.work` → `istock.maat.work`), falla si queda `altovalle`, `demo.maat.work`, `istock
+  demo` o `localhost` en el `innerText`, oculta `nextjs-portal`, toasts, `nav.panel-nav`,
   y los grupos de campo de IMEI y costo (`label.parentElement.style.display='none'`).
 - Estados del form: `form-0..4` (modelo → GB/color → estado → precio/batería), con geometría de
   cada campo en CSS px a `form-geom.json` (IMEI/costo con w=h=0, lo verifica el smoke test).
@@ -48,11 +49,15 @@ Ver `music-acestep.md`. Salida: `public/music/{night,bright,warm}.wav` (24 s, 48
   `Caption.tsx` (kicker + título centrado) · `Wipe.tsx` (12 f) · `FieldTap.tsx` ·
   `SoundDesign.tsx` (música por cama + cues, ducking 0.22).
 - Movimiento: `src/motion.ts` (`ease`, `glide`, `fade`, `pop` spring d16 s170 m0.6, `settle`).
+- `src/ads/validate.ts`: reglas de todo spec (duración, hook/close, presupuestos de caracteres,
+  highlight en pantalla, copy sin hosts ajenos). `Root.tsx` lo corre; `pnpm specs` lo corre en Node
+  (`--experimental-strip-types`, por eso los imports dentro de `src/ads/` llevan `.ts`).
 - Un anuncio nuevo = un spec + `publish/<slug>/03-caption.txt`. Nada más se toca.
 
 ## 5. Render y master
 ```
-pnpm typecheck && pnpm lint
+pnpm typecheck && pnpm lint && pnpm specs
+pnpm qa [<id>]                   # stills por escena → out/qa/<slug>-scenes.png, mirar
 pnpm compositions                # ids y duraciones
 pnpm build [IstockPesos ...]     # render crf 17 → ffmpeg master → portada (fin-40 f) → publish/<slug>/
 pnpm test && pnpm safe-zone
@@ -66,8 +71,7 @@ ffprobe -v error -show_entries stream=codec_name,profile,width,height,r_frame_ra
 ffmpeg -i out/istock-<slug>.mp4 -af loudnorm=I=-17:TP=-1.5:LRA=7:print_format=json -f null - 2>&1 | tail -12
 ffmpeg -y -i out/istock-<slug>.mp4 -vf "fps=30/18,scale=160:-1,tile=10x3" out/<slug>-final-contact.png
 ```
-Antes del render, stills por escena: `npx remotion still src/index.ts <id> out/qa/<id>-<n>.png
---frame=<n>` y un `hstack` con ffmpeg, mirado. Esperado (v10): h264 High 1080x1920 30/1 yuv420p bt709, aac 48000 st, 18.000 s;
+Antes del render, `pnpm qa <id>` y mirar la tira. Esperado (v10): h264 High 1080x1920 30/1 yuv420p bt709, aac 48000 st, 18.000 s;
 input_i ≈ -16.1 LUFS, input_tp ≤ -1.5. Mirar el contact sheet: safe zone, nada de IMEI/costo,
 titulares legibles en cada escena, portada (frame 500) con marca + CTA.
 

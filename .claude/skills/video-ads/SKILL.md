@@ -34,15 +34,19 @@ plano: `references/lessons.md`.
    (VIDEO, SAFE_ZONE, COLORS, PHONE, PRODUCT) es la única fuente de constantes.
 6. **Render + master**: `pnpm build [<id>]` = render crf 17 → ffmpeg (H.264 High yuv420p
    BT.709, loudnorm I=-17 TP=-1.5 LRA=7, AAC 192k 48 kHz, faststart) → portada → `publish/<slug>/`.
-7. **QA**: `pnpm typecheck && pnpm lint && pnpm test && pnpm safe-zone`, contact sheet de 30
-   frames mirado con los ojos, `ffprobe` + `loudnorm print_format=json` del master.
+7. **QA**: `pnpm typecheck && pnpm lint && pnpm test && pnpm safe-zone` (`test` incluye la
+   validación de specs), `pnpm qa <id>` (un still por escena, tira en `out/qa/`) mirado con los
+   ojos antes del render, `ffprobe` + `loudnorm print_format=json` del master.
 8. **Publicación**: `publish/<slug>/01-*.mp4 · 02-*-cover.png · 03-caption.txt`. Commit con
    paths nombrados, nunca `out/`, `tools/`, ni PNG masters.
 
 ## Reglas duras (las chequea `scripts/lint.mjs` y `scripts/smoke-test.mjs`)
 - IMEI, costo, margen: nunca en pantalla ni en `src/` (tokens `imei` y `cost` prohibidos).
-- Host y nombre del tenant seed (`demo.maat.work`, `iStock Demo`) nunca aparecen: se muestra
-  un reseller creíble (`Alto Valle Celulares` / `altovalle.maat.work`).
+- El único host que aparece es `istock.maat.work` (chip, WhatsApp, cierre): la promesa es «te da
+  tu propia landing». Nada de hosts de tenant (`altovalle.maat.work` fue un error corregido el
+  2026-09-04), ni `demo.maat.work`, ni `iStock Demo`, ni `localhost`. El tenant demo se muestra
+  como `Alto Valle Celulares`. Lo rechazan `src/ads/validate.ts`, `scripts/lint.mjs` y el guard
+  de `scripts/capture-v10.mjs`.
 - Sin gradientes ni `backdrop-filter`: paleta plana, papel claro y tinta oscura.
 - Texto, logo y CTA dentro de la safe zone de Reels `x 65..1015, y 269..1248`.
 - Texto WhatsApp exacto del producto (mapa `usado A`), ARS con `ceil_1000` como lo muestra la ficha.

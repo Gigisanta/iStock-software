@@ -18,7 +18,7 @@ Fecha: 2026-09-04. Reemplaza a v9 (rechazada: mockups estáticos, sin gancho, co
 ## Reglas de producto que el video respeta
 - UI real, grabada del producto (panel + vidriera demo), no mockups dibujados. Fotos de equipos generadas para el demo (no stock).
 - Nunca IMEI, costo ni margen en pantalla: el form de carga se graba sólo hasta el precio y la batería.
-- Texto WhatsApp exacto del producto: `Hola, vi el iPhone 14 Pro 256 Negro espacial (usado A) a USD 620 en altovalle.maat.work y lo quiero.` (el tenant demo se presenta como `Alto Valle Celulares`)
+- Texto WhatsApp exacto del producto: `Hola, vi el iPhone 14 Pro 256 Negro espacial (usado A) a USD 620 en istock.maat.work y lo quiero.` (el tenant demo se presenta como `Alto Valle Celulares`)
 - ARS informativo con `ceil_1000` (`USD 620 ≈ $ 923.000` es lo que muestra la ficha real).
 - Copy en rioplatense, voseo.
 

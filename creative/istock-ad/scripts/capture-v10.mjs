@@ -42,7 +42,8 @@ const CLEAN_CSS = `
 // The seeded tenant is called "iStock Demo"; the ad shows a believable reseller instead.
 const BRAND = [
   ['iStock Demo — Alto Valle', 'Alto Valle Celulares'],
-  ['demo.maat.work', 'altovalle.maat.work'],
+  ['iStock Demo', 'Alto Valle Celulares'],
+  ['demo.maat.work', 'istock.maat.work'],
 ];
 
 async function clean(page) {
@@ -63,6 +64,12 @@ async function clean(page) {
       if (group) group.style.display = 'none';
     }
   }, BRAND);
+  // Nothing but the product host may reach a capture: the ad promises istock.maat.work, never a tenant host.
+  const leaked = await page.evaluate((tokens) => {
+    const text = document.body.innerText.toLowerCase();
+    return tokens.filter((token) => text.includes(token));
+  }, ['altovalle', 'demo.maat.work', 'istock demo', 'localhost']);
+  if (leaked.length > 0) throw new Error(`capture leaks ${leaked.join(', ')} on ${page.url()}`);
 }
 
 async function injectPhotos(page) {
@@ -133,11 +140,9 @@ await page.click('button[value="sign_in"]');
 await page.waitForURL(/\/app/, { timeout: 30000 });
 await page.waitForLoadState('networkidle');
 
-for (const [name, url] of [
-  ['panel-home', '/app'],
-  ['panel-stock', '/app/stock'],
-  ['panel-lista', '/app/lista'],
-]) {
+// Only the panel home is captured: the stock list shows owner-only figures and the export list
+// prints absolute dev URLs, so neither can ever appear in an ad.
+for (const [name, url] of [['panel-home', '/app']]) {
   await page.goto(`${BASE}${url}`, { waitUntil: 'networkidle' });
   await clean(page);
   await injectPhotos(page);
