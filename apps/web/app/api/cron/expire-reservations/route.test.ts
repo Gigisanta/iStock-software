@@ -1,6 +1,8 @@
 import { DrizzleQueryError } from 'drizzle-orm/errors';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+vi.mock('server-only', () => ({}));
+
 /**
  * `GET /api/cron/expire-reservations` — la única puerta HTTP sin sesión que escribe en la base.
  *

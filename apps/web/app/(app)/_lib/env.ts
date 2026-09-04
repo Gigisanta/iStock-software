@@ -51,6 +51,11 @@ const serverEnvSchema = z.object({
     .union([z.literal(''), z.string().min(24, 'CRON_SECRET necesita al menos 24 caracteres')])
     .optional(),
 
+  /** Claves de Inngest: ausentes o vacías en local; el preflight exige ambas en Production. */
+  INNGEST_SIGNING_KEY: z.string().optional(),
+  INNGEST_EVENT_KEY: z.string().optional(),
+  INNGEST_SERVE_ORIGIN: z.string().optional(),
+
   /**
    * DSN de Sentry. Opcional, y **sin validar la forma acá a propósito** — que es lo contrario de
    * lo que hace `CRON_SECRET` dos líneas más arriba, así que la diferencia se explica:
@@ -126,6 +131,22 @@ export function assertLocalDriverAllowed(env: ServerEnv): void {
 export function cronSecret(): string | null {
   const value = serverEnv().CRON_SECRET;
   return value === undefined || value.length === 0 ? null : value;
+}
+
+export interface InngestConfig {
+  readonly signingKey: string | undefined;
+  readonly eventKey: string | undefined;
+  readonly serveOrigin: string | undefined;
+}
+
+/** Config server-only para serve y el cliente; no expone credenciales a componentes cliente. */
+export function inngestConfig(): InngestConfig {
+  const env = serverEnv();
+  return {
+    signingKey: env.INNGEST_SIGNING_KEY === '' ? undefined : env.INNGEST_SIGNING_KEY,
+    eventKey: env.INNGEST_EVENT_KEY === '' ? undefined : env.INNGEST_EVENT_KEY,
+    serveOrigin: env.INNGEST_SERVE_ORIGIN === '' ? undefined : env.INNGEST_SERVE_ORIGIN,
+  };
 }
 
 /** Host raíz sin protocolo: `maat.work` en prod, `localhost:3000` como fallback de dev. */
