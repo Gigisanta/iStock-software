@@ -39,8 +39,9 @@ desplegar el HEAD y cerrar esos bloqueos.
 - `pnpm test`: PASS; **2.975 tests aprobados y 4 skips intencionales** de Mercado Pago porque
   requieren credenciales de una cuenta de prueba.
 - `pnpm build`: PASS con Next.js 16.3.3; las rutas de marketing, billing y vidriera compilan.
-- `git status --short --branch`: `main` sincronizada con `origin/main` en `c16b087`; sólo queda el
-  directorio local no versionado `.serena/`, que se conserva intacto.
+- `git status --short --branch`: `main` sincronizada con `origin/main` en `f1ca023e59a086c35c78985c122e9543efed5633`,
+  que incluye `c16b087`; sólo queda el directorio local no versionado `.serena/`, que se conserva
+  intacto.
 - `pnpm --filter @istock/e2e typecheck`: PASS.
 - La ruta local `/_media` expone `Timing-Allow-Origin: *`; el e2e de media lo verifica sobre la
   respuesta HTTP real. El LCP con throttling y el header del CDN productivo siguen sin medirse.
@@ -130,8 +131,9 @@ desplegar el HEAD y cerrar esos bloqueos.
 - La invalidación de stock usa los tags del tenant, y la E2E verifica lectura cacheada, publicación,
   reserva, liberación y WhatsApp.
 - El entorno público inspeccionado todavía sirve una versión anterior. `istock.maat.work` responde,
-  pero no prueba el código local; `/demo` responde con redirección a `demo.maat.work`, cuyo DNS no
-  existe. Ésa es la razón operativa por la que el link que se pega en un estado aún no es confiable.
+  pero no prueba el código local; `/demo` responde con redirección a `demo.maat.work`, cuyo DNS,
+  certificado y HTTPS 200 están activos. La resolución del wildcard no es el bloqueo: el link que se
+  pega en un estado todavía apunta a una build pública anterior.
 - La diferencia visual también quedó medida: el HTML/CSS entregado por el deployment público vigente
   todavía contiene 16 referencias a `emerald` y el H1 anterior, mientras que el build local actual
   no contiene utilidades verdes y sirve la UI monocromática en claro y oscuro.
@@ -195,12 +197,13 @@ desplegar el HEAD y cerrar esos bloqueos.
   fue aprobado. El cliente también conserva `auto_recurring.transaction_amount` del preapproval en
   centavos ARS, así una notificación de suscripción no borra el importe que ya dejó una cuota
   autorizada. El mismo efecto limpia el intent durable cuando el estado ya es final. Los cuatro
-  experimentos de cuenta real siguen siendo B3; los tests locales del handler no sustituyen ese
-  cobro. Fuentes: [webhooks de Mercado Pago](https://www.mercadopago.com.ar/developers/es/docs/your-integrations/notifications/webhooks)
+  escenarios de cuenta real todavía no se ejecutaron: forman B3; los tests locales del handler no
+  sustituyen ese cobro. Fuentes: [webhooks de Mercado Pago](https://www.mercadopago.com.ar/developers/es/docs/your-integrations/notifications/webhooks)
   y [obtener pago](https://www.mercadopago.com.ar/developers/es/reference/online-payments/subscriptions/get-payment/get).
 - `MP_ACCESS_TOKEN` y `MP_WEBHOOK_SECRET` ya existen en las variables Production de Vercel sin
-  exponer sus valores. La corrección que agrega `notification_url` al alta de la suscripción está en
-  `c16b087`, todavía pendiente de un despliegue que el plan Hobby rechaza por el cron.
+  exponer sus valores. La corrección que agrega `notification_url` al alta de la suscripción fue
+  introducida en `c16b087`, incluido en el HEAD actual `f1ca023e59a086c35c78985c122e9543efed5633`;
+  sigue pendiente de un despliegue porque el plan Hobby rechaza el cron.
 
 ### Configuración operativa
 
@@ -231,7 +234,7 @@ desplegar el HEAD y cerrar esos bloqueos.
 | Sesión Vercel | PASS | usuario esperado disponible |
 | Plan del equipo | **FAIL: Hobby** | iStock comercial requiere Pro |
 | Variables Production | **FAIL: faltan `R2_ACCESS_KEY_ID` y `R2_SECRET_ACCESS_KEY`; MP presente** | las fotos reales siguen cerradas; el checkout MP corregido aún no está live |
-| Cron de reservas | PASS | hay una ruta cada 5 minutos declarada; requiere Vercel Pro |
+| Cron de reservas | PASS | hay una ruta cada 5 minutos declarada; el plan Hobby bloquea el deploy y requiere Vercel Pro |
 | `istock.maat.work` | PASS | el apex llega a Vercel |
 | `demo.maat.work` / wildcard | **PASS: CNAME, delegación ACME, certificado y HTTPS 200** | los links wildcard ya llegan a Vercel; falta comprobar un tenant real luego del deploy |
 | Deployment existente | PASS | existe historial, pero no implica que sea este HEAD |
@@ -242,9 +245,10 @@ El comando es sólo lectura y no imprime secretos: `bash scripts/preflight-verce
 
 ## Bloqueos externos antes de cobrar
 
-1. Mantener el cron `*/5` y elegir cómo salir de Hobby: pasar el equipo Vercel a Pro cuando haya un
-   cliente, o reabrir formalmente la ADR de jobs con research antes de cambiar de proveedor. No se
-   puede desplegar con un cron diario: rompería la expiración de reservas.
+1. Mantener el cron `*/5`: el plan Hobby bloquea el deploy por esa frecuencia. Elegir cómo salir de
+   Hobby: pasar el equipo Vercel a Pro cuando haya un cliente, o reabrir formalmente la ADR de jobs
+   con research antes de cambiar de proveedor. No se puede desplegar con un cron diario: rompería la
+   expiración de reservas.
 2. Crear las credenciales S3 de alcance exclusivo para `istock-media` y `istock-originals` y cargarlas
    en Production. R2 ya tiene `img.maat.work` activo con SSL y `r2.dev` deshabilitado en ambos buckets.
 3. Configurar en Production el proveedor de autenticación/Neon, R2 privado para originales y R2/CDN
@@ -313,5 +317,6 @@ reintentos reales, credenciales R2/Neon/Auth/observabilidad en Production, asoci
 un tenant real después del deploy y aplicación de las migraciones `0022_thankful_boomer.sql` y
 `0023_unknown_loners.sql` en el entorno objetivo.
 
-**BLOCKERS:** Vercel Hobby rechaza el cron `*/5`; faltan las credenciales R2; el deployment público
-no es `c16b087`; prueba B3 humana pendiente; migraciones `0022`/`0023` pendientes en Production.
+**BLOCKERS:** Vercel Hobby bloquea el deploy con el cron `*/5`; faltan las credenciales R2; el
+deployment público sirve una build vieja y no el HEAD `f1ca023e59a086c35c78985c122e9543efed5633`;
+prueba B3 humana pendiente; migraciones `0022`/`0023` pendientes en Production.
