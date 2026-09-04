@@ -2,7 +2,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-// Declared overlay boxes for v10 (text, logo, CTA). Phone bodies may bleed outside on purpose.
+// Declared overlay boxes for v10 (text, logo, CTA). The device sits below the captions and is fully visible.
 const projectRoot = fileURLToPath(new URL('../', import.meta.url));
 const outputArgument = process.argv.find((argument) => argument.startsWith('--output='));
 const output = outputArgument ? outputArgument.slice('--output='.length) : 'out/v10-safe-zone-report.json';
@@ -10,17 +10,17 @@ const outputPath = isAbsolute(output) ? output : join(projectRoot, output);
 
 const safeZone = { left: 65, top: 269, right: 1015, bottom: 1248 };
 const keyLayout = [
-  { id: 'hook-bubbles', kind: 'text', x: 100, y: 309, width: 880, height: 708 },
-  { id: 'hook-headline', kind: 'text', x: 100, y: 1087, width: 880, height: 160 },
-  { id: 'caption-upload', kind: 'text', x: 100, y: 299, width: 880, height: 200 },
-  { id: 'caption-storefront', kind: 'text', x: 100, y: 299, width: 880, height: 200 },
-  { id: 'storefront-host-pill', kind: 'text', x: 100, y: 519, width: 420, height: 60 },
-  { id: 'caption-detail', kind: 'text', x: 100, y: 299, width: 880, height: 200 },
-  { id: 'caption-whatsapp', kind: 'text', x: 100, y: 299, width: 880, height: 200 },
-  { id: 'close-lockup', kind: 'logo', x: 100, y: 420, width: 760, height: 170 },
-  { id: 'close-tagline', kind: 'text', x: 100, y: 690, width: 880, height: 140 },
-  { id: 'close-cta', kind: 'cta', x: 100, y: 960, width: 640, height: 120 },
-  { id: 'close-footer', kind: 'text', x: 100, y: 1150, width: 400, height: 40 },
+  { id: 'hook-bubbles', kind: 'text', x: 180, y: 309, width: 720, height: 708 },
+  { id: 'hook-headline', kind: 'text', x: 65, y: 1087, width: 950, height: 160 },
+  { id: 'caption-upload', kind: 'text', x: 65, y: 299, width: 950, height: 200 },
+  { id: 'caption-storefront', kind: 'text', x: 65, y: 299, width: 950, height: 200 },
+  { id: 'storefront-host-pill', kind: 'text', x: 330, y: 519, width: 420, height: 60 },
+  { id: 'caption-detail', kind: 'text', x: 65, y: 299, width: 950, height: 200 },
+  { id: 'caption-whatsapp', kind: 'text', x: 65, y: 299, width: 950, height: 200 },
+  { id: 'close-lockup', kind: 'logo', x: 160, y: 420, width: 760, height: 170 },
+  { id: 'close-tagline', kind: 'text', x: 65, y: 690, width: 950, height: 140 },
+  { id: 'close-cta', kind: 'cta', x: 220, y: 960, width: 640, height: 120 },
+  { id: 'close-footer', kind: 'text', x: 340, y: 1150, width: 400, height: 40 },
 ];
 
 const violations = keyLayout.filter((box) => (

@@ -35,7 +35,7 @@ Ver `music-acestep.md`. Salida: `public/v10/music.wav` (18 s, 48 kHz, fade out 1
 
 ## 4. Composición
 - `src/theme.ts`: `VIDEO` 1080x1920 30 fps 540 f · `SAFE_ZONE` · `PHONE` {390x844 CSS, scale
-  1.7, left 208, top 640, bezel 22, radius 84, statusHeight 50} · `BEATS` {84,147,246,348,456,540}.
+  1.45, left 257, top 622, bezel 22, radius 84, statusHeight 50} · `BEATS` {84,147,246,348,456,540}.
 - `Phone.tsx` (shell + dynamic island zIndex 2) · `Screenshot.tsx` (status bar blanca "23:52" +
   `Img` con `translateY(-scroll)`) · `Caption.tsx` (kicker + título 68 px en safe zone) ·
   `Wipe.tsx` (placa que sube en 12 f) · `SoundDesign.tsx` (cues y ducking 0.22).

@@ -14,6 +14,9 @@ export const HOOK_MESSAGES = [
 ] as const;
 
 const ROW = 118;
+// The bubble stack is centred as a block; bubbles stay left-aligned like a real chat.
+const STACK_WIDTH = 720;
+const STACK_LEFT = (1080 - STACK_WIDTH) / 2;
 
 // Six questions that every reseller answers by hand, every night.
 export function Hook({ frame }: HookProps) {
@@ -22,7 +25,7 @@ export function Hook({ frame }: HookProps) {
   const exit = 1 - ease(frame, BEATS.hookEnd - 4, BEATS.hookEnd + 6);
   return (
     <div style={bg}>
-      <div style={{ position: 'absolute', left: SAFE_ZONE.left + 35, top: SAFE_ZONE.top + 40, width: 880, opacity: exit }}>
+      <div style={{ position: 'absolute', left: STACK_LEFT, top: SAFE_ZONE.top + 40, width: STACK_WIDTH, opacity: exit }}>
         {HOOK_MESSAGES.map((message, index) => {
           const s = pop(frame, message.at, { damping: 14, stiffness: 190 });
           const shift = index * ROW;
@@ -63,9 +66,10 @@ export function Hook({ frame }: HookProps) {
       <div
         style={{
           position: 'absolute',
-          left: SAFE_ZONE.left + 35,
+          left: SAFE_ZONE.left,
           top: SAFE_ZONE.top + 40 + HOOK_MESSAGES.length * ROW + 70,
-          width: 880,
+          width: SAFE_ZONE.right - SAFE_ZONE.left,
+          textAlign: 'center',
           color: COLORS.paper,
           fontSize: 92,
           lineHeight: 1.04,

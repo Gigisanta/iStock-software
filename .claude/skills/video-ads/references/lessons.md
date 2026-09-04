@@ -23,6 +23,15 @@
 - `jobs_wait` de Higgsfield exige `index` en cada job.
 - PNG masters de fotos (5–9 MB c/u) no van a git: `public/v10/photos/*.png` en `.gitignore`.
 
+## v10 pulido (2026-09-04, pedido de Gio: "más y mejor centrado")
+- El teléfono a escala 1.7 se cortaba por abajo (shell hasta y 2075). → Escala 1.45, shell
+  600..1868, centrado en x; se pierde un 15 % de tamaño de UI pero el dispositivo se ve entero.
+- Todo el texto de overlay pasó a centrado (titulares, chip, gancho como bloque de 720 px, cierre
+  con `inline-block` para las píldoras). Las cajas de `verify-safe-zone.mjs` se actualizan a mano
+  cuando cambia la geometría: es una lista declarada, no una medición.
+- Regla: cada cambio de geometría se revisa con `remotion still` en 6 frames (uno por escena) y
+  una tira `hstack` antes de renderizar los 540.
+
 ## Pendientes conocidos
 - Escucha humana de la música (UNVERIFIED al cierre de v10).
 - Fotos generadas: sirven para el demo, reemplazar por stock real de un cliente cuando exista.

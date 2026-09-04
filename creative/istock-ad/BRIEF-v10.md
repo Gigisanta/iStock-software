@@ -6,6 +6,7 @@ Fecha: 2026-09-04. Reemplaza a v9 (rechazada: mockups estáticos, sin gancho, co
 - Marca: **iStock** (producto de MaatWork). App: `istock.maat.work`. Vidriera del cliente: `{slug}.maat.work`.
 - Formato: 1080×1920, 30 fps, 18 s (540 frames), H.264 High yuv420p BT.709, AAC 48 kHz, loudnorm I=-17 TP=-1.5.
 - Uso: Instagram Reels orgánico + Meta Ads (feed/reels/stories). Safe zone Reels: x 65..1015, y 269..1248.
+- Composición centrada (2026-09-04, pulido): teléfono entero visible (390x844 CSS a escala 1.45, centrado en x, shell y 600..1868) debajo de los titulares; titulares, chip de host, gancho y cierre centrados.
 - Diseñado para verse **sin sonido**: todo el mensaje está en pantalla; música + SFX suman, no cargan.
 
 ## Público y promesa

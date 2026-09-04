@@ -21,9 +21,10 @@ export function Caption({ frame, start, end, title, kicker, tone = 'ink' }: Capt
   const kickerColor = tone === 'ink' ? COLORS.accent : COLORS.accentSoft;
   const wrap: CSSProperties = {
     position: 'absolute',
-    left: SAFE_ZONE.left + 35,
+    left: SAFE_ZONE.left,
     top: SAFE_ZONE.top + 30,
-    width: SAFE_ZONE.right - SAFE_ZONE.left - 70,
+    width: SAFE_ZONE.right - SAFE_ZONE.left,
+    textAlign: 'center',
     opacity,
     transform: `translate3d(0, ${y}px, 0)`,
     fontFamily: TYPE.sans,

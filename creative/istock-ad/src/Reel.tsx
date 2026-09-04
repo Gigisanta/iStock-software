@@ -24,7 +24,7 @@ export function Reel() {
         <>
           <Wipe frame={frame} at={BEATS.hookEnd - WIPE} color={COLORS.paper} length={WIPE} />
           {frame >= BEATS.hookEnd ? (
-            <div style={{ position: 'absolute', left: 90, top: 760, width: 900, height: 900, borderRadius: 450, background: COLORS.accentSoft, opacity: 0.55, filter: 'blur(90px)' }} />
+            <div style={{ position: 'absolute', left: 90, top: 784, width: 900, height: 900, borderRadius: 450, background: COLORS.accentSoft, opacity: 0.55, filter: 'blur(90px)' }} />
           ) : null}
           {frame >= BEATS.hookEnd - WIPE && frame < BEATS.uploadEnd + 4 ? <Upload frame={frame} /> : null}
           {frame >= BEATS.uploadEnd && frame < BEATS.storefrontEnd + 4 ? <Storefront frame={frame} /> : null}

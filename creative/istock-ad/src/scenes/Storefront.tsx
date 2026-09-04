@@ -21,19 +21,27 @@ export function Storefront({ frame }: StorefrontProps) {
       <div
         style={{
           position: 'absolute',
-          left: SAFE_ZONE.left + 35,
+          left: SAFE_ZONE.left,
+          width: SAFE_ZONE.right - SAFE_ZONE.left,
           top: SAFE_ZONE.top + 250,
+          textAlign: 'center',
+          opacity: Math.min(1, link) * linkLeave,
+          transform: `translate3d(0, ${(1 - link) * 16}px, 0)`,
+        }}
+      >
+      <span
+        style={{
+          display: 'inline-block',
           padding: '14px 28px',
           borderRadius: 999,
           background: COLORS.ink,
           color: COLORS.paper,
           fontFamily: TYPE.mono,
           fontSize: 32,
-          opacity: Math.min(1, link) * linkLeave,
-          transform: `translate3d(0, ${(1 - link) * 16}px, 0)`,
         }}
       >
         {PRODUCT.storeHost}
+      </span>
       </div>
       <Phone>
         <Screenshot file="form-4.png" x={previousX} opacity={1 - slide} />

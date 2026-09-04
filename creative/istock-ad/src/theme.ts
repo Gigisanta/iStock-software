@@ -42,9 +42,10 @@ export const TYPE = {
 export const PHONE = {
   cssWidth: 390,
   cssHeight: 844,
-  scale: 1.7,
-  left: 208,
-  top: 640,
+  // Whole device visible: shell spans y 600..1868, centred on x.
+  scale: 1.45,
+  left: 257,
+  top: 622,
   bezel: 22,
   screenRadius: 84,
   statusHeight: 50,
