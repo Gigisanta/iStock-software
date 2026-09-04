@@ -1,0 +1,5 @@
+node_modules/
+out/
+tools/
+.remotion/
+public/v10/photos/*.png
