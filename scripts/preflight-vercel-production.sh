@@ -71,6 +71,8 @@ else
     LLM_MAX_OUTPUT_TOKENS
     MP_ACCESS_TOKEN
     MP_WEBHOOK_SECRET
+    INNGEST_SIGNING_KEY
+    INNGEST_EVENT_KEY
   )
   MISSING=()
   for key in "${REQUIRED_ENV[@]}"; do
@@ -99,10 +101,21 @@ else
   fi
 fi
 
-if [ -f vercel.json ] && jq -e '.crons | length == 1 and .[0].path == "/api/cron/expire-reservations" and .[0].schedule == "*/5 * * * *"' vercel.json >/dev/null; then
-  pass 'cron de expiración: cada 5 minutos (Vercel Pro), una sola ruta'
+if [ -f vercel.json ] && jq -e '([keys[]] | sort) == ["$schema"] and (has("crons") | not)' vercel.json >/dev/null; then
+  pass 'Vercel Cron desactivado: el schedule de expiración vive en Inngest Free'
 else
-  fail 'vercel.json no declara exactamente el cron cada 5 minutos requerido por las reservas'
+  fail 'vercel.json todavía declara Vercel Cron o configuración extra; la agenda de expiración debe vivir en Inngest'
+fi
+
+INNGEST_ROUTE='apps/web/app/api/inngest/route.ts'
+INNGEST_FUNCTIONS='apps/web/inngest/functions.ts'
+if [ -f "$INNGEST_ROUTE" ] && [ -f "$INNGEST_FUNCTIONS" ] &&
+   grep -Eq 'serve\(' "$INNGEST_ROUTE" &&
+   grep -Eq 'maxDuration[[:space:]]*=[[:space:]]*300' "$INNGEST_ROUTE" &&
+   grep -Eq "cron\\([[:space:]]*['\"]\\*/5 \\* \\* \\* \\*['\"]" "$INNGEST_FUNCTIONS"; then
+  pass 'Inngest declara /api/inngest y el barrido cada 5 minutos'
+else
+  fail 'falta la integración Inngest verificable: route, maxDuration=300 o cron */5'
 fi
 
 DNS_CNAME=$(dig +short CNAME "$DOMAIN" 2>/dev/null || true)
@@ -152,6 +165,16 @@ if printf '%s' "$LIVE_BILLING" | grep -Fq '/ingresar?plan=base'; then
   pass 'deployment público conserva plan=base al pedir suscripción sin sesión'
 else
   fail 'deployment público no conserva plan=base al pedir suscripción sin sesión'
+fi
+
+# Una ruta inexistente también puede existir en el árbol y pasar el build. El callback firmado debe
+# estar vivo en el alias canónico y rechazar una request anónima con 401; un 404/3xx/500 significa
+# que Inngest no puede sincronizar o ejecutar la función.
+LIVE_INNGEST_STATUS=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 "https://${DOMAIN}/api/inngest" 2>/dev/null || true)
+if [ "$LIVE_INNGEST_STATUS" = '401' ]; then
+  pass 'endpoint público de Inngest está vivo y falla cerrado sin firma'
+else
+  fail "endpoint público de Inngest respondió ${LIVE_INNGEST_STATUS:-sin respuesta}; se esperaba 401 sin firma"
 fi
 
 if [ "$fail" -eq 0 ]; then

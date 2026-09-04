@@ -167,6 +167,10 @@ const ESPERADO = {
   // handler lee `request.headers`; esta fila es lo que avisa el dia que eso deje de ser cierto.
   "/api/cron/expire-reservations": "dynamic",
 
+  // Scheduler Inngest. `serve` verifica la firma y procesa el body de cada callback; nunca se
+  // puede prerenderizar ni cachear una respuesta que depende de ese request.
+  "/api/inngest": "dynamic",
+
   // FASE 6. Webhook de Mercado Pago, y `dynamic` es un requisito por el MISMO motivo que el cron,
   // agravado: la ruta decide segun la FIRMA del pedido (`x-signature`, HMAC verificado en
   // `_lib/webhook/handle-notification.ts:105`). Una respuesta horneada seria un `200` servido del

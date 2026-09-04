@@ -2,29 +2,26 @@
 # ══════════════════════════════════════════════════════════════════════════════════════════════
 #  ACEPTACION DE S6 — la re-ejecuta el LEAD, no el agente que escribio el codigo (CLAUDE.md regla 2)
 #
-#  Gate del board: "reserva 30-120min; cron libera; vidriera revalida".
+#  Gate del board: "reserva 30-120min; scheduler libera; vidriera revalida".
 #
 #  ── Lo que este archivo NO hace, y por que ───────────────────────────────────────────────────
 #  No vuelve a probar `expireReservation` ni `createReservation`: son puras, viven en
 #  `packages/domain` y su suite es del owner del paquete. Duplicarlas aca serian dos copias que
 #  derivan. Lo que S6 agrega y nadie mas mira es el CAMINO: que una reserva del panel llegue al
-#  motor, que el cron llegue al handler, y que la vidriera se entere. Eso es lo que se audita.
+#  motor, que el scheduler llegue al handler, y que la vidriera se entere. Eso es lo que se audita.
 #
 #  ── El invariante mas caro de la slice, y por que necesita una probe y no un grep ────────────
-#  `GET /api/cron/expire-reservations` es la UNICA puerta HTTP sin sesion que ESCRIBE en todo el
-#  producto. Su propiedad no es "devuelve 401": es que **sin credencial valida no toca Postgres**,
-#  o sea una afirmacion sobre el ORDEN de dos cosas. Un handler que barre primero y decide el
-#  status despues devuelve los mismos 401 y es una escritura abierta. El orden no se lee con grep;
-#  se mide espiando el barrido. Eso es `scripts/probes/s6-cron-fail-closed.test.ts`.
+#  `GET /api/cron/expire-reservations` sigue siendo la UNICA puerta HTTP manual sin sesion que
+#  ESCRIBE en todo el producto. Su propiedad no es "devuelve 401": es que **sin credencial valida
+#  no toca Postgres**, o sea una afirmacion sobre el ORDEN de dos cosas. Un handler que barre
+#  primero y decide el status despues devuelve los mismos 401 y es una escritura abierta. El orden
+#  no se lee con grep; se mide espiando el barrido. Eso es `scripts/probes/s6-cron-fail-closed.test.ts`.
 #
-#  ── Y el que nadie habia mirado: el cron tiene que LLEGAR ────────────────────────────────────
-#  De la doc de Vercel (`docs/research/vercel-cron-limits.md`, verificada 2026-08-28):
-#    > "When a cron-triggered endpoint returns a 3xx redirect status code, the job completes
-#    >  without further requests."
-#  Un redirect NO es un fallo para Vercel: la corrida figura completa, no hay reintento, no hay log
-#  nuestro —el handler nunca corrio— y no hay alerta. Las reservas dejan de vencer y el sintoma
-#  aparece semanas despues del lado del cliente. `proxy.ts` rutea por HOST y el host que golpea el
-#  cron esta UNVERIFIED, asi que ese camino se mide: `scripts/probes/s6-cron-reachability.test.ts`.
+#  ── Y el que nadie habia mirado: el scheduler tiene que LLEGAR ─────────────────────────────
+#  Vercel Hobby rechaza `*/5`, por eso la agenda vive en Inngest Free. La probe cruza el trigger,
+#  el endpoint `serve` de Next y `proxy.ts`: una firma incorrecta o un rewrite que mande
+#  `/api/inngest` a una vidriera deja el barrido sin ejecutar, aunque el deploy figure verde.
+#  Eso se mide en `scripts/probes/s6-inngest-reachability.test.ts`.
 #
 #  ── Por que las dos probes son del LEAD y no de `app-agent` ──────────────────────────────────
 #  `apps/web/app/api/cron/expire-reservations/route.test.ts` existe, es bueno y prueba cosas
@@ -62,17 +59,17 @@ S6_UI=(
 )
 
 # ── V1 · el schedule existe y apunta a un handler que existe ─────────────────────────────────
-sec 'V1 · vercel.json agenda un handler real, y el cron llega hasta el'
+sec 'V1 · Inngest agenda un handler real, y el scheduler llega hasta el'
 if pnpm --filter @istock/web exec vitest run --root ../.. \
-     scripts/probes/s6-cron-reachability.test.ts >/tmp/s6-reach.txt 2>&1; then
+     scripts/probes/s6-inngest-reachability.test.ts >/tmp/s6-reach.txt 2>&1; then
   ok "la probe de alcance pasa: $(grep -oE 'Tests +[0-9]+ passed' /tmp/s6-reach.txt | tail -1)"
 else
-  no 'la probe de alcance FALLA. O el path agendado no tiene handler, o el proxy lo redirige/reescribe'
+  no 'la probe de alcance FALLA. O el trigger no tiene handler, o el proxy lo redirige/reescribe'
   sed 's/^/        /' /tmp/s6-reach.txt | grep -E '×|FAIL|Error' | head -8
 fi
 
-# ── V2 · el fail-closed, medido por invocacion ───────────────────────────────────────────────
-sec 'V2 · sin credencial valida el cron no toca Postgres (orden, no status code)'
+# ── V2 · el fail-closed de la puerta manual, medido por invocacion ──────────────────────────
+sec 'V2 · sin credencial valida la puerta manual no toca Postgres (orden, no status code)'
 if pnpm --filter @istock/web exec vitest run --root ../.. \
      scripts/probes/s6-cron-fail-closed.test.ts >/tmp/s6-closed.txt 2>&1; then
   ok "la probe de fail-closed pasa: $(grep -oE 'Tests +[0-9]+ passed' /tmp/s6-closed.txt | tail -1)"
