@@ -875,11 +875,14 @@ de una reserva vencida es ~5 min + el barrido, sobre un reloj de 30–120 min. E
 **una vez por día** y una expresión más frecuente **rompe el deploy**: con Hobby esta feature no
 existiría, lo que es una razón para Pro independiente de la licencia.
 
-**Lo que esta ADR no dice: que Inngest sea peor.** No se investigó — no hay archivo en
-`docs/research/` sobre Inngest y ningún límite suyo fue medido. El descarte es por **superficie**, no
-por números: un proveedor más, una credencial más, un webhook más que firmar, para un job que hoy es
-un `GET` cada cinco minutos. Si aparece un job que necesite **reintentos con backoff, fan-out o
-durabilidad**, esta ADR se reabre **con research primero**, porque es justo lo que Vercel Cron no da.
+**Lo que esta ADR no afirma: que Inngest sea peor.** Al redactarla no se había investigado — el
+descarte original fue por **superficie**, no por números: un proveedor más, una credencial más, un
+webhook más que firmar, para un job que hoy es un `GET` cada cinco minutos. El research posterior
+`docs/research/inngest-free-scheduled-functions.md` confirma que Inngest puede cubrir un cron de
+cinco minutos en una función serverless, pero también confirma la superficie adicional de endpoint
+firmado, claves y sincronización. Ese research no cambia esta ADR por sí solo. Si el requisito es
+posponer Vercel Pro, esta ADR se reabre con ese research y con una prueba de cuota, firma,
+reintento e idempotencia antes de cambiar el proveedor.
 
 ### Consecuencias — lo que se pierde, sin redondear
 | se pierde | cuánto duele hoy | mitigación |
