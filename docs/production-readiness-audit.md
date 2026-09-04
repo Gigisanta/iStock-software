@@ -39,9 +39,12 @@ desplegar el HEAD y cerrar esos bloqueos.
 - `pnpm test`: PASS; **2.975 tests aprobados y 4 skips intencionales** de Mercado Pago porque
   requieren credenciales de una cuenta de prueba.
 - `pnpm build`: PASS con Next.js 16.3.3; las rutas de marketing, billing y vidriera compilan.
-- `git status --short --branch`: `main` sincronizada con `origin/main` en `f1ca023e59a086c35c78985c122e9543efed5633`,
-  que incluye `c16b087`; sólo queda el directorio local no versionado `.serena/`, que se conserva
-  intacto.
+- `git status --short --branch`: `main` sincronizada con `origin/main` en `8e2be5ea41018df62125842122b3ac0fd5f71ac5`,
+  que incluye `f1ca023e` y `c16b087`; sólo queda el directorio local no versionado `.serena/`, que
+  se conserva intacto.
+- `vercel env run -e production --scope giolivos-projects --project istock -- pnpm db:migrate`:
+  PASS; devolvió `migrate OK` y dejó aplicadas en Production las migraciones
+  `0022_thankful_boomer.sql` y `0023_unknown_loners.sql`. `DATABASE_URL_UNPOOLED` se mantuvo oculta.
 - `pnpm --filter @istock/e2e typecheck`: PASS.
 - La ruta local `/_media` expone `Timing-Allow-Origin: *`; el e2e de media lo verifica sobre la
   respuesta HTTP real. El LCP con throttling y el header del CDN productivo siguen sin medirse.
@@ -202,7 +205,7 @@ desplegar el HEAD y cerrar esos bloqueos.
   y [obtener pago](https://www.mercadopago.com.ar/developers/es/reference/online-payments/subscriptions/get-payment/get).
 - `MP_ACCESS_TOKEN` y `MP_WEBHOOK_SECRET` ya existen en las variables Production de Vercel sin
   exponer sus valores. La corrección que agrega `notification_url` al alta de la suscripción fue
-  introducida en `c16b087`, incluido en el HEAD actual `f1ca023e59a086c35c78985c122e9543efed5633`;
+  introducida en `c16b087`, incluido en el HEAD actual `8e2be5ea41018df62125842122b3ac0fd5f71ac5`;
   sigue pendiente de un despliegue porque el plan Hobby rechaza el cron.
 
 ### Configuración operativa
@@ -263,9 +266,8 @@ El comando es sólo lectura y no imprime secretos: `bash scripts/preflight-verce
    el mismo webhook, simular rechazo/reintentos y confirmar que el tenant queda habilitado o
    degradado según el estado real. La prueba debe verificar también el medio elegido; la presencia
    de un valor en el enum de la API no prueba que pueda adherirse en esta cuenta.
-6. Desplegar el HEAD por el pipeline normal, ejecutar `pnpm db:migrate` en el entorno objetivo y
-   repetir el preflight, los smoke tests HTTPS y la E2E con dominio real. No activar cobros en
-   Production antes de ese paso.
+6. Desplegar el HEAD por el pipeline normal, repetir el preflight, los smoke tests HTTPS y la E2E
+   con dominio real. No activar cobros en Production antes de ese paso.
 
 ## Riesgos que permanecen declarados
 
@@ -314,9 +316,8 @@ bash scripts/preflight-vercel-production.sh
 
 **UNVERIFIED:** cuenta real de Mercado Pago, medios de pago y trial en checkout, webhook público y
 reintentos reales, credenciales R2/Neon/Auth/observabilidad en Production, asociación del wildcard a
-un tenant real después del deploy y aplicación de las migraciones `0022_thankful_boomer.sql` y
-`0023_unknown_loners.sql` en el entorno objetivo.
+un tenant real después del deploy.
 
 **BLOCKERS:** Vercel Hobby bloquea el deploy con el cron `*/5`; faltan las credenciales R2; el
-deployment público sirve una build vieja y no el HEAD `f1ca023e59a086c35c78985c122e9543efed5633`;
-prueba B3 humana pendiente; migraciones `0022`/`0023` pendientes en Production.
+deployment público sirve una build vieja y no el HEAD `8e2be5ea41018df62125842122b3ac0fd5f71ac5`;
+prueba B3 humana pendiente.
