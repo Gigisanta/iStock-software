@@ -85,7 +85,7 @@ export default function PricingPage() {
 
         <p className="pricing-note">
           <strong>Probá 14 días sin tarjeta.</strong> Después elegís Base o Pro y completás la
-          suscripción en Mercado Pago. El checkout muestra el importe exacto en pesos antes de
+          suscripción en Mercado Pago. La pantalla de pago muestra el importe exacto en pesos antes de
           confirmar y MP gestiona los débitos mensuales.
         </p>
       </div>
