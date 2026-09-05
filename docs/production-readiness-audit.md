@@ -4,12 +4,51 @@
 **Para quién:** LEAD y quienes destraban credenciales, cuentas y despliegue.
 **Cuándo se actualiza:** después de cada preflight, gate de aceptación o cambio de proveedor.
 **Fecha:** 2026-09-05
-**Estado:** deployment de Production `dpl_CweQwRcTGcaGPcToXa7NSXPKatxi` en estado Ready, URL `istock-1tketn3rt-giolivos-projects.vercel.app`; `https://istock.maat.work` responde; los gates locales posteriores al fix CSS pasan; el preflight sigue FAIL sólo por Vercel Hobby y las dos claves de Inngest ausentes; el upload real por el Route Handler/S3 driver de la app, Inngest real, B3 de Mercado Pago, el próximo CI y E11 siguen sin verificar
+**Estado:** `HEAD`, `main` y `origin/main` están en `5a21648` (`[test] qa: seed catalog options in tradein probe`); CI `33950035665` terminó `COMPLETED SUCCESS`; Production `dpl_J9nHP7iZ2JGpJkCMi3tWcGXCY5Zi` está READY en `istock-adx7ez1fu-giolivos-projects.vercel.app`; los alias públicos responden; el preflight sigue FAIL sólo por Vercel Hobby y las dos claves de Inngest ausentes; el upload real por el Route Handler/S3 driver de la app, Inngest real, B3 de Mercado Pago, B6 y E11 siguen sin verificar
 **Workflow:** diagnóstico profundo → correcciones de catálogo, vidriera, UX y billing → gates → preflight
 
 ## Resultado ejecutivo
 
-### Estado vigente — 2026-09-05 · evidencia adicional
+### Estado vigente — 2026-09-05 · corte actual
+
+`HEAD`, `main` y `origin/main` apuntan al commit completo
+`5a2164864bbf7191ab42cfea3630340d49f1d76a` (`[test] qa: seed catalog options in tradein probe`).
+El cambio es **sólo de test**: `scripts/probes/s8-canje.test.ts` ahora siembra
+`storage_options_gb` y `colors` en el modelo de catálogo del fixture. No cambia el comportamiento de
+Production ni las decisiones del producto.
+
+El CI run `33950035665` sobre `5a21648` terminó **COMPLETED SUCCESS**: los jobs `main` y `e2e`
+terminaron `success`, y las aceptaciones S1, S2, S3, S4, S6, S7, S8, S9, S13 y S10 terminaron
+`success`. El run precedente `33948167230`, sobre `a456bf6`, falló únicamente porque el fixture de
+S8 no incluía `catalog_models.storage_options_gb/colors`; con el fixture corregido en `5a21648`, S8
+se reejecutó **9/9** local y remotamente.
+
+El deployment de Production `dpl_J9nHP7iZ2JGpJkCMi3tWcGXCY5Zi` está **READY**, fue construido desde
+`5a21648`/`main` y su URL es `istock-adx7ez1fu-giolivos-projects.vercel.app`. Los alias
+`https://istock.maat.work` y `https://demo.maat.work` mantienen páginas 200. En la home del demo,
+las 16 URLs únicas de `img.maat.work` devolvieron `HEAD 200` y `image/webp`; la ficha consultó 6
+imágenes. Las respuestas de imágenes mantienen `Cache-Control: public, ... immutable`,
+`cf-cache-status: HIT` y `X-Content-Type-Options: nosniff`.
+
+En Production, `/api/health` responde 200 con `no-store`; el cron y el webhook de Mercado Pago sin
+firma responden 401 con `no-store`; un host miss responde la página controlada 200. La copia de
+marketing no contiene verde ni `Grafito` y sí contiene `Negro espacial`. Los símbolos que sostienen
+estas fronteras siguen siendo `proxy.ts`, `apps/web/app/api/health/route.ts`,
+`apps/web/app/api/cron/expire-reservations/route.ts`,
+`apps/web/app/(billing)/billing/webhooks/mercadopago/route.ts`,
+`packages/media/src/storage/r2.ts` y el seed Apple de `packages/db/src/seed-data.ts`.
+
+El LEAD reejecutó `bash scripts/accept-s8.sh` localmente: **S8: ACEPTADA**, V1–V6, typecheck,
+lint, test recursivo y todos los campos `MEDIDO` en verde. `git diff --check`,
+`bash scripts/guard-citas.sh` y `bash scripts/guard-doc-tables.sh` también pasan.
+
+`pnpm vercel:preflight` sigue esperado en **FAIL** sólo por los bloqueos externos explícitos: equipo
+Vercel Hobby, `INNGEST_SIGNING_KEY` e `INNGEST_EVENT_KEY` ausentes y `/api/inngest` en 500 por esas
+claves faltantes. No se marca producción cobrable ni se da por resuelto B3, Inngest, K5/S2.1 o E11.
+
+### Evidencia histórica — 2026-09-05 · corte previo (`4000cd4`)
+
+> Este bloque conserva el corte anterior; el estado vigente y el CI posterior están arriba.
 
 `HEAD`, `main` y `origin/main` apuntan a `4000cd4` (`[fix] marketing: align demo color copy`).
 La corrección de copy integra “La pantalla de pago…” en precios y destraba K1; no cambia ninguna
@@ -92,7 +131,32 @@ sincronización de la cuenta Inngest, una ejecución firmada real, el upload R2 
 Mercado Pago. El wildcard `*.maat.work` tiene DNS, delegación ACME y certificado administrado
 activos; no corresponde afirmar que hoy se puede cobrar.
 
-## Última evidencia ejecutada — 2026-09-05 · evidencia adicional
+## Última evidencia ejecutada — 2026-09-05 · corte actual
+
+- `HEAD`/`main`/`origin/main`: `5a2164864bbf7191ab42cfea3630340d49f1d76a`, commit de test que
+  completa `storage_options_gb` y `colors` en el fixture de `scripts/probes/s8-canje.test.ts`; no
+  cambia comportamiento de Production.
+- `bash scripts/accept-s8.sh`: **S8: ACEPTADA**, V1–V6, typecheck, lint, test recursivo y campos
+  `MEDIDO` en verde; el mismo caso quedó **9/9** local y remotamente.
+- CI `33950035665` sobre `5a21648`: **COMPLETED SUCCESS**; jobs `main` y `e2e` en `success`, con
+  S1, S2, S3, S4, S6, S7, S8, S9, S13 y S10 aceptadas. `33948167230` sobre `a456bf6` queda como
+  fallo histórico exclusivo del fixture S8 sin `storage_options_gb/colors`.
+- Production `dpl_J9nHP7iZ2JGpJkCMi3tWcGXCY5Zi`: **READY**, construido desde `5a21648`/`main`,
+  URL `istock-adx7ez1fu-giolivos-projects.vercel.app`; `istock.maat.work` y `demo.maat.work`
+  mantienen páginas 200. Home del demo: 16/16 URLs únicas `img.maat.work` con `HEAD 200`
+  `image/webp`; ficha: 6 imágenes; imágenes con `Cache-Control` público immutable,
+  `cf-cache-status: HIT` y `nosniff`.
+- Health 200/no-store; cron y webhook de Mercado Pago sin firma 401/no-store; host miss 200 con
+  página controlada; marketing sin verde ni `Grafito` y con `Negro espacial`.
+- `git diff --check`, `bash scripts/guard-citas.sh` y `bash scripts/guard-doc-tables.sh`: PASS.
+- `pnpm vercel:preflight`: sigue esperado en FAIL por Hobby, las dos claves de Inngest ausentes y
+  `/api/inngest` 500; B3, B6, upload real por el Route Handler/S3 driver, Inngest real y E11 siguen
+  sin verificación.
+
+## Evidencia histórica — 2026-09-05 · corte previo (`4000cd4`)
+
+> Este bloque conserva la evidencia ejecutada antes de `5a21648`; sus deployment y CI no describen
+> el estado vigente.
 
 - `apps/web/app/globals.css`: `.marketing-hero h1` conserva `max-width: 11ch` fuera de media query y
   aplica `max-width: 12ch` sólo en `@media (min-width: 900px)`.
@@ -486,3 +550,12 @@ externo de Mercado Pago; upload real por el Route Handler/S3 driver de la app y 
 pendiente por falta de Chrome DevTools MCP. La regla Cloudflare v2 y la probe de CDN de T13 están
 verificadas, pero no cierran el upload de K5/S2.1. No se declara producción cobrable.
 Histórico del corte anterior: deployment `dpl_CrZVPkuMbk2Mjzz9hAJW4vpd2hE8`, URL `istock-8uonj48ud-giolivos-projects.vercel.app`.
+
+## Addendum de evidencia — 2026-09-05
+
+- **Código vigente:** `5a2164864bbf7191ab42cfea3630340d49f1d76a`.
+- **GitHub CI:** run `33950035665` terminó `COMPLETED SUCCESS`: gates `main` y `e2e`, incluido S8.
+- **Vercel Production:** deployment `dpl_J9nHP7iZ2JGpJkCMi3tWcGXCY5Zi` en `READY`, construido desde `5a21648`; URL `istock-adx7ez1fu-giolivos-projects.vercel.app`.
+- **Probes de alias públicos:** siguen pasando: demo `16/16` respuestas `WebP`, ficha detail con 6 imágenes, `/api/health` 200 con `no-store`, y cron/webhook sin firma 401 con `no-store`.
+- **S8 histórico:** `33948167230` falló por un fixture de test sin `catalog_models.storage_options_gb/colors`; se corrigió sólo en el test en `5a21648`. No fue una regresión de producción.
+- **Blockers sin cambios:** Vercel Hobby por decisión explícita; faltan `INNGEST_SIGNING_KEY` e `INNGEST_EVENT_KEY` y no hay una ejecución real de Inngest; checkout/webhook real de Mercado Pago; upload real de la app por Route Handler K5/S2.1; número de WhatsApp de demo; LCP E11 con throttling.
