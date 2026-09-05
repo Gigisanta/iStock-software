@@ -19,29 +19,50 @@ Lo escribe `docs-keeper` (`CLAUDE.md` §4).
 | [CHATBOT.md](CHATBOT.md) | dieta, contexto, tools, handoff, evals, costo por 1000 msgs | `docs-keeper` por `CLAUDE.md` §4 — **decía `ai-agent` y era la cuarta vez del mismo patrón** (`PRODUCT.md`, `DOMAIN.md`, `ARCHITECTURE.md`); acá ni siquiera había conflicto: `.claude/agents/ai-agent.md:46` ya decía *"documentá … en `docs/CHATBOT.md` (**vía `docs-keeper`**)"*. El contenido lo aporta `ai-agent` | **sin revisar desde FASE 1**; lo único tocado el 2026-08-28 fue el ID de modelo muerto (`llama-3.1-8b-instant`, retirado el 16/08/2026). **Esta celda decía *«y `packages/ai` no existe»* y era falso: el paquete está en `main` desde `d42fac9`** — corregido el 2026-08-28 verificando contra el árbol, la misma corrección que ya llevaban `SLICE_BOARD.md` (`T19`) y `TEST_MATRIX.md`. Lo que sigue sin censarse es la **cobertura** (E7/E8/E9/S7), que es la fila `T19`, hoy en `todo` |
 | [OWNERSHIP.md](OWNERSHIP.md) | tabla vigente de dueños de archivos y desempates de ownership | **LEAD** | cada cambio de ownership o de la tabla |
 | [frontend-taste-audit.md](frontend-taste-audit.md) | dirección visual, diales y cambios aplicados al frontend | `docs-keeper` | cada auditoría visual o cambio de dirección |
-| [production-readiness-audit.md](production-readiness-audit.md) | evidencia de gates, producción pública, Cloudflare/R2, preflight y bloqueos para cobrar | `docs-keeper` | después de cada preflight, gate de aceptación o cambio de proveedor |
+| [production-readiness-audit.md](production-readiness-audit.md) | evidencia de gates, deployment público vigente, Cloudflare/R2, preflight y bloqueos para cobrar | `docs-keeper` | después de cada preflight, gate de aceptación o cambio de proveedor |
 | [research/](research/) | hechos verificados con fuente y fecha | `researcher` (uno por archivo) | **7 topics de FASE 1 (6 PASS, R4 PARCIAL) + `vercel-request-body-limit.md` (S2), `vercel-firewall-as-code.md` (T1), `vercel-cron-limits.md` (corte histórico de S6), `vercel-production-limits-2026.md` (addendum vigente 2026-09-04) e `inngest-free-scheduled-functions.md` (agenda Inngest Free), pedidos al evaluar límites o cerrar una slice** |
 
-## Estado vigente — 2026-09-05
+## Estado vigente — 2026-09-05 · evidencia adicional
 
-La fuente actual de avance es `SLICE_BOARD.md`. `HEAD` y `main` están en `bb6ea63` (`[fix] marketing:
-stabilize desktop hero heading`); el `origin/main` local todavía referencia `c0b09d4`. K1–K4 están `done` tras la reejecución del LEAD de
+La fuente actual de avance es `SLICE_BOARD.md`. `HEAD`, `main` y `origin/main` están en `4000cd4`
+(`[fix] marketing: align demo color copy`). El estado pushed conserva el fix CSS integrado;
+K1–K4 están `done` tras la reejecución del LEAD de
 `bash scripts/accept-fase3.sh`; K5 y S2.1 siguen `blocked` por la probe de byte del pipeline real de
-la app; T13 está `done` para CDN y E11 sigue sin cubrirse por falta de Chrome DevTools MCP. El fix CSS
+la app; T13 está `done` para CDN, T15 está `done` como decisión intencional sobre slug/color, y E11 sigue sin cubrirse
+por falta de Chrome DevTools MCP. El fix CSS
 vigente en `apps/web/app/globals.css` deja `.marketing-hero h1` en `11ch` fuera de media query y en
 `12ch` sólo desde `900px`. La mención histórica de S2.5 como `abierta` en la descripción larga de
 `SLICE_BOARD.md` queda supersedida por su fila `done` del 2026-09-04.
 
 La E2E posterior al CSS pasó en `E2E_PORT=3178`: 109/109, 19/19 specs, 0 skips; typecheck, lint,
 test, audit, build, accept-fase2 y accept-fase3 también pasan. El CI run `33942556793` sobre
-`c0b09d4` es diagnóstico histórico —falló antes del CSS por un H1 de 3 líneas en Ubuntu— y todavía
-no hay CI posterior a `bb6ea63`.
+`c0b09d4` es diagnóstico histórico —falló antes del CSS por un H1 de 3 líneas en Ubuntu—. El CI
+`33946696347`, basado en `4000cd4`, falló únicamente en `guard-citas.sh` porque los IDs externos de
+Cloudflare fueron tomados como commits; las citas ya tienen la excepción HTML explícita y, en el
+árbol actual, `bash scripts/guard-citas.sh`, `bash scripts/guard-doc-tables.sh` y `git diff --check`
+pasan. El próximo CI queda `UNVERIFIED` hasta que lo vea el LEAD.
 
 La evidencia de producción está en `production-readiness-audit.md`: deployment
-`dpl_EFeaAD5fjQkcF3WzqVkkgVUavANF` Ready, alias `istock.maat.work` respondiendo, gates verdes y
-preflight FAIL únicamente por Vercel Hobby y las dos claves de Inngest ausentes. B3 de Mercado Pago,
-Inngest real, el upload/`Cache-Control` por el pipeline de la app, E11 y CI posterior al CSS siguen
-`UNVERIFIED`.
+`dpl_CrZVPkuMbk2Mjzz9hAJW4vpd2hE8` Ready, URL
+`istock-8uonj48ud-giolivos-projects.vercel.app`, alias `https://istock.maat.work`, gates verdes y
+preflight FAIL únicamente por Vercel Hobby y las dos claves de Inngest ausentes.
+
+El LEAD hidrató el tenant demo el 2026-09-05 para 30 fotos mediante `buildDemoPhotoSource` y el
+camino oficial `uploadListingPhoto` → `buildVariants`: quedaron 66 objetos únicos en `istock-media`
+y 30 masters en `istock-originals`. Las 16 URLs únicas renderizadas por `demo.maat.work` respondieron
+200 `image/webp`; la regla externa `istock_media_response_headers`, en versión 2, agrega
+`Cache-Control` immutable, `Timing-Allow-Origin` y `X-Content-Type-Options: nosniff`, y el acceso
+público al master siguió en 404. Esto arregla la demo, pero no cierra K5/S2.1: todavía no se ejecutó
+un upload desde el Route Handler/S3 driver real de la aplicación.
+
+B3 de Mercado Pago, Inngest real, el upload real por el Route Handler/S3 driver de la app y el
+`Cache-Control` del objeto generado por ese camino, E11 y el próximo CI posterior a
+`33946696347` siguen `UNVERIFIED`. T15 no tiene una inconsistencia de datos pendiente: se conserva el
+slug público `iphone-14-pro-256-grafito` como identificador URL y se renderiza el atributo autoritativo
+`Negro espacial`; no hay migración, alias ni `Grafito` en el catálogo Apple.
+
+Histórico, no vigente: el deployment `dpl_CacVkEfwqq8o59uDbGMrZRjWsRG4` en
+`istock-kekukz7ke-giolivos-projects.vercel.app` y el CI `33945473170` sobre `97a547d`.
 
 ## Contratos que no están en /docs
 | archivo | qué es |
@@ -110,7 +131,9 @@ Lo que hay que saber sin leer nada más:
 - **ENACOM corta a 5 consultas/día por IP** → nada de consultar en el alta masiva. (ADR-009)
 - **R4 (Mercado Pago) está PARCIAL y frenado por la regla 3.** Se cierra con sandbox, no con
   research. (ADR-008)
-- Blocker con más lead time: **B5**, migrar los nameservers de `maat.work` a Vercel (24–48 h).
+- **Nota histórica del corte 2026-08-28:** B5 se describía como el blocker con más lead time para
+  resolver el DNS/alias de `maat.work` (24–48 h). El estado vigente sólo certifica el alias/DNS del
+  deployment actual resuelto; no se afirma una migración de nameservers.
 - **El techo de request body que manda es 4 MB** (Routing Middleware), no 4.5. Por eso entra **una
   foto por request**. La slice que lo levanta es **S2.1** y sigue `blocked` hasta ejecutar la probe
   real de byte en R2 — y arrastra una pregunta abierta entre las reglas 1 y 4 de `media-agent` que
@@ -141,8 +164,9 @@ Lo que hay que saber sin leer nada más:
   equipo ya no está publicado"* en vez de *"No hay ninguna vidriera en esta dirección"* —al que abre
   el link de un negocio que nunca existió le decíamos que el equipo se vendió—, y el desempate ahora
   se pregunta **después** del `null` para no sumarle una consulta a toda ficha que sí existe.
-  **Queda abierta T15** (prioridad baja, `db-agent`): en el `/demo`, el slug del listing dice
-  `grafito` y la página dice `Negro espacial`.
+  **T15 quedó cerrada** (decisión intencional, `db-agent`): se conserva el slug público
+  `iphone-14-pro-256-grafito` como identificador URL y la página renderiza `Negro espacial`, que es
+  el atributo autoritativo; no requiere migración, alias ni `Grafito` en el catálogo Apple.
 - **S4 está `done`: `./scripts/accept-s4.sh` re-ejecutado por el LEAD el 2026-08-28, sin fixture —
   37 PASS, 0 FAIL**, con la suite e2e corrida de verdad (**73 tests**) y el repo en **1004 passed /
   0 failed** — números **de esa corrida**, no los de hoy: los actuales (1225 y 86) están al final de

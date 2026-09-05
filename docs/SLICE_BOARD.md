@@ -69,34 +69,47 @@ Estados: `todo` · `doing` · `esperando gate` · `blocked` · `done`
 ese tope** (ver arriba), su celda tiene que nombrar **el comando** que falta y **quién** lo corre, y
 **no la cierra el agente que la escribió** cuando el comando lo corre el LEAD.
 
-## Última evidencia ejecutada — 2026-09-05
+## Última evidencia ejecutada — 2026-09-05 · evidencia adicional
 
-`HEAD` y `main` apuntan a `bb6ea63` (`[fix] marketing: stabilize desktop hero heading`); el
-`origin/main` local todavía referencia `c0b09d4` (`[fix] marketing: clarify Mercado Pago payment
-copy`). El fix CSS está incorporado en `bb6ea63`, en `apps/web/app/globals.css`: `.marketing-hero h1`
-conserva `max-width: 11ch` y aplica `max-width: 12ch` sólo en `@media (min-width: 900px)`. El LEAD verificó
+`HEAD`, `main` y `origin/main` apuntan a `4000cd4` (`[fix] marketing: align demo color copy`).
+El estado pushed ya integra el fix CSS en `apps/web/app/globals.css`: `.marketing-hero h1` conserva
+`max-width: 11ch` y aplica
+`max-width: 12ch` sólo en `@media (min-width: 900px)`. El LEAD verificó
 `E2E_PORT=3178 pnpm e2e`: **109/109**, **19/19 specs**, 0 skips; `pnpm typecheck`, `pnpm lint`,
 `pnpm test` (**2977 passed**, 4 skips MP ADR-008/B3), `pnpm audit`, `pnpm build`, `accept-fase2` y
 `accept-fase3` en PASS. La corrección de copy integra “La pantalla de pago…” en precios y destraba
 K1 sin cambiar decisiones de producto.
 
 El CI run `33942556793`, basado en `c0b09d4`, queda como diagnóstico histórico: falló antes del CSS
-porque Ubuntu midió el H1 en 3 líneas. Todavía falta un CI posterior al commit CSS; no se usa ese run
-para describir el estado actual.
+porque Ubuntu midió el H1 en 3 líneas. El CI `33946696347`, basado en `4000cd4`, falló únicamente en
+`guard-citas.sh` porque los IDs externos de Cloudflare fueron tomados como commits. Las citas ya
+tienen la excepción HTML explícita y, en el árbol actual, `bash scripts/guard-citas.sh`,
+`bash scripts/guard-doc-tables.sh` y `git diff --check` pasan. El próximo CI queda `UNVERIFIED` hasta
+que lo vea el LEAD.
 
-Production es `dpl_EFeaAD5fjQkcF3WzqVkkgVUavANF`, Ready, URL
-`istock-5850hfjzb-giolivos-projects.vercel.app`; `https://istock.maat.work` responde. Las rutas
+Production es `dpl_CrZVPkuMbk2Mjzz9hAJW4vpd2hE8`, Ready, URL
+`istock-8uonj48ud-giolivos-projects.vercel.app`; `https://istock.maat.work` responde. Las rutas
 públicas, `/api/health`, los rechazos 401/no-store de webhook, subscribe y cron, y el HTML sin
 secretos responden lo esperado. `/s/not-a-tenant` y robots/sitemap fuera del tenant son 404
 intencionales de `proxy.ts`.
 
-La sonda externa de Cloudflare verificó T13 para CDN: la regla
-`87a896569a304efd94370af6b0892312` (`istock_media_response_headers`) agrega
-`Timing-Allow-Origin: *` y `X-Content-Type-Options: nosniff` a WebP de `img.maat.work`; la sonda
-temporal dio 200 `image/webp` y luego 404 tras borrar/purgar, con ambos headers en ambos casos. Los
-buckets `istock-media` e `istock-originals` terminaron con 0 objetos. Esto no verifica el upload S3
-del pipeline de la app ni su `Cache-Control`; E11 (LCP con throttling) sigue sin cubrirse por falta
-de Chrome DevTools MCP.
+La sonda externa de Cloudflare verificó T13 para CDN: la regla v2
+`87a896569a304efd94370af6b0892312` <!-- t55-hash-exento: identificador externo de ruleset Cloudflare, no es un commit --> (`istock_media_response_headers`) agrega
+`Cache-Control` immutable, `Timing-Allow-Origin: *` y `X-Content-Type-Options: nosniff` a las
+respuestas WebP de `img.maat.work`. El LEAD hidrató el tenant demo el 2026-09-05 con
+`buildDemoPhotoSource` y el camino oficial `uploadListingPhoto` → `buildVariants` para 30 fotos:
+quedaron 66 objetos únicos en `istock-media` y 30 masters en `istock-originals`; las 16 URLs únicas
+renderizadas por `demo.maat.work` respondieron 200 `image/webp` y el acceso público al master siguió
+404. Esto arregla la demo, pero **no cierra K5/S2.1**: todavía no se ejecutó un upload desde el Route
+Handler/S3 driver real de la app. E11 (LCP con throttling) sigue `UNVERIFIED` por falta de Chrome
+DevTools MCP.
+
+T15 está `done` como decisión intencional: se conserva el slug público
+`iphone-14-pro-256-grafito` como identificador URL y se renderiza `Negro espacial` como atributo
+autoritativo. No requiere migración ni alias/redirect, y `Grafito` no se agrega al catálogo de
+`iphone-14-pro`. La conclusión del explorador Linnaeus fue que no hay inconsistencia de datos que
+reparar. El deployment `dpl_CacVkEfwqq8o59uDbGMrZRjWsRG4` y el CI `33945473170` sobre `97a547d` son
+históricos del corte anterior, no estado vigente.
 
 **Un encargo con varios ítems es UNA entrada en `doing`** — LEAD, 2026-08-28, resolviendo la
 colisión `T50`/`S8.2`. El tope cuenta **writers trabajando en paralelo sobre un directorio**, que es
@@ -223,8 +236,8 @@ Entidades: `tenants` `users` `memberships(owner\|seller)` `locations` `catalog_m
 
 ## FASE 3 — Skeleton
 
-**El LEAD re-ejecutó `bash scripts/accept-fase3.sh` el 2026-09-05 sobre `bb6ea63` y pasó.** K1–K4
-quedan en `done`. K5 queda `blocked`: el gate estático pasa, pero el board reserva su cierre para
+**El LEAD re-ejecutó `bash scripts/accept-fase3.sh` el 2026-09-05 y pasó; el resultado forma parte
+del estado pushed `97a547d`.** K1–K4 quedan en `done`. K5 queda `blocked`: el gate estático pasa, pero el board reserva su cierre para
 un byte real subido por el pipeline de iStock a R2.
 
 > **Anti-drift, 2026-08-28.** El motivo que este board registró el 2026-08-27 —*"el `next build`
@@ -248,6 +261,9 @@ un byte real subido por el pipeline de iStock a R2.
 > `packages/media/src/storage/r2.ts` (151 líneas, `R2Driver` sobre la S3 API) y
 > `storage/index.ts` lo elige con `MEDIA_DRIVER=r2`. El driver local no es lo único que hay: es el
 > **default mientras B1 esté abierto** (`env.ts` exige las credenciales sólo si `MEDIA_DRIVER=r2`).
+> La hidratación técnica del tenant demo del 2026-09-05 usa el camino oficial del seed y deja las
+> variantes navegables, pero no sustituye un upload desde el Route Handler/S3 driver real de la app;
+> por eso no mueve K5 ni S2.1 de `blocked`.
 > Lo que falta es la otra mitad de la palabra *probe*: `accept-fase3.sh` §K5 es una verificación
 > **estática** del paquete (existen las 3 variantes, `card ≤150KB` presupuestado, `CacheControl` por
 > parámetro del SDK y no `httpMetadata`, unlink sin `DeleteObject`). **Ningún byte del flujo de upload
@@ -488,7 +504,8 @@ un byte real subido por el pipeline de iStock a R2.
 > **S3.3**; **T3** (el test de RLS cruzado ya vive en `tests/`, 69 casos verdes desde la ubicación
 > nueva); y **T1 en su nivel 1** —las reglas del WAF existen, están versionadas y tienen censo de
 > rutas, pero **no están aplicadas**: leer la fila entera, no el `done`.
-> **Sigue abierta T15**, que salió de medir el mensaje de WhatsApp. **S2.1**, **S2.2**, **S2.3** y
+> **T15 quedó cerrada** como decisión intencional sobre el slug público y el color autoritativo, que
+> salió de medir el mensaje de WhatsApp. **S2.1**, **S2.2**, **S2.3** y
 > **S2.4** siguen abiertas después de aceptar S1, S2 y S3: **aceptar la slice no cierra sus deudas.**
 > **T2 cerró el 2026-08-28** (`9b3d7d2`, `W015` en `main`) **y al cerrarse abrió T16**: su alcance
 > medido es `apps/web` y `packages/**` sigue sin gate. Cerrar una fila sin nombrar lo que su alcance
@@ -574,9 +591,9 @@ un byte real subido por el pipeline de iStock a R2.
 | T17 | la reserva **configurable por tenant** estaba prometida y no existía | **done** · 2026-09-04 | `app-agent` + `db-agent` | — | El dueño elige 30 min, 1 h, 1 h 30 min o 2 h desde `/app/ajustes`. La preferencia queda en `tenants.reservation_minutes`, con default 60 y `CHECK` de presets; `/app/stock` la usa en cada selector y la Server Action la aplica si el campo llega vacío. La duración puntual sigue validando 30–120 min y no se clampea. S12 lo comprueba después de guardar, al volver al stock | `packages/db/drizzle/0023_unknown_loners.sql` · `apps/web/app/(app)/app/(panel)/ajustes/` · `apps/web/app/(app)/app/(panel)/stock/` · `e2e/s12-onboarding-primer-equipo-publicado.spec.ts` |
 | T18 | `cancelReservation()` derivaba el estado de cierre a mano | **done** · 2026-08-28 · **re-ejecutada por el LEAD** | `app-agent` | — | **`bash scripts/accept-s6.sh`** — el mismo comando que ya cubre la familia. **Re-ejecutado por el LEAD el 2026-08-28: `S6: ACEPTADA`, exit 0, V1…V10 todas PASS**, con estas dos líneas medidas: `MEDIDO s6 reserva · estado_tras_reservar=reserved · vidriera_dice="Reservado" · tras_expirar=available` y `MEDIDO s6 radio · publicadas=4 · paginas=5 · rerender=2 · esperado=2 · sobrevivieron=[ficha-a,ficha-c,ficha-d]`. **Sin conteo de PASS registrado para esa corrida** —consta el veredicto y el detalle por sección, no el número—: el último conteo citable de `accept-s6` sigue siendo el `PASS=22` del barrido serial sobre `68c0bd6`, que es **anterior a la V10**. *Lo que la fila afirmaba antes de la corrida, y se sostiene:* la abrió el LEAD en el propio commit de S6.1 (`83bc673`, último párrafo) — `reserve-unit.ts` escribía `status: 'cancelled'` hardcodeado teniendo el `intent: 'cancel'` ya armado, y el barrido del cron escribía la arista a mano teniendo `decision.listingTransition` en la mano; **era el tercer call site de la familia que ADR-019 vino a cerrar** y acertaba por casualidad, porque cancelar a mano **sí** es `cancelled`. Hoy los tres toman el estado de `transitionEffects(...).closesReservationAs`: `reserve-unit.ts:281` (`398fff7`), `expire-reservations.ts:280` (`b9a8e05`) y `publish-listing.ts:321-325`. **Censado contra `main` por `docs-keeper` el 2026-08-28** (`git grep "status: 'cancelled'\|status: 'expired'" HEAD -- apps/web packages`, sin tests): **cero** literales en la familia de reservas — los dos hits que quedan son otra cosa (`(billing)/_lib/subscriptions/status.ts:65` es un estado de **suscripción**, `packages/domain/src/reservation.ts:127` es la tabla del dominio, o sea la fuente) | `apps/web/app/(app)/_lib/reservations/reserve-unit.ts:281` · `apps/web/app/(app)/_lib/reservations/expire-reservations.ts:280` · `apps/web/app/(app)/_lib/listings/publish-listing.ts:321-325` |
 | T19 | el lado chatbot del test matrix no tenía código ni test | **todo** · 2026-08-28 · **era `doing` y lo cambió la regla, no el trabajo.** `CLAUDE.md` §0 regla 1, segunda precisión (commit **`1414302`**): *`doing` marca **un writer**, no una pregunta abierta — una fila cuyo trabajo es auditar, censar o decidir, sin nadie editando archivos, va a `todo` o `blocked`*. **El trabajo pendiente de esta fila es TOMAR EL CENSO de E7/E8/E9/S7, que es auditar: nadie edita un archivo por `T19`.** *(Y el `doing` era caro justamente por eso: al escribir esto `ai-agent` **sí** tiene `packages/ai/src/chat.ts` modificado en el árbol de trabajo por otro encargo, así que el `doing` de `T19` no marcaba a ese writer — le reservaba el directorio a nadie mientras el writer real trabajaba sin fila.)* **No se abandonó nada:** el censo sigue sin tomar y la fila sigue abierta; lo que cambia es que el conteo de `doing` sobre `packages/ai` vuelve a medir lo que dice medir — **cero** | `ai-agent` (**FASE 5**) | **B4** | **Corregido el 2026-08-28: `packages/ai` EXISTE y esta fila decía lo contrario.** El texto viejo era *"`ls packages/` devuelve `db domain media` y nada más"*; hoy devuelve **`ai db domain media`** y el paquete está en `main` desde **`d42fac9`**, con 47 archivos y **19 `*.test.ts`** (`git ls-tree -r --name-only HEAD packages/ai/`). **Lo que este board NO afirma es la cobertura**: E7, E8, E9 y S7 de `TEST_MATRIX.md` quedan **pendientes de censo**, no verdes — cuando esto se escribió `ai-agent` estaba editando ocho archivos del paquete y cualquier conteo envejecía antes de la corrida. **Al 2026-08-28, después de `89ab7c0`, el árbol está limpio** (`git status` sin cambios) y `packages/ai` tiene **572 tests** verdes, así que la condición *«se re-audita cuando el árbol se aquiete»* se cumplió: **el censo de E7/E8/E9/S7 se puede tomar y no está tomado.** La fila la mueve el LEAD. **La duda sobre su `doing` la contestó el LEAD el 2026-08-28 (`1414302`) y era lo que este board sospechaba:** era un rastro del árbol de aquel momento, no un writer activo, y la fila está en `todo` desde entonces — ver la celda de estado y §Estados. Con él quedan sin cubrir E7, E8, E9 y S7 del `TEST_MATRIX.md`: el chat que no alucina sobre una unidad `reserved`, los jailbreaks de costo e IMEI en 3 fraseos, la dieta de contexto sin IMEI y la prompt injection escondida en la descripción del dueño. **Es el hueco de cobertura más grande del repo** y es de agenda, no de deuda: `CLAUDE.md` §Monorepo lo declara y FASE 5 lo construye. Se anota acá para que *"sin cubrir — FASE 5"* deje de leerse como una nota al pie | `packages/ai/` (**existe** desde `d42fac9`; el *(no existe)* de esta celda era del texto viejo que la propia fila corrige) · `docs/CHATBOT.md` · `docs/TEST_MATRIX.md` E7/E8/E9/S7 |
-| T13 | CDN de `img.maat.work` no mandaba headers de medición y seguridad | **done · 2026-09-05 · verificada por el LEAD** | **LEAD** (`config`/Cloudflare externo; la route también fija headers locales) | probe API directa de clave WebP: 200 `image/webp` + `content-length` + ambos headers; después borrar y purgar: 404 con ambos headers | ruleset `87a896569a304efd94370af6b0892312`, fase `http_response_headers_transform`, ref `istock_media_response_headers`; `img.maat.work` y `.webp` | `apps/web/app/(app)/%5Fmedia/[...key]/route.ts` · Cloudflare Zone Ruleset |
+| T13 | CDN de `img.maat.work` no mandaba headers de medición y seguridad | **done · 2026-09-05 · verificada por el LEAD** | **LEAD** (`config`/Cloudflare externo; la route también fija headers locales) | probe API directa: 16 URLs únicas de `demo.maat.work` → 200 `image/webp`; master público → 404; `Cache-Control` immutable, `Timing-Allow-Origin` y `nosniff` presentes | ruleset v2 `87a896569a304efd94370af6b0892312` <!-- t55-hash-exento: identificador externo de ruleset Cloudflare, no es un commit -->, fase `http_response_headers_transform`, ref `istock_media_response_headers`; `img.maat.work` y `.webp` | `apps/web/app/(app)/%5Fmedia/[...key]/route.ts` · Cloudflare Zone Ruleset |
 | T14 | **dos** prohibiciones de `CLAUDE.md` §2 que ningún gate afirma (**eran tres hasta el 2026-08-28**: `W016` cerró **T14.1**, ver **T26**) | todo | `qa-agent` (ver desempate abajo) | — | cada una tiene un chequeo **que se vio fallar** sobre una violación sembrada, y corre **en cada push**, no dentro de un `accept-*`. **T14.3 se agregó el 2026-08-28** (la levantó `qa-agent`): *"borrado de un objeto de R2 por key al borrar un listing → rechazo"*. `guard-r2.sh` lo cubre **estáticamente** (R1+R2, `T11`), y no hay ningún test que afirme el **efecto**: que borrar un listing borra **el mapeo** y **no el byte**. La trampa está escrita en `packages/media/src/keys.ts:26` —dos tenants que suben la misma foto comparten el objeto— y hoy **no la frena nada el día que alguien escriba el borrado** | `tests/` (o `scripts/**`, y entonces es del **LEAD**) |
-| T15 | el seed del demo dice un color en la URL y otro en la página | todo · **prioridad baja** | `db-agent` | — | **pregunta abierta, no diagnóstico** (ver abajo). Cerrada cuando el slug del listing y el color que muestra la ficha nombren lo mismo, y `bash scripts/accept-s3.sh` siga en verde | `packages/db/src/seed-data.ts:114-116` |
+| T15 | slug público y color autoritativo del demo | **done · decisión intencional · 2026-09-05** | `db-agent` | — | `seed-data.test.ts` + tests de storefront/marketing + probe de producción: se conserva `iphone-14-pro-256-grafito`, la URL existente responde 200 y la ficha renderiza `Negro espacial`; no hay migración, alias/redirect ni `Grafito` para `iphone-14-pro` en el catálogo Apple | `packages/db/src/seed-data.ts` · `packages/db/src/seed-data.test.ts` · `apps/web/app/(storefront)/demo.test.ts` · `apps/web/app/(storefront)/_lib/routes.test.ts` · `apps/web/app/marketing-copy.test.ts` · `scripts/accept-s3.sh` |
 | T16 | `packages/**` no tiene gate de "query sin filtro de tenant" | todo | **LEAD** (todo gate es del LEAD, §4) | — | una query sembrada sin `tenant_id` dentro de `packages/**` pone **rojo** un comando del repo, y la exención se declara con motivo escrito igual que en W015. **Nace de cerrar T2**, cuyo alcance medido es `apps/web/app` + `apps/web/lib` + `proxy.ts` (`web-lint.mjs:41`) y nada más | sin definir — `apps/web/scripts/web-lint.mjs` no puede ser (mira `apps/web`); candidato natural: un gate propio en `scripts/**` |
 | T20 | `guard-gates.sh` no se audita a sí mismo, y su mensaje de éxito cuenta de más | **done** · 2026-08-28 | **LEAD** (todo gate es del LEAD, §4) | — | **Levantado por `docs-keeper` el 2026-08-28 al verificar una frase de ADR-020, y confirmado leyendo cuatro líneas del gate.** Estaba así: el mensaje de éxito imprimía un conteo de `scripts/*.sh` hecho con `ls` → *"los **21** scripts resuelven todos los helpers que invocan"*, pero los dos barridos salteaban `_lib.sh`, así que **los auditados eran 20** — y el que quedaba afuera era la librería que importan los otros veinte, o sea donde un helper inexistente hace **más** daño y de una sola vez. **Arreglado por el LEAD el mismo día**, en tres partes y respetando que el diagnóstico valía para G1 y **no** para G2: (1) **`_lib.sh` entra a G1**; (2) **G2 lo sigue exceptuando, con el motivo escrito en el código** (`:167`) — G2 caza al gate que **redefine** un helper que la librería ya da, y `_lib.sh` es la librería: auditarlo ahí reportaría sus 12 definiciones como duplicadas de sí mismas; (3) el número impreso sale del barrido (`AUDITADOS`, `:173`) y no de un `ls`, y **su ausencia es FAIL** (`:184-187`), la misma convención que V9. Hoy imprime *"los **23** scripts auditados"*: los mismos que lista, los mismos que audita — y ese es el invariante, no el número. **Los números de esta celda se re-midieron el 2026-08-28 y habían quedado viejos: decía `21` scripts y `9 casos`, y el repo creció.** | `./scripts/guard-gates.sh` → `PASS  los 23 scripts auditados resuelven todos los helpers que invocan` (sección **G1**); `./scripts/guard-gates.test.sh` → **24 fixtures**, `OK (se vio encender y se vio callar)`, incluidos los tres de T20 (árbol sano con `_lib.sh` adentro → PASS; invocación rota **dentro** de `_lib.sh` → **FAIL**; G2 no acusa a `_lib.sh` de duplicar lo que él mismo define → PASS). **El veredicto global de `guard-gates.sh` hoy NO es PASS**, y no por G1 ni por T20: lo pone en rojo **G4**. Ver **T30** |
 | T21 | `reservations` no tiene dónde anotar que una fila ya falló *(= `R1` de `COST.md` §2.5)* | **done** · 2026-08-28 · **cerró con 1 fallo de aceptación en el histórico** (el fallo se deja escrito como historia, no como estado: ver §"T21 · el primer fallo") | `db-agent` | — | **`bash scripts/accept-s6.sh`** (V10 + V10b), re-ejecutado por el **LEAD** el 2026-08-28. **Lo que la cerró no es una lectura de archivo:** la probe ve el contador llegar a **1** tras el rollback de la transacción que falló (`intentos_tras_fallo=1`) y a **5** en el tope (`tope=5`, `abandonadas_en_el_tope=1`) contra Postgres real. Si el `+1` viviera dentro de la transacción que falla, el rollback se lo llevaría y el campo valdría 0 · **Spec:** columna `sweep_attempts integer not null default 0` en `reservations`, **con su `GRANT` explícito para `service_role`** (§2 de `CLAUDE.md`: columna/tabla nueva sin GRANT no la lee nadie) y con la trampa del `created_at` de Drizzle a la vista —una migración editada después de aplicada nunca llega a la base de desarrollo y `migrate` dice `OK`—. **No** una tabla de dead-letter: una tabla nueva cuesta migración + GRANT + policy + un lector que nadie va a escribir; un contador sobre una fila que ya existe cuesta cero. **T21 habilita a T22, T23 y T24** | migración en `packages/db/**` + la fila del schema; el gate que lo mide es el de abajo, y **no** busca `sweep_attempts` en ningún archivo. **El fallo del 2026-08-28 y el gate nuevo que salió de él: §"T21 · el primer fallo"**, abajo |
@@ -1965,10 +1982,11 @@ medición de Resource Timing vuelva a confundir ausencia de permisos con una ima
 
 **Cerrada para el driver local el 2026-09-04:** `route.ts` emite `Timing-Allow-Origin: *` y el spec
 de media lo comprueba sobre HTTP. **Cerrada para el CDN productivo el 2026-09-05:** la regla externa
-de Cloudflare para `img.maat.work` fue inspeccionada con una sonda API directa, que vio los dos headers
-en el 200 de un WebP temporal y en el 404 posterior a borrar/purgar. Esto cierra T13 para CDN; E11
-con throttling sigue **UNVERIFIED**, y la sonda no cierra K5/S2.1 porque no subió el byte mediante el
-pipeline de la app.
+de Cloudflare `istock_media_response_headers`, en versión 2, fue inspeccionada sobre las 16 URLs
+únicas de `demo.maat.work`: todas respondieron 200 `image/webp` con `Cache-Control` immutable,
+`Timing-Allow-Origin: *` y `X-Content-Type-Options: nosniff`; el acceso público al master siguió 404.
+Esto cierra T13 para CDN; E11 con throttling sigue **UNVERIFIED**, y la evidencia no cierra K5/S2.1
+porque no subió el byte mediante el Route Handler/S3 driver real de la app.
 
 ### T14 · dos prohibiciones de `CLAUDE.md` §2 que ningún gate afirma  ·  `qa-agent`
 
@@ -2205,10 +2223,12 @@ dejado el defecto **fijado** (`apps/web/app/(billing)/_lib/entitlements.test.ts`
 que era, material para un gate y no un gate: corre en la **V5**, declarado como red de regresión del
 writer y **no** como certificado.
 
-### T15 · el seed del demo dice un color en la URL y otro en la página  ·  `db-agent`
+### T15 · slug público y color autoritativo del demo · **CERRADA el 2026-09-05 · decisión intencional** · `db-agent`
 
-Abierta el 2026-08-28. **Salió de una medición, no de una revisión:** M3b de `accept-s3.sh` decodifica
-el `text=` del `wa.me` de la ficha del demo e imprime el mensaje real, y ahí se ve el par:
+La observación histórica salió de una medición, no de una revisión: M3b de `scripts/accept-s3.sh`
+mostró el mensaje de WhatsApp con `Negro espacial` y el slug público
+`iphone-14-pro-256-grafito`. El explorador Linnaeus concluyó que no hay una inconsistencia de datos
+que reparar:
 
 ```
 mensaje: Hola, vi el iPhone 14 Pro 256 Negro espacial (usado A) a USD 620 en demo.maat.work y lo quiero.
@@ -2222,15 +2242,18 @@ slug:    iphone-14-pro-256-grafito
 colores**; sí es un color de `iphone-13-pro` (`:46`). Dato al lado, sin conclusión: el string
 canónico de ejemplo de `CLAUDE.md` §1 dice *"iPhone 14 Pro 256 Grafito"*.
 
-**Qué NO se afirma acá, a propósito:** no está verificado si el slug se deriva del color en algún
-lado, si se escribió a mano, o cuál de los dos valores es el equivocado. **Es una pregunta abierta
-para `db-agent`, no un diagnóstico** — y cuál corregir cambia según eso.
+La decisión es conservar el slug público existente `iphone-14-pro-256-grafito` y renderizar
+`Negro espacial` como atributo autoritativo. El slug es un identificador URL, no un atributo del
+catálogo: renombrarlo rompería el enlace y exigiría alias/redirect, incompatible con el contrato sin
+compatibilidad obsoleta. No hay migración ni alias/redirect, y no se agrega `Grafito` al catálogo de
+`iphone-14-pro`; el seed Apple válido conserva `Negro espacial`, `Plata`, `Oro` y `Morado oscuro`.
 
-**Por qué es prioridad baja y aun así entra al board:** no rompe nada, ningún gate lo mira, y el
-mensaje de WhatsApp que factura es correcto (nombra el color de la página). Lo que se rompe es más
-chico y más caro de explicar: en el `/demo` que se le muestra a un reseller, **la URL dice una cosa y
-la página dice otra**. Es exactamente el tipo de detalle que un reseller sí mira, porque el color es
-parte del precio.
+**Aceptación:** `packages/db/src/seed-data.test.ts` cubre composición y catálogo del seed;
+`apps/web/app/(storefront)/demo.test.ts` y `apps/web/app/(storefront)/_lib/routes.test.ts`
+conservan el recorrido del alias y la URL pública; `apps/web/app/marketing-copy.test.ts` cubre el
+copy público de marketing; `scripts/accept-s3.sh` y los probes de producción verifican la URL
+existente con 200 y el color renderizado `Negro espacial`. La evidencia no implica migrar datos ni
+cerrar K5/S2.1.
 
 ### S4.1 · el mensaje de WhatsApp repite storage y color sin `catalog_model`  ·  **CERRADA el 2026-08-28** (`7e40856` + `07c42ff`)
 
@@ -2974,20 +2997,20 @@ env · seed · wildcard local (nip.io) · **cómo NO apagar el spend cap**.
 
 | # | blocker | bloquea | quién lo destraba |
 |---|---|---|---|
-| B1 | probe de byte real contra R2 mediante el pipeline de la app; las credenciales ya están cargadas en Production | K5, S2, **S2.1** | **LEAD** |
+| B1 | probe de byte real contra R2 mediante el Route Handler/S3 driver de la app; las credenciales ya están cargadas en Production; la hidratación del demo no la sustituye | K5, S2, **S2.1** | **LEAD** |
 | B2 | proyecto Neon Postgres/Auth + credenciales de Production | D2, D3 | **humano** |
 | B3 | prueba externa de Mercado Pago: cuenta/test checkout/webhook; integración segura implementada pero sin cobro verificable | FASE 6, **ADR-008** | **humano** |
 | B4 | claves LLM opcionales ausentes — **no bloquea producción ni el preflight actual** | FASE 5 | **humano** |
-| B5 | nameservers de `maat.work`: **resuelto para el deployment actual**, el alias `https://istock.maat.work` responde | K3, S1 (prod) | **cerrado** |
+| B5 | DNS/alias de `maat.work`: **resuelto para el deployment actual**, el alias `https://istock.maat.work` responde | K3, S1 (prod) | **cerrado** |
 | B6 | número de WhatsApp del tenant demo — **ya tiene forma de env**: entra por `SEED_DEMO_WA_PHONE` y sin él `packages/db/src/seed.ts` cae en `SEED_DEMO_WA_PHONE_FALLBACK`, que es un placeholder | demo mostrable a prospectos | **humano** |
 | B7 | cuenta/app Production de Inngest, `INNGEST_SIGNING_KEY` y `INNGEST_EVENT_KEY` cargadas y sincronización de funciones | S6 final, producción | **humano + LEAD** |
-| B8 | decisión pendiente de subir el equipo Vercel de Hobby a Pro | producción comercial | **humano + LEAD** |
+| B8 | equipo Vercel en Hobby por decisión explícita; todavía no se sube a Pro | producción comercial | **humano + LEAD** |
 | B9 | sincronización de Inngest y un run real de `*/5 * * * *` en el deployment actual (**UNVERIFIED**) | S6 final, producción | **LEAD + humano** |
 
-> **Nota histórica de B5 (FASE 1 / R1).** El wildcard `*.maat.work` se certificaba por DNS-01, y
-> Vercel sólo lo emitía si el dominio usaba **sus** nameservers. Ese era el blocker con más lead
-> time del plan inicial. **Estado vigente 2026-09-05:** el alias `https://istock.maat.work` responde;
-> B5 ya no bloquea K3 ni S1 del deployment actual.
+> **Nota histórica de B5 (FASE 1 / R1).** El wildcard `*.maat.work` tenía restricciones de DNS-01 y
+> configuración del dominio en el plan inicial. **Estado vigente 2026-09-05:** el alias
+> `https://istock.maat.work` responde; B5 ya no bloquea K3 ni S1 del deployment actual y no se afirma
+> una migración de nameservers.
 > Efecto colateral a mirar antes de apretar el botón: todo registro MX/TXT actual de `maat.work`
 > (mail, verificaciones) hay que recrearlo en Vercel o se cae.
 

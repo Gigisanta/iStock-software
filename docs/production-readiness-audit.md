@@ -4,22 +4,23 @@
 **Para quién:** LEAD y quienes destraban credenciales, cuentas y despliegue.
 **Cuándo se actualiza:** después de cada preflight, gate de aceptación o cambio de proveedor.
 **Fecha:** 2026-09-05
-**Estado:** deployment de Production `dpl_EFeaAD5fjQkcF3WzqVkkgVUavANF` en estado Ready, URL `istock-5850hfjzb-giolivos-projects.vercel.app`; `https://istock.maat.work` responde; los gates locales posteriores al fix CSS pasan; el preflight sigue FAIL sólo por Vercel Hobby y las dos claves de Inngest ausentes; el upload real por el pipeline de la app, Inngest real, B3 de Mercado Pago, CI posterior al CSS y E11 siguen sin verificar
+**Estado:** deployment de Production `dpl_CrZVPkuMbk2Mjzz9hAJW4vpd2hE8` en estado Ready, URL `istock-8uonj48ud-giolivos-projects.vercel.app`; `https://istock.maat.work` responde; los gates locales posteriores al fix CSS pasan; el preflight sigue FAIL sólo por Vercel Hobby y las dos claves de Inngest ausentes; el upload real por el Route Handler/S3 driver de la app, Inngest real, B3 de Mercado Pago, el próximo CI y E11 siguen sin verificar
 **Workflow:** diagnóstico profundo → correcciones de catálogo, vidriera, UX y billing → gates → preflight
 
 ## Resultado ejecutivo
 
-### Estado vigente — 2026-09-05
+### Estado vigente — 2026-09-05 · evidencia adicional
 
-`HEAD` y `main` apuntan a `bb6ea63` (`[fix] marketing: stabilize desktop hero heading`); el
-`origin/main` local todavía referencia `c0b09d4` (`[fix] marketing: clarify Mercado Pago payment copy`).
+`HEAD`, `main` y `origin/main` apuntan a `4000cd4` (`[fix] marketing: align demo color copy`).
 La corrección de copy integra “La pantalla de pago…” en precios y destraba K1; no cambia ninguna
-decisión de producto. El commit `bb6ea63` incorpora el fix CSS en `apps/web/app/globals.css`:
+decisión de producto. El estado pushed ya integra el fix CSS en `apps/web/app/globals.css`:
 `.marketing-hero h1` mantiene `max-width: 11ch` y aplica `max-width: 12ch` sólo dentro de
-`@media (min-width: 900px)`. La evidencia de Production que sigue no se atribuye a un despliegue de
-`bb6ea63`.
-El deployment de Production `dpl_EFeaAD5fjQkcF3WzqVkkgVUavANF` está **Ready**, su URL es
-`istock-5850hfjzb-giolivos-projects.vercel.app`, y el alias `https://istock.maat.work` responde.
+`@media (min-width: 900px)`. El CI `33946696347`, basado en `4000cd4`, falló únicamente en
+`guard-citas.sh` porque IDs externos de Cloudflare fueron tomados como commits; las citas ya tienen
+la excepción HTML explícita. El próximo CI queda `UNVERIFIED`; la evidencia de
+Production que sigue documenta el deployment Ready actual.
+El deployment de Production `dpl_CrZVPkuMbk2Mjzz9hAJW4vpd2hE8` está **Ready**, su URL es
+`istock-8uonj48ud-giolivos-projects.vercel.app`, y el alias `https://istock.maat.work` responde.
 
 La evidencia posterior al fix CSS es: `E2E_PORT=3178 pnpm e2e` PASS, **109/109**, **19/19 specs**,
 0 skips; `pnpm typecheck` PASS; `pnpm lint` PASS; `pnpm test` PASS (**2977 passed**, 4 skips
@@ -27,8 +28,12 @@ anclados a MP ADR-008/B3); `pnpm audit` PASS; `pnpm build` PASS; `bash scripts/a
 `bash scripts/accept-fase3.sh` PASS.
 
 El CI run `33942556793`, basado en `c0b09d4`, queda como diagnóstico histórico: falló antes del fix
-CSS porque en Ubuntu el H1 ocupaba 3 líneas. Todavía no existe evidencia de un CI posterior al commit
-`bb6ea63`. Esto no invalida la E2E local posterior ni cambia el estado de producción.
+CSS porque en Ubuntu el H1 ocupaba 3 líneas. El CI run `33946696347`, basado en `4000cd4`, falló
+únicamente en `guard-citas.sh` porque IDs externos de Cloudflare fueron tomados como commits. Las
+citas ya tienen la excepción HTML explícita y, en el árbol actual, `bash scripts/guard-citas.sh`,
+`bash scripts/guard-doc-tables.sh` y `git diff --check` pasan. El próximo CI queda `UNVERIFIED` hasta
+que lo vea el LEAD. Esto no invalida la E2E local posterior ni cambia el estado de producción ni el
+deployment Ready documentado.
 
 En producción, `/`, `/precios`, `/ingresar`, `/billing/suscribirse?plan=base` y
 `/billing/suscribirse?plan=negocio` responden el flujo esperado; el último conserva el plan y redirige
@@ -38,16 +43,16 @@ responde 401; cron sin `CRON_SECRET` responde 401; el HTML público no contiene 
 y las rutas de metadata `/robots.txt`/`/sitemap.xml` que el proxy mantiene fuera del tenant responden
 404 de forma intencional según `proxy.ts`; no son bugs.
 
-Cloudflare API verificó la cuenta `1a8318...`, la zona `maat.work` (`59ed3d17a48275c087abbfdc8e4fd48d`),
-los buckets `istock-media` e `istock-originals` existentes y vacíos al finalizar, y `img.maat.work`
-activo con SSL/ownership activos y mínimo TLS 1.2. `istock-media` está proxied. La regla externa de
-response-header transform es el ruleset `87a896569a304efd94370af6b0892312`, fase
-`http_response_headers_transform`, ref `istock_media_response_headers`, para `img.maat.work` y paths
-`.webp`; fija `Timing-Allow-Origin: *` y `X-Content-Type-Options: nosniff`. La sonda temporal devolvió
-200 `image/webp`, `content-length: 27` y ambos headers; el objeto fue borrado, la URL purgada y la
-misma URL terminó en 404 con ambos headers. Esto verifica T13 para CDN, no el upload S3 de la app ni
-el `Cache-Control` de un objeto creado por el pipeline. El código sí fija `CacheControl` en
-`packages/media/src/storage/r2.ts`.
+Cloudflare API verificó la cuenta `1a8318...`, la zona `maat.work` (`59ed3d17a48275c087abbfdc8e4fd48d`), <!-- t55-hash-exento: identificador externo de zona Cloudflare, no es un commit -->
+los buckets `istock-media` e `istock-originals` existentes, y `img.maat.work` activo con SSL/ownership
+activos y mínimo TLS 1.2. `istock-media` está proxied. La regla externa de response-header transform es
+el ruleset `87a896569a304efd94370af6b0892312`, <!-- t55-hash-exento: identificador externo de ruleset Cloudflare, no es un commit --> fase
+`http_response_headers_transform`, ref `istock_media_response_headers`, en **versión 2**, para
+`img.maat.work` y paths `.webp`; agrega `Cache-Control` immutable, `Timing-Allow-Origin: *` y
+`X-Content-Type-Options: nosniff`. Las 16 URLs únicas renderizadas por `demo.maat.work` respondieron
+200 `image/webp`; el acceso público al master siguió 404. Esto verifica T13 para CDN, no el upload
+desde el Route Handler/S3 driver real de la app ni el `Cache-Control` de un objeto creado por ese
+camino. El código sí fija `CacheControl` en `packages/media/src/storage/r2.ts`.
 
 La configuración observada de la zona es: `always_use_https` on, `automatic_https_rewrites` on, Brotli
 on, `browser_cache_ttl` 0, `cache_level` aggressive, mínimo TLS 1.2, SSL strict y HTTP/3 on. Smart
@@ -73,9 +78,9 @@ build y la suite E2E. La última corrida completa fue **109/109 tests, 19/19 spe
 los contratos S11 de roles y S12 de onboarding cobrable (cuenta nueva → negocio → primer equipo
 publicado → link público), además del acceso directo a suscripción sin sesión y la propagación del
 nombre y precio publicado del panel a la vidriera pública. La duración configurable de reserva se
-validó también en una corrida enfocada de S12. Después del push `b23fd47`, Vercel produjo
-automáticamente el deployment de Production `istock-my35ypor0-giolivos-projects.vercel.app`, en
-estado **Ready**. La landing pública pasa el control monocromático, `/billing/suscribirse?plan=base`
+validó también en una corrida enfocada de S12. La evidencia vigente documenta el deployment de
+Production `dpl_CrZVPkuMbk2Mjzz9hAJW4vpd2hE8`, URL `istock-8uonj48ud-giolivos-projects.vercel.app`,
+en estado **Ready**. La landing pública pasa el control monocromático, `/billing/suscribirse?plan=base`
 conserva el plan y `/api/health` devuelve 200. Las credenciales R2 de alcance exclusivo ya están
 cargadas como Secret en Production; `/_media/nonexistent.webp` devuelve 404 controlado en vez de
 500, evidencia de wiring y manejo de una key inexistente. Todavía no es una prueba de upload de un
@@ -87,7 +92,7 @@ sincronización de la cuenta Inngest, una ejecución firmada real, el upload R2 
 Mercado Pago. El wildcard `*.maat.work` tiene DNS, delegación ACME y certificado administrado
 activos; no corresponde afirmar que hoy se puede cobrar.
 
-## Última evidencia ejecutada — 2026-09-05
+## Última evidencia ejecutada — 2026-09-05 · evidencia adicional
 
 - `apps/web/app/globals.css`: `.marketing-hero h1` conserva `max-width: 11ch` fuera de media query y
   aplica `max-width: 12ch` sólo en `@media (min-width: 900px)`.
@@ -95,7 +100,17 @@ activos; no corresponde afirmar que hoy se puede cobrar.
 - `pnpm typecheck`, `pnpm lint`, `pnpm test` (**2977 passed, 4 skips MP ADR-008/B3**), `pnpm audit`,
   `pnpm build`, `bash scripts/accept-fase2.sh` y `bash scripts/accept-fase3.sh`: PASS.
 - CI `33942556793` sobre `c0b09d4`: **FAIL histórico**, anterior al CSS; Ubuntu midió el H1 en 3 líneas.
-  CI posterior a `bb6ea63`: **UNVERIFIED**.
+  CI `33946696347` sobre `4000cd4`: **FAIL únicamente en `guard-citas.sh`**, porque IDs externos de
+  Cloudflare fueron tomados como commits. Las citas ya tienen la excepción HTML explícita; en el árbol
+  actual `bash scripts/guard-citas.sh`, `bash scripts/guard-doc-tables.sh` y `git diff --check`: PASS.
+  El próximo CI queda **UNVERIFIED** hasta que lo vea el LEAD.
+- El LEAD hidrató el tenant demo el 2026-09-05 para 30 fotos con `buildDemoPhotoSource` y el camino
+  oficial `uploadListingPhoto` → `buildVariants`: quedaron 66 objetos únicos en `istock-media` y 30
+  masters en `istock-originals`. Las 16 URLs únicas renderizadas por `demo.maat.work` respondieron
+  200 `image/webp`; `istock_media_response_headers` está en versión 2 y agrega `Cache-Control`
+  immutable, `Timing-Allow-Origin` y `X-Content-Type-Options: nosniff`; el acceso público al master
+  siguió 404. Esto arregla la demo, pero **no cierra K5/S2.1**: todavía no se ejecutó un upload desde
+  el Route Handler/S3 driver real de la app.
 - La comprobación del código mantiene estos anclajes: `proxy.ts` para los 404 intencionales;
   `apps/web/app/api/health/route.ts` para 200/no-store;
   `apps/web/app/(billing)/billing/webhooks/mercadopago/route.ts` y
@@ -161,7 +176,8 @@ activos; no corresponde afirmar que hoy se puede cobrar.
   endpoint público de Inngest en 500 sin firma. Pasan los comandos y la sesión, el deployment de
   Production, `vercel.json` sin Cron, la integración estática de Inngest, DNS apex/wildcard, la
   landing monocromática y la conservación de `plan=base`; el detalle está abajo.
-- Tras el redeploy, `istock-my35ypor0-giolivos-projects.vercel.app` quedó **Ready**. Las sondas
+- **Histórico del 2026-09-04:** tras el redeploy, `istock-my35ypor0-giolivos-projects.vercel.app` quedó
+  **Ready**. Las sondas
   públicas devuelven 200 en `/api/health`, conservan `plan=base` al pedir
   `/billing/suscribirse?plan=base`, y `/_media/nonexistent.webp` devuelve 404 `text/plain`; esta
   última sólo acredita wiring/configuración del driver y manejo de key inexistente, no una carga real.
@@ -220,7 +236,8 @@ activos; no corresponde afirmar que hoy se puede cobrar.
   no cruzan el DTO público.
 - La invalidación de stock usa los tags del tenant, y la E2E verifica lectura cacheada, publicación,
   reserva, liberación y WhatsApp.
-- El deployment público de Production `istock-my35ypor0-giolivos-projects.vercel.app` quedó Ready y
+El deployment público de Production `dpl_CrZVPkuMbk2Mjzz9hAJW4vpd2hE8` quedó Ready en
+  `istock-8uonj48ud-giolivos-projects.vercel.app` y
   `istock.maat.work` responde con la landing actual; `/demo` responde con redirección a
   `demo.maat.work`, cuyo DNS, certificado y HTTPS 200 están activos. La resolución del wildcard no
   es el bloqueo.
@@ -242,6 +259,14 @@ activos; no corresponde afirmar que hoy se puede cobrar.
   local fresco sobre `demo.localhost:3102` encontró 16 URLs únicas y **16/16 HTTP 200
   `image/webp`**, con 10 cards visibles. Es sólo un fixture de navegación; las fotos de clientes
   siguen requiriendo carga real.
+- En Production, el LEAD hidrató el tenant demo el 2026-09-05 para esas 30 fotos con
+  `buildDemoPhotoSource` y el camino oficial `uploadListingPhoto` → `buildVariants`: quedaron 66
+  objetos únicos en `istock-media` y 30 masters en `istock-originals`. Las 16 URLs únicas renderizadas
+  por `demo.maat.work` respondieron 200 `image/webp`; la regla externa `istock_media_response_headers`
+  está en versión 2 y agrega `Cache-Control` immutable, `Timing-Allow-Origin` y
+  `X-Content-Type-Options: nosniff`. El acceso público al master siguió 404. Esto arregla la demo,
+  pero **no cierra K5/S2.1**: todavía no se ejecutó un upload desde el Route Handler/S3 driver real
+  de la app.
 
 ### Billing
 
@@ -337,10 +362,11 @@ activos; no corresponde afirmar que hoy se puede cobrar.
 
 | Control | Resultado | Consecuencia |
 |---|---|---|
-| HEAD / main | **PASS: `bb6ea63`** | fix CSS de heading incorporado; copy de Mercado Pago integrado sin cambiar decisiones de producto |
-| origin/main (ref local) | **`c0b09d4`** | referencia remota local anterior; no implica CI posterior a `bb6ea63` |
-| Deployment Production | **PASS: `dpl_EFeaAD5fjQkcF3WzqVkkgVUavANF`, Ready** | URL `istock-5850hfjzb-giolivos-projects.vercel.app`; el alias `https://istock.maat.work` responde |
-| Gates locales | **PASS** | E2E 109/109, 19/19 specs, 0 skips; typecheck, lint, test 2977 + 4 skips MP ADR-008/B3, build, accept-fase2, accept-fase3 y guard-doc-tables verdes |
+| HEAD / main / origin/main | **PASS: `4000cd4`** | fix CSS de heading y copy de marketing vigentes sin cambiar decisiones de producto |
+| Deployment Production | **PASS: `dpl_CrZVPkuMbk2Mjzz9hAJW4vpd2hE8`, Ready** | URL `istock-8uonj48ud-giolivos-projects.vercel.app`; el alias `https://istock.maat.work` responde |
+| Gates locales | **PASS** | E2E 109/109, 19/19 specs, 0 skips; typecheck, lint, test 2977 + 4 skips MP ADR-008/B3, build, accept-fase2, accept-fase3, guard-citas, guard-doc-tables y `git diff --check` verdes |
+| CI `33946696347` sobre `4000cd4` | **FAIL únicamente en `guard-citas.sh`** | IDs externos de Cloudflare fueron tomados como commits; las citas ya tienen la excepción HTML explícita. El próximo CI queda `UNVERIFIED` hasta que lo vea el LEAD |
+| Tenant demo hidratado | **PASS como demo** | 30 fotos; 66 objetos únicos en `istock-media`, 30 masters en `istock-originals`; 16 URLs únicas → 200 `image/webp`; master público 404; no cierra K5/S2.1 |
 | Flujos públicos | **PASS** | `/`, `/precios`, `/ingresar`, ambos planes de suscripción, health 200/no-store y controles 401/no-store responden lo esperado |
 | 404 intencionales | **PASS** | `/s/not-a-tenant` y robots/sitemap fuera del tenant son exclusiones de `proxy.ts`, no bugs |
 | Plan del equipo Vercel | **FAIL: Hobby** | decisión del usuario: todavía no se sube a Pro |
@@ -363,7 +389,7 @@ los gates locales.
 | Integración Inngest estática | PASS | el código local declara route, `serve`, timeout y `*/5`; no verifica cuenta ni sincronización |
 | `istock.maat.work` | PASS | el apex llega a Vercel |
 | `demo.maat.work` / wildcard | **PASS: CNAME, delegación ACME, certificado y HTTPS 200** | los links wildcard ya llegan a Vercel; falta comprobar un tenant real luego del deploy |
-| Deployment Production | **PASS: `istock-my35ypor0-giolivos-projects.vercel.app` Ready** | el deployment actual está disponible; no sustituye B3, el upload real de R2 ni la verificación de Inngest |
+| Deployment Production (histórico del 2026-09-04) | **PASS: `istock-my35ypor0-giolivos-projects.vercel.app` Ready** | el deployment de ese corte estaba disponible; no sustituye B3, el upload real de R2 ni la verificación de Inngest |
 | Landing pública actual | PASS | sirve el H1 actual y pasa el control monocromático |
 | Suscripción anónima Base | PASS | conserva `plan=base` al derivar a login |
 | `/api/health` | PASS: 200 | la señal de vida pública responde; no acredita integraciones externas |
@@ -444,17 +470,18 @@ claves, deployment ni ejecución real. El preflight debe repetirse después de d
 - Vidriera: no se agrega una consulta por pageview; las fotos públicas siguen siendo variantes
   redimensionadas y el original permanece privado.
 - Seed del demo: en local no agrega egress; con `MEDIA_DRIVER=r2`, una corrida de 30 fotos implica
-  hasta 120 escrituras de objetos (master privado + thumb/card/detail por foto), con deduplicación
-  por contenido del driver. No se ejecuta en el hot path de visitantes.
+  hasta 120 PUT lógicos (master privado + thumb/card/detail por foto), con deduplicación por contenido
+  del driver. La corrida Production dejó 66 objetos únicos en `istock-media` y 30 masters en
+  `istock-originals`; no se ejecuta en el hot path de visitantes.
 
-**UNVERIFIED:** CI posterior a `bb6ea63`; E11 (LCP con throttling, pendiente por falta de Chrome
-DevTools MCP); upload real mediante el S3/pipeline de la app y `Cache-Control` de un objeto creado por
-ese pipeline; cuenta/sincronización de Inngest y ejecución programada firmada (B7/B9); B3 externo de
-Mercado Pago con cuenta/test checkout/webhook.
+**UNVERIFIED:** el próximo CI posterior a `33946696347`/`4000cd4` hasta que lo vea el LEAD; E11
+(LCP con throttling, pendiente por falta de Chrome DevTools MCP); upload real desde el Route Handler/S3
+driver de la app y `Cache-Control` de un objeto creado por ese camino; cuenta/sincronización de Inngest
+y ejecución programada firmada (B7/B9); B3 externo de Mercado Pago con cuenta/test checkout/webhook.
 
-**BLOCKERS:** Vercel Hobby (B8, pendiente por decisión explícita del usuario); faltan
+**BLOCKERS:** Vercel Hobby (B8, por decisión explícita del usuario); faltan
 `INNGEST_SIGNING_KEY` e `INNGEST_EVENT_KEY` y `/api/inngest` responde 500 sin ellas (B7/B9); B3
-externo de Mercado Pago; upload real por el S3/pipeline de la app y verificación de su
-`Cache-Control`; E11 LCP con throttling, pendiente por falta de Chrome DevTools MCP. La probe de CDN
-de T13 sigue verificada por Cloudflare, pero no cierra el upload de K5/S2.1. No se declara producción
-cobrable.
+externo de Mercado Pago; upload real por el Route Handler/S3 driver de la app y verificación del
+`Cache-Control` del objeto creado por ese camino (B1, S3/pipeline real); E11 LCP con throttling,
+pendiente por falta de Chrome DevTools MCP. La regla Cloudflare v2 y la probe de CDN de T13 están
+verificadas, pero no cierran el upload de K5/S2.1. No se declara producción cobrable.
