@@ -87,6 +87,24 @@ const nextConfig: NextConfig = {
 
   typedRoutes: true,
   poweredByHeader: false,
+  /**
+   * Headers de seguridad globales para HTML, Server Actions y API routes. No agregamos CSP acá:
+   * el login, Mercado Pago y los assets de R2 tienen orígenes externos que primero requieren un
+   * inventario de runtime, y una CSP incompleta sería peor que no declararla.
+   */
+  async headers() {
+    return [
+      {
+        source: '/:path*',
+        headers: [
+          { key: 'X-Content-Type-Options', value: 'nosniff' },
+          { key: 'X-Frame-Options', value: 'DENY' },
+          { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
+          { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=()' },
+        ],
+      },
+    ]
+  },
   reactStrictMode: true,
 }
 
