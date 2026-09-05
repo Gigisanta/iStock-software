@@ -43,8 +43,8 @@ Cloudflare fueron tomados como commits; las citas ya tienen la excepción HTML e
 pasan. El próximo CI queda `UNVERIFIED` hasta que lo vea el LEAD.
 
 La evidencia de producción está en `production-readiness-audit.md`: deployment
-`dpl_CrZVPkuMbk2Mjzz9hAJW4vpd2hE8` Ready, URL
-`istock-8uonj48ud-giolivos-projects.vercel.app`, alias `https://istock.maat.work`, gates verdes y
+`dpl_CweQwRcTGcaGPcToXa7NSXPKatxi` Ready, URL
+`istock-1tketn3rt-giolivos-projects.vercel.app`, alias `https://istock.maat.work`, gates verdes y
 preflight FAIL únicamente por Vercel Hobby y las dos claves de Inngest ausentes.
 
 El LEAD hidrató el tenant demo el 2026-09-05 para 30 fotos mediante `buildDemoPhotoSource` y el
@@ -605,3 +605,5 @@ Lo que hay que saber sin leer nada más:
   módulo de `(billing)` no se borrara cuando `(app)` creció su propio resolver. `PRODUCT.md` lo dice
   ahora al lado de la tabla de planes, para que la palanca no se lea como una capacidad del panel:
   hoy se ejerce con un `update` a mano contra Postgres.
+Histórico del corte anterior: deployment `dpl_CrZVPkuMbk2Mjzz9hAJW4vpd2hE8`, URL
+`istock-8uonj48ud-giolivos-projects.vercel.app`.

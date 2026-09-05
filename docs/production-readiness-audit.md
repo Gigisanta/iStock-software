@@ -4,7 +4,7 @@
 **Para quién:** LEAD y quienes destraban credenciales, cuentas y despliegue.
 **Cuándo se actualiza:** después de cada preflight, gate de aceptación o cambio de proveedor.
 **Fecha:** 2026-09-05
-**Estado:** deployment de Production `dpl_CrZVPkuMbk2Mjzz9hAJW4vpd2hE8` en estado Ready, URL `istock-8uonj48ud-giolivos-projects.vercel.app`; `https://istock.maat.work` responde; los gates locales posteriores al fix CSS pasan; el preflight sigue FAIL sólo por Vercel Hobby y las dos claves de Inngest ausentes; el upload real por el Route Handler/S3 driver de la app, Inngest real, B3 de Mercado Pago, el próximo CI y E11 siguen sin verificar
+**Estado:** deployment de Production `dpl_CweQwRcTGcaGPcToXa7NSXPKatxi` en estado Ready, URL `istock-1tketn3rt-giolivos-projects.vercel.app`; `https://istock.maat.work` responde; los gates locales posteriores al fix CSS pasan; el preflight sigue FAIL sólo por Vercel Hobby y las dos claves de Inngest ausentes; el upload real por el Route Handler/S3 driver de la app, Inngest real, B3 de Mercado Pago, el próximo CI y E11 siguen sin verificar
 **Workflow:** diagnóstico profundo → correcciones de catálogo, vidriera, UX y billing → gates → preflight
 
 ## Resultado ejecutivo
@@ -19,8 +19,8 @@ decisión de producto. El estado pushed ya integra el fix CSS en `apps/web/app/g
 `guard-citas.sh` porque IDs externos de Cloudflare fueron tomados como commits; las citas ya tienen
 la excepción HTML explícita. El próximo CI queda `UNVERIFIED`; la evidencia de
 Production que sigue documenta el deployment Ready actual.
-El deployment de Production `dpl_CrZVPkuMbk2Mjzz9hAJW4vpd2hE8` está **Ready**, su URL es
-`istock-8uonj48ud-giolivos-projects.vercel.app`, y el alias `https://istock.maat.work` responde.
+El deployment de Production `dpl_CweQwRcTGcaGPcToXa7NSXPKatxi` está **Ready**, su URL es
+`istock-1tketn3rt-giolivos-projects.vercel.app`, y el alias `https://istock.maat.work` responde.
 
 La evidencia posterior al fix CSS es: `E2E_PORT=3178 pnpm e2e` PASS, **109/109**, **19/19 specs**,
 0 skips; `pnpm typecheck` PASS; `pnpm lint` PASS; `pnpm test` PASS (**2977 passed**, 4 skips
@@ -79,7 +79,7 @@ los contratos S11 de roles y S12 de onboarding cobrable (cuenta nueva → negoci
 publicado → link público), además del acceso directo a suscripción sin sesión y la propagación del
 nombre y precio publicado del panel a la vidriera pública. La duración configurable de reserva se
 validó también en una corrida enfocada de S12. La evidencia vigente documenta el deployment de
-Production `dpl_CrZVPkuMbk2Mjzz9hAJW4vpd2hE8`, URL `istock-8uonj48ud-giolivos-projects.vercel.app`,
+Production `dpl_CweQwRcTGcaGPcToXa7NSXPKatxi`, URL `istock-1tketn3rt-giolivos-projects.vercel.app`,
 en estado **Ready**. La landing pública pasa el control monocromático, `/billing/suscribirse?plan=base`
 conserva el plan y `/api/health` devuelve 200. Las credenciales R2 de alcance exclusivo ya están
 cargadas como Secret en Production; `/_media/nonexistent.webp` devuelve 404 controlado en vez de
@@ -236,8 +236,8 @@ activos; no corresponde afirmar que hoy se puede cobrar.
   no cruzan el DTO público.
 - La invalidación de stock usa los tags del tenant, y la E2E verifica lectura cacheada, publicación,
   reserva, liberación y WhatsApp.
-El deployment público de Production `dpl_CrZVPkuMbk2Mjzz9hAJW4vpd2hE8` quedó Ready en
-  `istock-8uonj48ud-giolivos-projects.vercel.app` y
+El deployment público de Production `dpl_CweQwRcTGcaGPcToXa7NSXPKatxi` quedó Ready en
+  `istock-1tketn3rt-giolivos-projects.vercel.app` y
   `istock.maat.work` responde con la landing actual; `/demo` responde con redirección a
   `demo.maat.work`, cuyo DNS, certificado y HTTPS 200 están activos. La resolución del wildcard no
   es el bloqueo.
@@ -363,7 +363,7 @@ El deployment público de Production `dpl_CrZVPkuMbk2Mjzz9hAJW4vpd2hE8` quedó R
 | Control | Resultado | Consecuencia |
 |---|---|---|
 | HEAD / main / origin/main | **PASS: `4000cd4`** | fix CSS de heading y copy de marketing vigentes sin cambiar decisiones de producto |
-| Deployment Production | **PASS: `dpl_CrZVPkuMbk2Mjzz9hAJW4vpd2hE8`, Ready** | URL `istock-8uonj48ud-giolivos-projects.vercel.app`; el alias `https://istock.maat.work` responde |
+| Deployment Production | **PASS: `dpl_CweQwRcTGcaGPcToXa7NSXPKatxi`, Ready** | URL `istock-1tketn3rt-giolivos-projects.vercel.app`; el alias `https://istock.maat.work` responde |
 | Gates locales | **PASS** | E2E 109/109, 19/19 specs, 0 skips; typecheck, lint, test 2977 + 4 skips MP ADR-008/B3, build, accept-fase2, accept-fase3, guard-citas, guard-doc-tables y `git diff --check` verdes |
 | CI `33946696347` sobre `4000cd4` | **FAIL únicamente en `guard-citas.sh`** | IDs externos de Cloudflare fueron tomados como commits; las citas ya tienen la excepción HTML explícita. El próximo CI queda `UNVERIFIED` hasta que lo vea el LEAD |
 | Tenant demo hidratado | **PASS como demo** | 30 fotos; 66 objetos únicos en `istock-media`, 30 masters en `istock-originals`; 16 URLs únicas → 200 `image/webp`; master público 404; no cierra K5/S2.1 |
@@ -485,3 +485,4 @@ externo de Mercado Pago; upload real por el Route Handler/S3 driver de la app y 
 `Cache-Control` del objeto creado por ese camino (B1, S3/pipeline real); E11 LCP con throttling,
 pendiente por falta de Chrome DevTools MCP. La regla Cloudflare v2 y la probe de CDN de T13 están
 verificadas, pero no cierran el upload de K5/S2.1. No se declara producción cobrable.
+Histórico del corte anterior: deployment `dpl_CrZVPkuMbk2Mjzz9hAJW4vpd2hE8`, URL `istock-8uonj48ud-giolivos-projects.vercel.app`.

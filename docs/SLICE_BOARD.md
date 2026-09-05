@@ -87,8 +87,8 @@ tienen la excepción HTML explícita y, en el árbol actual, `bash scripts/guard
 `bash scripts/guard-doc-tables.sh` y `git diff --check` pasan. El próximo CI queda `UNVERIFIED` hasta
 que lo vea el LEAD.
 
-Production es `dpl_CrZVPkuMbk2Mjzz9hAJW4vpd2hE8`, Ready, URL
-`istock-8uonj48ud-giolivos-projects.vercel.app`; `https://istock.maat.work` responde. Las rutas
+Production es `dpl_CweQwRcTGcaGPcToXa7NSXPKatxi`, Ready, URL
+`istock-1tketn3rt-giolivos-projects.vercel.app`; `https://istock.maat.work` responde. Las rutas
 públicas, `/api/health`, los rechazos 401/no-store de webhook, subscribe y cron, y el HTML sin
 secretos responden lo esperado. `/s/not-a-tenant` y robots/sitemap fuera del tenant son 404
 intencionales de `proxy.ts`.
@@ -3025,3 +3025,5 @@ env · seed · wildcard local (nip.io) · **cómo NO apagar el spend cap**.
 > Queda dicho para que la próxima pasada no lo "arregle" abriendo un `B7`: la ausencia es
 > deliberada. **Si el LEAD prefiere que sea un blocker, es una línea y la mueve** — la clasificación
 > es suya, no de este documento.
+Histórico del corte anterior: deployment `dpl_CrZVPkuMbk2Mjzz9hAJW4vpd2hE8`, URL
+`istock-8uonj48ud-giolivos-projects.vercel.app`.
