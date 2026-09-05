@@ -2571,6 +2571,10 @@ h4 {
 }
 
 @media (min-width: 900px) {
+  .marketing-hero h1 {
+    max-width: 12ch;
+  }
+
   .marketing-hero {
     grid-template-columns: minmax(0, 1.15fr) minmax(20rem, 0.85fr);
     align-items: center;
