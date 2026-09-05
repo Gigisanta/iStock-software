@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 
 const MESSAGES = [
-  'Hola, vi el iPhone 14 Pro 256 GB Grafito a USD 620 en tu vidriera y lo quiero.',
+  'Hola, vi el iPhone 14 Pro 256 GB Negro espacial a USD 620 en tu vidriera y lo quiero.',
   '¿Sigue disponible el iPhone 13 128 GB? Vi que tiene 88% de batería.',
   'Quiero entregar mi iPhone 12 como parte de pago. ¿Cuándo puedo pasar?',
 ] as const;

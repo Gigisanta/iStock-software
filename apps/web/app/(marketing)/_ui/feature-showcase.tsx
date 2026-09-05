@@ -33,7 +33,7 @@ const PREVIEW_MODELS = [
     id: 'iphone-14-pro',
     label: 'iPhone 14 Pro',
     storage: ['128 GB', '256 GB', '512 GB'],
-    colors: ['Grafito', 'Plata', 'Oro'],
+    colors: ['Negro espacial', 'Plata', 'Oro'],
   },
   {
     id: 'iphone-15',
@@ -178,7 +178,7 @@ function ShowcaseContent({ feature }: { readonly feature: FeatureId }) {
 function StockConfiguratorPreview() {
   const [modelId, setModelId] = useState<PreviewModelId>('iphone-14-pro');
   const [storage, setStorage] = useState('256 GB');
-  const [color, setColor] = useState('Grafito');
+  const [color, setColor] = useState('Negro espacial');
   const model = PREVIEW_MODELS.find((candidate) => candidate.id === modelId) ?? PREVIEW_MODELS[0];
 
   return (
