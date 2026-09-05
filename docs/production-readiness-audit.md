@@ -3,11 +3,60 @@
 **Qué es:** auditoría de evidencia local y bloqueos externos para cobrar en producción.
 **Para quién:** LEAD y quienes destraban credenciales, cuentas y despliegue.
 **Cuándo se actualiza:** después de cada preflight, gate de aceptación o cambio de proveedor.
-**Fecha:** 2026-09-04
-**Estado:** deployment de Production `istock-my35ypor0-giolivos-projects.vercel.app` en estado Ready; landing, plan Base, health y wiring de R2 pasan sus sondas públicas; Inngest expone la ruta pero devuelve 500 por claves faltantes; Vercel Hobby, la prueba real de upload R2, la sincronización/ejecución de Inngest y B3 siguen bloqueando el cobro
+**Fecha:** 2026-09-05
+**Estado:** deployment de Production `dpl_EFeaAD5fjQkcF3WzqVkkgVUavANF` en estado Ready, URL `istock-5850hfjzb-giolivos-projects.vercel.app`; `https://istock.maat.work` responde; los gates locales posteriores al fix CSS pasan; el preflight sigue FAIL sólo por Vercel Hobby y las dos claves de Inngest ausentes; el upload real por el pipeline de la app, Inngest real, B3 de Mercado Pago, CI posterior al CSS y E11 siguen sin verificar
 **Workflow:** diagnóstico profundo → correcciones de catálogo, vidriera, UX y billing → gates → preflight
 
 ## Resultado ejecutivo
+
+### Estado vigente — 2026-09-05
+
+`HEAD` y `main` apuntan a `bb6ea63` (`[fix] marketing: stabilize desktop hero heading`); el
+`origin/main` local todavía referencia `c0b09d4` (`[fix] marketing: clarify Mercado Pago payment copy`).
+La corrección de copy integra “La pantalla de pago…” en precios y destraba K1; no cambia ninguna
+decisión de producto. El commit `bb6ea63` incorpora el fix CSS en `apps/web/app/globals.css`:
+`.marketing-hero h1` mantiene `max-width: 11ch` y aplica `max-width: 12ch` sólo dentro de
+`@media (min-width: 900px)`. La evidencia de Production que sigue no se atribuye a un despliegue de
+`bb6ea63`.
+El deployment de Production `dpl_EFeaAD5fjQkcF3WzqVkkgVUavANF` está **Ready**, su URL es
+`istock-5850hfjzb-giolivos-projects.vercel.app`, y el alias `https://istock.maat.work` responde.
+
+La evidencia posterior al fix CSS es: `E2E_PORT=3178 pnpm e2e` PASS, **109/109**, **19/19 specs**,
+0 skips; `pnpm typecheck` PASS; `pnpm lint` PASS; `pnpm test` PASS (**2977 passed**, 4 skips
+anclados a MP ADR-008/B3); `pnpm audit` PASS; `pnpm build` PASS; `bash scripts/accept-fase2.sh` PASS;
+`bash scripts/accept-fase3.sh` PASS.
+
+El CI run `33942556793`, basado en `c0b09d4`, queda como diagnóstico histórico: falló antes del fix
+CSS porque en Ubuntu el H1 ocupaba 3 líneas. Todavía no existe evidencia de un CI posterior al commit
+`bb6ea63`. Esto no invalida la E2E local posterior ni cambia el estado de producción.
+
+En producción, `/`, `/precios`, `/ingresar`, `/billing/suscribirse?plan=base` y
+`/billing/suscribirse?plan=negocio` responden el flujo esperado; el último conserva el plan y redirige
+a ingresar sin sesión. `/api/health` responde 200 con `no-store`. El webhook de Mercado Pago sin firma,
+con firma alterada o con `x-tenant-id` malicioso responde 401 con `no-store`; subscribe sin sesión
+responde 401; cron sin `CRON_SECRET` responde 401; el HTML público no contiene secretos. `/s/not-a-tenant`
+y las rutas de metadata `/robots.txt`/`/sitemap.xml` que el proxy mantiene fuera del tenant responden
+404 de forma intencional según `proxy.ts`; no son bugs.
+
+Cloudflare API verificó la cuenta `1a8318...`, la zona `maat.work` (`59ed3d17a48275c087abbfdc8e4fd48d`),
+los buckets `istock-media` e `istock-originals` existentes y vacíos al finalizar, y `img.maat.work`
+activo con SSL/ownership activos y mínimo TLS 1.2. `istock-media` está proxied. La regla externa de
+response-header transform es el ruleset `87a896569a304efd94370af6b0892312`, fase
+`http_response_headers_transform`, ref `istock_media_response_headers`, para `img.maat.work` y paths
+`.webp`; fija `Timing-Allow-Origin: *` y `X-Content-Type-Options: nosniff`. La sonda temporal devolvió
+200 `image/webp`, `content-length: 27` y ambos headers; el objeto fue borrado, la URL purgada y la
+misma URL terminó en 404 con ambos headers. Esto verifica T13 para CDN, no el upload S3 de la app ni
+el `Cache-Control` de un objeto creado por el pipeline. El código sí fija `CacheControl` en
+`packages/media/src/storage/r2.ts`.
+
+La configuración observada de la zona es: `always_use_https` on, `automatic_https_rewrites` on, Brotli
+on, `browser_cache_ttl` 0, `cache_level` aggressive, mínimo TLS 1.2, SSL strict y HTTP/3 on. Smart
+Tiered Cache está off y Regional Tiered no está disponible en el plan; no se hizo mutación por esto.
+
+El preflight de producción sigue FAIL únicamente por el equipo Vercel en Hobby —decisión del usuario,
+todavía no Pro— y por `INNGEST_SIGNING_KEY`/`INNGEST_EVENT_KEY` ausentes; por eso `/api/inngest` responde
+500 sin esas claves. La ausencia de LLM opcionales no es blocker. B3 externo de Mercado Pago y B7/B9 de
+Inngest aún no fueron ejecutados.
 
 El síntoma del selector vacío tenía una causa concreta: la base tenía un catálogo Apple demasiado
 chico y el alta de unidades no usaba sus variantes. El código local ahora carga 32 líneas de modelo,
@@ -38,7 +87,24 @@ sincronización de la cuenta Inngest, una ejecución firmada real, el upload R2 
 Mercado Pago. El wildcard `*.maat.work` tiene DNS, delegación ACME y certificado administrado
 activos; no corresponde afirmar que hoy se puede cobrar.
 
-## Última evidencia ejecutada
+## Última evidencia ejecutada — 2026-09-05
+
+- `apps/web/app/globals.css`: `.marketing-hero h1` conserva `max-width: 11ch` fuera de media query y
+  aplica `max-width: 12ch` sólo en `@media (min-width: 900px)`.
+- `E2E_PORT=3178 pnpm e2e`: PASS; **109/109 tests**, **19/19 specs**, 0 skips.
+- `pnpm typecheck`, `pnpm lint`, `pnpm test` (**2977 passed, 4 skips MP ADR-008/B3**), `pnpm audit`,
+  `pnpm build`, `bash scripts/accept-fase2.sh` y `bash scripts/accept-fase3.sh`: PASS.
+- CI `33942556793` sobre `c0b09d4`: **FAIL histórico**, anterior al CSS; Ubuntu midió el H1 en 3 líneas.
+  CI posterior a `bb6ea63`: **UNVERIFIED**.
+- La comprobación del código mantiene estos anclajes: `proxy.ts` para los 404 intencionales;
+  `apps/web/app/api/health/route.ts` para 200/no-store;
+  `apps/web/app/(billing)/billing/webhooks/mercadopago/route.ts` y
+  `apps/web/app/(billing)/billing/subscribe/route.ts` para los 401/no-store;
+  `apps/web/app/api/cron/expire-reservations/route.ts` para cron fail-closed;
+  `apps/web/app/(marketing)/precios/page.tsx` para el copy de K1; y
+  `apps/web/app/api/inngest/route.ts`/`apps/web/inngest/functions.ts` para el wiring local de Inngest.
+
+## Evidencia previa — 2026-09-04
 
 - `pnpm --filter @istock/web exec vitest run 'app/(billing)/_lib/subscribe.test.ts' 'app/(billing)/billing/subscribe/route.test.ts'`:
   PASS; 26 tests cubren rechazo definitivo, respuesta incierta, retención del lease y mensajes sin
@@ -54,8 +120,9 @@ activos; no corresponde afirmar que hoy se puede cobrar.
   PASS; devolvió `migrate OK` y dejó aplicadas en Production las migraciones
   `0022_thankful_boomer.sql` y `0023_unknown_loners.sql`. `DATABASE_URL_UNPOOLED` se mantuvo oculta.
 - `pnpm --filter @istock/e2e typecheck`: PASS.
-- La ruta local `/_media` expone `Timing-Allow-Origin: *`; el e2e de media lo verifica sobre la
-  respuesta HTTP real. El LCP con throttling y el header del CDN productivo siguen sin medirse.
+- La route local `apps/web/app/(app)/%5Fmedia/[...key]/route.ts` fija los headers locales; la regla
+  externa de Cloudflare y su sonda productiva están documentadas en la evidencia vigente de
+  2026-09-05. El LCP con throttling sigue sin medirse.
 - `E2E_PORT=3145 pnpm e2e`: PASS; 109/109 tests, 19/19 specs, 0 skips, sobre `next build` + `next start`, con
   smoke de marketing que verifica CTA, tabs, navegación por teclado, contraste e interacción en
   esquema oscuro, selección de plan y el host correcto del link de la vidriera en el panel local,
@@ -266,7 +333,25 @@ activos; no corresponde afirmar que hoy se puede cobrar.
   `/billing/subscribe`. El contrato queda cubierto por `app/auth-interrupts.test.ts` y el build de
   producción lo compila con Next 16.3.3.
 
-## Preflight real del 2026-09-04
+## Preflight real del 2026-09-05
+
+| Control | Resultado | Consecuencia |
+|---|---|---|
+| HEAD / main | **PASS: `bb6ea63`** | fix CSS de heading incorporado; copy de Mercado Pago integrado sin cambiar decisiones de producto |
+| origin/main (ref local) | **`c0b09d4`** | referencia remota local anterior; no implica CI posterior a `bb6ea63` |
+| Deployment Production | **PASS: `dpl_EFeaAD5fjQkcF3WzqVkkgVUavANF`, Ready** | URL `istock-5850hfjzb-giolivos-projects.vercel.app`; el alias `https://istock.maat.work` responde |
+| Gates locales | **PASS** | E2E 109/109, 19/19 specs, 0 skips; typecheck, lint, test 2977 + 4 skips MP ADR-008/B3, build, accept-fase2, accept-fase3 y guard-doc-tables verdes |
+| Flujos públicos | **PASS** | `/`, `/precios`, `/ingresar`, ambos planes de suscripción, health 200/no-store y controles 401/no-store responden lo esperado |
+| 404 intencionales | **PASS** | `/s/not-a-tenant` y robots/sitemap fuera del tenant son exclusiones de `proxy.ts`, no bugs |
+| Plan del equipo Vercel | **FAIL: Hobby** | decisión del usuario: todavía no se sube a Pro |
+| Variables Inngest | **FAIL: faltan `INNGEST_SIGNING_KEY` e `INNGEST_EVENT_KEY`** | `/api/inngest` responde 500 sin esas claves; B7/B9 siguen sin verificar |
+| LLM opcionales | **sin bloqueo** | su ausencia no convierte el preflight en otro blocker |
+
+El preflight de esta fecha falla únicamente por Hobby y las dos claves de Inngest. El cobro real de
+Mercado Pago (B3), el upload por el pipeline de la app y la ejecución real de Inngest no se deducen de
+los gates locales.
+
+## Preflight real del 2026-09-04 (histórico)
 
 | Control | Resultado | Consecuencia |
 |---|---|---|
@@ -362,12 +447,14 @@ claves, deployment ni ejecución real. El preflight debe repetirse después de d
   hasta 120 escrituras de objetos (master privado + thumb/card/detail por foto), con deduplicación
   por contenido del driver. No se ejecuta en el hot path de visitantes.
 
-**UNVERIFIED:** upload real de un byte y recorrido completo de variantes en R2, sincronización de la
-cuenta Inngest y ejecución programada firmada, cuenta real de Mercado Pago, medios de pago y trial en
-checkout, webhook público y reintentos reales, validez de credenciales Neon/Auth/observabilidad en
-Production, asociación del wildcard a un tenant real después del deploy.
+**UNVERIFIED:** CI posterior a `bb6ea63`; E11 (LCP con throttling, pendiente por falta de Chrome
+DevTools MCP); upload real mediante el S3/pipeline de la app y `Cache-Control` de un objeto creado por
+ese pipeline; cuenta/sincronización de Inngest y ejecución programada firmada (B7/B9); B3 externo de
+Mercado Pago con cuenta/test checkout/webhook.
 
-**BLOCKERS:** Vercel Hobby no cumple el requisito comercial; la probe real de upload R2 sigue
-pendiente; faltan las dos claves de Inngest y `/api/inngest` existe pero responde 500 sin firma;
-sincronización/ejecución de Inngest y prueba B3 humana siguen pendientes. No se declara producción
+**BLOCKERS:** Vercel Hobby (B8, pendiente por decisión explícita del usuario); faltan
+`INNGEST_SIGNING_KEY` e `INNGEST_EVENT_KEY` y `/api/inngest` responde 500 sin ellas (B7/B9); B3
+externo de Mercado Pago; upload real por el S3/pipeline de la app y verificación de su
+`Cache-Control`; E11 LCP con throttling, pendiente por falta de Chrome DevTools MCP. La probe de CDN
+de T13 sigue verificada por Cloudflare, pero no cierra el upload de K5/S2.1. No se declara producción
 cobrable.

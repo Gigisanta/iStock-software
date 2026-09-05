@@ -69,6 +69,35 @@ Estados: `todo` · `doing` · `esperando gate` · `blocked` · `done`
 ese tope** (ver arriba), su celda tiene que nombrar **el comando** que falta y **quién** lo corre, y
 **no la cierra el agente que la escribió** cuando el comando lo corre el LEAD.
 
+## Última evidencia ejecutada — 2026-09-05
+
+`HEAD` y `main` apuntan a `bb6ea63` (`[fix] marketing: stabilize desktop hero heading`); el
+`origin/main` local todavía referencia `c0b09d4` (`[fix] marketing: clarify Mercado Pago payment
+copy`). El fix CSS está incorporado en `bb6ea63`, en `apps/web/app/globals.css`: `.marketing-hero h1`
+conserva `max-width: 11ch` y aplica `max-width: 12ch` sólo en `@media (min-width: 900px)`. El LEAD verificó
+`E2E_PORT=3178 pnpm e2e`: **109/109**, **19/19 specs**, 0 skips; `pnpm typecheck`, `pnpm lint`,
+`pnpm test` (**2977 passed**, 4 skips MP ADR-008/B3), `pnpm audit`, `pnpm build`, `accept-fase2` y
+`accept-fase3` en PASS. La corrección de copy integra “La pantalla de pago…” en precios y destraba
+K1 sin cambiar decisiones de producto.
+
+El CI run `33942556793`, basado en `c0b09d4`, queda como diagnóstico histórico: falló antes del CSS
+porque Ubuntu midió el H1 en 3 líneas. Todavía falta un CI posterior al commit CSS; no se usa ese run
+para describir el estado actual.
+
+Production es `dpl_EFeaAD5fjQkcF3WzqVkkgVUavANF`, Ready, URL
+`istock-5850hfjzb-giolivos-projects.vercel.app`; `https://istock.maat.work` responde. Las rutas
+públicas, `/api/health`, los rechazos 401/no-store de webhook, subscribe y cron, y el HTML sin
+secretos responden lo esperado. `/s/not-a-tenant` y robots/sitemap fuera del tenant son 404
+intencionales de `proxy.ts`.
+
+La sonda externa de Cloudflare verificó T13 para CDN: la regla
+`87a896569a304efd94370af6b0892312` (`istock_media_response_headers`) agrega
+`Timing-Allow-Origin: *` y `X-Content-Type-Options: nosniff` a WebP de `img.maat.work`; la sonda
+temporal dio 200 `image/webp` y luego 404 tras borrar/purgar, con ambos headers en ambos casos. Los
+buckets `istock-media` e `istock-originals` terminaron con 0 objetos. Esto no verifica el upload S3
+del pipeline de la app ni su `Cache-Control`; E11 (LCP con throttling) sigue sin cubrirse por falta
+de Chrome DevTools MCP.
+
 **Un encargo con varios ítems es UNA entrada en `doing`** — LEAD, 2026-08-28, resolviendo la
 colisión `T50`/`S8.2`. El tope cuenta **writers trabajando en paralelo sobre un directorio**, que es
 lo que la regla protege, no ítems adentro del mismo encargo. Las filas siguen siendo dos porque son
@@ -194,26 +223,24 @@ Entidades: `tenants` `users` `memberships(owner\|seller)` `locations` `catalog_m
 
 ## FASE 3 — Skeleton
 
-**El gate ya corre entero y cierra verde. Las cinco filas siguen en `todo` igual, y el motivo
-cambió:** ya no es que el gate no pudiera correr, es **quién lo corrió**. `bash scripts/accept-fase3.sh`
-→ **`FASE 3: ACEPTADA` · exit 0 · 54 PASS · 0 FAIL**, `next build` incluido, el 2026-08-28 sobre el
-árbol de trabajo y en la versión modificada que registra la fila **T29**. La corrió `docs-keeper`,
-**no el LEAD**, así que por `CLAUDE.md` §0.2 no promueve nada: lo que fija el estado de K1–K5 es la
-re-ejecución del LEAD, y esa no existe todavía.
+**El LEAD re-ejecutó `bash scripts/accept-fase3.sh` el 2026-09-05 sobre `bb6ea63` y pasó.** K1–K4
+quedan en `done`. K5 queda `blocked`: el gate estático pasa, pero el board reserva su cierre para
+un byte real subido por el pipeline de iStock a R2.
 
 > **Anti-drift, 2026-08-28.** El motivo que este board registró el 2026-08-27 —*"el `next build`
 > está roto"* (`usePathname()` fuera de `<Suspense>`)— **ya no es cierto**, y quedó probado dos
 > veces: la medición de ADR-014 corrió `next start` en :3199, y ahora el propio gate compiló y
-> listó las rutas (`○ /`, `ƒ /_media/[...key]`, `ƒ Proxy (Middleware)`). Lo único pendiente es la
-> corrida del LEAD.
+> listó las rutas (`○ /`, `ƒ /_media/[...key]`, `ƒ Proxy (Middleware)`). **La corrida que faltaba
+> en esta nota histórica quedó hecha el 2026-09-05**; el estado vigente de K1–K5 está en la tabla
+> inmediata de abajo.
 
 | id | título | estado | owner | gate de aceptación | artefacto |
 |---|---|---|---|---|---|
-| K1 | marketing honesta (sin promesas falsas) | todo | `app-agent` | `bash scripts/accept-fase3.sh` §K1 | `apps/web/app/(marketing)/` |
-| K2 | auth + crear tenant + slug | todo | `app-agent` | `bash scripts/accept-fase3.sh` §K2 | `apps/web/app/(app)/` |
-| K3 | proxy de host (`proxy.ts`) | todo | `storefront-agent` | `bash scripts/accept-fase3.sh` §K3 + §K3b (todo cache tag lleva slug) | `apps/web/proxy.ts` |
-| K4 | layout del panel (mobile-first) | todo | `app-agent` | `bash scripts/accept-fase3.sh` §K4 | `apps/web/app/(app)/` |
-| K5 | probe de upload a R2 | todo | `media-agent` | **pendiente de probe real de byte con credenciales ya cargadas** — ver nota abajo | `packages/media/src/` |
+| K1 | marketing honesta (sin promesas falsas) | **done · 2026-09-05 · LEAD reejecutó `bash scripts/accept-fase3.sh`** | `app-agent` | `bash scripts/accept-fase3.sh` §K1 | `apps/web/app/(marketing)/` · copy en `precios/page.tsx` |
+| K2 | auth + crear tenant + slug | **done · 2026-09-05 · LEAD reejecutó `bash scripts/accept-fase3.sh`** | `app-agent` | `bash scripts/accept-fase3.sh` §K2 | `apps/web/app/(app)/` |
+| K3 | proxy de host (`proxy.ts`) | **done · 2026-09-05 · LEAD reejecutó `bash scripts/accept-fase3.sh`** | `storefront-agent` | `bash scripts/accept-fase3.sh` §K3 + §K3b (todo cache tag lleva slug) | `apps/web/proxy.ts` |
+| K4 | layout del panel (mobile-first) | **done · 2026-09-05 · LEAD reejecutó `bash scripts/accept-fase3.sh`** | `app-agent` | `bash scripts/accept-fase3.sh` §K4 | `apps/web/app/(app)/` |
+| K5 | probe de upload a R2 | **blocked** | `media-agent` → `app-agent` | gate estático de `bash scripts/accept-fase3.sh` PASS; falta probe real de byte por pipeline | `packages/media/src/` · `apps/web/app/api/**` |
 
 > **K5 no puede pasar a `done` mientras no exista una probe real de byte en R2, y el motivo no es el
 > que decía este board.** Las credenciales de B1 ya están cargadas en Production.
@@ -518,7 +545,7 @@ re-ejecución del LEAD, y esa no existe todavía.
 
 | id | título | estado | owner | bloqueo | gate de aceptación | artefacto |
 |---|---|---|---|---|---|---|
-| S2.1 | upload directo a R2 por URL prefirmada | blocked | `media-agent` → `app-agent` | **probe real de R2 pendiente** + pregunta abierta de abajo | 8 fotos sin round-trip por foto; el original **nunca** es alcanzable; `card` sigue ≤150KB | `packages/media/src/*`, `apps/web/app/api/**` |
+| S2.1 | upload directo a R2 por URL prefirmada | **blocked** | `media-agent` → `app-agent` | **probe real de byte por el pipeline de la app pendiente**; T13 CDN no cierra esta fila | 8 fotos sin round-trip por foto; el original **nunca** es alcanzable; `card` sigue ≤150KB | `packages/media/src/*`, `apps/web/app/api/**` |
 | P1 | `robots.txt` / `sitemap.xml` por tenant — **decisión de diseño** | **done** | `storefront-agent` + `qa-agent` | — | decisión escrita **antes** de arrancar S3 → **ADR-015**, verificada por el LEAD (30 URLs contra el `path-to-regexp` compilado) | `docs/DECISIONS.md` ADR-015 · `apps/web/proxy.ts` (`117c4f0`) |
 | P2 | metadata file conventions bajo host de tenant — **decisión de diseño** | **done** | `storefront-agent` + `qa-agent` | — | ídem P1: misma causa raíz, misma ADR, mismo commit | ADR-015 · `apps/web/proxy.ts` · `tests/proxy-matcher-no-deja-la-vidriera-sin-vigilar.test.ts` |
 | T1 | rate limiting en el edge: las 2 reglas de Vercel Firewall | **done** — nivel 1 | **LEAD** (`config/**` + `scripts/**`, §4) | — | **el gate original decía "2 reglas activas + prueba de que disparan" y eso NO se cumple entero**: las reglas están declaradas y validadas, y **no están aplicadas** (no hay proyecto Vercel — **B2**/**B5** —, y aplicar es un paso operativo aparte que `vercel deploy` **no** hace). Cerrado el **nivel 1**: el archivo existe, pasa las restricciones reales de Pro, **el censo de route handlers no deja entrar una ruta sin decidir**, y desde `3199a78` **el gate y su polaridad tienen step en CI** (`ci.yml:118` y `:126`) — *step declarado*, no ejecutado: `ci.yml` nunca corrió, ver §"Seis gates rojos o dormidos". `bash scripts/guard-firewall.sh` → `GUARD-FIREWALL: PASS` (re-corrido el 2026-08-28). **Cero** contador en Postgres sobre la vidriera. Con S4 (`c9611b1`) `storefront-track-rl` pasó de `planned` a **`active`**: el endpoint no nace sin techo. Ver §T1 abajo | `config/firewall-rules.json` + `scripts/guard-firewall.sh` + `scripts/guard-firewall.test.sh` (`4fce968`, `3199a78`) · **ADR-016** |
@@ -547,7 +574,7 @@ re-ejecución del LEAD, y esa no existe todavía.
 | T17 | la reserva **configurable por tenant** estaba prometida y no existía | **done** · 2026-09-04 | `app-agent` + `db-agent` | — | El dueño elige 30 min, 1 h, 1 h 30 min o 2 h desde `/app/ajustes`. La preferencia queda en `tenants.reservation_minutes`, con default 60 y `CHECK` de presets; `/app/stock` la usa en cada selector y la Server Action la aplica si el campo llega vacío. La duración puntual sigue validando 30–120 min y no se clampea. S12 lo comprueba después de guardar, al volver al stock | `packages/db/drizzle/0023_unknown_loners.sql` · `apps/web/app/(app)/app/(panel)/ajustes/` · `apps/web/app/(app)/app/(panel)/stock/` · `e2e/s12-onboarding-primer-equipo-publicado.spec.ts` |
 | T18 | `cancelReservation()` derivaba el estado de cierre a mano | **done** · 2026-08-28 · **re-ejecutada por el LEAD** | `app-agent` | — | **`bash scripts/accept-s6.sh`** — el mismo comando que ya cubre la familia. **Re-ejecutado por el LEAD el 2026-08-28: `S6: ACEPTADA`, exit 0, V1…V10 todas PASS**, con estas dos líneas medidas: `MEDIDO s6 reserva · estado_tras_reservar=reserved · vidriera_dice="Reservado" · tras_expirar=available` y `MEDIDO s6 radio · publicadas=4 · paginas=5 · rerender=2 · esperado=2 · sobrevivieron=[ficha-a,ficha-c,ficha-d]`. **Sin conteo de PASS registrado para esa corrida** —consta el veredicto y el detalle por sección, no el número—: el último conteo citable de `accept-s6` sigue siendo el `PASS=22` del barrido serial sobre `68c0bd6`, que es **anterior a la V10**. *Lo que la fila afirmaba antes de la corrida, y se sostiene:* la abrió el LEAD en el propio commit de S6.1 (`83bc673`, último párrafo) — `reserve-unit.ts` escribía `status: 'cancelled'` hardcodeado teniendo el `intent: 'cancel'` ya armado, y el barrido del cron escribía la arista a mano teniendo `decision.listingTransition` en la mano; **era el tercer call site de la familia que ADR-019 vino a cerrar** y acertaba por casualidad, porque cancelar a mano **sí** es `cancelled`. Hoy los tres toman el estado de `transitionEffects(...).closesReservationAs`: `reserve-unit.ts:281` (`398fff7`), `expire-reservations.ts:280` (`b9a8e05`) y `publish-listing.ts:321-325`. **Censado contra `main` por `docs-keeper` el 2026-08-28** (`git grep "status: 'cancelled'\|status: 'expired'" HEAD -- apps/web packages`, sin tests): **cero** literales en la familia de reservas — los dos hits que quedan son otra cosa (`(billing)/_lib/subscriptions/status.ts:65` es un estado de **suscripción**, `packages/domain/src/reservation.ts:127` es la tabla del dominio, o sea la fuente) | `apps/web/app/(app)/_lib/reservations/reserve-unit.ts:281` · `apps/web/app/(app)/_lib/reservations/expire-reservations.ts:280` · `apps/web/app/(app)/_lib/listings/publish-listing.ts:321-325` |
 | T19 | el lado chatbot del test matrix no tenía código ni test | **todo** · 2026-08-28 · **era `doing` y lo cambió la regla, no el trabajo.** `CLAUDE.md` §0 regla 1, segunda precisión (commit **`1414302`**): *`doing` marca **un writer**, no una pregunta abierta — una fila cuyo trabajo es auditar, censar o decidir, sin nadie editando archivos, va a `todo` o `blocked`*. **El trabajo pendiente de esta fila es TOMAR EL CENSO de E7/E8/E9/S7, que es auditar: nadie edita un archivo por `T19`.** *(Y el `doing` era caro justamente por eso: al escribir esto `ai-agent` **sí** tiene `packages/ai/src/chat.ts` modificado en el árbol de trabajo por otro encargo, así que el `doing` de `T19` no marcaba a ese writer — le reservaba el directorio a nadie mientras el writer real trabajaba sin fila.)* **No se abandonó nada:** el censo sigue sin tomar y la fila sigue abierta; lo que cambia es que el conteo de `doing` sobre `packages/ai` vuelve a medir lo que dice medir — **cero** | `ai-agent` (**FASE 5**) | **B4** | **Corregido el 2026-08-28: `packages/ai` EXISTE y esta fila decía lo contrario.** El texto viejo era *"`ls packages/` devuelve `db domain media` y nada más"*; hoy devuelve **`ai db domain media`** y el paquete está en `main` desde **`d42fac9`**, con 47 archivos y **19 `*.test.ts`** (`git ls-tree -r --name-only HEAD packages/ai/`). **Lo que este board NO afirma es la cobertura**: E7, E8, E9 y S7 de `TEST_MATRIX.md` quedan **pendientes de censo**, no verdes — cuando esto se escribió `ai-agent` estaba editando ocho archivos del paquete y cualquier conteo envejecía antes de la corrida. **Al 2026-08-28, después de `89ab7c0`, el árbol está limpio** (`git status` sin cambios) y `packages/ai` tiene **572 tests** verdes, así que la condición *«se re-audita cuando el árbol se aquiete»* se cumplió: **el censo de E7/E8/E9/S7 se puede tomar y no está tomado.** La fila la mueve el LEAD. **La duda sobre su `doing` la contestó el LEAD el 2026-08-28 (`1414302`) y era lo que este board sospechaba:** era un rastro del árbol de aquel momento, no un writer activo, y la fila está en `todo` desde entonces — ver la celda de estado y §Estados. Con él quedan sin cubrir E7, E8, E9 y S7 del `TEST_MATRIX.md`: el chat que no alucina sobre una unidad `reserved`, los jailbreaks de costo e IMEI en 3 fraseos, la dieta de contexto sin IMEI y la prompt injection escondida en la descripción del dueño. **Es el hueco de cobertura más grande del repo** y es de agenda, no de deuda: `CLAUDE.md` §Monorepo lo declara y FASE 5 lo construye. Se anota acá para que *"sin cubrir — FASE 5"* deje de leerse como una nota al pie | `packages/ai/` (**existe** desde `d42fac9`; el *(no existe)* de esta celda era del texto viejo que la propia fila corrige) · `docs/CHATBOT.md` · `docs/TEST_MATRIX.md` E7/E8/E9/S7 |
-| T13 | `/_media` no manda `Timing-Allow-Origin` | todo | `app-agent` | — | la Performance API reporta el byte real del recurso cross-origin; el spec de S3 compara sus **dos** cuentas en vez de descartar una | `apps/web/app/(app)/%5Fmedia/[...key]/route.ts` |
+| T13 | CDN de `img.maat.work` no mandaba headers de medición y seguridad | **done · 2026-09-05 · verificada por el LEAD** | **LEAD** (`config`/Cloudflare externo; la route también fija headers locales) | probe API directa de clave WebP: 200 `image/webp` + `content-length` + ambos headers; después borrar y purgar: 404 con ambos headers | ruleset `87a896569a304efd94370af6b0892312`, fase `http_response_headers_transform`, ref `istock_media_response_headers`; `img.maat.work` y `.webp` | `apps/web/app/(app)/%5Fmedia/[...key]/route.ts` · Cloudflare Zone Ruleset |
 | T14 | **dos** prohibiciones de `CLAUDE.md` §2 que ningún gate afirma (**eran tres hasta el 2026-08-28**: `W016` cerró **T14.1**, ver **T26**) | todo | `qa-agent` (ver desempate abajo) | — | cada una tiene un chequeo **que se vio fallar** sobre una violación sembrada, y corre **en cada push**, no dentro de un `accept-*`. **T14.3 se agregó el 2026-08-28** (la levantó `qa-agent`): *"borrado de un objeto de R2 por key al borrar un listing → rechazo"*. `guard-r2.sh` lo cubre **estáticamente** (R1+R2, `T11`), y no hay ningún test que afirme el **efecto**: que borrar un listing borra **el mapeo** y **no el byte**. La trampa está escrita en `packages/media/src/keys.ts:26` —dos tenants que suben la misma foto comparten el objeto— y hoy **no la frena nada el día que alguien escriba el borrado** | `tests/` (o `scripts/**`, y entonces es del **LEAD**) |
 | T15 | el seed del demo dice un color en la URL y otro en la página | todo · **prioridad baja** | `db-agent` | — | **pregunta abierta, no diagnóstico** (ver abajo). Cerrada cuando el slug del listing y el color que muestra la ficha nombren lo mismo, y `bash scripts/accept-s3.sh` siga en verde | `packages/db/src/seed-data.ts:114-116` |
 | T16 | `packages/**` no tiene gate de "query sin filtro de tenant" | todo | **LEAD** (todo gate es del LEAD, §4) | — | una query sembrada sin `tenant_id` dentro de `packages/**` pone **rojo** un comando del repo, y la exención se declara con motivo escrito igual que en W015. **Nace de cerrar T2**, cuyo alcance medido es `apps/web/app` + `apps/web/lib` + `proxy.ts` (`web-lint.mjs:41`) y nada más | sin definir — `apps/web/scripts/web-lint.mjs` no puede ser (mira `apps/web`); candidato natural: un gate propio en `scripts/**` |
@@ -1937,9 +1964,11 @@ medición de Resource Timing vuelva a confundir ausencia de permisos con una ima
 > ruta no existiría. La URL pública sí es `/_media/…`. Buscarla como `_media` no la encuentra.
 
 **Cerrada para el driver local el 2026-09-04:** `route.ts` emite `Timing-Allow-Origin: *` y el spec
-de media lo comprueba sobre HTTP. El CDN productivo `img.maat.work` es externo a este repo y su
-header sigue **UNVERIFIED** hasta inspeccionarlo después de desplegar R2; eso no se tapa con la ruta
-local.
+de media lo comprueba sobre HTTP. **Cerrada para el CDN productivo el 2026-09-05:** la regla externa
+de Cloudflare para `img.maat.work` fue inspeccionada con una sonda API directa, que vio los dos headers
+en el 200 de un WebP temporal y en el 404 posterior a borrar/purgar. Esto cierra T13 para CDN; E11
+con throttling sigue **UNVERIFIED**, y la sonda no cierra K5/S2.1 porque no subió el byte mediante el
+pipeline de la app.
 
 ### T14 · dos prohibiciones de `CLAUDE.md` §2 que ningún gate afirma  ·  `qa-agent`
 
@@ -2945,21 +2974,20 @@ env · seed · wildcard local (nip.io) · **cómo NO apagar el spend cap**.
 
 | # | blocker | bloquea | quién lo destraba |
 |---|---|---|---|
-| B1 | probe de byte real contra R2 con credenciales ya cargadas en Production | K5, S2, **S2.1** | **LEAD** |
+| B1 | probe de byte real contra R2 mediante el pipeline de la app; las credenciales ya están cargadas en Production | K5, S2, **S2.1** | **LEAD** |
 | B2 | proyecto Neon Postgres/Auth + credenciales de Production | D2, D3 | **humano** |
-| B3 | credenciales de Mercado Pago (**sandbox** + app + webhook secret) | FASE 6, **ADR-008** | **humano** |
-| B4 | API key de Gemini y/o Groq | FASE 5 | **humano** |
-| B5 | **migrar los nameservers de `maat.work` a `ns1/ns2.vercel-dns.com`** | K3, S1 (prod) | **humano — arrancar ya** |
-| B6 | número de WhatsApp del tenant demo — **ya tiene forma de env**: entra por `SEED_DEMO_WA_PHONE` y sin él `packages/db/src/seed.ts` cae en `SEED_DEMO_WA_PHONE_FALLBACK`, que es un placeholder | S4, S13 | **humano** |
+| B3 | prueba externa de Mercado Pago: cuenta/test checkout/webhook; integración segura implementada pero sin cobro verificable | FASE 6, **ADR-008** | **humano** |
+| B4 | claves LLM opcionales ausentes — **no bloquea producción ni el preflight actual** | FASE 5 | **humano** |
+| B5 | nameservers de `maat.work`: **resuelto para el deployment actual**, el alias `https://istock.maat.work` responde | K3, S1 (prod) | **cerrado** |
+| B6 | número de WhatsApp del tenant demo — **ya tiene forma de env**: entra por `SEED_DEMO_WA_PHONE` y sin él `packages/db/src/seed.ts` cae en `SEED_DEMO_WA_PHONE_FALLBACK`, que es un placeholder | demo mostrable a prospectos | **humano** |
 | B7 | cuenta/app Production de Inngest, `INNGEST_SIGNING_KEY` y `INNGEST_EVENT_KEY` cargadas y sincronización de funciones | S6 final, producción | **humano + LEAD** |
-| B8 | elegibilidad y términos comerciales de Vercel Hobby para el despliegue previo al primer cliente de pago (**UNVERIFIED**) | producción | **humano + LEAD** |
-| B9 | deployment del árbol integrado y un run real de `*/5 * * * *` en Inngest (**UNVERIFIED**) | S6 final, producción | **LEAD + humano** |
+| B8 | decisión pendiente de subir el equipo Vercel de Hobby a Pro | producción comercial | **humano + LEAD** |
+| B9 | sincronización de Inngest y un run real de `*/5 * * * *` en el deployment actual (**UNVERIFIED**) | S6 final, producción | **LEAD + humano** |
 
-> **B5 creció en FASE 1 (R1).** El wildcard `*.maat.work` se certifica por DNS-01, y Vercel sólo lo
-> emite si el dominio usa **sus** nameservers. No alcanza con un CNAME: hay que mover el DNS
-> completo de `maat.work` a Vercel, con **24–48 h de propagación**. Es el blocker con más lead
-> time de los seis y no depende de nada nuestro → **conviene arrancarlo antes que B1–B4**, aunque
-> se use recién en K3.
+> **Nota histórica de B5 (FASE 1 / R1).** El wildcard `*.maat.work` se certificaba por DNS-01, y
+> Vercel sólo lo emitía si el dominio usaba **sus** nameservers. Ese era el blocker con más lead
+> time del plan inicial. **Estado vigente 2026-09-05:** el alias `https://istock.maat.work` responde;
+> B5 ya no bloquea K3 ni S1 del deployment actual.
 > Efecto colateral a mirar antes de apretar el botón: todo registro MX/TXT actual de `maat.work`
 > (mail, verificaciones) hay que recrearlo en Vercel o se cae.
 

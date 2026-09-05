@@ -17,7 +17,31 @@ Lo escribe `docs-keeper` (`CLAUDE.md` §4).
 | [TEST_MATRIX.md](TEST_MATRIX.md) | unit / RLS / e2e / seguridad + **§"Probes de aceptación"** y **§"Integración — `apps/web` contra Postgres real"** (dos secciones nuevas del 2026-08-28, S7) + **qué regla no prueba nadie todavía**, verificado contra el repo + §**"La familia gate vacuamente verde"** (las tres cerradas con **ADR-020**, y lo que `guard-gates.sh` **no** cubre) + §**"Un sexto caso"**, que abre familia aparte con **ADR-021**: el test que midió bien, a un sujeto inventado. **§"Un quinto caso" se cerró el 2026-08-28**: el barrido de reservas ya tiene un test que lo corre **dos veces** (`scripts/probes/s6-sweep-head-of-line.test.ts`, **7 casos**, Postgres real, y **sin base es FAIL, no `skip`**), y su parte `MEDIDO cron barrido` lo parsea **V10b** de `accept-s6.sh` campo por campo contra literales del shell (**ADR-023**). La sección lleva además la tabla de las **dos versiones** de la spec que la probe corrigió (**ADR-024**). **S7 sumó tres inventarios, los tres SIN conteo de PASS a propósito** —el número que vale sale de una corrida, y este doc ya se equivocó dos veces contando en el fuente y afirmando en el runner—: **R9** en la tabla de RLS (la venta manual: el costo y el margen no cruzan; seis sub-bloques, **24 `it()` contados en el fuente**, con el hueco de R9c **declarado** = fila `P4`), la probe **`s7-venta-manual.test.ts`** (5 casos, certificado de `accept-s7.sh`) y **`create-listing.test.ts`** (8 casos, `7fc284a`, cero literales de error: las colisiones las tira Postgres). **El `79` de RLS y el `1225` del total quedan FECHADOS y no se re-suman**; `79 + 24` es una aritmética que nadie corrió. **El último 🔴 de la tabla de §2 se apagó el 2026-08-28** con `W016` (T26); los que quedan son 🟡 (T14.2, T14.3) y un 🔴 que no es de §2 sino de disponibilidad (S2.5). **S8 sumó:** la probe **`s8-canje.test.ts`** (9 casos **más un canario**, y las probes pasaron de 8 a **9**), **R7c-bis** en la tabla de RLS (qué columnas `SENSITIVE` puede `anon` **escribir**: exactamente dos), **R6c pasó de un entero a cuatro aserciones** (7 policies `TO anon` = 5 de lectura + 2 de escritura, y *que no exista nada más*), la fila de seguridad **S8** —la PII del visitante sin test de fuga, **el hueco que más importa**—, el quinto lint con arnés (`rls-lint.test.sh`) y los **19** casos de W015. **`E5` sigue 🔴 pero por otro motivo, y la celda decía el viejo:** ya no es *"la slice no arrancó"*, es que `next build` y `pnpm e2e` **no se corrieron** (86 tests en 13 archivos, **ninguno de S8**) | `docs-keeper` (era `qa-agent`; **corregido por el LEAD el 2026-08-28**: quien escribe los tests que cruzan no puede escribir también el doc que declara la cobertura) | cada test nuevo, y cada corrida de gate que cambie lo cubierto |
 | [COST.md](COST.md) | piso de plataforma, marginal por tenant, estrés, métrica a vigilar | LEAD en FASE 1, después `cost-auditor` | **con fuente desde FASE 1** |
 | [CHATBOT.md](CHATBOT.md) | dieta, contexto, tools, handoff, evals, costo por 1000 msgs | `docs-keeper` por `CLAUDE.md` §4 — **decía `ai-agent` y era la cuarta vez del mismo patrón** (`PRODUCT.md`, `DOMAIN.md`, `ARCHITECTURE.md`); acá ni siquiera había conflicto: `.claude/agents/ai-agent.md:46` ya decía *"documentá … en `docs/CHATBOT.md` (**vía `docs-keeper`**)"*. El contenido lo aporta `ai-agent` | **sin revisar desde FASE 1**; lo único tocado el 2026-08-28 fue el ID de modelo muerto (`llama-3.1-8b-instant`, retirado el 16/08/2026). **Esta celda decía *«y `packages/ai` no existe»* y era falso: el paquete está en `main` desde `d42fac9`** — corregido el 2026-08-28 verificando contra el árbol, la misma corrección que ya llevaban `SLICE_BOARD.md` (`T19`) y `TEST_MATRIX.md`. Lo que sigue sin censarse es la **cobertura** (E7/E8/E9/S7), que es la fila `T19`, hoy en `todo` |
+| [OWNERSHIP.md](OWNERSHIP.md) | tabla vigente de dueños de archivos y desempates de ownership | **LEAD** | cada cambio de ownership o de la tabla |
+| [frontend-taste-audit.md](frontend-taste-audit.md) | dirección visual, diales y cambios aplicados al frontend | `docs-keeper` | cada auditoría visual o cambio de dirección |
+| [production-readiness-audit.md](production-readiness-audit.md) | evidencia de gates, producción pública, Cloudflare/R2, preflight y bloqueos para cobrar | `docs-keeper` | después de cada preflight, gate de aceptación o cambio de proveedor |
 | [research/](research/) | hechos verificados con fuente y fecha | `researcher` (uno por archivo) | **7 topics de FASE 1 (6 PASS, R4 PARCIAL) + `vercel-request-body-limit.md` (S2), `vercel-firewall-as-code.md` (T1), `vercel-cron-limits.md` (corte histórico de S6), `vercel-production-limits-2026.md` (addendum vigente 2026-09-04) e `inngest-free-scheduled-functions.md` (agenda Inngest Free), pedidos al evaluar límites o cerrar una slice** |
+
+## Estado vigente — 2026-09-05
+
+La fuente actual de avance es `SLICE_BOARD.md`. `HEAD` y `main` están en `bb6ea63` (`[fix] marketing:
+stabilize desktop hero heading`); el `origin/main` local todavía referencia `c0b09d4`. K1–K4 están `done` tras la reejecución del LEAD de
+`bash scripts/accept-fase3.sh`; K5 y S2.1 siguen `blocked` por la probe de byte del pipeline real de
+la app; T13 está `done` para CDN y E11 sigue sin cubrirse por falta de Chrome DevTools MCP. El fix CSS
+vigente en `apps/web/app/globals.css` deja `.marketing-hero h1` en `11ch` fuera de media query y en
+`12ch` sólo desde `900px`. La mención histórica de S2.5 como `abierta` en la descripción larga de
+`SLICE_BOARD.md` queda supersedida por su fila `done` del 2026-09-04.
+
+La E2E posterior al CSS pasó en `E2E_PORT=3178`: 109/109, 19/19 specs, 0 skips; typecheck, lint,
+test, audit, build, accept-fase2 y accept-fase3 también pasan. El CI run `33942556793` sobre
+`c0b09d4` es diagnóstico histórico —falló antes del CSS por un H1 de 3 líneas en Ubuntu— y todavía
+no hay CI posterior a `bb6ea63`.
+
+La evidencia de producción está en `production-readiness-audit.md`: deployment
+`dpl_EFeaAD5fjQkcF3WzqVkkgVUavANF` Ready, alias `istock.maat.work` respondiendo, gates verdes y
+preflight FAIL únicamente por Vercel Hobby y las dos claves de Inngest ausentes. B3 de Mercado Pago,
+Inngest real, el upload/`Cache-Control` por el pipeline de la app, E11 y CI posterior al CSS siguen
+`UNVERIFIED`.
 
 ## Contratos que no están en /docs
 | archivo | qué es |
@@ -517,7 +541,7 @@ Lo que hay que saber sin leer nada más:
 - **Deuda nueva, abierta el 2026-08-28:** editar el **TC** y los puntos de retiro después del alta
   **no existe** —`ajustes` es sólo lectura y la única mutación de `fx_settings`/`locations` es el
   `insert` del alta— así que hoy mover el TC exige recrear el negocio (**T12**, `app-agent`, es
-  producto: el TC lo pone una persona y la va a mover seguido); `/_media` no manda
+  producto: el TC lo pone una persona y la va a mover seguido). **En ese corte histórico**, `/_media` no manda
   `Timing-Allow-Origin`, así que la Performance API mide **0** cross-origin y **ninguna medición de
   bytes de imagen puede salir de ahí** —ni los e2e, que miden con `request.sizes()` de Playwright,
   ni RUM el día que exista— (**T13**, `app-agent`); y quedan **dos** prohibiciones de `CLAUDE.md` §2
