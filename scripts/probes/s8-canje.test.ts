@@ -218,8 +218,8 @@ beforeAll(async () => {
       (${tenantB}::uuid, ${USER_B}::uuid, 'owner')`;
 
   const [m] = await cliente<{ id: string }[]>`
-    insert into catalog_models (slug, display_name, release_year)
-    values (${'probe-s8-' + randomUUID().slice(0, 8)}, 'iPhone 12', 2020) returning id`;
+    insert into catalog_models (slug, display_name, release_year, storage_options_gb, colors)
+    values (${'probe-s8-' + randomUUID().slice(0, 8)}, 'iPhone 12', 2020, ARRAY[128]::integer[], ARRAY['Negro']::text[]) returning id`;
   modelo = m?.id ?? '';
   expect(modelo, 'no se pudo crear el modelo de catálogo del fixture').not.toBe('');
 });
